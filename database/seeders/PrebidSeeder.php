@@ -31,7 +31,7 @@ class PrebidSeeder extends Seeder
             ],
         );
 
-        PrebidBuild::withoutGlobalScopes()->whereKeyNot($build->id)->update(['is_active' => false]);
+        PrebidBuild::withoutGlobalScopes()->where('id', '!=', $build->id)->update(['is_active' => false]);
 
         foreach ($this->registry() as $definition) {
             $adapter = PrebidAdapter::query()->updateOrCreate(
