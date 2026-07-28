@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\AccountStatusController;
 use App\Http\Controllers\Admin\AdvertiserController;
 use App\Http\Controllers\Admin\ContactController;
 use App\Http\Controllers\Admin\ContractController as AdminContractController;
+use App\Http\Controllers\Admin\GamConnectionController;
 use App\Http\Controllers\Admin\ImpersonationController;
 use App\Http\Controllers\Admin\OrganizationController;
 use App\Http\Controllers\Admin\PublisherController;
@@ -104,6 +105,17 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/advertisers/{advertiser}/contacts', [ContactController::class, 'storeAdvertiser'])->middleware('permission:advertisers.manage')->name('admin.advertisers.contacts.store');
         Route::put('/admin/advertisers/{advertiser}/contacts/{contact}', [ContactController::class, 'updateAdvertiser'])->middleware('permission:advertisers.manage')->name('admin.advertisers.contacts.update');
         Route::delete('/admin/advertisers/{advertiser}/contacts/{contact}', [ContactController::class, 'destroyAdvertiser'])->middleware('permission:advertisers.manage')->name('admin.advertisers.contacts.destroy');
+
+        Route::get('/admin/gam/connections', [GamConnectionController::class, 'index'])->middleware('permission:gam.connections.view')->name('admin.gam.connections.index');
+        Route::get('/admin/gam/connections/create', [GamConnectionController::class, 'create'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.create');
+        Route::post('/admin/gam/connections', [GamConnectionController::class, 'store'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.store');
+        Route::get('/admin/gam/connections/{gamConnection}', [GamConnectionController::class, 'show'])->middleware('permission:gam.connections.view')->name('admin.gam.connections.show');
+        Route::get('/admin/gam/connections/{gamConnection}/edit', [GamConnectionController::class, 'edit'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.edit');
+        Route::put('/admin/gam/connections/{gamConnection}', [GamConnectionController::class, 'update'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.update');
+        Route::post('/admin/gam/connections/{gamConnection}/test', [GamConnectionController::class, 'test'])->middleware(['permission:gam.connections.test', 'throttle:10,1'])->name('admin.gam.connections.test');
+        Route::post('/admin/gam/connections/{gamConnection}/primary', [GamConnectionController::class, 'primary'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.primary');
+        Route::post('/admin/gam/connections/{gamConnection}/assign-site', [GamConnectionController::class, 'assignSite'])->middleware('permission:gam.connections.assign')->name('admin.gam.connections.assign-site');
+
         Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware('permission:sites.view')->name('admin.sites.index');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware('permission:sites.view')->name('admin.sites.show');
         Route::post('/admin/sites/{site}/approve', [AdminSiteController::class, 'approve'])->middleware('permission:sites.review')->name('admin.sites.approve');
