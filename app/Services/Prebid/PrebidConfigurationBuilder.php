@@ -4,7 +4,6 @@ namespace App\Services\Prebid;
 
 use App\Enums\PlacementType;
 use App\Enums\PrebidPriceGranularity;
-use App\Models\BidderPlacementMapping;
 use App\Models\BidderSiteMapping;
 use App\Models\GamConnection;
 use App\Models\Placement;
@@ -134,7 +133,14 @@ final class PrebidConfigurationBuilder
                 $siteMapping->public_parameters ?? [],
                 $placementMapping?->public_parameters ?? [],
             ];
-            $layers = $this->injectIdentifiers($adapter->bidder_code, $adapter->required_public_parameters ?? [], $layers, $account->publisher_id, $siteMapping->publisher_id, $placementMapping?->placement_id_value);
+            $layers = $this->injectIdentifiers(
+                $adapter->bidder_code,
+                $adapter->required_public_parameters ?? [],
+                $layers,
+                $account->publisher_id,
+                $siteMapping->publisher_id,
+                $placementMapping?->placement_id_value,
+            );
 
             try {
                 $params = $this->parameters->mergeAndValidate($adapter, ...$layers);
@@ -171,16 +177,33 @@ final class PrebidConfigurationBuilder
             }
         };
 
-        match ($bidderCode) {
-            'rubicon' => [$put(['accountId'], $accountPublisherId), $put(['siteId'], $sitePublisherId), $put(['zoneId'], $placementId)],
-            'pubmatic' => [$put(['publisherId'], $accountPublisherId ?: $sitePublisherId), $put(['adSlot'], $placementId)],
-            'appnexus' => [$put(['member'], $accountPublisherId), $put(['placementId'], $placementId ?: $sitePublisherId)],
-            'openx' => [$put(['unit'], $placementId ?: $sitePublisherId)],
-            'ix' => [$put(['siteId'], $sitePublisherId ?: $placementId ?: $accountPublisherId)],
-            default => [$put(['publisherId', 'accountId', 'member'], $accountPublisherId ?: $sitePublisherId), $put(['placementId', 'adSlot', 'unit', 'zoneId', 'siteId'], $placementId)],
-        };
+        switch ($bidderCode) {
+            case 'rubicon':
+                $put(['accountId'], $accountPublisherId);
+                $put(['siteId'], $sitePublisherId);
+                $put(['zoneId'], $placementId);
+                break;
+            case 'pubmatic':
+                $put(['publisherId'], $accountPublisherId ?: $sitePublisherId);
+                $put(['adSlot'], $placementId);
+                break;
+            case 'appnexus':
+                $put(['member'], $accountPublisherId);
+                $put(['placementId'], $placementId ?: $sitePublisherId);
+                break;
+            case 'openx':
+                $put(['unit'], $placementId ?: $sitePublisherId);
+                break;
+            case 'ix':
+                $put(['siteId'], $sitePublisherId ?: $placementId ?: $accountPublisherId);
+                break;
+            default:
+                $put(['publisherId', 'accountId', 'member'], $accountPublisherId ?: $sitePublisherId);
+                $put(['placementId', 'adSlot', 'unit', 'zoneId', 'siteId'], $placementId);
+        }
 
         $layers[] = $injected;
+
         return $layers;
     }
 
