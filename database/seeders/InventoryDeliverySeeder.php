@@ -11,19 +11,20 @@ class InventoryDeliverySeeder extends Seeder
     public function run(): void
     {
         $source = public_path('assets/hm-loader.js');
-        $checksum = is_file($source) ? hash_file('sha256', $source) : hash('sha256', 'hm-loader-1.0.0');
+        $checksum = is_file($source) ? hash_file('sha256', $source) : hash('sha256', 'hm-loader-1.1.0');
 
-        LoaderRelease::query()->updateOrCreate(
-            ['version' => '1.0.0'],
+        $loader = LoaderRelease::query()->updateOrCreate(
+            ['version' => '1.1.0'],
             [
                 'source_path' => 'assets/hm-loader.js',
                 'minified_path' => 'assets/hm-loader.min.js',
                 'checksum' => $checksum,
                 'is_active' => true,
-                'notes' => 'Initial production Horus Loader release.',
+                'notes' => 'Horus Loader with browser-side Prebid auctions and fail-safe GAM fallback.',
                 'published_at' => now(),
             ],
         );
+        LoaderRelease::query()->where('id', '!=', $loader->id)->update(['is_active' => false]);
 
         TagVersion::query()->updateOrCreate(
             ['version' => '1.0.0'],
