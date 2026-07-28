@@ -1,23 +1,32 @@
 (function (window, document) {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.1.0';
     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
     var state = window[STATE_KEY] = window[STATE_KEY] || {
         config: null,
         gptPromise: null,
+        prebidPromise: null,
+        prebidAssetUrl: null,
         servicesEnabled: false,
+        initialLoadDisabled: false,
         slots: {},
         refreshTimers: {},
         observer: null,
         navigationPatched: false,
         scanTimer: null,
         script: null,
-        booting: null
+        booting: null,
+        diagnostics: {
+            auctions: 0,
+            auctionTimeouts: 0,
+            auctionFailures: 0,
+            fallbacks: 0
+        }
     };
 
     function log(config) {
-        if (!config || !config.debug || !window.console || !window.console.info) return;
+        if (!config || !(config.debug || (config.prebid && config.prebid.debug)) || !window.console || !window.console.info) return;
         var args = Array.prototype.slice.call(arguments, 1);
         args.unshift('[Horus Loader ' + VERSION + ']');
         window.console.info.apply(window.console, args);
@@ -78,16 +87,15 @@
     }
 
     function fetchConfig(script, siteKey, force) {
-        var url = buildConfigUrl(script, siteKey, force);
-        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
-            .then(function (response) {
-                if (!response || !response.ok) throw new Error('Static configuration unavailable');
-                return response.json();
-            })
-            .then(function (config) {
-                if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
-                return config;
-            });
+        return window.fetch(buildConfigUrl(script, siteKey, force), {
+            method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default'
+        }).then(function (response) {
+            if (!response || !response.ok) throw new Error('Static configuration unavailable');
+            return response.json();
+        }).then(function (config) {
+            if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
+            return config;
+        });
     }
 
     function ensureGoogletagQueue() {
@@ -96,27 +104,66 @@
         return window.googletag;
     }
 
-    function loadGpt(config) {
-        var googletag = ensureGoogletagQueue();
-        if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
-        if (state.gptPromise) return state.gptPromise;
+    function ensurePrebidQueue() {
+        window.pbjs = window.pbjs || { que: [] };
+        window.pbjs.que = window.pbjs.que || [];
+        return window.pbjs;
+    }
 
-        state.gptPromise = new Promise(function (resolve, reject) {
-            var existing = document.querySelector ? document.querySelector('script[data-hm-gpt="1"]') : null;
+    function loadExternalScript(selector, attributes, source) {
+        return new Promise(function (resolve, reject) {
+            var existing = document.querySelector ? document.querySelector(selector) : null;
             if (existing) {
-                existing.addEventListener('load', function () { resolve(ensureGoogletagQueue()); }, { once: true });
+                if (existing.getAttribute('data-hm-loaded') === '1') {
+                    resolve(existing);
+                    return;
+                }
+                existing.addEventListener('load', function () { resolve(existing); }, { once: true });
                 existing.addEventListener('error', reject, { once: true });
                 return;
             }
             var tag = document.createElement('script');
             tag.async = true;
-            tag.src = config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-            tag.setAttribute('data-hm-gpt', '1');
-            tag.onload = function () { resolve(ensureGoogletagQueue()); };
-            tag.onerror = function () { reject(new Error('GPT failed to load')); };
+            tag.src = source;
+            Object.keys(attributes).forEach(function (key) { tag.setAttribute(key, attributes[key]); });
+            tag.onload = function () { tag.setAttribute('data-hm-loaded', '1'); resolve(tag); };
+            tag.onerror = function () { reject(new Error('Script failed to load: ' + source)); };
             (document.head || document.documentElement).appendChild(tag);
         });
+    }
+
+    function loadGpt(config) {
+        var googletag = ensureGoogletagQueue();
+        if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
+        if (state.gptPromise) return state.gptPromise;
+        state.gptPromise = loadExternalScript(
+            'script[data-hm-gpt="1"]',
+            { 'data-hm-gpt': '1' },
+            config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'
+        ).then(function () { return ensureGoogletagQueue(); });
         return state.gptPromise;
+    }
+
+    function loadPrebid(config) {
+        var prebid = config.prebid || {};
+        var build = prebid.build || {};
+        if (!prebid.enabled || !build.assetUrl) return Promise.reject(new Error('Prebid is not enabled or has no compiled build'));
+        var pbjs = ensurePrebidQueue();
+        if (pbjs.libLoaded) return Promise.resolve(pbjs);
+        if (state.prebidPromise) return state.prebidPromise;
+        state.prebidAssetUrl = build.assetUrl;
+        state.prebidPromise = loadExternalScript(
+            'script[data-hm-prebid="1"]',
+            {
+                'data-hm-prebid': '1',
+                'data-hm-prebid-version': String(build.version || '')
+            },
+            build.assetUrl + (build.assetUrl.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(build.version || config.configVersion || VERSION)
+        ).then(function () { return ensurePrebidQueue(); }).catch(function (error) {
+            state.prebidPromise = null;
+            throw error;
+        });
+        return state.prebidPromise;
     }
 
     function normalizeSizes(sizes) {
@@ -178,6 +225,126 @@
         };
     }
 
+    function prebidEnabled(config) {
+        return Boolean(config && config.prebidEnabled && config.prebid && config.prebid.enabled);
+    }
+
+    function configurePrebid(pbjs, config) {
+        var prebid = config.prebid || {};
+        var base = {
+            priceGranularity: prebid.priceGranularity || 'dense',
+            bidderSequence: prebid.bidderSequence || 'random',
+            enableSendAllBids: Boolean(prebid.sendAllBids),
+            debug: Boolean(prebid.debug),
+            currency: { adServerCurrency: prebid.currency || 'USD' }
+        };
+        if (prebid.consentManagement && Object.keys(prebid.consentManagement).length) base.consentManagement = prebid.consentManagement;
+        if (prebid.userSync && Object.keys(prebid.userSync).length) base.userSync = prebid.userSync;
+        var advanced = prebid.advancedConfig && typeof prebid.advancedConfig === 'object' ? prebid.advancedConfig : {};
+        var merged = Object.assign({}, base, advanced);
+        if (pbjs.setConfig) pbjs.setConfig(merged);
+    }
+
+    function makePrebidAdUnits(config, entries) {
+        var configured = config.prebid && config.prebid.adUnits || {};
+        return entries.map(function (entry) {
+            var template = configured[entry.placement.code];
+            if (!template || !Array.isArray(template.bids) || !template.bids.length) return null;
+            return {
+                code: entry.element.id,
+                mediaTypes: template.mediaTypes,
+                bids: template.bids
+            };
+        }).filter(Boolean);
+    }
+
+    function refreshGpt(googletag, entries) {
+        return new Promise(function (resolve) {
+            googletag.cmd.push(function () {
+                try {
+                    var slots = entries.map(function (entry) { return entry.slot; }).filter(Boolean);
+                    if (slots.length && googletag.pubads().refresh) googletag.pubads().refresh(slots);
+                } catch (error) {
+                    // Ad delivery must fail silently on publisher pages.
+                }
+                resolve(entries);
+            });
+        });
+    }
+
+    function runPrebidAuction(config, googletag, entries) {
+        var prebid = config.prebid || {};
+        var adUnits = makePrebidAdUnits(config, entries);
+        if (!adUnits.length) return Promise.reject(new Error('No eligible Prebid ad units'));
+
+        return loadPrebid(config).then(function (pbjs) {
+            return new Promise(function (resolve, reject) {
+                var settled = false;
+                var timeout = Math.max(100, Number(prebid.auctionTimeoutMs || 1200));
+                var safetyTimer = window.setTimeout(function () {
+                    if (settled) return;
+                    settled = true;
+                    state.diagnostics.auctionTimeouts += 1;
+                    reject(new Error('Prebid auction safety timeout'));
+                }, timeout + 300);
+
+                pbjs.que.push(function () {
+                    try {
+                        configurePrebid(pbjs, config);
+                        var codes = adUnits.map(function (unit) { return unit.code; });
+                        if (pbjs.removeAdUnit) codes.forEach(function (code) { pbjs.removeAdUnit(code); });
+                        if (pbjs.addAdUnits) pbjs.addAdUnits(adUnits);
+                        if (prebid.timeoutReportingEnabled && pbjs.onEvent && !pbjs.__hmTimeoutListener) {
+                            pbjs.__hmTimeoutListener = true;
+                            pbjs.onEvent('bidTimeout', function (timedOutBids) {
+                                state.diagnostics.auctionTimeouts += Array.isArray(timedOutBids) ? timedOutBids.length : 1;
+                                updateDiagnostics(config, entries);
+                            });
+                        }
+                        state.diagnostics.auctions += 1;
+                        pbjs.requestBids({
+                            adUnitCodes: codes,
+                            timeout: timeout,
+                            bidsBackHandler: function () {
+                                if (settled) return;
+                                settled = true;
+                                window.clearTimeout(safetyTimer);
+                                try {
+                                    if (pbjs.setTargetingForGPTAsync) pbjs.setTargetingForGPTAsync(codes);
+                                } catch (targetingError) {
+                                    log(config, 'Prebid targeting failed; continuing to GAM', targetingError);
+                                }
+                                resolve(entries);
+                            }
+                        });
+                    } catch (error) {
+                        if (settled) return;
+                        settled = true;
+                        window.clearTimeout(safetyTimer);
+                        reject(error);
+                    }
+                });
+            });
+        }).then(function () {
+            return refreshGpt(googletag, entries);
+        });
+    }
+
+    function requestWithFallback(config, googletag, entries) {
+        if (!prebidEnabled(config)) {
+            return state.initialLoadDisabled ? refreshGpt(googletag, entries) : Promise.resolve(entries);
+        }
+        return runPrebidAuction(config, googletag, entries).catch(function (error) {
+            state.diagnostics.auctionFailures += 1;
+            log(config, 'Prebid failed safely', error);
+            if (config.prebid && config.prebid.gamFallbackEnabled) {
+                state.diagnostics.fallbacks += 1;
+                return refreshGpt(googletag, entries);
+            }
+            return entries;
+        });
+    }
+
     function defineItems(config, items) {
         if (!items.length) return Promise.resolve([]);
         return loadGpt(config).then(function (googletag) {
@@ -189,6 +356,10 @@
                         var lazy = lazyOptions(items);
                         if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
                         if (config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
+                        if (prebidEnabled(config) && pubads.disableInitialLoad && !state.servicesEnabled) {
+                            pubads.disableInitialLoad();
+                            state.initialLoadDisabled = true;
+                        }
 
                         var defined = [];
                         items.forEach(function (item) {
@@ -222,15 +393,23 @@
                         defined.forEach(function (entry) {
                             if (entry.placement.outOfPageFormat) googletag.display(entry.slot);
                             else googletag.display(entry.element.id);
-                            entry.element.setAttribute('data-hm-status', 'requested');
-                            scheduleRefresh(googletag, pubads, entry);
+                            entry.element.setAttribute('data-hm-status', 'registered');
                         });
-                        diagnostics(config, defined);
                         resolve(defined);
                     } catch (error) {
                         log(config, 'Slot definition failed', error);
                         resolve([]);
                     }
+                });
+            }).then(function (defined) {
+                if (!defined.length) return defined;
+                return requestWithFallback(config, googletag, defined).then(function () {
+                    defined.forEach(function (entry) {
+                        entry.element.setAttribute('data-hm-status', 'requested');
+                        scheduleRefresh(config, googletag, entry);
+                    });
+                    updateDiagnostics(config, defined);
+                    return defined;
                 });
             });
         }).catch(function (error) {
@@ -239,11 +418,13 @@
         });
     }
 
-    function scheduleRefresh(googletag, pubads, entry) {
-        var refresh = entry.placement.refresh || {};
-        var interval = Number(refresh.intervalSeconds || 0);
-        if (!refresh.enabled || interval < 30 || !pubads.refresh) return;
-        var limit = Number(refresh.limit || 0);
+    function scheduleRefresh(config, googletag, entry) {
+        var placementRefresh = entry.placement.refresh || {};
+        var prebidRefresh = config.prebid && config.prebid.refresh || {};
+        var enabled = placementRefresh.enabled || (prebidEnabled(config) && prebidRefresh.enabled);
+        var interval = Number(placementRefresh.intervalSeconds || prebidRefresh.intervalSeconds || 0);
+        if (!enabled || interval < 30) return;
+        var limit = Number(placementRefresh.limit || 0);
         var key = entry.element.id;
         if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
         state.refreshTimers[key] = window.setInterval(function () {
@@ -254,12 +435,12 @@
                 return;
             }
             entry.refreshCount += 1;
-            googletag.cmd.push(function () { pubads.refresh([entry.slot]); });
+            requestWithFallback(config, googletag, [entry]);
         }, interval * 1000);
     }
 
-    function diagnostics(config, defined) {
-        if (!config.debug) return;
+    function updateDiagnostics(config, defined) {
+        if (!(config.debug || (config.prebid && config.prebid.debug))) return;
         window.__HM_DIAGNOSTICS__ = {
             loaderVersion: VERSION,
             configVersion: config.configVersion,
@@ -267,7 +448,14 @@
             hostname: currentHostname(),
             servingMode: config.servingMode,
             gamNetworkCode: config.gamNetworkCode,
-            definedPlacements: defined.map(function (entry) { return entry.placement.code; })
+            prebidEnabled: prebidEnabled(config),
+            prebidBuild: config.prebid && config.prebid.build && config.prebid.build.version,
+            gamSetupKey: config.prebid && config.prebid.gamSetup && config.prebid.gamSetup.key,
+            definedPlacements: defined.map(function (entry) { return entry.placement.code; }),
+            auctions: state.diagnostics.auctions,
+            auctionTimeouts: state.diagnostics.auctionTimeouts,
+            auctionFailures: state.diagnostics.auctionFailures,
+            gamFallbacks: state.diagnostics.fallbacks
         };
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
     }
@@ -351,7 +539,17 @@
         getConfig: function () { return state.config; },
         _resetForTests: function () {
             Object.keys(state.refreshTimers).forEach(function (key) { window.clearInterval(state.refreshTimers[key]); });
-            state.config = null; state.gptPromise = null; state.servicesEnabled = false; state.slots = {}; state.refreshTimers = {}; state.booting = null; state.script = null;
+            state.config = null;
+            state.gptPromise = null;
+            state.prebidPromise = null;
+            state.prebidAssetUrl = null;
+            state.servicesEnabled = false;
+            state.initialLoadDisabled = false;
+            state.slots = {};
+            state.refreshTimers = {};
+            state.booting = null;
+            state.script = null;
+            state.diagnostics = { auctions: 0, auctionTimeouts: 0, auctionFailures: 0, fallbacks: 0 };
         }
     };
 
