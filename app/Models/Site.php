@@ -18,7 +18,7 @@ class Site extends Model
 {
     use BelongsToOrganization, HasUlids, SoftDeletes;
 
-    protected $fillable = ['organization_id', 'publisher_id', 'public_key', 'display_name', 'primary_domain', 'language', 'content_category', 'country', 'main_traffic_countries', 'estimated_monthly_pageviews', 'estimated_monthly_users', 'current_monetization_providers', 'current_gam_network_code', 'current_adsense_status', 'current_adx_status', 'prebid_enabled', 'native_demand_enabled', 'default_revenue_share_percent', 'serving_mode', 'status', 'submitted_at', 'approved_at'];
+    protected $fillable = ['organization_id', 'publisher_id', 'public_key', 'display_name', 'primary_domain', 'language', 'content_category', 'country', 'main_traffic_countries', 'estimated_monthly_pageviews', 'estimated_monthly_users', 'current_monetization_providers', 'current_gam_network_code', 'current_adsense_status', 'current_adx_status', 'prebid_enabled', 'native_demand_enabled', 'default_revenue_share_percent', 'serving_mode', 'gam_connection_id', 'status', 'submitted_at', 'approved_at'];
 
     protected static function booted(): void
     {
@@ -47,6 +47,11 @@ class Site extends Model
     public function publisher(): BelongsTo
     {
         return $this->belongsTo(Publisher::class);
+    }
+
+    public function gamConnection(): BelongsTo
+    {
+        return $this->belongsTo(GamConnection::class, 'gam_connection_id');
     }
 
     public function domains(): HasMany
