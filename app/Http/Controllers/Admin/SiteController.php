@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\ConfigEnvironment;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Enums\VerificationMethod;
@@ -12,6 +13,7 @@ use App\Models\SiteDomain;
 use App\Models\SiteNote;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteLifecycleService;
 use Illuminate\Http\RedirectResponse;
@@ -28,7 +30,7 @@ class SiteController extends Controller
 
     public function show(Site $site): View
     {
-        return view('publisher.sites.show', ['site' => $site->load(['publisher', 'domains.verifications', 'reviews', 'notes', 'statusHistory', 'servingSettings', 'servingModeChanges']), 'internal' => true]);
+        return view('publisher.sites.show', ['site' => $site->load(['publisher', 'domains.verifications', 'reviews', 'notes', 'statusHistory', 'servingSettings', 'servingModeChanges', 'siteConfig']), 'internal' => true]);
     }
 
     public function approve(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
@@ -84,13 +86,14 @@ class SiteController extends Controller
         return back()->with('status', 'Website archived. Its history and permanent key are retained.');
     }
 
-    public function servingMode(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
+    public function servingMode(Request $request, Site $site, SiteLifecycleService $lifecycle, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate(['serving_mode' => ['required', Rule::enum(ServingMode::class)], 'reason' => ['required', 'string', 'max:2000'], 'rollback_reference_id' => ['nullable', 'ulid']]);
         $rollback = isset($data['rollback_reference_id']) ? ServingModeChange::withoutGlobalScopes()->where('site_id', $site->id)->findOrFail($data['rollback_reference_id']) : null;
         $lifecycle->changeServingMode($site, ServingMode::from($data['serving_mode']), $request->user(), $data['reason'], $rollback);
+        $version = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
 
-        return back()->with('status', 'Serving mode changed. Publisher installation code remains unchanged.');
+        return back()->with('status', 'Serving mode changed and production configuration v'.$version->version.' published. Publisher installation code remains unchanged.');
     }
 
     public function revenueShare(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
@@ -105,7 +108,7 @@ class SiteController extends Controller
     {
         $data = $request->validate(['note' => ['required', 'string', 'max:10000']]);
         $note = SiteNote::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'author_id' => $request->user()->id, 'note' => $data['note']]);
-        $audit->record('site.internal_note.added', $site->organization_id, $request->user(), $note, metadata: ['site_id' => $site->id]);
+        $audit->record('site.internal_note.added', $site->organization_id, $request->user(), $note, newValues: ['site_id' => $site->id]);
 
         return back()->with('status', 'Internal note added.');
     }
@@ -120,12 +123,13 @@ class SiteController extends Controller
         return back()->with('status', 'Domain manually verified.');
     }
 
-    public function emergencyPause(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
+    public function emergencyPause(Request $request, Site $site, SiteLifecycleService $lifecycle, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         $lifecycle->emergencyPause($site, $request->user(), $data['reason']);
+        $version = $publisher->pauseImmediately($site->refresh(), $request->user());
 
-        return back()->with('status', 'Emergency pause applied and fully audited.');
+        return back()->with('status', 'Emergency pause applied and static production configuration v'.$version->version.' published.');
     }
 
     private function review(Site $site, Request $request, string $decision, array $data): void
