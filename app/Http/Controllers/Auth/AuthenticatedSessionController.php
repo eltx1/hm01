@@ -41,6 +41,16 @@ class AuthenticatedSessionController extends Controller
             return back()->withErrors(['email' => 'The provided credentials or account status are invalid.'])->onlyInput('email');
         }
 
+        if ($user->two_factor_confirmed_at) {
+            $request->session()->regenerate();
+            $request->session()->put([
+                'two_factor_user_id' => $user->id,
+                'two_factor_remember' => $request->boolean('remember'),
+            ]);
+
+            return redirect()->route('two-factor.challenge');
+        }
+
         Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
         $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0])->save();

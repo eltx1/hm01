@@ -41,8 +41,14 @@ recoverable lifecycle is required. Invitations store only a SHA-256 hash of a
 256-bit random, single-use token and expire after 48 hours.
 
 Administrator two-factor fields are encrypted through Laravel casts. They
-establish storage for a future challenge flow; a complete TOTP/WebAuthn
-challenge is a separate security task.
+store the TOTP secret and hashed, single-use recovery codes. Horus Media
+administrators must complete enrollment and a challenge before entering the
+administrative control plane.
+
+Organizations contain dashboard title, logo path, primary color, support email,
+status, and Horus-only internal notes. Publisher and advertiser contacts are
+separate organization-scoped records. The Horus Media organization type is
+immutable and only one such organization may exist.
 
 ## Identifier and time conventions
 

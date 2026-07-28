@@ -8,10 +8,10 @@
     <title>@yield('title', 'Dashboard') · {{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body>
+<body @if($brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
     <div class="admin-shell">
         <aside class="sidebar" aria-label="Primary navigation">
-            <a class="brand" href="/">{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
+            <a class="brand" href="/">@if($brand?->logo_path)<img class="brand-logo" src="{{ Storage::disk('public')->url($brand->logo_path) }}" alt="">@endif{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
             <p class="eyebrow">Ad Network Control Plane</p>
             <nav>@yield('navigation')</nav>
         </aside>

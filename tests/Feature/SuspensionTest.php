@@ -30,7 +30,7 @@ class SuspensionTest extends TestCase
         $admin = $this->makeUser($horus, RoleName::SuperAdmin);
         $target = $this->makeUser($this->makeOrganization(OrganizationType::Advertiser), RoleName::AdvertiserAdmin);
 
-        $this->actingAs($admin)->patch(route('admin.users.suspend', $target))->assertRedirect();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->patch(route('admin.users.suspend', $target))->assertRedirect();
         $this->assertSame(UserStatus::Suspended, $target->fresh()->status);
         $this->assertDatabaseHas('audit_logs', ['event' => 'user.suspended', 'actor_id' => $admin->id, 'auditable_id' => $target->id]);
     }

@@ -34,6 +34,8 @@ trait InteractsWithIdentity
             'organization_id' => $organization->id,
             'status' => UserStatus::Active,
             'activated_at' => now(),
+            'two_factor_secret' => $organization->type === OrganizationType::HorusMedia ? 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' : null,
+            'two_factor_confirmed_at' => $organization->type === OrganizationType::HorusMedia ? now() : null,
         ], $attributes));
         $systemRole = Role::whereNull('organization_id')->where('name', $role->value)->firstOrFail();
         $user->roles()->attach($systemRole);

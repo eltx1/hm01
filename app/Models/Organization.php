@@ -7,6 +7,7 @@ use App\Enums\OrganizationType;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Organization extends Model
@@ -25,6 +26,16 @@ class Organization extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    public function publisher(): HasOne
+    {
+        return $this->hasOne(Publisher::class);
+    }
+
+    public function advertiser(): HasOne
+    {
+        return $this->hasOne(Advertiser::class);
     }
 
     public function isActive(): bool

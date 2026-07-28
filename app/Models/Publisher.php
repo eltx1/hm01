@@ -6,6 +6,7 @@ use App\Enums\AccountStatus;
 use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Publisher extends Model
@@ -19,5 +20,10 @@ class Publisher extends Model
     protected function casts(): array
     {
         return ['status' => AccountStatus::class];
+    }
+
+    public function contacts(): HasMany
+    {
+        return $this->hasMany(PublisherContact::class);
     }
 }

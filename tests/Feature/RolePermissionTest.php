@@ -22,7 +22,7 @@ class RolePermissionTest extends TestCase
         $role = Role::where('name', RoleName::SupportAgent->value)->firstOrFail();
         $permission = Permission::where('name', 'roles.view')->firstOrFail();
 
-        $this->actingAs($super)->put(route('admin.roles.permissions.sync', $role), ['permissions' => [$permission->id]])->assertRedirect();
+        $this->actingAs($super)->withSession(['two_factor_passed_at' => now()->timestamp])->put(route('admin.roles.permissions.sync', $role), ['permissions' => [$permission->id]])->assertRedirect();
         $this->assertDatabaseHas('role_permissions', ['role_id' => $role->id, 'permission_id' => $permission->id]);
         $this->assertDatabaseHas('audit_logs', ['event' => 'permission.role.updated', 'actor_id' => $super->id]);
 

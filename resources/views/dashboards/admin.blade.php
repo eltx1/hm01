@@ -2,7 +2,7 @@
 @section('title', 'Administrator dashboard')
 @section('heading', 'Horus Media overview')
 @section('navigation')
-<a class="active" href="{{ route('dashboard') }}">Overview</a><span>Publishers</span><span>Advertisers</span><span>Users</span><span>Access control</span><span>Audit log</span>
+<a class="active" href="{{ route('dashboard') }}">Overview</a><a href="{{ route('admin.organizations.index') }}">Organizations</a><a href="{{ route('admin.publishers.index') }}">Publishers</a><a href="{{ route('admin.advertisers.index') }}">Advertisers</a><a href="{{ route('admin.roles.index') }}">Access control</a>
 @endsection
 @section('content')
 <section class="metric-grid">

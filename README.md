@@ -36,6 +36,9 @@ This release establishes the Laravel 12 control-plane foundation:
 - Vite assets compiled before deployment
 - organization-scoped authentication and account isolation
 - system roles, permissions, secure invitations, and audited administration
+- TOTP administrator two-factor authentication with single-use recovery codes
+- organization, publisher, advertiser, contact, and white-label branding management
+- interactive first-super-administrator bootstrap command
 - publisher, advertiser, partner, and Horus Media dashboard shells
 
 Website inventory, GAM API operations, bidders, campaigns, reporting imports,
@@ -48,6 +51,8 @@ cp .env.example .env
 composer install
 php artisan key:generate
 php artisan migrate
+php artisan db:seed --class=IdentityAccessSeeder
+php artisan horus:create-super-admin
 npm ci
 npm run build
 php artisan test
@@ -63,6 +68,8 @@ and built `public/build/` through hPanel, point the dashboard document root to
 `public/`, populate a private `.env`, migrate with `--force`, and configure the
 single scheduler cron described in
 [`docs/HOSTINGER_DEPLOYMENT.md`](docs/HOSTINGER_DEPLOYMENT.md).
+The GitHub Actions release job also produces an hPanel-ready archive containing
+optimized production dependencies and compiled frontend assets.
 
 ## Documentation
 

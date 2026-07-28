@@ -28,6 +28,7 @@ class IdentityAccessSeeder extends Seeder
         'roles.manage' => ['Manage roles and permissions', 'identity'],
         'audit.view' => ['View audit events', 'security'],
         'internal_notes.view' => ['View Horus Media internal notes', 'security'],
+        'branding.manage' => ['Manage organization branding', 'organizations'],
         'finance.publisher.view' => ['View publisher financial information', 'finance'],
         'finance.internal_margin.view' => ['View internal revenue margins', 'finance'],
         'billing.advertiser.view' => ['View advertiser billing', 'finance'],
@@ -61,15 +62,15 @@ class IdentityAccessSeeder extends Seeder
         }
 
         $names = match ($role) {
-            RoleName::OperationsAdmin => ['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'support.manage'],
+            RoleName::OperationsAdmin => ['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'branding.manage', 'support.manage'],
             RoleName::AdOpsAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view'],
             RoleName::FinanceAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'audit.view', 'internal_notes.view', 'finance.publisher.view', 'finance.internal_margin.view', 'billing.advertiser.view'],
             RoleName::SupportAgent => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'internal_notes.view', 'support.manage'],
-            RoleName::PublisherAdmin => ['dashboard.publisher.view', 'users.view', 'users.manage', 'users.invite', 'finance.publisher.view', 'support.manage'],
+            RoleName::PublisherAdmin => ['dashboard.publisher.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'finance.publisher.view', 'support.manage'],
             RoleName::PublisherViewer => ['dashboard.publisher.view', 'finance.publisher.view'],
-            RoleName::AdvertiserAdmin => ['dashboard.advertiser.view', 'users.view', 'users.manage', 'users.invite', 'billing.advertiser.view', 'support.manage'],
+            RoleName::AdvertiserAdmin => ['dashboard.advertiser.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'billing.advertiser.view', 'support.manage'],
             RoleName::AdvertiserViewer => ['dashboard.advertiser.view', 'billing.advertiser.view'],
-            RoleName::PartnerAdmin => ['users.view', 'users.manage', 'users.invite', 'support.manage'],
+            RoleName::PartnerAdmin => ['users.view', 'users.manage', 'users.invite', 'branding.manage', 'support.manage'],
             RoleName::PartnerViewer => [],
             default => [],
         };

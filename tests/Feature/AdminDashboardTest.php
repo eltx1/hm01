@@ -17,7 +17,7 @@ class AdminDashboardTest extends TestCase
         $this->seedIdentity();
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
 
-        $this->actingAs($admin)->get('/')
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get('/')
             ->assertOk()
             ->assertSee('Total publishers')
             ->assertSee('Recent audit events');

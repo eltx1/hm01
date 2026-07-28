@@ -19,13 +19,16 @@
   failures are recorded separately.
 - Permission changes and administrator impersonation are explicitly audited.
   Audit payloads redact passwords, tokens, and two-factor secrets.
+- Horus Media administrators must enroll RFC 6238 TOTP and pass a challenge;
+  challenge sessions expire after 12 hours and recovery codes are single-use.
+- White-label branding changes require the dedicated `branding.manage`
+  permission and are audited.
 - Publisher roles do not receive internal-margin permissions; advertiser roles
   do not receive publisher-finance permissions.
 
 ## Required future controls
 
-- complete TOTP/WebAuthn challenge and recovery flow for administrators (the
-  encrypted storage structure is present)
+- optional WebAuthn support and step-up authentication for the highest-risk actions
 - periodic least-privilege authorization review and custom-role design if needed
 - encryption for connector secrets using a key outside the database
 - credential rotation and connection health checks

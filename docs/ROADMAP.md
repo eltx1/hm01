@@ -11,14 +11,16 @@ responsive admin shell, tests, and Hostinger documentation.
 Organizations, users, invitations, MFA, roles and permissions, organization
 scoping, administrator cross-tenant access, policies, and audit coverage.
 
-Status: organization isolation, system RBAC, invitations, authentication,
-password reset, email verification, account states, session invalidation,
-impersonation auditing, and dashboard shells are implemented. Encrypted
-administrator two-factor storage is present; the interactive challenge remains.
+Status: complete. Organization isolation, system RBAC, invitations,
+authentication, password reset, email verification, account states, session
+invalidation, audited impersonation, TOTP with recovery codes, account/contact
+management, white-label branding, dashboard shells, and secure administrator
+bootstrap are implemented.
 
 ## Phase 2 — Publisher inventory
 
-Publishers, websites, placements, stable public site keys, domains, website
+Publisher account management is implemented. Websites, placements, stable
+public site keys, domains, website
 verification as an operational signal, and serving-mode management.
 `HORUS_GAM` is created as the default with no activation blocker. MCM and
 Publisher GAM remain optional.

@@ -21,7 +21,7 @@ class AccountStatusTest extends TestCase
         $organization = $this->makeOrganization(OrganizationType::Publisher);
         $publisher = Publisher::withoutGlobalScopes()->create(['organization_id' => $organization->id, 'legal_name' => 'Publisher LLC', 'display_name' => 'Publisher', 'status' => AccountStatus::Active]);
 
-        $this->actingAs($admin)->patch(route('admin.publishers.status', $publisher), ['status' => 'SUSPENDED'])->assertRedirect();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->patch(route('admin.publishers.status', $publisher), ['status' => 'SUSPENDED'])->assertRedirect();
 
         $this->assertSame(AccountStatus::Suspended, $publisher->fresh()->status);
         $this->assertDatabaseHas('audit_logs', ['event' => 'publisher.status.changed', 'auditable_id' => $publisher->id]);

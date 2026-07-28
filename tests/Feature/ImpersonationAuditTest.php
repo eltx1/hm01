@@ -18,7 +18,7 @@ class ImpersonationAuditTest extends TestCase
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
         $target = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherViewer);
 
-        $this->actingAs($admin)->post(route('admin.impersonate.start', $target))->assertRedirect('/');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->post(route('admin.impersonate.start', $target))->assertRedirect('/');
         $this->assertAuthenticatedAs($target);
         $this->assertDatabaseHas('audit_logs', ['event' => 'admin.impersonation.started', 'actor_id' => $admin->id]);
 

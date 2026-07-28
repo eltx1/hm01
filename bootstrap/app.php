@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureActiveUser;
+use App\Http\Middleware\EnsureAdministratorTwoFactor;
 use App\Http\Middleware\EnsurePermission;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -19,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: []);
         $middleware->alias([
             'active' => EnsureActiveUser::class,
+            'admin.2fa' => EnsureAdministratorTwoFactor::class,
             'permission' => EnsurePermission::class,
         ]);
         $middleware->redirectGuestsTo(fn () => route('login'));

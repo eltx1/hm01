@@ -50,3 +50,64 @@ jobs:
 
       - name: Build production assets
         run: npm run build
+
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: horus_test
+          MYSQL_USER: horus
+          MYSQL_PASSWORD: horus_test_password
+          MYSQL_ROOT_PASSWORD: root_test_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uhorus -phorus_test_password"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql
+          coverage: none
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Run MySQL migrations and tests
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:TjdJVrvlPuNPVt+Rh3VHiJyInFSQGaWPYIhDf49E48M=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: horus_test
+          DB_USERNAME: horus
+          DB_PASSWORD: horus_test_password
+        run: |
+          php artisan migrate:fresh --seed --force
+          php artisan test
+
+  release-artifact:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, mysql]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+      - run: npm ci && npm run build
+      - name: Create Hostinger release
+        run: zip -qr horus-media-hostinger.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: horus-media-hostinger-${{ github.sha }}
+          path: horus-media-hostinger.zip
+          retention-days: 14

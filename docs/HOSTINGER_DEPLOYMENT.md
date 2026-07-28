@@ -28,6 +28,10 @@ php artisan test
 Upload application files, production `vendor/`, and `public/build/`. Node.js and
 npm are not needed in production.
 
+On pushes to `main`, GitHub Actions builds a release ZIP after the SQLite/PHP
+matrix and MySQL integration suite pass. The artifact includes `vendor/` and
+compiled `public/build/` and can be uploaded through hPanel.
+
 ## Configure
 
 1. Create the MySQL database and least-privilege application user in hPanel.
@@ -36,8 +40,14 @@ npm are not needed in production.
 3. Set PHP 8.2+ and point `app.horusmedia.net` at `public/`.
 4. Ensure `storage/` and `bootstrap/cache/` are writable by the PHP process.
 5. Run `php artisan migrate --force`.
-6. Run `php artisan config:cache`, `route:cache`, and `view:cache`.
-7. Verify `https://app.horusmedia.net/up` returns a successful response.
+6. Run `php artisan db:seed --class=IdentityAccessSeeder --force`.
+7. Run `php artisan storage:link` so uploaded branding logos are publicly served.
+8. On the first deployment only, run `php artisan horus:create-super-admin` and
+   enter the initial administrator password at the hidden prompt. Never place
+   that password in shell history or deployment files.
+9. Run `php artisan config:cache`, `route:cache`, and `view:cache`.
+10. Verify `https://app.horusmedia.net/up` returns a successful response, then
+    sign in and enroll the administrator's authenticator.
 
 Do not upload a development `.env`, database dump, credentials, logs, or
 `node_modules/`.
