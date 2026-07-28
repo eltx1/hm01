@@ -1,0 +1,23 @@
+{
+  "name": "Horus Media Default Browser Build",
+  "version": "horus-11.14.0-1",
+  "prebidVersion": "11.14.0",
+  "sourceRepository": "https://github.com/prebid/Prebid.js.git",
+  "sourceReference": "11.14.0",
+  "modules": [
+    "appnexusBidAdapter",
+    "ixBidAdapter",
+    "openxBidAdapter",
+    "pubmaticBidAdapter",
+    "rubiconBidAdapter",
+    "consentManagementTcf",
+    "consentManagementGpp",
+    "gptPreAuction",
+    "currency"
+  ],
+  "output": {
+    "asset": "public/assets/prebid/horus-prebid.js",
+    "minified": "public/assets/prebid/horus-prebid.min.js",
+    "manifest": "public/assets/prebid/manifest.json"
+  }
+}
