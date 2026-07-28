@@ -5,7 +5,7 @@
 <a href="{{ route('dashboard') }}">Dashboard</a>
 <a href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
 <a class="active" href="{{ route('admin.prebid.index') }}">Prebid</a>
-<a href="{{ route('admin.inventory.site', $site) }}">Inventory</a>
+<a href="{{ route('admin.sites.inventory.index', $site) }}">Inventory</a>
 @endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $site->primary_domain }}</p><h2>Browser auction configuration</h2><p>The permanent Horus loader remains unchanged. Publish the site's static configuration after changing bidders or auction settings.</p></div><span class="pill">{{ $site->serving_mode->value }}</span></section>
