@@ -178,7 +178,7 @@ class GamIntegrationTest extends TestCase
         $admin = $this->makeUser($horus, RoleName::AdOpsAdmin);
         $publisher = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
 
-        $this->actingAs($admin)->get(route('admin.gam.connections.index'))->assertOk()->assertSee('Google Ad Manager connections');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get(route('admin.gam.connections.index'))->assertOk()->assertSee('Google Ad Manager connections');
         $this->actingAs($publisher)->get(route('admin.gam.connections.index'))->assertForbidden();
     }
 
