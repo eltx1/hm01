@@ -33,6 +33,10 @@ class IdentityAccessSeeder extends Seeder
         'sites.manage' => ['Manage publisher websites', 'sites'],
         'sites.review' => ['Review publisher websites', 'sites'],
         'sites.serving.manage' => ['Manage website serving modes', 'sites'],
+        'gam.connections.view' => ['View Google Ad Manager connections', 'gam'],
+        'gam.connections.manage' => ['Manage Google Ad Manager connections', 'gam'],
+        'gam.connections.test' => ['Test Google Ad Manager connections', 'gam'],
+        'gam.connections.assign' => ['Assign GAM connections to websites', 'gam'],
         'contracts.view' => ['View publisher contracts', 'contracts'],
         'contracts.manage' => ['Manage publisher contracts', 'contracts'],
         'publisher_payments.manage' => ['Manage publisher payment profiles', 'finance'],
@@ -70,10 +74,10 @@ class IdentityAccessSeeder extends Seeder
         }
 
         $names = match ($role) {
-            RoleName::OperationsAdmin => ['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'branding.manage', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'support.manage'],
-            RoleName::AdOpsAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage'],
-            RoleName::FinanceAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'audit.view', 'internal_notes.view', 'sites.view', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'finance.publisher.view', 'finance.internal_margin.view', 'billing.advertiser.view'],
-            RoleName::SupportAgent => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'internal_notes.view', 'sites.view', 'contracts.view', 'support.manage'],
+            RoleName::OperationsAdmin => ['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'branding.manage', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'support.manage'],
+            RoleName::AdOpsAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign'],
+            RoleName::FinanceAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'finance.publisher.view', 'finance.internal_margin.view', 'billing.advertiser.view'],
+            RoleName::SupportAgent => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'contracts.view', 'support.manage'],
             RoleName::PublisherAdmin => ['dashboard.publisher.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'sites.view', 'sites.manage', 'contracts.view', 'publisher_payments.manage', 'onboarding.manage', 'finance.publisher.view', 'support.manage'],
             RoleName::PublisherViewer => ['dashboard.publisher.view', 'sites.view', 'contracts.view', 'finance.publisher.view'],
             RoleName::AdvertiserAdmin => ['dashboard.advertiser.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'billing.advertiser.view', 'support.manage'],
