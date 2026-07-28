@@ -31,20 +31,20 @@ final class GamOperationExecutor
         $isWrite = (bool) ($options['write'] ?? false);
         $dryRun = (bool) ($options['dry_run'] ?? $connection->dry_run_default ?? config('gam.dry_run_default', true));
         $idempotencyKey = $options['idempotency_key'] ?? ($isWrite ? $this->idempotencyKey($connection, $operationName, $payload, $options) : null);
+        $existing = null;
 
         if ($idempotencyKey) {
             $existing = GamApiOperation::withoutGlobalScopes()
                 ->where('gam_connection_id', $connection->id)
                 ->where('idempotency_key', $idempotencyKey)
-                ->where('status', GamOperationStatus::Succeeded)
                 ->first();
 
-            if ($existing) {
+            if ($existing?->status === GamOperationStatus::Succeeded) {
                 return GamResult::duplicate($existing->response_payload ?? [], $existing->id);
             }
         }
 
-        $apiOperation = GamApiOperation::withoutGlobalScopes()->create([
+        $operationData = [
             'organization_id' => $connection->organization_id,
             'gam_connection_id' => $connection->id,
             'gam_sync_run_id' => $options['sync_run_id'] ?? null,
@@ -55,8 +55,22 @@ final class GamOperationExecutor
             'dry_run' => $dryRun,
             'status' => GamOperationStatus::Pending,
             'request_payload' => $this->sanitizer->sanitize($payload),
+            'response_payload' => null,
+            'remote_request_id' => null,
+            'attempts' => 0,
+            'error_category' => null,
+            'error_code' => null,
+            'error_message' => null,
             'started_at' => now(),
-        ]);
+            'completed_at' => null,
+        ];
+
+        if ($existing) {
+            $existing->update($operationData);
+            $apiOperation = $existing->refresh();
+        } else {
+            $apiOperation = GamApiOperation::withoutGlobalScopes()->create($operationData);
+        }
 
         if ($dryRun) {
             $planned = [
