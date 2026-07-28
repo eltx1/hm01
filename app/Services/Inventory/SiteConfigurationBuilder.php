@@ -12,11 +12,14 @@ use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
 use App\Services\Gam\GamConnectionResolver;
+use App\Services\Prebid\PrebidConfigurationBuilder;
 
 final class SiteConfigurationBuilder
 {
-    public function __construct(private readonly GamConnectionResolver $connections)
-    {
+    public function __construct(
+        private readonly GamConnectionResolver $connections,
+        private readonly PrebidConfigurationBuilder $prebid,
+    ) {
     }
 
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
@@ -38,6 +41,7 @@ final class SiteConfigurationBuilder
         $active = $config->status === 'ACTIVE'
             && ! $config->immediate_pause
             && $site->serving_mode !== ServingMode::Paused;
+        $prebid = $this->prebid->build($site, $connection);
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -55,7 +59,8 @@ final class SiteConfigurationBuilder
             'environment' => $environment->value,
             'status' => $active ? 'active' : 'paused',
             'immediatePause' => (bool) $config->immediate_pause,
-            'prebidEnabled' => (bool) $site->prebid_enabled,
+            'prebidEnabled' => (bool) $prebid['enabled'],
+            'prebid' => $prebid,
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
