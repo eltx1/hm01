@@ -5,7 +5,9 @@
     "scripts": {
         "build": "npm run build:loader && vite build",
         "build:loader": "node scripts/build-loader.mjs",
+        "build:prebid": "node scripts/build-prebid.mjs",
         "test:browser": "node --test tests/Browser/*.test.js",
+        "test:prebid": "node --test tests/Browser/prebid-*.test.js",
         "dev": "vite"
     },
     "devDependencies": {
