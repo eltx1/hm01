@@ -12,11 +12,15 @@ use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
 use App\Services\Gam\GamConnectionResolver;
+use App\Services\Prebid\PrebidPublicConfigBuilder;
+use Illuminate\Support\Arr;
 
 final class SiteConfigurationBuilder
 {
-    public function __construct(private readonly GamConnectionResolver $connections)
-    {
+    public function __construct(
+        private readonly GamConnectionResolver $connections,
+        private readonly PrebidPublicConfigBuilder $prebid,
+    ) {
     }
 
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
@@ -38,6 +42,7 @@ final class SiteConfigurationBuilder
         $active = $config->status === 'ACTIVE'
             && ! $config->immediate_pause
             && $site->serving_mode !== ServingMode::Paused;
+        $prebid = $this->prebid->build($site, $connection);
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -55,12 +60,13 @@ final class SiteConfigurationBuilder
             'environment' => $environment->value,
             'status' => $active ? 'active' : 'paused',
             'immediatePause' => (bool) $config->immediate_pause,
-            'prebidEnabled' => (bool) $site->prebid_enabled,
+            'prebidEnabled' => (bool) $prebid['enabled'],
+            'prebid' => Arr::except($prebid, ['placements']),
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
-                'version' => $loader?->version ?? '1.0.0',
+                'version' => $loader?->version ?? '1.1.0',
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
@@ -72,7 +78,17 @@ final class SiteConfigurationBuilder
             'pageTargeting' => $pageTargeting,
             'placements' => $site->placements
                 ->sortBy('sort_order')
-                ->map(fn (Placement $placement) => $this->placement($placement, $networkCode, $environment, $config->house_ad_testing))
+                ->map(function (Placement $placement) use ($networkCode, $environment, $config, $prebid): array {
+                    $payload = $this->placement($placement, $networkCode, $environment, $config->house_ad_testing);
+                    $payload['prebid'] = $prebid['placements'][$placement->code] ?? [
+                        'enabled' => false,
+                        'adUnitCode' => $placement->code,
+                        'mediaTypes' => [],
+                        'bids' => [],
+                    ];
+
+                    return $payload;
+                })
                 ->values()
                 ->all(),
             'generatedAt' => now()->utc()->toIso8601String(),

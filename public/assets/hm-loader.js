@@ -1,362 +1,89 @@
-(function (window, document) {
-    'use strict';
+(function (w, d) {
+'use strict';
+const V='1.1.0', K='__HORUS_MEDIA_LOADER_STATE__';
+const S=w[K]=w[K]||{cfg:null,script:null,gpt:null,pb:null,services:false,initial:false,slots:{},units:{},timers:{},boot:null,observer:null,nav:false};
 
-    var VERSION = '1.0.0';
-    var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
-    var state = window[STATE_KEY] = window[STATE_KEY] || {
-        config: null,
-        gptPromise: null,
-        servicesEnabled: false,
-        slots: {},
-        refreshTimers: {},
-        observer: null,
-        navigationPatched: false,
-        scanTimer: null,
-        script: null,
-        booting: null
-    };
+const debug=(c,...a)=>{if(c&&c.debug&&w.console&&console.info)console.info(`[Horus Loader ${V}]`,...a)};
+const data=(s,n)=>s&&((s.dataset&&s.dataset[n]!==undefined)?s.dataset[n]:s.getAttribute(`data-${n.replace(/[A-Z]/g,x=>'-'+x.toLowerCase())}`));
+const script=()=>S.script||(S.script=d.currentScript&&data(d.currentScript,'siteKey')?d.currentScript:[...d.querySelectorAll('script[data-site-key]')].pop());
+const base=s=>data(s,'configBase')||(()=>{try{return new URL(s.src,w.location.href).origin+'/configs'}catch(e){return'https://cdn.horusmedia.net/configs'}})();
+const host=()=>String(w.location&&w.location.hostname||'').toLowerCase().replace(/\.$/,'');
+const allowed=(h,list)=>Array.isArray(list)&&list.some(x=>{x=String(x||'').toLowerCase().replace(/^https?:\/\//,'').split('/')[0].split(':')[0].replace(/\.$/,'');return x.startsWith('*.')?h.endsWith(x.slice(1))&&h!==x.slice(2):h===x});
+const configUrl=(s,key,force)=>{const env=String(data(s,'environment')||'production').toLowerCase(),v=data(s,'configVersion')||(force?Date.now():null),u=`${base(s).replace(/\/$/,'')}/${encodeURIComponent(key)}/${env}.json`;return v?`${u}?v=${encodeURIComponent(v)}`:u};
+const fetchCfg=async(s,key,force)=>{const r=await w.fetch(configUrl(s,key,force),{mode:'cors',credentials:'omit',cache:force?'reload':'default'});if(!r||!r.ok)throw Error('Static configuration unavailable');const c=await r.json();if(!c||c.siteKey!==key)throw Error('Static configuration site key mismatch');return c};
 
-    function log(config) {
-        if (!config || !config.debug || !window.console || !window.console.info) return;
-        var args = Array.prototype.slice.call(arguments, 1);
-        args.unshift('[Horus Loader ' + VERSION + ']');
-        window.console.info.apply(window.console, args);
-    }
+const gt=()=>{w.googletag=w.googletag||{cmd:[]};w.googletag.cmd=w.googletag.cmd||[];return w.googletag};
+const pb=()=>{w.pbjs=w.pbjs||{que:[]};w.pbjs.que=w.pbjs.que||[];return w.pbjs};
+const load=(src,marker)=>new Promise((ok,no)=>{const q=`script[${marker}="1"]`,old=d.querySelector(q);if(old){old.addEventListener('load',ok,{once:true});old.addEventListener('error',no,{once:true});return}const s=d.createElement('script');s.async=true;s.src=src;s.setAttribute(marker,'1');s.onload=ok;s.onerror=()=>no(Error(`${marker} failed to load`));(d.head||d.documentElement).appendChild(s)});
+const loadGpt=c=>{const g=gt();if(g.apiReady||g.pubadsReady)return Promise.resolve(g);return S.gpt||(S.gpt=load(c.gpt&&c.gpt.url||'https://securepubads.g.doubleclick.net/tag/js/gpt.js','data-hm-gpt').then(gt))};
+const loadPb=c=>{const p=pb(),x=c.prebid||{};if(!x.enabled||!x.build||!x.build.assetUrl)return Promise.reject(Error('Prebid disabled'));if(typeof p.requestBids==='function')return Promise.resolve(p);return S.pb||(S.pb=load(x.build.assetUrl,'data-hm-prebid').then(()=>{const z=pb();if(typeof z.requestBids!=='function')throw Error('Invalid Prebid build');return z}).catch(e=>{S.pb=null;throw e}))};
 
-    function findScript() {
-        if (state.script) return state.script;
-        var current = document.currentScript;
-        if (current && current.getAttribute && current.getAttribute('data-site-key')) {
-            state.script = current;
-            return current;
-        }
-        var scripts = document.querySelectorAll ? document.querySelectorAll('script[data-site-key]') : [];
-        state.script = scripts.length ? scripts[scripts.length - 1] : null;
-        return state.script;
-    }
+const sizes=x=>Array.isArray(x)?x.filter(y=>y==='fluid'||Array.isArray(y)&&y.length===2&&+y[0]>0&&+y[1]>0):[];
+const target=(o,v)=>{if(!o||!v)return;Object.keys(v).sort().forEach(k=>o.setTargeting&&o.setTargeting(k,(Array.isArray(v[k])?v[k]:[v[k]]).map(String)))};
+const mapping=(g,m)=>{if(!g.sizeMapping||!Array.isArray(m)||!m.length)return null;const b=g.sizeMapping();m.forEach(x=>{const z=sizes(x.sizes);if(z.length)b.addSize(Array.isArray(x.viewport)?x.viewport:[0,0],z)});return b.build()};
+const elementId=(e,c,p)=>e.id||(e.id=`hm-${String(c.siteKey).replace(/\W/g,'')}-${String(p.code).replace(/[^\w-]/g,'')}-${Object.keys(S.slots).length}`);
+const eligible=c=>{const map={};(c.placements||[]).forEach(p=>map[p.code]=p);return[...d.querySelectorAll('.hm-ad[data-placement]')].map(e=>({e,p:map[e.getAttribute('data-placement')]})).filter(x=>x.p&&x.p.enabled&&x.p.status==='active'&&x.p.adUnitPath&&x.e.getAttribute('data-hm-defined')!=='1')};
+const lazy=items=>{const a=items.map(x=>x.p.lazyLoad||{}).filter(x=>x.enabled);return a.length?{fetchMarginPercent:Math.max(...a.map(x=>+x.fetchMarginPercent||0)),renderMarginPercent:Math.max(...a.map(x=>+x.renderMarginPercent||0)),mobileScaling:Math.max(...a.map(x=>+x.mobileScaling||1))}:null};
 
-    function scriptData(script, name) {
-        if (!script) return null;
-        if (script.dataset && script.dataset[name] !== undefined) return script.dataset[name];
-        var attribute = 'data-' + name.replace(/[A-Z]/g, function (letter) { return '-' + letter.toLowerCase(); });
-        return script.getAttribute ? script.getAttribute(attribute) : null;
-    }
+const cmd=(g,fn)=>new Promise(r=>g.cmd.push(()=>{try{r(fn())}catch(e){r(null)}}));
+const define=async(c,items)=>{
+ if(!items.length)return[];
+ try{
+  const g=await loadGpt(c);
+  const entries=await cmd(g,()=>{
+   const ads=g.pubads();target(ads,c.pageTargeting||{});const l=lazy(items);if(l&&ads.enableLazyLoad)ads.enableLazyLoad(l);
+   if(c.gpt&&c.gpt.singleRequest&&ads.enableSingleRequest&&!S.services)ads.enableSingleRequest();
+   if(!S.initial&&ads.disableInitialLoad){ads.disableInitialLoad();S.initial=true}
+   const out=[];
+   items.forEach(({e,p})=>{const id=elementId(e,c,p);let slot=null;
+    if(p.outOfPageFormat&&g.defineOutOfPageSlot&&g.enums&&g.enums.OutOfPageFormat)slot=g.defineOutOfPageSlot(p.adUnitPath,g.enums.OutOfPageFormat[p.outOfPageFormat]);
+    else if(g.defineSlot)slot=g.defineSlot(p.adUnitPath,sizes(p.sizes),id);
+    if(!slot)return;const m=mapping(g,p.responsiveMappings);if(m&&slot.defineSizeMapping)slot.defineSizeMapping(m);target(slot,p.targeting||{});
+    slot.setForceSafeFrame&&slot.setForceSafeFrame(!!p.safeFrame);slot.setCollapseEmptyDiv&&slot.setCollapseEmptyDiv(!!p.collapseEmptyDiv,!!p.collapseEmptyDiv);slot.addService&&slot.addService(ads);
+    e.setAttribute('data-hm-defined','1');e.setAttribute('data-hm-status','defined');S.slots[id]={slot,p,e,count:0};out.push(S.slots[id]);
+   });
+   if(!S.services&&g.enableServices){g.enableServices();S.services=true}
+   out.forEach(x=>g.display(x.p.outOfPageFormat?x.slot:x.e.id));return out;
+  })||[];
+  await request(c,entries,false);entries.forEach(x=>schedule(c,x));diag(c,entries);return entries;
+ }catch(e){debug(c,'GPT unavailable',e);return[]}
+};
 
-    function configBase(script) {
-        var explicit = scriptData(script, 'configBase');
-        if (explicit) return explicit.replace(/\/$/, '');
-        try {
-            return new URL(script.src, window.location.href).origin + '/configs';
-        } catch (error) {
-            return 'https://cdn.horusmedia.net/configs';
-        }
-    }
+const gam=(c,entries,refresh)=>{if(!entries.length)return Promise.resolve([]);const g=gt();return cmd(g,()=>{try{const a=g.pubads(),sl=entries.map(x=>x.slot);a.refresh&&a.refresh(sl,refresh?{changeCorrelator:false}:undefined);entries.forEach(x=>x.e.setAttribute('data-hm-status',refresh?'refreshed':'requested'))}catch(e){debug(c,'GAM request failed safely',e)}return entries})};
 
-    function currentHostname() {
-        return String(window.location && window.location.hostname || '').toLowerCase().replace(/\.$/, '');
-    }
+const clearHb=x=>{const s=x.slot;if(s&&s.getTargetingKeys&&s.clearTargeting)s.getTargetingKeys().filter(k=>String(k).startsWith('hb_')).forEach(k=>s.clearTargeting(k))};
+const configure=(c,p)=>{if(S.pbVersion===c.configVersion)return;const x=c.prebid||{},v={bidderSequence:x.bidderSequence||'random',priceGranularity:x.priceGranularity||'medium',enableSendAllBids:false};if(x.currency&&x.currency.adServerCurrency)v.currency=x.currency;if(x.consentManagement&&Object.keys(x.consentManagement).length)v.consentManagement=x.consentManagement;p.setConfig(v);S.pbVersion=c.configVersion};
+const adUnit=x=>({code:x.e.id,mediaTypes:x.p.prebid.mediaTypes||{},bids:(x.p.prebid.bids||[]).map(b=>({bidder:b.bidder,params:b.params||{}}))});
+const timeoutEvent=(c,codes)=>{if(!(c.prebid&&c.prebid.timeoutReporting))return;debug(c,'Prebid timeout',codes);try{w.dispatchEvent(typeof w.CustomEvent==='function'?new CustomEvent('horus:prebid-timeout',{detail:{siteKey:c.siteKey,adUnitCodes:codes}}):new Event('horus:prebid-timeout'))}catch(e){}};
 
-    function hostAllowed(hostname, allowed) {
-        if (!hostname || !Array.isArray(allowed) || !allowed.length) return false;
-        return allowed.some(function (candidate) {
-            candidate = String(candidate || '').toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0].replace(/\.$/, '');
-            if (!candidate) return false;
-            if (candidate.indexOf('*.') === 0) {
-                var suffix = candidate.slice(1);
-                return hostname.endsWith(suffix) && hostname !== suffix.slice(1);
-            }
-            return hostname === candidate;
-        });
-    }
+const auction=async(c,entries)=>{
+ const p=await loadPb(c);
+ return new Promise(resolve=>{
+  const t=Math.max(300,Math.min(5000,+c.prebid.auctionTimeoutMs||1200)),codes=entries.map(x=>x.e.id);let done=false;
+  const finish=x=>{if(done)return;done=true;clearTimeout(timer);if(x.timedOut)timeoutEvent(c,codes);resolve(x)},timer=setTimeout(()=>finish({hasBid:false,failed:false,timedOut:true}),t+100);
+  p.que.push(()=>{try{configure(c,p);entries.forEach(x=>{if(S.units[x.e.id])return;const u=adUnit(x);if(u.bids.length){p.addAdUnits(u);S.units[x.e.id]=true}});
+   p.requestBids({adUnitCodes:codes,timeout:t,bidsBackHandler:(r,to)=>{try{p.setTargetingForGPTAsync&&p.setTargetingForGPTAsync(codes);const h=p.getHighestCpmBids?p.getHighestCpmBids(codes):[];finish({hasBid:Array.isArray(h)&&h.length>0,failed:false,timedOut:!!to})}catch(e){finish({hasBid:false,failed:true,timedOut:!!to})}}})
+  }catch(e){finish({hasBid:false,failed:true,timedOut:false})}})
+ });
+};
 
-    function buildConfigUrl(script, siteKey, force) {
-        var environment = String(scriptData(script, 'environment') || 'production').toLowerCase();
-        var selectedVersion = scriptData(script, 'configVersion');
-        var url = configBase(script) + '/' + encodeURIComponent(siteKey) + '/' + environment + '.json';
-        var bust = selectedVersion || (force ? Date.now() : null);
-        return bust ? url + '?v=' + encodeURIComponent(bust) : url;
-    }
+const request=async(c,entries,refresh)=>{
+ if(!entries.length)return[];
+ const pe=entries.filter(x=>c.prebid&&c.prebid.enabled&&x.p.prebid&&x.p.prebid.enabled&&!x.p.outOfPageFormat);
+ if(!pe.length)return gam(c,entries,refresh);pe.forEach(clearHb);
+ try{const r=await auction(c,pe),send=!r.hasBid&&c.prebid.gamFallback===false&&!r.failed?entries.filter(x=>!pe.includes(x)):entries;await gam(c,send,refresh);return r}
+ catch(e){debug(c,'Prebid failed; GAM fallback',e);await gam(c,entries,refresh);return{hasBid:false,failed:true,timedOut:false}}
+};
 
-    function fetchConfig(script, siteKey, force) {
-        var url = buildConfigUrl(script, siteKey, force);
-        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
-            .then(function (response) {
-                if (!response || !response.ok) throw new Error('Static configuration unavailable');
-                return response.json();
-            })
-            .then(function (config) {
-                if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
-                return config;
-            });
-    }
+const schedule=(c,x)=>{const r=x.p.refresh||{},pr=c.prebid&&c.prebid.refresh||{},sec=+r.intervalSeconds||0;if(!r.enabled||sec<30)return;const key=x.e.id,limit=+r.limit||0;if(S.timers[key])clearInterval(S.timers[key]);S.timers[key]=setInterval(()=>{if(d.visibilityState&&d.visibilityState!=='visible')return;if(limit&&x.count>=limit){clearInterval(S.timers[key]);delete S.timers[key];return}x.count++;x.p.prebid&&x.p.prebid.enabled&&pr.enabled!==false&&pr.auctionBeforeRefresh!==false?request(c,[x],true):gam(c,[x],true)},sec*1000)};
+const diag=(c,e)=>{if(c.debug)w.__HM_DIAGNOSTICS__={loaderVersion:V,configVersion:c.configVersion,siteKey:c.siteKey,hostname:host(),servingMode:c.servingMode,gamNetworkCode:c.gamNetworkCode,prebidEnabled:!!(c.prebid&&c.prebid.enabled),prebidBuild:c.prebid&&c.prebid.build&&c.prebid.build.version,prebidBidders:c.prebid&&c.prebid.activeBidders||[],definedPlacements:e.map(x=>x.p.code)}};
+const scan=c=>!c||c.status!=='active'||c.immediatePause?Promise.resolve([]):define(c,eligible(c));
 
-    function ensureGoogletagQueue() {
-        window.googletag = window.googletag || { cmd: [] };
-        window.googletag.cmd = window.googletag.cmd || [];
-        return window.googletag;
-    }
+const spa=()=>{if(!S.observer&&w.MutationObserver&&d.documentElement){S.observer=new MutationObserver(()=>{clearTimeout(S.scan);S.scan=setTimeout(()=>scan(S.cfg),25)});S.observer.observe(d.documentElement,{childList:true,subtree:true})}if(S.nav||!w.history)return;S.nav=true;['pushState','replaceState'].forEach(m=>{const f=w.history[m];if(typeof f==='function')w.history[m]=function(){const r=f.apply(this,arguments);w.dispatchEvent(new Event('horus:navigation'));return r}});w.addEventListener('popstate',()=>w.dispatchEvent(new Event('horus:navigation')));w.addEventListener('horus:navigation',()=>setTimeout(()=>scan(S.cfg),0))};
+const delegate=(c,s)=>{const x=c.loader||{};if(!x.assetUrl||!x.version||x.version===V||w.__HM_RELEASE_DELEGATED__)return false;w.__HM_RELEASE_DELEGATED__=true;const n=d.createElement('script');n.async=true;n.src=x.assetUrl+(x.assetUrl.includes('?')?'&':'?')+'v='+encodeURIComponent(x.version);n.setAttribute('data-site-key',c.siteKey);n.setAttribute('data-config-base',base(s));n.setAttribute('data-environment',String(data(s,'environment')||'production'));(d.head||d.documentElement).appendChild(n);return true};
 
-    function loadGpt(config) {
-        var googletag = ensureGoogletagQueue();
-        if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
-        if (state.gptPromise) return state.gptPromise;
+const boot=(o={})=>{const s=o.script||script(),key=o.siteKey||data(s,'siteKey');if(!key||!w.fetch)return Promise.resolve([]);if(S.boot&&!o.force)return S.boot;S.boot=fetchCfg(s,key,!!o.force).then(c=>{S.cfg=c;if(!allowed(host(),c.allowedHostnames)){debug(c,'Hostname rejected');return[]}if(c.status!=='active'||c.immediatePause){debug(c,'Site paused');return[]}if(delegate(c,s))return[];spa();return scan(c)}).catch(e=>{debug({debug:!!data(s,'debug')},'Loader stopped safely',e);return[]}).finally(()=>S.boot=null);return S.boot};
 
-        state.gptPromise = new Promise(function (resolve, reject) {
-            var existing = document.querySelector ? document.querySelector('script[data-hm-gpt="1"]') : null;
-            if (existing) {
-                existing.addEventListener('load', function () { resolve(ensureGoogletagQueue()); }, { once: true });
-                existing.addEventListener('error', reject, { once: true });
-                return;
-            }
-            var tag = document.createElement('script');
-            tag.async = true;
-            tag.src = config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-            tag.setAttribute('data-hm-gpt', '1');
-            tag.onload = function () { resolve(ensureGoogletagQueue()); };
-            tag.onerror = function () { reject(new Error('GPT failed to load')); };
-            (document.head || document.documentElement).appendChild(tag);
-        });
-        return state.gptPromise;
-    }
-
-    function normalizeSizes(sizes) {
-        if (!Array.isArray(sizes)) return [];
-        return sizes.filter(function (size) {
-            return size === 'fluid' || (Array.isArray(size) && size.length === 2 && Number(size[0]) > 0 && Number(size[1]) > 0);
-        });
-    }
-
-    function applyTargeting(target, values) {
-        if (!target || !values) return;
-        Object.keys(values).sort().forEach(function (key) {
-            var normalized = Array.isArray(values[key]) ? values[key].map(String) : [String(values[key])];
-            if (normalized.length && target.setTargeting) target.setTargeting(key, normalized);
-        });
-    }
-
-    function buildSizeMapping(googletag, mappings) {
-        if (!googletag.sizeMapping || !Array.isArray(mappings) || !mappings.length) return null;
-        var builder = googletag.sizeMapping();
-        mappings.forEach(function (mapping) {
-            var viewport = Array.isArray(mapping.viewport) ? mapping.viewport : [0, 0];
-            var sizes = normalizeSizes(mapping.sizes);
-            if (sizes.length) builder.addSize(viewport, sizes);
-        });
-        return builder.build();
-    }
-
-    function ensureElementId(element, config, placement) {
-        if (element.id) return element.id;
-        var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
-        var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
-        element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + Object.keys(state.slots).length;
-        return element.id;
-    }
-
-    function eligibleElements(config) {
-        var nodes = document.querySelectorAll ? document.querySelectorAll('.hm-ad[data-placement]') : [];
-        var placements = {};
-        (config.placements || []).forEach(function (placement) { placements[placement.code] = placement; });
-        var result = [];
-        Array.prototype.forEach.call(nodes, function (element) {
-            var code = element.getAttribute('data-placement');
-            var placement = placements[code];
-            if (!placement || !placement.enabled || placement.status !== 'active' || !placement.adUnitPath) return;
-            if (element.getAttribute('data-hm-defined') === '1') return;
-            result.push({ element: element, placement: placement });
-        });
-        return result;
-    }
-
-    function lazyOptions(items) {
-        var enabled = items.map(function (item) { return item.placement.lazyLoad || {}; }).filter(function (item) { return item.enabled; });
-        if (!enabled.length) return null;
-        return {
-            fetchMarginPercent: Math.max.apply(Math, enabled.map(function (item) { return Number(item.fetchMarginPercent || 0); })),
-            renderMarginPercent: Math.max.apply(Math, enabled.map(function (item) { return Number(item.renderMarginPercent || 0); })),
-            mobileScaling: Math.max.apply(Math, enabled.map(function (item) { return Number(item.mobileScaling || 1); }))
-        };
-    }
-
-    function defineItems(config, items) {
-        if (!items.length) return Promise.resolve([]);
-        return loadGpt(config).then(function (googletag) {
-            return new Promise(function (resolve) {
-                googletag.cmd.push(function () {
-                    try {
-                        var pubads = googletag.pubads();
-                        applyTargeting(pubads, config.pageTargeting || {});
-                        var lazy = lazyOptions(items);
-                        if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
-                        if (config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
-
-                        var defined = [];
-                        items.forEach(function (item) {
-                            var placement = item.placement;
-                            var element = item.element;
-                            var elementId = ensureElementId(element, config, placement);
-                            var slot = null;
-                            if (placement.outOfPageFormat && googletag.defineOutOfPageSlot && googletag.enums && googletag.enums.OutOfPageFormat) {
-                                var format = googletag.enums.OutOfPageFormat[placement.outOfPageFormat];
-                                if (format) slot = googletag.defineOutOfPageSlot(placement.adUnitPath, format);
-                            } else if (googletag.defineSlot) {
-                                slot = googletag.defineSlot(placement.adUnitPath, normalizeSizes(placement.sizes), elementId);
-                            }
-                            if (!slot) return;
-                            var mapping = buildSizeMapping(googletag, placement.responsiveMappings);
-                            if (mapping && slot.defineSizeMapping) slot.defineSizeMapping(mapping);
-                            applyTargeting(slot, placement.targeting || {});
-                            if (slot.setForceSafeFrame) slot.setForceSafeFrame(Boolean(placement.safeFrame));
-                            if (slot.setCollapseEmptyDiv) slot.setCollapseEmptyDiv(Boolean(placement.collapseEmptyDiv), Boolean(placement.collapseEmptyDiv));
-                            if (slot.addService) slot.addService(pubads);
-                            element.setAttribute('data-hm-defined', '1');
-                            element.setAttribute('data-hm-status', 'defined');
-                            state.slots[elementId] = { slot: slot, placement: placement, element: element, refreshCount: 0 };
-                            defined.push(state.slots[elementId]);
-                        });
-
-                        if (!state.servicesEnabled && googletag.enableServices) {
-                            googletag.enableServices();
-                            state.servicesEnabled = true;
-                        }
-                        defined.forEach(function (entry) {
-                            if (entry.placement.outOfPageFormat) googletag.display(entry.slot);
-                            else googletag.display(entry.element.id);
-                            entry.element.setAttribute('data-hm-status', 'requested');
-                            scheduleRefresh(googletag, pubads, entry);
-                        });
-                        diagnostics(config, defined);
-                        resolve(defined);
-                    } catch (error) {
-                        log(config, 'Slot definition failed', error);
-                        resolve([]);
-                    }
-                });
-            });
-        }).catch(function (error) {
-            log(config, 'GPT unavailable', error);
-            return [];
-        });
-    }
-
-    function scheduleRefresh(googletag, pubads, entry) {
-        var refresh = entry.placement.refresh || {};
-        var interval = Number(refresh.intervalSeconds || 0);
-        if (!refresh.enabled || interval < 30 || !pubads.refresh) return;
-        var limit = Number(refresh.limit || 0);
-        var key = entry.element.id;
-        if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
-        state.refreshTimers[key] = window.setInterval(function () {
-            if (document.visibilityState && document.visibilityState !== 'visible') return;
-            if (limit > 0 && entry.refreshCount >= limit) {
-                window.clearInterval(state.refreshTimers[key]);
-                delete state.refreshTimers[key];
-                return;
-            }
-            entry.refreshCount += 1;
-            googletag.cmd.push(function () { pubads.refresh([entry.slot]); });
-        }, interval * 1000);
-    }
-
-    function diagnostics(config, defined) {
-        if (!config.debug) return;
-        window.__HM_DIAGNOSTICS__ = {
-            loaderVersion: VERSION,
-            configVersion: config.configVersion,
-            siteKey: config.siteKey,
-            hostname: currentHostname(),
-            servingMode: config.servingMode,
-            gamNetworkCode: config.gamNetworkCode,
-            definedPlacements: defined.map(function (entry) { return entry.placement.code; })
-        };
-        log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
-    }
-
-    function scan(config) {
-        if (!config || config.status !== 'active' || config.immediatePause) return Promise.resolve([]);
-        return defineItems(config, eligibleElements(config));
-    }
-
-    function installSpaSupport() {
-        if (!state.observer && window.MutationObserver && document.documentElement) {
-            state.observer = new window.MutationObserver(function () {
-                window.clearTimeout(state.scanTimer);
-                state.scanTimer = window.setTimeout(function () { scan(state.config); }, 25);
-            });
-            state.observer.observe(document.documentElement, { childList: true, subtree: true });
-        }
-        if (state.navigationPatched || !window.history) return;
-        state.navigationPatched = true;
-        ['pushState', 'replaceState'].forEach(function (method) {
-            var original = window.history[method];
-            if (typeof original !== 'function') return;
-            window.history[method] = function () {
-                var value = original.apply(this, arguments);
-                window.dispatchEvent(new Event('horus:navigation'));
-                return value;
-            };
-        });
-        window.addEventListener('popstate', function () { window.dispatchEvent(new Event('horus:navigation')); });
-        window.addEventListener('horus:navigation', function () { window.setTimeout(function () { scan(state.config); }, 0); });
-    }
-
-    function maybeDelegateRelease(config, script) {
-        var selected = config.loader || {};
-        if (!selected.assetUrl || !selected.version || selected.version === VERSION || window.__HM_RELEASE_DELEGATED__) return false;
-        window.__HM_RELEASE_DELEGATED__ = true;
-        var replacement = document.createElement('script');
-        replacement.async = true;
-        replacement.src = selected.assetUrl + (selected.assetUrl.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(selected.version);
-        replacement.setAttribute('data-site-key', config.siteKey);
-        replacement.setAttribute('data-config-base', configBase(script));
-        replacement.setAttribute('data-environment', String(scriptData(script, 'environment') || 'production'));
-        (document.head || document.documentElement).appendChild(replacement);
-        return true;
-    }
-
-    function boot(options) {
-        options = options || {};
-        var script = options.script || findScript();
-        var siteKey = options.siteKey || scriptData(script, 'siteKey');
-        if (!siteKey || !window.fetch) return Promise.resolve([]);
-        if (state.booting && !options.force) return state.booting;
-
-        state.booting = fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
-            state.config = config;
-            if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
-                log(config, 'Hostname rejected', currentHostname());
-                return [];
-            }
-            if (config.status !== 'active' || config.immediatePause) {
-                log(config, 'Site is paused; no advertising calls were made');
-                return [];
-            }
-            if (maybeDelegateRelease(config, script)) return [];
-            installSpaSupport();
-            return scan(config);
-        }).catch(function (error) {
-            log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
-            return [];
-        }).finally(function () {
-            state.booting = null;
-        });
-        return state.booting;
-    }
-
-    window.HorusMediaLoader = {
-        version: VERSION,
-        boot: boot,
-        refresh: function () { return boot({ force: true }); },
-        scan: function () { return scan(state.config); },
-        getConfig: function () { return state.config; },
-        _resetForTests: function () {
-            Object.keys(state.refreshTimers).forEach(function (key) { window.clearInterval(state.refreshTimers[key]); });
-            state.config = null; state.gptPromise = null; state.servicesEnabled = false; state.slots = {}; state.refreshTimers = {}; state.booting = null; state.script = null;
-        }
-    };
-
-    if (!window.__HM_DISABLE_AUTOBOOT__) {
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });
-        else boot();
-    }
-}(window, document));
+w.HorusMediaLoader={version:V,boot,refresh:()=>boot({force:true}),scan:()=>scan(S.cfg),getConfig:()=>S.cfg,_resetForTests:()=>{Object.values(S.timers).forEach(clearInterval);Object.assign(S,{cfg:null,script:null,gpt:null,pb:null,services:false,initial:false,slots:{},units:{},timers:{},boot:null,pbVersion:null})}};
+if(!w.__HM_DISABLE_AUTOBOOT__)(d.readyState==='loading'?d.addEventListener('DOMContentLoaded',()=>boot(),{once:true}):boot());
+})(window,document);

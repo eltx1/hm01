@@ -59,6 +59,8 @@ class Site extends Model
     public function layoutProfiles(): HasMany { return $this->hasMany(SiteLayoutProfile::class); }
     public function siteConfig(): HasOne { return $this->hasOne(SiteConfig::class); }
     public function configVersions(): HasMany { return $this->hasMany(ConfigVersion::class); }
+    public function prebidSettings(): HasMany { return $this->hasMany(PrebidSetting::class); }
+    public function bidderSiteMappings(): HasMany { return $this->hasMany(BidderSiteMapping::class); }
 
     public function installationCode(): string
     {

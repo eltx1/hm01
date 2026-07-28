@@ -1,0 +1,10 @@
+[
+  "pubmaticBidAdapter",
+  "rubiconBidAdapter",
+  "openxBidAdapter",
+  "consentManagementTcf",
+  "consentManagementGpp",
+  "currency",
+  "gptPreAuction",
+  "priceFloors"
+]

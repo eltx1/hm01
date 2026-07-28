@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             IdentityAccessSeeder::class,
             InventoryDeliverySeeder::class,
+            PrebidSeeder::class,
         ]);
     }
 }

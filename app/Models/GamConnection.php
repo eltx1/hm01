@@ -38,60 +38,22 @@ class GamConnection extends Model
         ];
     }
 
-    public function credential(): HasOne
-    {
-        return $this->hasOne(GamCredential::class);
-    }
-
-    public function networks(): HasMany
-    {
-        return $this->hasMany(GamNetwork::class);
-    }
-
-    public function permissions(): HasMany
-    {
-        return $this->hasMany(GamConnectionPermission::class);
-    }
-
-    public function remoteObjects(): HasMany
-    {
-        return $this->hasMany(GamRemoteObject::class);
-    }
-
-    public function operations(): HasMany
-    {
-        return $this->hasMany(GamApiOperation::class);
-    }
-
-    public function syncRuns(): HasMany
-    {
-        return $this->hasMany(GamSyncRun::class);
-    }
-
-    public function syncLogs(): HasMany
-    {
-        return $this->hasMany(GamSyncLog::class);
-    }
-
-    public function errors(): HasMany
-    {
-        return $this->hasMany(GamError::class);
-    }
-
-    public function sites(): HasMany
-    {
-        return $this->hasMany(Site::class);
-    }
-
-    public function creator(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'created_by');
-    }
-
-    public function updater(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'updated_by');
-    }
+    public function credential(): HasOne { return $this->hasOne(GamCredential::class); }
+    public function networks(): HasMany { return $this->hasMany(GamNetwork::class); }
+    public function permissions(): HasMany { return $this->hasMany(GamConnectionPermission::class); }
+    public function remoteObjects(): HasMany { return $this->hasMany(GamRemoteObject::class); }
+    public function operations(): HasMany { return $this->hasMany(GamApiOperation::class); }
+    public function syncRuns(): HasMany { return $this->hasMany(GamSyncRun::class); }
+    public function syncLogs(): HasMany { return $this->hasMany(GamSyncLog::class); }
+    public function errors(): HasMany { return $this->hasMany(GamError::class); }
+    public function sites(): HasMany { return $this->hasMany(Site::class); }
+    public function prebidSettings(): HasMany { return $this->hasMany(PrebidSetting::class); }
+    public function prebidTemplate(): HasOne { return $this->hasOne(PrebidGamTemplate::class); }
+    public function prebidSetupRuns(): HasMany { return $this->hasMany(PrebidSetupRun::class); }
+    public function prebidRemoteObjects(): HasMany { return $this->hasMany(PrebidGamRemoteObject::class); }
+    public function prebidErrors(): HasMany { return $this->hasMany(PrebidError::class); }
+    public function creator(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
+    public function updater(): BelongsTo { return $this->belongsTo(User::class, 'updated_by'); }
 
     public function isPrimaryHorus(): bool
     {

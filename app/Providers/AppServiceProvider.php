@@ -7,6 +7,7 @@ use App\Services\Gam\GamNativeSoapTransport;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -25,5 +26,6 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(str($request->input('email'))->lower().'|'.$request->ip()));
+        Route::middleware('web')->group(base_path('routes/prebid.php'));
     }
 }

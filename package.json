@@ -5,6 +5,8 @@
     "scripts": {
         "build": "npm run build:loader && vite build",
         "build:loader": "node scripts/build-loader.mjs",
+        "build:prebid": "node scripts/build-prebid.mjs",
+        "build:release": "npm run build:prebid && npm run build",
         "test:browser": "node --test tests/Browser/*.test.js",
         "dev": "vite"
     },
