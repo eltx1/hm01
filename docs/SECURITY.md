@@ -53,6 +53,10 @@ support dry-run mode and idempotency. Audit records must capture actor, tenant,
 operation, sanitized change, request correlation, and result. Secrets, tokens,
 full payment details, and sensitive personal data must be redacted.
 
+Publisher website forms treat revenue share as read-only agreement data. The
+server derives it from the applicable contract, and only Horus Media roles with
+`sites.serving.manage` can change it through an audited operation.
+
 ## Data minimization
 
 The control plane stores aggregate reporting only. Do not route ad requests

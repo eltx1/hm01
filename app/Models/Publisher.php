@@ -42,4 +42,12 @@ class Publisher extends Model
     {
         return $this->hasMany(Site::class);
     }
+
+    public function applicableRevenueShare(): string
+    {
+        $contract = $this->contracts()->where('status', 'ACTIVE')->latest()->first()
+            ?? $this->contracts()->latest()->first();
+
+        return (string) ($contract?->revenue_share_percent ?? '70.00');
+    }
 }

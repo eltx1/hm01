@@ -43,6 +43,34 @@ class SiteManagementTest extends TestCase
         $this->actingAs($viewer)->post(route('publisher.sites.store'), [])->assertForbidden();
     }
 
+    public function test_publisher_cannot_override_revenue_share_and_configuration_changes_are_versioned(): void
+    {
+        $this->seedIdentity();
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $site = $this->makeSiteFor($this->makePublisherFor($user), $user);
+
+        $this->actingAs($user)->put(route('publisher.sites.update', $site), [
+            'display_name' => $site->display_name,
+            'primary_domain' => $site->primary_domain,
+            'language' => $site->language,
+            'content_category' => $site->content_category,
+            'country' => $site->country,
+            'main_traffic_countries' => 'US,GB',
+            'estimated_monthly_pageviews' => 120000,
+            'estimated_monthly_users' => 60000,
+            'current_monetization_providers' => 'AdSense',
+            'default_revenue_share_percent' => 5,
+            'prebid_enabled' => 1,
+            'native_demand_enabled' => 0,
+        ])->assertRedirect();
+
+        $site->refresh();
+        $this->assertSame('70.00', $site->default_revenue_share_percent);
+        $this->assertSame('70.00', $site->servingSettings->revenue_share_percent);
+        $this->assertTrue($site->servingSettings->prebid_enabled);
+        $this->assertSame(2, $site->servingSettings->configuration_version);
+    }
+
     public function test_complete_website_status_workflow_is_historic_and_audited(): void
     {
         $this->seedIdentity();

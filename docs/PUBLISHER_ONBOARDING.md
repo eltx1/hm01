@@ -47,6 +47,12 @@ No network code or serving mode appears in the tag. `sites.serving_mode` and
 in one transaction. Each real change appends `serving_mode_changes` with the
 previous/new modes, administrator, reason, time, and optional rollback link.
 
+Website revenue share is inherited from the publisher's commercial agreement.
+Publisher-facing website requests cannot override it; only the audited Horus
+Media serving-control workflow can change the site revenue share. Changes to
+publisher-visible Prebid or native-demand preferences increment the site's
+configuration version for future loader configuration publication.
+
 ## Domain verification
 
 - Meta tag: `horus-site-verification` token in the home page.

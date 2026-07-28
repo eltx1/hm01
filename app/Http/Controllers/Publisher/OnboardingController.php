@@ -108,15 +108,24 @@ class OnboardingController extends Controller
             'language' => ['required', 'string', 'max:12'], 'content_category' => ['required', 'string', 'max:100'], 'country' => ['required', 'string', 'size:2'],
             'estimated_monthly_pageviews' => ['required', 'integer', 'min:0'], 'estimated_monthly_users' => ['required', 'integer', 'min:0'],
             'current_gam_network_code' => ['nullable', 'string', 'max:50'], 'current_adsense_status' => ['nullable', 'string', 'max:24'], 'current_adx_status' => ['nullable', 'string', 'max:24'],
-            'prebid_enabled' => ['sometimes', 'boolean'], 'native_demand_enabled' => ['sometimes', 'boolean'], 'default_revenue_share_percent' => ['required', 'numeric', 'between:0,100'],
+            'prebid_enabled' => ['sometimes', 'boolean'], 'native_demand_enabled' => ['sometimes', 'boolean'],
         ]);
         $data['main_traffic_countries'] = array_values(array_filter(array_map('trim', explode(',', strtoupper((string) $request->input('main_traffic_countries'))))));
         $data['current_monetization_providers'] = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('current_monetization_providers')))));
+        $data['default_revenue_share_percent'] = (string) ($site?->default_revenue_share_percent
+            ?? $publisher->applicableRevenueShare());
 
         if ($site) {
             $oldDomain = $site->primary_domain;
             $site->update($data);
-            $site->servingSettings()->update(['prebid_enabled' => $site->prebid_enabled, 'native_demand_enabled' => $site->native_demand_enabled]);
+            $settings = $site->servingSettings()->firstOrFail();
+            $configurationChanged = $settings->prebid_enabled !== $site->prebid_enabled
+                || $settings->native_demand_enabled !== $site->native_demand_enabled;
+            $settings->update([
+                'prebid_enabled' => $site->prebid_enabled,
+                'native_demand_enabled' => $site->native_demand_enabled,
+                'configuration_version' => $configurationChanged ? $settings->configuration_version + 1 : $settings->configuration_version,
+            ]);
             if ($oldDomain !== $site->primary_domain) {
                 $site->domains()->where('is_primary', true)->update(['is_primary' => false]);
                 $site->domains()->firstOrCreate(

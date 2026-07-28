@@ -32,6 +32,7 @@ class SiteController extends Controller
     {
         $publisher = $this->publisher($request);
         $data = $this->validated($request, $publisher);
+        $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
         return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created with HORUS_GAM as its serving mode.');
@@ -54,7 +55,14 @@ class SiteController extends Controller
         $data = $this->validated($request, $publisher, $site);
         $originalDomain = $site->primary_domain;
         $site->update($data);
-        $site->servingSettings()->update(['prebid_enabled' => $site->prebid_enabled, 'native_demand_enabled' => $site->native_demand_enabled]);
+        $settings = $site->servingSettings()->firstOrFail();
+        $configurationChanged = $settings->prebid_enabled !== $site->prebid_enabled
+            || $settings->native_demand_enabled !== $site->native_demand_enabled;
+        $settings->update([
+            'prebid_enabled' => $site->prebid_enabled,
+            'native_demand_enabled' => $site->native_demand_enabled,
+            'configuration_version' => $configurationChanged ? $settings->configuration_version + 1 : $settings->configuration_version,
+        ]);
         if ($originalDomain !== $site->primary_domain) {
             $site->domains()->where('is_primary', true)->update(['is_primary' => false]);
             SiteDomain::firstOrCreate(
@@ -107,7 +115,6 @@ class SiteController extends Controller
             'current_monetization_providers' => ['nullable', 'array'], 'current_monetization_providers.*' => ['string', 'max:100'],
             'current_gam_network_code' => ['nullable', 'string', 'max:50'], 'current_adsense_status' => ['nullable', 'string', 'max:24'], 'current_adx_status' => ['nullable', 'string', 'max:24'],
             'prebid_enabled' => ['sometimes', 'boolean'], 'native_demand_enabled' => ['sometimes', 'boolean'],
-            'default_revenue_share_percent' => ['required', 'numeric', 'between:0,100'],
         ]);
     }
 
