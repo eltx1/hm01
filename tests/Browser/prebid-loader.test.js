@@ -105,11 +105,9 @@ function harness(siteConfig, { prebidBehavior = 'success' } = {}) {
         },
         setTargetingForGPTAsync(codes) { metrics.targeting += 1; metrics.order.push('prebid-targeting'); metrics.targetingCodes = codes; },
     };
-    const createdScripts = [];
     const document = {
         currentScript: loaderScript, readyState: 'complete', visibilityState: 'visible', documentElement: {},
         head: { appendChild(node) {
-            createdScripts.push(node);
             if (node.getAttribute('data-hm-gpt') === '1') {
                 metrics.gptLoads += 1;
                 queueMicrotask(() => node.onload?.());
@@ -166,7 +164,7 @@ test('runs Prebid before GPT refresh and loads each library once', async () => {
     assert.equal(metrics.targeting, 1);
     assert.equal(metrics.refreshes, 1);
     assert.equal(metrics.addedAdUnits.length, 1);
-    assert.deepEqual(metrics.targetingCodes, [metrics.addedAdUnits[0].code]);
+    assert.deepEqual(Array.from(metrics.targetingCodes), [metrics.addedAdUnits[0].code]);
     assert.ok(metrics.order.indexOf('auction') < metrics.order.indexOf('prebid-targeting'));
     assert.ok(metrics.order.indexOf('prebid-targeting') < metrics.order.indexOf('gpt-refresh'));
 });
