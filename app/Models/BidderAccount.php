@@ -1,0 +1,35 @@
+<?php
+
+namespace App\Models;
+
+use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class BidderAccount extends Model
+{
+    use BelongsToOrganization, HasUlids, SoftDeletes;
+
+    protected $fillable = [
+        'organization_id', 'prebid_bidder_id', 'name', 'publisher_id', 'account_code',
+        'public_parameters', 'is_enabled', 'approval_status', 'created_by', 'updated_by',
+    ];
+
+    protected function casts(): array
+    {
+        return ['public_parameters' => 'array', 'is_enabled' => 'boolean'];
+    }
+
+    public function bidder(): BelongsTo
+    {
+        return $this->belongsTo(PrebidBidder::class, 'prebid_bidder_id');
+    }
+
+    public function siteMappings(): HasMany
+    {
+        return $this->hasMany(BidderSiteMapping::class);
+    }
+}
