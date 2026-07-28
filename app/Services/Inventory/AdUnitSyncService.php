@@ -27,8 +27,9 @@ final class AdUnitSyncService
         $attributes = $this->attributes($adUnit, $connection->configuration ?? []);
         $hash = hash('sha256', json_encode($attributes, JSON_THROW_ON_ERROR));
         $mapping = $this->mapping($adUnit, $connection->id);
+        $mappedLocalHash = data_get($mapping?->metadata, 'local_hash');
 
-        if ($mapping && $mapping->payload_hash === $hash && ! $force) {
+        if ($mapping && $mappedLocalHash === $hash && ! $force) {
             $adUnit->update(['sync_status' => 'IN_SYNC', 'last_sync_hash' => $hash, 'last_synced_at' => now(), 'updated_by' => $actor->id]);
 
             return GamResult::duplicate([
@@ -44,7 +45,7 @@ final class AdUnitSyncService
             'remote_type' => 'ad_unit',
             'remote_id_path' => 'rval.0.id',
             'idempotency_key' => hash('sha256', $connection->id.'|ad_unit|'.$adUnit->id.'|'.$hash.'|'.($mapping ? 'update' : 'create')),
-            'mapping_metadata' => ['site_id' => $adUnit->site_id, 'code' => $adUnit->code],
+            'mapping_metadata' => ['site_id' => $adUnit->site_id, 'code' => $adUnit->code, 'local_hash' => $hash],
         ];
 
         $connector = $this->connectors->for($connection);
@@ -74,7 +75,7 @@ final class AdUnitSyncService
             'force' => $force,
             'operation_id' => $result->operationId,
             'success' => $result->success,
-            'difference_detected' => $mapping ? $mapping->payload_hash !== $hash : true,
+            'difference_detected' => ! $mapping || $mappedLocalHash !== $hash,
         ]);
 
         return $result;
@@ -87,13 +88,14 @@ final class AdUnitSyncService
         $attributes = $this->attributes($adUnit, $connection->configuration ?? []);
         $hash = hash('sha256', json_encode($attributes, JSON_THROW_ON_ERROR));
         $mapping = $this->mapping($adUnit, $connection->id);
+        $remoteHash = data_get($mapping?->metadata, 'local_hash');
 
         return [
             'mapped' => (bool) $mapping,
             'remoteId' => $mapping?->remote_object_id,
             'localHash' => $hash,
-            'remoteHash' => $mapping?->payload_hash,
-            'different' => ! $mapping || $mapping->payload_hash !== $hash,
+            'remoteHash' => $remoteHash,
+            'different' => ! $mapping || $remoteHash !== $hash,
         ];
     }
 
