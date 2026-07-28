@@ -139,6 +139,48 @@ Laravel. Database versions remain the audit source while the current JSON alias
 is the browser delivery source. No impression, bid, visitor, or slot-render
 event is stored by this layer.
 
+## Prebid browser bidding and GAM automation tables
+
+The Prebid integration adds:
+
+- `prebid_builds`: pinned source release, approved module list, static asset
+  paths, manifest, checksum, build status, and active release selection.
+- `prebid_adapters`: public bidder schema, module name, media types, sizes,
+  documentation, verification date, and enabled state.
+- `prebid_bidders`: logical bidder codes and aliases backed by adapters.
+- `bidder_accounts`: organization-owned public publisher identifiers and
+  adapter parameters. No credentials or private tokens are accepted.
+- `bidder_site_mappings`: per-site bidder enablement, sequence, publisher ID,
+  and public overrides.
+- `bidder_placement_mappings`: optional placement-specific zone/unit/slot IDs
+  and public overrides.
+- `prebid_settings`: one browser auction profile per site, including build,
+  timeout, granularity, currency, consent, user sync, lazy loading, refresh,
+  diagnostics, fallback, and configuration version.
+- `prebid_price_buckets`: ordered custom minimum, maximum, increment, and
+  precision definitions.
+- `prebid_gam_templates`: connection-specific advertiser/order/targeting,
+  line-item, creative, currency, and trafficker settings.
+- `prebid_setup_runs`: immutable dry-run plan, one-time confirmation hash,
+  counters, saved cursor, status, and execution timestamps.
+- `prebid_gam_remote_objects`: deterministic object key and payload hash mapped
+  to each remote GAM advertiser, key, value, order, line item, creative, and
+  association.
+- `prebid_errors`: site/network/run-scoped planning and execution failures.
+
+The primary Horus connection and every optional GAM connection keep separate
+setup templates and remote mappings. Switching a website does not reuse remote
+IDs from a different GAM network.
+
+A setup preview stores an exact plan before any write. The confirmation code is
+stored only as SHA-256 and removed after confirmation. External writes use the
+shared GAM idempotency ledger in addition to Prebid object-key reconciliation.
+Interrupted setup runs resume from their saved cursor, and completed payload
+hashes are skipped.
+
+Browser configuration contains public bidder parameters only. No auction, bid,
+impression, pageview, or visitor event is written to these tables.
+
 ## Reporting storage
 
 Later reporting migrations will store imported, aggregated dimensions and
