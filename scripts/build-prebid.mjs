@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { transformWithEsbuild } from 'vite';
 
 const root = resolve(import.meta.dirname, '..');
 const profilePath = resolve(root, process.env.PREBID_BUILD_PROFILE || 'prebid-builds/horus-default.json');
@@ -57,13 +58,18 @@ try {
         throw new Error(`Prebid build finished without a recognized output file. Checked: ${candidates.join(', ')}`);
     }
 
-    const asset = outputPath(profile.output.asset);
-    const minified = outputPath(profile.output.minified);
-    cpSync(compiled, asset);
-    cpSync(compiled, minified);
+    const source = readFileSync(compiled, 'utf8');
+    const minifiedResult = await transformWithEsbuild(source, 'horus-prebid.js', {
+        minify: true,
+        target: 'es2018',
+        legalComments: 'none',
+    });
+    const readableBytes = Buffer.from(source.endsWith('\n') ? source : source + '\n');
+    const minifiedBytes = Buffer.from(minifiedResult.code.trim() + '\n');
+    writeFileSync(outputPath(profile.output.asset), readableBytes);
+    writeFileSync(outputPath(profile.output.minified), minifiedBytes);
 
-    const bytes = readFileSync(compiled);
-    const checksum = createHash('sha256').update(bytes).digest('hex');
+    const checksum = createHash('sha256').update(minifiedBytes).digest('hex');
     const manifest = {
         name: profile.name,
         version: profile.version,
@@ -73,11 +79,12 @@ try {
         modules: profile.modules,
         assetUrl: '/' + profile.output.minified.replace(/^public\//, ''),
         checksum,
-        bytes: bytes.length,
+        bytes: minifiedBytes.length,
+        readableBytes: readableBytes.length,
         builtAt: new Date().toISOString(),
     };
     writeFileSync(outputPath(profile.output.manifest), JSON.stringify(manifest, null, 2) + '\n');
-    console.log(`Built ${profile.version}: ${bytes.length} bytes, sha256 ${checksum}`);
+    console.log(`Built ${profile.version}: ${minifiedBytes.length} bytes, sha256 ${checksum}`);
 } finally {
     if (!process.env.PREBID_SOURCE_DIR && process.env.PREBID_KEEP_SOURCE !== '1') {
         rmSync(temporaryRoot, { recursive: true, force: true });
