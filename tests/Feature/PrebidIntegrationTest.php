@@ -9,13 +9,11 @@ use App\Enums\PlacementStatus;
 use App\Enums\PlacementType;
 use App\Enums\PrebidPriceGranularity;
 use App\Enums\RoleName;
-use App\Models\BidderAccount;
 use App\Models\GamRemoteObject;
 use App\Models\PrebidAdapter;
 use App\Models\PrebidBuild;
 use App\Models\PrebidGamRemoteObject;
 use App\Models\PrebidPriceBucket;
-use App\Models\PrebidSetupRun;
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Inventory\AdUnitSyncService;
@@ -177,7 +175,7 @@ class PrebidIntegrationTest extends TestCase
     {
         [$site] = $this->prebidReadySite();
         $config = app(SiteConfigurationBuilder::class)->build($site->refresh(), ConfigEnvironment::Production, 1);
-        $encoded = json_encode($config, JSON_THROW_ON_ERROR);
+        $encoded = json_encode($config, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 
         $this->assertStringContainsString('https://cdn.horusmedia.net/assets/prebid/horus-prebid.min.js', $encoded);
         $this->assertStringNotContainsString('/api/impression', $encoded);
