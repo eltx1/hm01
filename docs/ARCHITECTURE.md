@@ -1,74 +1,69 @@
 # Architecture
 
-## Overview
+## System boundaries
 
-Horus Media Platform is divided into two planes.
+Horus Media Platform is the control plane. It stores operational configuration,
+connector metadata, and aggregated reporting. It never sits in the advertising
+request path.
 
-### Control plane
-
-Hosted on `app.horusmedia.net` using PHP, Laravel, MySQL, and cron jobs.
-
-Responsibilities:
-
-- Users and permissions
-- Publishers and advertisers
-- Websites and placements
-- GAM connection management
-- Campaign management
-- Static configuration generation
-- Report imports
-- Revenue calculations
-- Statements and payments
-- Audit logs
-
-### Delivery plane
-
-Runs outside the Laravel request cycle.
-
-Flow:
-
-```text
-Publisher website
-  -> hm-loader.js
-  -> static site configuration
-  -> Prebid.js
-  -> Google Publisher Tag
-  -> selected GAM network
-  -> demand sources
+```mermaid
+flowchart LR
+    A["Publisher Website"] --> B["Horus Loader<br/>cdn.horusmedia.net"]
+    B --> C["Prebid.js"]
+    C --> D["Google Publisher Tag"]
+    D --> E{"Selected GAM Network<br/>Default: HORUS_GAM"}
+    E --> F["HORUS_GAM"]
+    E --> G["MCM_PARTNER_GAM"]
+    E --> H["PUBLISHER_GAM"]
+    F --> I["Demand Sources"]
+    G --> I
+    H --> I
+    C --> I
 ```
 
-## Serving modes
+`DIRECT_NATIVE_ONLY` branches from loader configuration to configured native
+connectors, and `PAUSED` prevents slot activation. They are omitted above to
+keep the required GAM path legible.
 
-- `HORUS_GAM` is the default.
-- `MCM_PARTNER_GAM` is optional.
-- `PUBLISHER_GAM` is optional.
-- `DIRECT_NATIVE_ONLY` is optional.
-- `PAUSED` disables ad delivery.
+## Control-plane workflow
 
-The serving mode is resolved per website. The publisher installation code remains unchanged.
+```mermaid
+flowchart TD
+    A["Horus Media Admin Dashboard"] --> B["Publishers"]
+    B --> C["Websites"]
+    C --> D["Placements"]
+    D --> E["Direct Advertisers"]
+    E --> F["Campaigns"]
+    F --> G["GAM API"]
+    G --> H["Reports"]
+    H --> I["Revenue Shares"]
+    I --> J["Publisher Payments"]
+```
 
-## Domains
+This diagram is a capability sequence, not a claim that all modules exist in
+the foundation release.
 
-- `horusmedia.net`: company website
-- `app.horusmedia.net`: application dashboard
-- `cdn.horusmedia.net`: loader, Prebid builds, and static configurations
+## Runtime components
 
-## Configuration delivery
+- `app.horusmedia.net`: Laravel control plane and dashboard
+- `cdn.horusmedia.net`: versioned loader, browser bundles, and published
+  configuration artifacts
+- MySQL: transactional control-plane data, database sessions, cache, queue,
+  audit log, and aggregated reporting in later phases
+- cron: Laravel scheduler once per minute
+- browser: Prebid.js auctions, GPT setup, and direct advertising requests
+- GAM and external networks: serving and source reporting systems
 
-The backend generates versioned static JSON configuration files. The loader fetches these files from the CDN. No Laravel request is required for each impression.
+## Configuration publication
 
-## Google Ad Manager
+A later release will publish immutable, cacheable configuration snapshots to
+the CDN. The loader resolves the current snapshot by stable site key. Publication
+must be atomic, versioned, idempotent, auditable, and support dry-run for every
+external write.
 
-The system must support multiple GAM connections. `HORUS_GAM` is the primary connection and default target. Remote object IDs are stored locally for synchronization and idempotency.
+## Hostinger constraints
 
-## Prebid
-
-Prebid.js runs in the browser. Bidder configuration is generated per website and placement. GAM setup is automated through the platform and stored with local-to-remote mappings.
-
-## Reporting
-
-Reports are imported from GAM and external demand sources by cron. Data is stored in hourly or daily aggregates. Raw bid and impression events are not stored in the MVP.
-
-## Production constraints
-
-The production release must run on Hostinger shared or cloud hosting without root access, Docker, Redis, Supervisor, WebSockets, or a permanent Node.js runtime.
+There is no production dependency on Docker, Redis, Supervisor, WebSockets,
+permanent workers, or a Node.js runtime. Composer dependencies and Vite assets
+are prepared before upload. Cron invokes the scheduler; scheduled database queue
+work drains with `--stop-when-empty`.

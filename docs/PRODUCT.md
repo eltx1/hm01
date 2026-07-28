@@ -1,36 +1,50 @@
-# Horus Media Platform
+# Product
 
-## Goal
+## Purpose
 
-Build a private white-label platform for Horus Media to manage publishers, websites, advertisers, campaigns, reporting, revenue shares, statements, and payments.
+Horus Media is a white-label advertising control plane for onboarding
+publishers, configuring websites and placements, managing optional demand
+connections, importing aggregated reporting, calculating revenue shares, and
+preparing publisher payments.
 
-## Fixed architecture
+The product does not proxy advertising traffic. Google Ad Manager remains the
+primary serving engine.
 
-- Default ad server: `HORUS_GAM`
-- Optional modes: `MCM_PARTNER_GAM`, `PUBLISHER_GAM`, `DIRECT_NATIVE_ONLY`, `PAUSED`
-- Prebid.js runs in the browser.
-- Google Ad Manager is the main campaign and inventory engine.
-- Publishers install one permanent Horus loader.
-- The PHP backend is a control plane and does not handle every ad impression.
+## Users
 
-## Primary users
+- Horus Media administrators configure organizations, websites, placements,
+  serving modes, commercial terms, and operational access.
+- Publisher users review their websites, reporting, balances, and payments.
+- Finance and operations users review reconciliations and payment readiness.
 
-- Horus Media administrators
-- Publishers
-- Advertisers
-- Optional partners
+Role and permission implementation is a later phase.
 
-## MVP modules
+## Serving modes
 
-1. Authentication and permissions
-2. Publisher and advertiser management
-3. Website onboarding and verification
-4. GAM connection management
-5. Inventory and GPT configuration
-6. Horus Loader
-7. Browser-side Prebid.js
-8. Direct campaigns
-9. Native demand connectors
-10. Reporting and revenue calculations
-11. Statements and payments
-12. Hostinger deployment
+| Mode | Purpose | New-website default |
+|---|---|---:|
+| `HORUS_GAM` | Horus Media's main GAM network | Yes |
+| `MCM_PARTNER_GAM` | Optional approved MCM partner connection | No |
+| `PUBLISHER_GAM` | Optional publisher-owned GAM connection | No |
+| `DIRECT_NATIVE_ONLY` | Optional native/direct serving without GAM | No |
+| `PAUSED` | Disable serving for the website | No |
+
+There is no activation gate that prevents `HORUS_GAM` from being selected.
+MCM and Publisher GAM are optional alternatives, never prerequisites.
+
+## Installation promise
+
+A publisher installs one permanent loader from `cdn.horusmedia.net`. Website
+configuration is resolved by a stable public site key. Administrators can
+change serving mode and demand configuration without modifying that loader tag.
+
+## Foundation acceptance criteria
+
+- Hostinger-compatible Laravel application and MySQL schema foundation
+- health, exception, session, CSRF, logging, scheduling, and audit foundations
+- responsive dashboard shell
+- architecture and deployment documentation
+- tests that run on SQLite where practical
+
+Publisher workflows, serving integrations, bidders, campaigns, and reporting
+are outside this foundation release.

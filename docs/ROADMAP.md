@@ -1,79 +1,52 @@
 # Roadmap
 
-## Phase 1 — Foundation
+## Phase 0 — Foundation
 
-- Repository rules and documentation
-- Laravel application scaffold
-- MySQL configuration
-- Health endpoint
-- Logging, sessions, CSRF, audit foundation
-- Hostinger-compatible release workflow
+Laravel, MySQL/environment configuration, health endpoint, secure sessions,
+CSRF, exceptions, structured logs, database queue/scheduler, audit records,
+responsive admin shell, tests, and Hostinger documentation.
 
-## Phase 2 — Accounts
+## Phase 1 — Identity and tenancy
 
-- Authentication
-- Organizations
-- Roles and permissions
-- Publisher and advertiser dashboards
+Organizations, users, invitations, MFA, roles and permissions, organization
+scoping, administrator cross-tenant access, policies, and audit coverage.
 
-## Phase 3 — Publishers and websites
+## Phase 2 — Publisher inventory
 
-- Publisher onboarding
-- Contracts
-- Websites
-- Domain verification
-- Serving modes
+Publishers, websites, placements, stable public site keys, domains, website
+verification as an operational signal, and serving-mode management.
+`HORUS_GAM` is created as the default with no activation blocker. MCM and
+Publisher GAM remain optional.
 
-## Phase 4 — GAM connections
+## Phase 3 — Loader and configuration delivery
 
-- Primary Horus GAM connection
-- Optional partner and publisher connections
-- Dry-run and idempotent API operations
-- Remote object mappings
+Versioned CDN publication, permanent loader, configuration schema, atomic
+promotion and rollback, browser telemetry limited to operational needs, GPT
+integration, and `PAUSED` behavior.
 
-## Phase 5 — Inventory and loader
+## Phase 4 — GAM control-plane integration
 
-- Ad units and placements
-- GPT configuration
-- Static site configuration
-- Horus loader
-- Versioning and rollback
+Credential vaulting, `HORUS_GAM` account setup, dry-run plans, idempotent GAM
+writes, reconciliation, ad-unit mapping, and audit trails. Add optional MCM and
+Publisher GAM adapters behind the same connector interface.
 
-## Phase 6 — Prebid.js
+## Phase 5 — Prebid and optional demand
 
-- Bidder registry
-- Website and placement mappings
-- Browser auction flow
-- Central GAM line-item automation
+Pinned Prebid build pipeline, consent integration, bidder configuration,
+timeouts, targeting, native connector contract, and controlled demand rollout.
 
-## Phase 7 — Direct campaigns
+## Phase 6 — Direct sales
 
-- Advertisers
-- Campaigns and creatives
-- Targeting
-- GAM deployment and synchronization
+Advertisers, campaigns, creatives, approvals, pacing, GAM synchronization, and
+financial terms. All external writes remain dry-runnable and idempotent.
 
-## Phase 8 — Native demand
+## Phase 7 — Reporting and finance
 
-- MGID
-- Taboola
-- Speakol
-- Outbrain
-- Custom tags
+Scheduled GAM/network imports, aggregate fact model, reconciliation, dashboards,
+revenue-share ledger, statements, payment approvals, exports, and corrections.
 
-## Phase 9 — Reporting and finance
+## Phase 8 — Production hardening
 
-- GAM report imports
-- External network reports
-- Revenue rules
-- Statements
-- Payments
-- Advertiser invoices
-
-## Phase 10 — Production release
-
-- Security audit
-- Hostinger deployment package
-- Cron configuration
-- Cloudflare and CDN configuration
-- Pilot deployment
+Load and security testing, observability, backup/restore drills, retention,
+access reviews, incident runbooks, CDN failover, performance budgets, and staged
+Hostinger release validation.
