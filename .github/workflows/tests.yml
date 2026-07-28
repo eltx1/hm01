@@ -39,6 +39,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -51,12 +52,20 @@ jobs:
         run: npm ci
       - name: Audit frontend dependencies
         run: npm audit --audit-level=moderate
-      - name: Execute Horus Loader browser tests
+      - name: Execute Horus Loader and Prebid browser tests
         run: npm run test:browser
       - name: Build production assets and minified loader
         run: npm run build
-      - name: Verify loader distributions
-        run: test -s public/assets/hm-loader.js && test -s public/assets/hm-loader.min.js
+      - name: Build pinned custom Prebid distribution
+        run: npm run build:prebid
+      - name: Verify browser distributions
+        run: |
+          test -s public/assets/hm-loader.js
+          test -s public/assets/hm-loader.min.js
+          test -s public/assets/prebid/horus-prebid.js
+          test -s public/assets/prebid/horus-prebid.min.js
+          test -s public/assets/prebid/manifest.json
+          node -e "const m=require('./public/assets/prebid/manifest.json'); if(m.version!=='horus-11.14.0-1'||!m.checksum||!m.modules.includes('gptPreAuction')) process.exit(1)"
 
   mysql:
     runs-on: ubuntu-latest
@@ -99,6 +108,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [tests, mysql, frontend]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: shivammathur/setup-php@v2
@@ -111,9 +121,13 @@ jobs:
           node-version: '22'
           cache: npm
       - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
-      - run: npm ci && npm run test:browser && npm run build
+      - run: npm ci && npm run test:browser && npm run build && npm run build:prebid
+      - name: Validate compiled Prebid release
+        run: |
+          test -s public/assets/prebid/horus-prebid.min.js
+          test -s public/assets/prebid/manifest.json
       - name: Create portable production release
-        run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
+        run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log' 'prebid-builds/source/*'
       - uses: actions/upload-artifact@v4
         with:
           name: horus-media-release-${{ github.sha }}
