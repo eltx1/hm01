@@ -24,9 +24,9 @@ before/after values, metadata, and creation time.
 Business tables carry an `organization_id`. Publisher and advertiser models
 apply an authenticated organization global scope; Horus Media administrators
 are the explicit cross-organization exception. Other application queries must
-be scoped by explicit scopes, policies, or repositories. Unique constraints should generally include
-`organization_id`. Cross-organization administration must be an explicit,
-authorized, audited path.
+be scoped by explicit scopes, policies, or repositories. Unique constraints
+should generally include `organization_id`. Cross-organization administration
+must be an explicit, authorized, audited path.
 
 `audit_logs.organization_id` is nullable only for platform-wide and pre-
 authentication events.
@@ -77,6 +77,38 @@ one-to-one serving settings default to `HORUS_GAM`. Serving changes increment a
 configuration version and append a row with administrator, reason, timestamp,
 and optional rollback reference. Status history and verification attempts are
 append-oriented rather than overwritten.
+
+## Google Ad Manager tables
+
+The GAM integration adds:
+
+- `gam_connections`: driver, type, selected network, health, primary Horus flag,
+  default dry-run policy, and non-secret configuration.
+- `gam_credentials`: one encrypted `env:` or `file:` reference per connection,
+  plus non-secret identity hints and scopes. Raw keys and tokens are prohibited.
+- `gam_networks`: accessible network metadata synchronized from Google.
+- `gam_connection_permissions`: validated capabilities such as API access and
+  network read access.
+- `gam_api_operations`: the idempotency ledger and sanitized request/response
+  audit for every connector operation.
+- `gam_remote_objects`: stable mappings from local Horus records to upstream GAM
+  object IDs.
+- `gam_sync_runs`: synchronization summaries and counters.
+- `gam_sync_logs`: structured events belonging to synchronization runs.
+- `gam_errors`: categorized, retryable, resolvable upstream failures.
+
+`sites.gam_connection_id` is nullable. When absent, the resolver automatically
+uses the enabled primary `HORUS_GAM` connection for a `HORUS_GAM` website. An
+explicit assignment changes only that website.
+
+The operation idempotency key is unique per connection. A successful operation
+is returned as a duplicate on repeat execution. Failed or dry-run operation
+records are safely reused, allowing an administrator to preview an operation
+and later perform that exact write without creating a second ledger row.
+
+Request and response payloads are sanitized recursively before storage.
+Credential references are encrypted with the Laravel application key; resolved
+credential files and OAuth access tokens are not stored in these tables.
 
 ## Reporting storage
 
