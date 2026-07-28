@@ -12,10 +12,10 @@ class GamPayloadSanitizerTest extends TestCase
         $sanitizer = new GamPayloadSanitizer;
         $clean = $sanitizer->sanitize([
             'name' => 'Horus',
-            'private_key' => '-----BEGIN PRIVATE KEY-----secret',
+            'private_key' => '-----BEGIN PRIVATE KEY-----private-material-123',
             'nested' => [
-                'client_secret' => 'secret',
-                'authorization' => 'Bearer very-secret-token',
+                'client_secret' => 'client-material-456',
+                'authorization' => 'Bearer bearer-material-789',
                 'safe' => 'visible',
             ],
             'free_text' => 'Bearer abc.def.ghi',
@@ -27,6 +27,10 @@ class GamPayloadSanitizerTest extends TestCase
         $this->assertSame('[REDACTED]', $clean['nested']['authorization']);
         $this->assertSame('visible', $clean['nested']['safe']);
         $this->assertSame('[REDACTED]', $clean['free_text']);
-        $this->assertStringNotContainsString('secret', json_encode($clean, JSON_THROW_ON_ERROR));
+
+        $encoded = json_encode($clean, JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('private-material-123', $encoded);
+        $this->assertStringNotContainsString('client-material-456', $encoded);
+        $this->assertStringNotContainsString('bearer-material-789', $encoded);
     }
 }
