@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\ConfigEnvironment;
 use App\Enums\GamConnectionType;
 use App\Enums\GamCredentialType;
 use App\Http\Controllers\Controller;
@@ -10,6 +11,7 @@ use App\Models\Organization;
 use App\Models\Site;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Gam\GamConnectionService;
+use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -101,7 +103,7 @@ class GamConnectionController extends Controller
         return back()->with('status', 'Primary HORUS_GAM connection selected.');
     }
 
-    public function assignSite(Request $request, GamConnection $gamConnection, GamConnectionService $service): RedirectResponse
+    public function assignSite(Request $request, GamConnection $gamConnection, GamConnectionService $service, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate([
             'site_id' => ['required', 'ulid', 'exists:sites,id'],
@@ -109,8 +111,9 @@ class GamConnectionController extends Controller
         ]);
         $site = Site::withoutGlobalScopes()->findOrFail($data['site_id']);
         $service->assignToSite($site, $gamConnection, $request->user(), $data['reason']);
+        $version = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
 
-        return back()->with('status', 'The website now uses the selected GAM connection. Other websites were not changed.');
+        return back()->with('status', 'The website now uses the selected GAM connection and production configuration v'.$version->version.' was published. Other websites were not changed.');
     }
 
     private function validated(Request $request, bool $creating): array

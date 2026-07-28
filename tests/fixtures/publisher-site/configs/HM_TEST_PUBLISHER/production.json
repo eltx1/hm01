@@ -1,0 +1,38 @@
+{
+  "siteKey": "HM_TEST_PUBLISHER",
+  "servingMode": "HORUS_GAM",
+  "gamNetworkCode": "123456789",
+  "configVersion": 1,
+  "environment": "PRODUCTION",
+  "status": "active",
+  "immediatePause": false,
+  "prebidEnabled": false,
+  "debug": true,
+  "houseAdTesting": true,
+  "allowedHostnames": ["localhost", "publisher.example"],
+  "loader": {"version": "1.0.0", "cacheBust": 1},
+  "gpt": {"url": "https://securepubads.g.doubleclick.net/tag/js/gpt.js", "tagVersion": "1.0.0", "singleRequest": true},
+  "pageTargeting": {"hm_house_test": ["1"]},
+  "placements": [
+    {
+      "code": "article_top",
+      "name": "Article Top",
+      "type": "DISPLAY",
+      "status": "active",
+      "enabled": true,
+      "adUnitPath": "/123456789/article_top",
+      "sizes": [[300, 250], [728, 90]],
+      "responsiveMappings": [
+        {"viewport": [768, 0], "device": "DESKTOP", "sizes": [[728, 90]]},
+        {"viewport": [0, 0], "device": "MOBILE", "sizes": [[300, 250]]}
+      ],
+      "targeting": {"position": ["article_top"]},
+      "lazyLoad": {"enabled": true, "fetchMarginPercent": 500, "renderMarginPercent": 200, "mobileScaling": 2},
+      "refresh": {"enabled": false, "intervalSeconds": null, "limit": null},
+      "collapseEmptyDiv": true,
+      "safeFrame": false,
+      "outOfPageFormat": null
+    }
+  ],
+  "generatedAt": "2026-07-29T00:00:00Z"
+}

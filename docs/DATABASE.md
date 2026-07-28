@@ -110,6 +110,35 @@ Request and response payloads are sanitized recursively before storage.
 Credential references are encrypted with the Laravel application key; resolved
 credential files and OAuth access tokens are not stored in these tables.
 
+## Inventory and browser delivery tables
+
+The inventory and Horus Loader layer adds:
+
+- `ad_units`: local website inventory, stable codes, enablement, GAM sync status,
+  and last synchronized payload hash.
+- `ad_unit_sizes`: fixed or fluid sizes accepted by a local ad unit.
+- `placements`: browser slot codes, type, status, lazy loading, refresh,
+  SafeFrame, collapse, and ordering behavior.
+- `placement_sizes`: fixed/fluid sizes plus viewport and device-specific size
+  mapping rules.
+- `placement_targeting`: page-level and placement-level public targeting values.
+- `site_layout_profiles`: audited snapshots created when a layout is duplicated.
+- `site_configs`: one delivery profile per site with active loader/tag releases,
+  pause state, debug and house-test flags, cache TTL, and environment pointers.
+- `config_versions`: immutable preview, test, and production JSON snapshots with
+  checksums, paths, publication actors, rollback sources, and timestamps.
+- `tag_versions`: versioned GPT URL and public GPT defaults.
+- `loader_releases`: versioned readable/minified loader asset paths and checksums.
+
+The existing `gam_remote_objects` table maps local `ad_units` to remote GAM ad
+unit IDs. Layout duplication intentionally creates no remote mappings for the
+target website.
+
+Static JSON is written to a deployable CDN directory, not served dynamically by
+Laravel. Database versions remain the audit source while the current JSON alias
+is the browser delivery source. No impression, bid, visitor, or slot-render
+event is stored by this layer.
+
 ## Reporting storage
 
 Later reporting migrations will store imported, aggregated dimensions and

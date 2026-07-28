@@ -4,11 +4,14 @@ namespace App\Services\Sites;
 
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
+use App\Models\LoaderRelease;
 use App\Models\ServingModeChange;
 use App\Models\Site;
+use App\Models\SiteConfig;
 use App\Models\SiteDomain;
 use App\Models\SiteServingSetting;
 use App\Models\SiteStatusHistory;
+use App\Models\TagVersion;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +39,14 @@ class SiteLifecycleService
                 'revenue_share_percent' => $site->default_revenue_share_percent,
                 'prebid_enabled' => $site->prebid_enabled,
                 'native_demand_enabled' => $site->native_demand_enabled,
+            ]);
+            SiteConfig::withoutGlobalScopes()->create([
+                'organization_id' => $site->organization_id,
+                'site_id' => $site->id,
+                'loader_release_id' => LoaderRelease::query()->where('is_active', true)->latest('published_at')->value('id'),
+                'tag_version_id' => TagVersion::query()->where('is_active', true)->latest('published_at')->value('id'),
+                'status' => 'ACTIVE',
+                'cache_ttl_seconds' => config('horus.config_cache_ttl_seconds', 60),
             ]);
             SiteStatusHistory::create([
                 'organization_id' => $site->organization_id, 'site_id' => $site->id,

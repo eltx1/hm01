@@ -26,13 +26,28 @@ Resolution order:
    `PUBLISHER_GAM` sites.
 
 Assigning one website never changes another website. Serving mode and
-connection changes increment the site's configuration version for later loader
-publication.
+connection changes increment the site's configuration version and publish a new
+production static configuration. The permanent installation code is unchanged.
 
-## API boundary
+## API and browser boundary
 
 Laravel uses GAM APIs only for control-plane management and reporting imports.
 Browser ad calls go from GPT directly to the configured GAM network.
+
+```text
+Laravel administrator action
+  -> local inventory and GAM API synchronization
+  -> static public JSON publication
+
+Publisher browser
+  -> Horus Loader from CDN
+  -> static JSON from CDN
+  -> GPT
+  -> selected GAM network
+```
+
+There is no Laravel request per impression, slot, bid, or refresh. The browser
+never receives GAM credentials.
 
 Every connector write:
 
@@ -43,7 +58,78 @@ Every connector write:
   retrying cannot duplicate an upstream object
 - stores categorized errors without credential material
 
-## Centralized versioning
+## Inventory synchronization
+
+Local ad units belong to a website. Synchronization resolves that website's
+current GAM connection and creates or updates the corresponding GAM ad unit.
+Each connection supplies a non-secret `configuration.root_ad_unit_id` used as
+the remote parent.
+
+`gam_remote_objects` stores the local ad-unit ID, remote GAM ID, connection,
+payload hash, status, and synchronization time. A matching hash is considered in
+sync. A changed hash is reported as a difference and may be deliberately
+resynchronized. Changing a site's selected GAM connection produces a separate
+mapping in that connection rather than reusing an unrelated remote ID.
+
+Placements are browser slot definitions. They contain the stable placement code,
+local ad-unit assignment, fixed/fluid sizes, responsive size mappings,
+targeting, lazy loading, refresh, collapse, SafeFrame, and pause state.
+
+## Static configuration
+
+Laravel publishes public static JSON for `PREVIEW`, `TEST`, and `PRODUCTION`.
+Each publication creates:
+
+```text
+configs/{SITE_KEY}/production.v{VERSION}.json
+configs/{SITE_KEY}/production.json
+```
+
+The versioned object is immutable evidence. The current alias is the URL fetched
+by the loader. Rollback creates a new version copied from the selected prior
+payload and records its source instead of editing historical data.
+
+Static configurations include the resolved GAM network code and public slot
+settings only. They exclude:
+
+- private keys and credential references
+- OAuth material
+- internal database IDs that are not required for delivery
+- revenue shares and payment data
+- contracts and internal notes
+
+An immediate site pause publishes a file that tells the loader to stop before
+GPT is loaded. A disabled placement remains in the public configuration for
+operational diagnostics but is not defined or requested by the loader.
+
+## Horus Loader and GPT
+
+The permanent publisher script is:
+
+```html
+<script async
+        src="https://cdn.horusmedia.net/hm-loader.js"
+        data-site-key="PUBLIC_SITE_KEY"></script>
+```
+
+The loader:
+
+- validates the current hostname against the static configuration
+- loads GPT at most once
+- defines active GAM slots and responsive mappings
+- applies page and placement targeting
+- configures lazy loading, empty collapse, SafeFrame, and optional refresh
+- supports interstitial and rewarded out-of-page formats
+- discovers added placement elements for practical SPA navigation
+- supports loader and configuration version selection
+- renders diagnostics only in debug mode
+- catches failures without breaking the publisher page
+
+The loader and configuration are public CDN resources. No cookie or credential
+is needed to retrieve them. See `docs/INVENTORY_AND_LOADER.md` for the complete
+runtime and cache policy.
+
+## Centralized API versioning
 
 The SOAP API version exists only in `config/gam.php` and defaults to `v202602`.
 No service class hard-codes a version. Upgrading an active SOAP version is a
@@ -68,7 +154,7 @@ file:/home/account/private/gam-horus.json
 The resolved file must be readable and outside the public web directory. OAuth
 access tokens are cached only as Laravel-encrypted ciphertext.
 
-## Implemented data model
+## Implemented GAM data model
 
 - `gam_connections`: Horus, MCM partner, and publisher connection definitions
 - `gam_networks`: networks discovered through each credential
@@ -114,6 +200,12 @@ The Horus Media administrator console provides:
 - test credentials and synchronize network metadata
 - view permission checks, health, operations, and open errors
 - assign a connection to a specific website
+- create local ad units and synchronize them to the selected GAM
+- create and bulk-create placements
+- configure sizes, responsive mappings, targeting, lazy loading, refresh,
+  SafeFrame, and collapse behavior
+- preview, publish, pause, resume, and roll back static configurations
+- duplicate a local layout to another website without copying remote IDs
 
 The control plane never exposes credential material to browser JavaScript.
 
@@ -121,5 +213,5 @@ The control plane never exposes credential material to browser JavaScript.
 
 Production requires PHP 8.2+, OpenSSL, cURL, and the PHP SOAP extension for live
 SOAP calls. The application remains compatible with Hostinger shared/cloud
-hosting: no root process, Redis, Supervisor, Docker, WebSockets, or permanent
-worker is required.
+hosting: no root process, Redis, Supervisor, Docker, WebSockets, permanent
+worker, or impression endpoint is required.
