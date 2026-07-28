@@ -25,17 +25,17 @@ final class GamConnectionResolver
 
         return match ($site->serving_mode) {
             ServingMode::HorusGam => GamConnection::withoutGlobalScopes()
-                ->where('type', GamConnectionType::HorusGam)
+                ->where('type', GamConnectionType::HorusGam->value)
                 ->where('is_primary', true)
                 ->where('is_enabled', true)
                 ->first(),
             ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()
-                ->where('type', GamConnectionType::McmPartnerGam)
+                ->where('type', GamConnectionType::McmPartnerGam->value)
                 ->where('is_enabled', true)
                 ->orderByDesc('last_successful_sync_at')
                 ->first(),
             ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()
-                ->where('type', GamConnectionType::PublisherGam)
+                ->where('type', GamConnectionType::PublisherGam->value)
                 ->where('organization_id', $site->organization_id)
                 ->where('is_enabled', true)
                 ->orderByDesc('last_successful_sync_at')
