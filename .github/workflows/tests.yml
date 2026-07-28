@@ -45,8 +45,23 @@ jobs:
       - name: Execute tests
         run: php artisan test
 
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=moderate
 
       - name: Build production assets
         run: npm run build
@@ -90,7 +105,7 @@ jobs:
 
   release-artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [tests, mysql]
+    needs: [tests, mysql, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
