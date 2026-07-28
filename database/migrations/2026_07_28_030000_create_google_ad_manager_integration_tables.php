@@ -28,8 +28,8 @@ return new class extends Migration
             $table->foreignUlid('updated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
             $table->softDeletes();
-            $table->unique(['organization_id', 'name']);
-            $table->index(['type', 'is_primary', 'is_enabled']);
+            $table->unique(['organization_id', 'name'], 'gam_connections_org_name_unique');
+            $table->index(['type', 'is_primary', 'is_enabled'], 'gam_connections_routing_index');
         });
 
         Schema::create('gam_credentials', function (Blueprint $table): void {
@@ -45,7 +45,7 @@ return new class extends Migration
             $table->timestamp('rotated_at')->nullable();
             $table->json('metadata')->nullable();
             $table->timestamps();
-            $table->index(['organization_id', 'credential_type']);
+            $table->index(['organization_id', 'credential_type'], 'gam_credentials_org_type_index');
         });
 
         Schema::create('gam_networks', function (Blueprint $table): void {
@@ -61,8 +61,8 @@ return new class extends Migration
             $table->json('capabilities')->nullable();
             $table->timestamp('last_seen_at')->nullable();
             $table->timestamps();
-            $table->unique(['gam_connection_id', 'network_code']);
-            $table->index(['organization_id', 'is_current']);
+            $table->unique(['gam_connection_id', 'network_code'], 'gam_networks_connection_code_unique');
+            $table->index(['organization_id', 'is_current'], 'gam_networks_org_current_index');
         });
 
         Schema::create('gam_connection_permissions', function (Blueprint $table): void {
@@ -74,8 +74,8 @@ return new class extends Migration
             $table->json('details')->nullable();
             $table->timestamp('verified_at')->nullable();
             $table->timestamps();
-            $table->unique(['gam_connection_id', 'permission_name']);
-            $table->index(['organization_id', 'status']);
+            $table->unique(['gam_connection_id', 'permission_name'], 'gam_conn_perm_unique');
+            $table->index(['organization_id', 'status'], 'gam_conn_perm_org_status_index');
         });
 
         Schema::create('gam_sync_runs', function (Blueprint $table): void {
@@ -91,7 +91,7 @@ return new class extends Migration
             $table->timestamp('started_at')->nullable();
             $table->timestamp('completed_at')->nullable();
             $table->timestamps();
-            $table->index(['organization_id', 'gam_connection_id', 'created_at']);
+            $table->index(['organization_id', 'gam_connection_id', 'created_at'], 'gam_sync_runs_lookup_index');
         });
 
         Schema::create('gam_api_operations', function (Blueprint $table): void {
@@ -115,8 +115,8 @@ return new class extends Migration
             $table->timestamp('started_at')->nullable();
             $table->timestamp('completed_at')->nullable();
             $table->timestamps();
-            $table->unique(['gam_connection_id', 'idempotency_key']);
-            $table->index(['organization_id', 'gam_connection_id', 'created_at']);
+            $table->unique(['gam_connection_id', 'idempotency_key'], 'gam_api_idempotency_unique');
+            $table->index(['organization_id', 'gam_connection_id', 'created_at'], 'gam_api_operations_lookup_index');
         });
 
         Schema::create('gam_remote_objects', function (Blueprint $table): void {
@@ -135,7 +135,7 @@ return new class extends Migration
             $table->timestamps();
             $table->unique(['gam_connection_id', 'local_object_type', 'local_object_id', 'remote_object_type'], 'gam_remote_local_unique');
             $table->unique(['gam_connection_id', 'remote_object_type', 'remote_object_id'], 'gam_remote_upstream_unique');
-            $table->index(['organization_id', 'gam_connection_id']);
+            $table->index(['organization_id', 'gam_connection_id'], 'gam_remote_objects_lookup_index');
         });
 
         Schema::create('gam_sync_logs', function (Blueprint $table): void {
@@ -148,7 +148,7 @@ return new class extends Migration
             $table->text('message');
             $table->json('context')->nullable();
             $table->timestamp('created_at')->useCurrent();
-            $table->index(['organization_id', 'gam_connection_id', 'created_at']);
+            $table->index(['organization_id', 'gam_connection_id', 'created_at'], 'gam_sync_logs_lookup_index');
         });
 
         Schema::create('gam_errors', function (Blueprint $table): void {
@@ -166,12 +166,12 @@ return new class extends Migration
             $table->timestamp('resolved_at')->nullable();
             $table->foreignUlid('resolved_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
-            $table->index(['organization_id', 'gam_connection_id', 'occurred_at']);
+            $table->index(['organization_id', 'gam_connection_id', 'occurred_at'], 'gam_errors_lookup_index');
         });
 
         Schema::table('sites', function (Blueprint $table): void {
             $table->foreignUlid('gam_connection_id')->nullable()->after('serving_mode')->constrained('gam_connections')->nullOnDelete();
-            $table->index(['serving_mode', 'gam_connection_id']);
+            $table->index(['serving_mode', 'gam_connection_id'], 'sites_serving_gam_index');
         });
     }
 
@@ -179,7 +179,7 @@ return new class extends Migration
     {
         Schema::table('sites', function (Blueprint $table): void {
             $table->dropForeign(['gam_connection_id']);
-            $table->dropIndex(['serving_mode', 'gam_connection_id']);
+            $table->dropIndex('sites_serving_gam_index');
             $table->dropColumn('gam_connection_id');
         });
 
