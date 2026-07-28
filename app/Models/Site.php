@@ -44,53 +44,24 @@ class Site extends Model
         return Attribute::make(set: fn (string $value) => strtolower(rtrim(preg_replace('#^https?://#i', '', trim($value)), '/')));
     }
 
-    public function publisher(): BelongsTo
-    {
-        return $this->belongsTo(Publisher::class);
-    }
-
-    public function gamConnection(): BelongsTo
-    {
-        return $this->belongsTo(GamConnection::class, 'gam_connection_id');
-    }
-
-    public function domains(): HasMany
-    {
-        return $this->hasMany(SiteDomain::class);
-    }
-
-    public function verifications(): HasMany
-    {
-        return $this->hasMany(SiteVerification::class);
-    }
-
-    public function reviews(): HasMany
-    {
-        return $this->hasMany(SiteReview::class);
-    }
-
-    public function notes(): HasMany
-    {
-        return $this->hasMany(SiteNote::class);
-    }
-
-    public function statusHistory(): HasMany
-    {
-        return $this->hasMany(SiteStatusHistory::class);
-    }
-
-    public function servingSettings(): HasOne
-    {
-        return $this->hasOne(SiteServingSetting::class);
-    }
-
-    public function servingModeChanges(): HasMany
-    {
-        return $this->hasMany(ServingModeChange::class);
-    }
+    public function publisher(): BelongsTo { return $this->belongsTo(Publisher::class); }
+    public function gamConnection(): BelongsTo { return $this->belongsTo(GamConnection::class, 'gam_connection_id'); }
+    public function domains(): HasMany { return $this->hasMany(SiteDomain::class); }
+    public function verifications(): HasMany { return $this->hasMany(SiteVerification::class); }
+    public function reviews(): HasMany { return $this->hasMany(SiteReview::class); }
+    public function notes(): HasMany { return $this->hasMany(SiteNote::class); }
+    public function statusHistory(): HasMany { return $this->hasMany(SiteStatusHistory::class); }
+    public function servingSettings(): HasOne { return $this->hasOne(SiteServingSetting::class); }
+    public function servingModeChanges(): HasMany { return $this->hasMany(ServingModeChange::class); }
+    public function adUnits(): HasMany { return $this->hasMany(AdUnit::class); }
+    public function placements(): HasMany { return $this->hasMany(Placement::class); }
+    public function targeting(): HasMany { return $this->hasMany(PlacementTargeting::class); }
+    public function layoutProfiles(): HasMany { return $this->hasMany(SiteLayoutProfile::class); }
+    public function siteConfig(): HasOne { return $this->hasOne(SiteConfig::class); }
+    public function configVersions(): HasMany { return $this->hasMany(ConfigVersion::class); }
 
     public function installationCode(): string
     {
-        return '<script async src="https://cdn.horusmedia.net/loader.js" data-horus-site="'.$this->public_key.'"></script>';
+        return '<script async src="'.config('horus.loader_url').'" data-site-key="'.$this->public_key.'"></script>';
     }
 }
