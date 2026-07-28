@@ -11,6 +11,11 @@ responsive admin shell, tests, and Hostinger documentation.
 Organizations, users, invitations, MFA, roles and permissions, organization
 scoping, administrator cross-tenant access, policies, and audit coverage.
 
+Status: organization isolation, system RBAC, invitations, authentication,
+password reset, email verification, account states, session invalidation,
+impersonation auditing, and dashboard shells are implemented. Encrypted
+administrator two-factor storage is present; the interactive challenge remains.
+
 ## Phase 2 — Publisher inventory
 
 Publishers, websites, placements, stable public site keys, domains, website

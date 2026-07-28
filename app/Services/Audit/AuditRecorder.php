@@ -19,6 +19,10 @@ final class AuditRecorder
         ?Request $request = null,
     ): AuditLog {
         $request ??= request();
+        $metadata = array_merge([
+            'method' => $request->method(),
+            'route' => $request->route()?->getName(),
+        ], $metadata);
 
         return AuditLog::query()->create([
             'organization_id' => $organizationId,
@@ -30,9 +34,24 @@ final class AuditRecorder
             'request_id' => $request->header('X-Request-ID'),
             'ip_address' => $request->ip(),
             'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024),
-            'old_values' => $oldValues ?: null,
-            'new_values' => $newValues ?: null,
-            'metadata' => $metadata ?: null,
+            'old_values' => $this->redact($oldValues) ?: null,
+            'new_values' => $this->redact($newValues) ?: null,
+            'metadata' => $this->redact($metadata) ?: null,
         ]);
+    }
+
+    private function redact(array $values): array
+    {
+        $sensitive = ['password', 'password_confirmation', 'token', 'token_hash', 'secret', 'two_factor_secret', 'two_factor_recovery_codes'];
+
+        foreach ($values as $key => $value) {
+            if (in_array(strtolower((string) $key), $sensitive, true)) {
+                $values[$key] = '[REDACTED]';
+            } elseif (is_array($value)) {
+                $values[$key] = $this->redact($value);
+            }
+        }
+
+        return $values;
     }
 }

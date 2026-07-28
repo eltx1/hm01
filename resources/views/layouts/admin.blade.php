@@ -4,22 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', 'Dashboard') · Horus Media</title>
+    @php($brand = auth()->user()?->organization)
+    <title>@yield('title', 'Dashboard') · {{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body>
     <div class="admin-shell">
         <aside class="sidebar" aria-label="Primary navigation">
-            <a class="brand" href="/">Horus Media</a>
+            <a class="brand" href="/">{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
             <p class="eyebrow">Ad Network Control Plane</p>
-            <nav>
-                <a class="active" href="/">Overview</a>
-                <span>Publishers</span>
-                <span>Websites</span>
-                <span>Placements</span>
-                <span>Advertisers & Campaigns</span>
-                <span>Reports & Payments</span>
-            </nav>
+            <nav>@yield('navigation')</nav>
         </aside>
         <main>
             <header class="topbar">
@@ -29,6 +23,9 @@
                 </div>
                 <span class="status">Foundation</span>
             </header>
+            @if(session()->has('impersonator_id'))
+                <form method="POST" action="{{ route('admin.impersonate.stop') }}" class="impersonation-banner">@csrf @method('DELETE') Impersonating {{ auth()->user()->email }} <button>Stop</button></form>
+            @endif
             @yield('content')
         </main>
     </div>

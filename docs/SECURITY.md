@@ -11,12 +11,22 @@
 - Sensitive actions have an append-oriented audit-log foundation.
 - Production configuration is environment-based; credential values are absent
   from repository templates.
+- Active user and active organization state are required at login and on every
+  authenticated request.
+- Publisher and advertiser account models apply organization global scopes.
+- Invitations accept only roles valid for the destination organization type.
+- Password reset and suspension revoke database sessions; login successes and
+  failures are recorded separately.
+- Permission changes and administrator impersonation are explicitly audited.
+  Audit payloads redact passwords, tokens, and two-factor secrets.
+- Publisher roles do not receive internal-margin permissions; advertiser roles
+  do not receive publisher-finance permissions.
 
 ## Required future controls
 
-- least-privilege roles, policies, MFA for administrators, and session
-  revocation
-- organization-scoped queries and authorization tests
+- complete TOTP/WebAuthn challenge and recovery flow for administrators (the
+  encrypted storage structure is present)
+- periodic least-privilege authorization review and custom-role design if needed
 - encryption for connector secrets using a key outside the database
 - credential rotation and connection health checks
 - rate limiting for authentication, API, loader configuration, and exports

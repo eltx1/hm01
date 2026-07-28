@@ -21,14 +21,28 @@ before/after values, metadata, and creation time.
 
 ## Tenant isolation
 
-Future business tables will carry an `organization_id`. Application queries
-must be scoped to the authenticated organization by explicit scopes, policies,
-or repositories. Unique constraints should generally include
+Business tables carry an `organization_id`. Publisher and advertiser models
+apply an authenticated organization global scope; Horus Media administrators
+are the explicit cross-organization exception. Other application queries must
+be scoped by explicit scopes, policies, or repositories. Unique constraints should generally include
 `organization_id`. Cross-organization administration must be an explicit,
 authorized, audited path.
 
 `audit_logs.organization_id` is nullable only for platform-wide and pre-
 authentication events.
+
+## Identity and account tables
+
+Phase 1 adds `organizations`, organization-bound `users`, `roles`,
+`permissions`, `role_permissions`, `user_roles`, `user_invitations`,
+`login_events`, `publishers`, `publisher_contacts`, `advertisers`, and
+`advertiser_contacts`. Users and account records use soft deletion where a
+recoverable lifecycle is required. Invitations store only a SHA-256 hash of a
+256-bit random, single-use token and expire after 48 hours.
+
+Administrator two-factor fields are encrypted through Laravel casts. They
+establish storage for a future challenge flow; a complete TOTP/WebAuthn
+challenge is a separate security task.
 
 ## Identifier and time conventions
 

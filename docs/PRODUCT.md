@@ -17,7 +17,17 @@ primary serving engine.
 - Publisher users review their websites, reporting, balances, and payments.
 - Finance and operations users review reconciliations and payment readiness.
 
-Role and permission implementation is a later phase.
+Phase 1 implements organization-scoped identity, invitations, system roles and
+permissions, account states, audit trails, Horus administrator impersonation,
+and separate publisher and advertiser dashboard shells. Website, campaign, and
+reporting links remain explicit placeholders.
+
+## Account model
+
+Organizations are typed as `HORUS_MEDIA`, `PUBLISHER`, `ADVERTISER`, or
+`PARTNER`. Users belong to one organization and receive one or more system
+roles. Publisher and advertiser records carry white-label presentation fields,
+while Horus-only internal notes are never rendered to tenant users.
 
 ## Serving modes
 

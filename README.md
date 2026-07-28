@@ -34,8 +34,11 @@ This release establishes the Laravel 12 control-plane foundation:
 - responsive admin shell
 - PHPUnit with an in-memory SQLite test environment
 - Vite assets compiled before deployment
+- organization-scoped authentication and account isolation
+- system roles, permissions, secure invitations, and audited administration
+- publisher, advertiser, partner, and Horus Media dashboard shells
 
-Publisher management, GAM API operations, bidders, campaigns, reporting imports,
+Website inventory, GAM API operations, bidders, campaigns, reporting imports,
 revenue calculations, and payments are intentionally not implemented yet.
 
 ## Local setup
