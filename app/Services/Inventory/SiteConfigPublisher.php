@@ -22,9 +22,7 @@ final class SiteConfigPublisher
 
     public function preview(Site $site, ConfigEnvironment $environment): array
     {
-        $version = $this->nextVersion($site, $environment);
-
-        return $this->builder->build($site->refresh(), $environment, $version);
+        return $this->builder->build($site->refresh(), $environment, $this->nextVersion($site, $environment));
     }
 
     public function publish(Site $site, ConfigEnvironment $environment, User $actor): ConfigVersion
@@ -51,9 +49,10 @@ final class SiteConfigPublisher
             ]);
 
             $siteConfig->update([$this->versionColumn($environment) => $version]);
-            $site->servingSettings()->update([
-                'configuration_version' => max((int) $site->servingSettings?->configuration_version + 1, $version),
-            ]);
+            $settings = $site->servingSettings()->first();
+            if ($settings) {
+                $settings->update(['configuration_version' => max(((int) $settings->configuration_version) + 1, $version)]);
+            }
 
             $this->audit->record('site.config.published', $site->organization_id, $actor, $record, newValues: [
                 'site_id' => $site->id,
@@ -119,16 +118,14 @@ final class SiteConfigPublisher
 
     public function pauseImmediately(Site $site, User $actor): ConfigVersion
     {
-        $config = $this->ensureSiteConfig($site);
-        $config->update(['immediate_pause' => true, 'status' => 'PAUSED']);
+        $this->ensureSiteConfig($site)->update(['immediate_pause' => true, 'status' => 'PAUSED']);
 
         return $this->publish($site, ConfigEnvironment::Production, $actor);
     }
 
     public function resume(Site $site, User $actor): ConfigVersion
     {
-        $config = $this->ensureSiteConfig($site);
-        $config->update(['immediate_pause' => false, 'status' => 'ACTIVE']);
+        $this->ensureSiteConfig($site)->update(['immediate_pause' => false, 'status' => 'ACTIVE']);
 
         return $this->publish($site, ConfigEnvironment::Production, $actor);
     }
@@ -137,10 +134,7 @@ final class SiteConfigPublisher
     {
         return SiteConfig::withoutGlobalScopes()->firstOrCreate(
             ['site_id' => $site->id],
-            [
-                'organization_id' => $site->organization_id,
-                'cache_ttl_seconds' => config('horus.config_cache_ttl_seconds', 60),
-            ],
+            ['organization_id' => $site->organization_id, 'cache_ttl_seconds' => config('horus.config_cache_ttl_seconds', 60)],
         );
     }
 
