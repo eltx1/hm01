@@ -22,7 +22,7 @@ The browser requests configuration from the CDN, runs Prebid.js and Google
 Publisher Tag, and sends advertising traffic directly to the selected serving
 network. Ad requests never transit the Laravel application.
 
-## Foundation scope
+## Implemented scope
 
 This release establishes the Laravel 12 control-plane foundation:
 
@@ -40,9 +40,13 @@ This release establishes the Laravel 12 control-plane foundation:
 - organization, publisher, advertiser, contact, and white-label branding management
 - interactive first-super-administrator bootstrap command
 - publisher, advertiser, partner, and Horus Media dashboard shells
+- seven-step publisher onboarding with encrypted payment details
+- contracts, private contract files, status transitions, and revenue-share terms
+- organization-scoped websites, authorized domains, and four verification modes
+- audited website review, status, serving-mode, revenue-share, and emergency controls
 
-Website inventory, GAM API operations, bidders, campaigns, reporting imports,
-revenue calculations, and payments are intentionally not implemented yet.
+GAM API operations, loader publication, bidders, campaigns, reporting imports,
+revenue ledger calculations, and payment execution are intentionally not implemented yet.
 
 ## Local setup
 
@@ -63,13 +67,14 @@ set the `DB_*` variables in `.env`.
 
 ## Production deployment
 
-Build frontend assets before uploading. Upload the application plus `vendor/`
-and built `public/build/` through hPanel, point the dashboard document root to
-`public/`, populate a private `.env`, migrate with `--force`, and configure the
-single scheduler cron described in
-[`docs/HOSTINGER_DEPLOYMENT.md`](docs/HOSTINGER_DEPLOYMENT.md).
-The GitHub Actions release job also produces an hPanel-ready archive containing
-optimized production dependencies and compiled frontend assets.
+Build frontend assets before uploading. The application runs on any compatible
+PHP 8.2+ web server with MySQL/MariaDB, writable Laravel storage, and cron. Point
+the web document root to `public/`, create a private `.env`, migrate with
+`--force`, and configure one scheduler cron. See the portable
+[`deployment guide`](docs/DEPLOYMENT.md) and the optional
+[`Hostinger profile`](docs/HOSTINGER_DEPLOYMENT.md). GitHub Actions produces a
+provider-neutral release archive containing optimized Composer dependencies and
+compiled frontend assets.
 
 ## Documentation
 
@@ -81,5 +86,7 @@ optimized production dependencies and compiled frontend assets.
 - [Native networks](docs/NATIVE_NETWORKS.md)
 - [Reporting](docs/REPORTING.md)
 - [Security](docs/SECURITY.md)
+- [Publisher onboarding and websites](docs/PUBLISHER_ONBOARDING.md)
+- [Portable deployment](docs/DEPLOYMENT.md)
 - [Hostinger deployment](docs/HOSTINGER_DEPLOYMENT.md)
 - [Roadmap](docs/ROADMAP.md)

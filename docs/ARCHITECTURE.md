@@ -61,9 +61,25 @@ the CDN. The loader resolves the current snapshot by stable site key. Publicatio
 must be atomic, versioned, idempotent, auditable, and support dry-run for every
 external write.
 
-## Hostinger constraints
+## Publisher onboarding control plane
+
+The implemented module stores publisher commercial terms, encrypted payment
+profiles, private contract documents, websites, authorized domains, verification
+attempts, reviews, internal notes, status history, serving settings, and serving
+mode history. The website owns one stable public key used in the permanent
+loader tag. Its serving mode defaults independently in both `sites` and
+`site_serving_settings` to `HORUS_GAM`; changing either operational selection is
+performed transactionally without changing the public key.
+
+Domain checks support HTML meta, well-known text file, DNS TXT, and audited
+manual verification. HTTP verification accepts public DNS targets only and does
+not follow redirects, protecting the control plane from internal-network fetches.
+
+## Portable hosting constraints
 
 There is no production dependency on Docker, Redis, Supervisor, WebSockets,
 permanent workers, or a Node.js runtime. Composer dependencies and Vite assets
 are prepared before upload. Cron invokes the scheduler; scheduled database queue
-work drains with `--stop-when-empty`.
+work drains with `--stop-when-empty`. These constraints preserve compatibility
+with Hostinger while also supporting Apache, nginx, VPS, managed cloud, and
+other standards-compliant PHP/MySQL hosts.

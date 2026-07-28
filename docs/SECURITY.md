@@ -25,6 +25,14 @@
   permission and are audited.
 - Publisher roles do not receive internal-margin permissions; advertiser roles
   do not receive publisher-finance permissions.
+- Publisher site, domain, contract, and payment-profile queries are organization
+  scoped. Viewer roles cannot mutate onboarding or websites.
+- Contract documents use private storage and authorized controller downloads.
+- Payment and tax references are encrypted at rest and omitted from audit data.
+- Automated domain verification validates public DNS targets, rejects private
+  and reserved addresses, limits response size and time, and does not follow redirects.
+- Site reviews, status changes, serving changes, revenue-share changes, manual
+  verification, internal notes, and emergency pauses are audited.
 
 ## Required future controls
 

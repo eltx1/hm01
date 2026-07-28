@@ -38,6 +38,8 @@ These rules are mandatory for every contributor and automated agent.
 - Every sensitive operation must be audited.
 - Database queries must be organization-scoped where applicable.
 - Production must remain compatible with Hostinger shared or cloud hosting.
+- Keep deployment portable across standards-compliant PHP 8.2+ and MySQL
+  hosting; Hostinger compatibility is a supported profile, not vendor lock-in.
 - Do not add Node.js runtime dependencies in production. Compile assets before
   deployment.
 - Do not introduce Docker, Redis, Supervisor, WebSockets, or permanent-worker

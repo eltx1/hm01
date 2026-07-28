@@ -1,0 +1,5 @@
+@extends('layouts.admin')
+@section('title', 'Publisher contracts')
+@section('heading', $publisher->display_name.' contracts')
+@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a href="{{ route('admin.publishers.index') }}">Publishers</a><span class="active">Contracts</span>@endsection
+@section('content')@if(auth()->user()->hasPermission('contracts.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.contracts.create', $publisher) }}">New contract</a>@endif<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Status</th><th>Revenue share</th><th>Threshold</th><th></th></tr></thead><tbody>@forelse($contracts as $contract)<tr><td>{{ $contract->contract_reference }}</td><td>{{ $contract->status->value }}</td><td>{{ $contract->revenue_share_percent }}%</td><td>{{ $contract->currency }} {{ $contract->payment_threshold }}</td><td><a href="{{ route('admin.publishers.contracts.edit', [$publisher, $contract]) }}">Manage</a></td></tr>@empty<tr><td colspan="5">No contracts.</td></tr>@endforelse</tbody></table></div>@endsection

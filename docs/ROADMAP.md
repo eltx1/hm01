@@ -4,7 +4,8 @@
 
 Laravel, MySQL/environment configuration, health endpoint, secure sessions,
 CSRF, exceptions, structured logs, database queue/scheduler, audit records,
-responsive admin shell, tests, and Hostinger documentation.
+responsive admin shell, tests, and portable deployment documentation with a
+Hostinger profile.
 
 ## Phase 1 — Identity and tenancy
 
@@ -19,11 +20,13 @@ bootstrap are implemented.
 
 ## Phase 2 — Publisher inventory
 
-Publisher account management is implemented. Websites, placements, stable
-public site keys, domains, website
-verification as an operational signal, and serving-mode management.
-`HORUS_GAM` is created as the default with no activation blocker. MCM and
-Publisher GAM remain optional.
+Status: complete for onboarding and website control-plane scope. Publisher
+contracts, encrypted payment profiles, seven-step onboarding, websites, stable
+public site keys, authorized domains, four verification methods, review/status
+workflows, placement planning, revenue-share controls, notes, and complete
+serving/status histories are implemented. `HORUS_GAM` is the database and
+application default with no activation blocker. MCM and Publisher GAM remain
+optional.
 
 ## Phase 3 — Loader and configuration delivery
 
@@ -56,4 +59,4 @@ revenue-share ledger, statements, payment approvals, exports, and corrections.
 
 Load and security testing, observability, backup/restore drills, retention,
 access reviews, incident runbooks, CDN failover, performance budgets, and staged
-Hostinger release validation.
+multi-provider release validation, including the Hostinger profile.

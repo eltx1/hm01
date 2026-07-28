@@ -1,5 +1,9 @@
 # Hostinger Deployment
 
+This is a provider-specific profile of the portable process in
+[`DEPLOYMENT.md`](DEPLOYMENT.md). Hostinger is supported but is not required;
+the application remains deployable on any compatible PHP/MySQL environment.
+
 ## Assumptions
 
 - Hostinger shared or cloud plan provides PHP 8.2 or newer, required PHP
@@ -28,9 +32,9 @@ php artisan test
 Upload application files, production `vendor/`, and `public/build/`. Node.js and
 npm are not needed in production.
 
-On pushes to `main`, GitHub Actions builds a release ZIP after the SQLite/PHP
+On pushes to `main`, GitHub Actions builds a provider-neutral release ZIP after the SQLite/PHP
 matrix and MySQL integration suite pass. The artifact includes `vendor/` and
-compiled `public/build/` and can be uploaded through hPanel.
+compiled `public/build/` and can be uploaded through hPanel or another provider's deployment interface.
 
 ## Configure
 

@@ -41,7 +41,14 @@ credentials while presenting one internal interface. `HORUS_GAM` will be
 provisioned as the platform default; missing optional connector records do not
 invalidate it.
 
+## Implemented control-plane selection
+
+Website records, stable public site keys, serving settings, administrator mode
+changes, rollback references, and complete serving-mode history are implemented.
+Every new site defaults to `HORUS_GAM`, and the permanent loader tag contains
+only its stable Horus site key.
+
 ## Not in this release
 
-No GAM credentials, network codes, API clients, ad units, orders, line items,
-creatives, reports, or synchronization jobs are implemented in the foundation.
+No GAM credentials, API clients, ad units, orders, line items, creatives,
+reports, loader publication, or synchronization jobs are implemented yet.

@@ -104,10 +104,10 @@ jobs:
           cache: npm
       - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
       - run: npm ci && npm run build
-      - name: Create Hostinger release
-        run: zip -qr horus-media-hostinger.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
+      - name: Create portable production release
+        run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
       - uses: actions/upload-artifact@v4
         with:
-          name: horus-media-hostinger-${{ github.sha }}
-          path: horus-media-hostinger.zip
+          name: horus-media-release-${{ github.sha }}
+          path: horus-media-release.zip
           retention-days: 14

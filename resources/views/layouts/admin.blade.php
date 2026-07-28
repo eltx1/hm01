@@ -21,11 +21,14 @@
                     <p class="eyebrow">app.horusmedia.net</p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
-                <span class="status">Foundation</span>
+                <span class="status">Control Plane</span>
             </header>
             @if(session()->has('impersonator_id'))
                 <form method="POST" action="{{ route('admin.impersonate.stop') }}" class="impersonation-banner">@csrf @method('DELETE') Impersonating {{ auth()->user()->email }} <button>Stop</button></form>
             @endif
+            @if(session('status'))<div class="notice" role="status">{{ session('status') }}</div>@endif
+            @if(session('error'))<div class="notice error" role="alert">{{ session('error') }}</div>@endif
+            @if($errors->any())<div class="notice error" role="alert"><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
             @yield('content')
         </main>
     </div>

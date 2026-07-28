@@ -43,6 +43,23 @@ class AccountManagementTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['event' => 'advertiser.contact.created']);
     }
 
+    public function test_horus_admin_can_review_submitted_publisher(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $publisherOrganization = $this->makeOrganization(OrganizationType::Publisher);
+        $publisher = Publisher::withoutGlobalScopes()->create([
+            'organization_id' => $publisherOrganization->id, 'legal_name' => 'Review LLC',
+            'display_name' => 'Review Publisher', 'status' => 'PENDING', 'onboarding_submitted_at' => now(),
+        ]);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.publishers.review', $publisher), ['decision' => 'APPROVE', 'reason' => 'All onboarding data reviewed'])->assertRedirect();
+
+        $this->assertSame('ACTIVE', $publisher->fresh()->status->value);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'publisher.reviewed', 'auditable_id' => $publisher->id]);
+    }
+
     private function publisherData(): array
     {
         return ['legal_name' => 'Publisher LLC', 'display_name' => 'Publisher', 'organization_slug' => 'publisher', 'status' => 'ACTIVE', 'billing_email' => 'billing@publisher.test', 'primary_color' => '#12499d'];

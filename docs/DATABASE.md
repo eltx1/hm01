@@ -59,6 +59,25 @@ immutable and only one such organization may exist.
 - Store percentages as fixed-precision decimals, never floating point.
 - Store source identifiers as strings to avoid upstream integer-width coupling.
 
+## Publisher onboarding and website tables
+
+Phase 2 adds `publisher_contracts`, `publisher_payment_profiles`, `sites`,
+`site_domains`, `site_verifications`, `site_reviews`, `site_notes`,
+`site_status_history`, `site_serving_settings`, and `serving_mode_changes`.
+Every tenant table carries `organization_id`; route-model binding therefore
+inherits the same publisher isolation as queries.
+
+Payment account details and tax identifiers use encrypted Laravel casts.
+Contract files are referenced by private-disk paths and never served directly
+from the public directory. Monetary thresholds use fixed-precision decimals,
+and revenue shares use `DECIMAL(5,2)`.
+
+`sites.public_key` is a random stable loader identifier. Both the site and its
+one-to-one serving settings default to `HORUS_GAM`. Serving changes increment a
+configuration version and append a row with administrator, reason, timestamp,
+and optional rollback reference. Status history and verification attempts are
+append-oriented rather than overwritten.
+
 ## Reporting storage
 
 Later reporting migrations will store imported, aggregated dimensions and

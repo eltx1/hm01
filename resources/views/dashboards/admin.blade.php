@@ -2,7 +2,7 @@
 @section('title', 'Administrator dashboard')
 @section('heading', 'Horus Media overview')
 @section('navigation')
-<a class="active" href="{{ route('dashboard') }}">Overview</a><a href="{{ route('admin.organizations.index') }}">Organizations</a><a href="{{ route('admin.publishers.index') }}">Publishers</a><a href="{{ route('admin.advertisers.index') }}">Advertisers</a><a href="{{ route('admin.roles.index') }}">Access control</a>
+<a class="active" href="{{ route('dashboard') }}">Overview</a>@if(auth()->user()->hasPermission('organizations.manage'))<a href="{{ route('admin.organizations.index') }}">Organizations</a>@endif @if(auth()->user()->hasPermission('publishers.view'))<a href="{{ route('admin.publishers.index') }}">Publishers</a>@endif @if(auth()->user()->hasPermission('sites.view'))<a href="{{ route('admin.sites.index') }}">Websites</a>@endif @if(auth()->user()->hasPermission('advertisers.view'))<a href="{{ route('admin.advertisers.index') }}">Advertisers</a>@endif @if(auth()->user()->hasPermission('roles.view'))<a href="{{ route('admin.roles.index') }}">Access control</a>@endif
 @endsection
 @section('content')
 <section class="metric-grid">

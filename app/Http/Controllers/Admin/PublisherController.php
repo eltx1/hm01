@@ -12,6 +12,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class PublisherController extends Controller
@@ -67,6 +68,23 @@ class PublisherController extends Controller
         });
 
         return redirect()->route('admin.publishers.index');
+    }
+
+    public function review(Request $request, Publisher $publisher, AuditRecorder $audit): RedirectResponse
+    {
+        $data = $request->validate(['decision' => ['required', 'in:APPROVE,REJECT'], 'reason' => ['required', 'string', 'max:5000']]);
+        if ($data['decision'] === 'APPROVE' && ! $publisher->onboarding_submitted_at) {
+            throw ValidationException::withMessages(['decision' => 'The publisher must submit onboarding before review.']);
+        }
+        $status = $data['decision'] === 'APPROVE' ? 'ACTIVE' : 'SUSPENDED';
+        $before = $publisher->status->value;
+        DB::transaction(function () use ($publisher, $status): void {
+            $publisher->update(['status' => $status]);
+            $publisher->organization->update(['status' => $status]);
+        });
+        $audit->record('publisher.reviewed', $publisher->organization_id, $request->user(), $publisher, ['status' => $before], ['status' => $status], ['decision' => $data['decision'], 'reason' => $data['reason']]);
+
+        return back()->with('status', 'Publisher review recorded.');
     }
 
     private function validated(Request $request, ?Publisher $publisher = null): array

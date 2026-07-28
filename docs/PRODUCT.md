@@ -17,10 +17,12 @@ primary serving engine.
 - Publisher users review their websites, reporting, balances, and payments.
 - Finance and operations users review reconciliations and payment readiness.
 
-Phase 1 implements organization-scoped identity, invitations, system roles and
-permissions, account states, audit trails, Horus administrator impersonation,
-and separate publisher and advertiser dashboard shells. Website, campaign, and
-reporting links remain explicit placeholders.
+The implemented product includes organization-scoped identity, invitations,
+system roles and permissions, account states, audit trails, administrator
+impersonation, publisher onboarding, contracts, payment profiles, website and
+domain management, verification, operational reviews, serving-mode history,
+and separate tenant dashboard shells. Campaign and reporting links remain
+explicit placeholders.
 
 ## Account model
 
@@ -48,13 +50,14 @@ A publisher installs one permanent loader from `cdn.horusmedia.net`. Website
 configuration is resolved by a stable public site key. Administrators can
 change serving mode and demand configuration without modifying that loader tag.
 
-## Foundation acceptance criteria
+## Current acceptance criteria
 
-- Hostinger-compatible Laravel application and MySQL schema foundation
+- portable Laravel application with a Hostinger-compatible deployment profile
 - health, exception, session, CSRF, logging, scheduling, and audit foundations
 - responsive dashboard shell
-- architecture and deployment documentation
+- publisher onboarding, contracts, site review, domain verification, and histories
+- architecture and portable deployment documentation
 - tests that run on SQLite where practical
 
-Publisher workflows, serving integrations, bidders, campaigns, and reporting
-are outside this foundation release.
+GAM/Prebid serving integrations, bidders, campaigns, reporting, and payment
+execution remain outside this release.
