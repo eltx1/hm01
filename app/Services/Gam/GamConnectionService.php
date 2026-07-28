@@ -33,10 +33,10 @@ final class GamConnectionService
         return DB::transaction(function () use ($data, $actor): GamConnection {
             $type = GamConnectionType::from($data['type']);
             $shouldBePrimary = $type === GamConnectionType::HorusGam
-                && ((bool) ($data['is_primary'] ?? false) || ! GamConnection::withoutGlobalScopes()->where('type', $type)->where('is_primary', true)->exists());
+                && ((bool) ($data['is_primary'] ?? false) || ! GamConnection::withoutGlobalScopes()->where('type', $type->value)->where('is_primary', true)->exists());
 
             if ($shouldBePrimary) {
-                GamConnection::withoutGlobalScopes()->where('type', $type)->update(['is_primary' => false]);
+                GamConnection::withoutGlobalScopes()->where('type', $type->value)->update(['is_primary' => false]);
             }
 
             $connection = GamConnection::withoutGlobalScopes()->create([
@@ -90,7 +90,10 @@ final class GamConnectionService
             $makePrimary = $type === GamConnectionType::HorusGam && (bool) ($data['is_primary'] ?? $connection->is_primary);
 
             if ($makePrimary) {
-                GamConnection::withoutGlobalScopes()->where('type', GamConnectionType::HorusGam)->whereKeyNot($connection->id)->update(['is_primary' => false]);
+                GamConnection::withoutGlobalScopes()
+                    ->where('type', GamConnectionType::HorusGam->value)
+                    ->where('id', '!=', $connection->id)
+                    ->update(['is_primary' => false]);
             }
 
             $connection->update([
@@ -139,7 +142,10 @@ final class GamConnectionService
         }
 
         return DB::transaction(function () use ($connection, $actor): GamConnection {
-            GamConnection::withoutGlobalScopes()->where('type', GamConnectionType::HorusGam)->whereKeyNot($connection->id)->update(['is_primary' => false]);
+            GamConnection::withoutGlobalScopes()
+                ->where('type', GamConnectionType::HorusGam->value)
+                ->where('id', '!=', $connection->id)
+                ->update(['is_primary' => false]);
             $connection->update(['is_primary' => true, 'is_enabled' => true, 'updated_by' => $actor->id]);
             $this->audit->record('gam.connection.primary_selected', $connection->organization_id, $actor, $connection, newValues: ['is_primary' => true]);
 
