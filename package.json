@@ -3,7 +3,9 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build",
+        "build": "npm run build:loader && vite build",
+        "build:loader": "node scripts/build-loader.mjs",
+        "test:browser": "node --test tests/Browser/*.test.js",
         "dev": "vite"
     },
     "devDependencies": {
