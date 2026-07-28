@@ -61,6 +61,7 @@ final class SiteConfigurationBuilder
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
                 'version' => $loader?->version ?? '1.0.0',
+                'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
             'gpt' => [
@@ -83,14 +84,13 @@ final class SiteConfigurationBuilder
         $sizes = $placement->sizes->where('is_active', true);
         $fixed = $sizes->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
             ->map(fn ($size) => [(int) $size->width, (int) $size->height])->unique()->values()->all();
-        $fluid = $sizes->contains(fn ($size) => $size->size_type === 'FLUID');
-        if ($fluid) {
+        if ($sizes->contains(fn ($size) => $size->size_type === 'FLUID')) {
             $fixed[] = 'fluid';
         }
 
         $mappings = $sizes
             ->filter(fn ($size) => $size->min_viewport_width > 0 || $size->device->value !== 'ALL')
-            ->groupBy(fn ($size) => $size->min_viewport_width.'x'.$size->min_viewport_height)
+            ->groupBy(fn ($size) => $size->min_viewport_width.'x'.$size->min_viewport_height.'|'.$size->device->value)
             ->map(function ($group): array {
                 $first = $group->first();
                 return [
@@ -151,6 +151,7 @@ final class SiteConfigurationBuilder
             ->merge($site->domains->pluck('domain'))
             ->map(fn ($domain) => strtolower(preg_replace('#^https?://#i', '', trim((string) $domain))))
             ->map(fn ($domain) => explode('/', $domain)[0])
+            ->map(fn ($domain) => explode(':', $domain)[0])
             ->filter()
             ->unique()
             ->values()
