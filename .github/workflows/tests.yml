@@ -53,10 +53,15 @@ jobs:
         run: npm audit --audit-level=moderate
       - name: Execute Horus Loader browser tests
         run: npm run test:browser
-      - name: Build production assets and minified loader
+      - name: Build production assets, custom Prebid, and minified loader
         run: npm run build
-      - name: Verify loader distributions
-        run: test -s public/assets/hm-loader.js && test -s public/assets/hm-loader.min.js
+      - name: Verify browser distributions
+        run: |
+          test -s public/assets/hm-loader.js
+          test -s public/assets/hm-loader.min.js
+          test -s public/assets/prebid/horus-prebid.js
+          test -s public/assets/prebid/horus-prebid.min.js
+          test -s public/assets/prebid/horus-prebid.sha256
 
   mysql:
     runs-on: ubuntu-latest
@@ -112,6 +117,8 @@ jobs:
           cache: npm
       - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
       - run: npm ci && npm run test:browser && npm run build
+      - name: Verify compiled Prebid release files
+        run: test -s public/assets/prebid/horus-prebid.min.js && test -s public/assets/prebid/horus-prebid.sha256
       - name: Create portable production release
         run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
       - uses: actions/upload-artifact@v4

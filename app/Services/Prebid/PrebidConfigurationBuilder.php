@@ -1,0 +1,151 @@
+<?php
+
+namespace App\Services\Prebid;
+
+use App\Enums\PlacementStatus;
+use App\Enums\PlacementType;
+use App\Models\BidderSiteMapping;
+use App\Models\GamConnection;
+use App\Models\Placement;
+use App\Models\PrebidPriceBucket;
+use App\Models\Site;
+
+final class PrebidConfigurationBuilder
+{
+    public function __construct(private readonly PrebidManager $manager)
+    {
+    }
+
+    public function build(Site $site, GamConnection $connection): array
+    {
+        $settings = $this->manager->settingsFor($connection);
+        $settings->loadMissing('build');
+        $build = $settings->build;
+        $site->loadMissing(['placements.sizes']);
+
+        $siteMappings = BidderSiteMapping::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('enabled', true)
+            ->with([
+                'account.bidder.adapter',
+                'placementMappings' => fn ($query) => $query->where('enabled', true)->orderBy('sequence'),
+            ])
+            ->orderBy('sequence')
+            ->get();
+
+        $adUnits = $site->placements
+            ->filter(fn (Placement $placement) => $placement->status === PlacementStatus::Active)
+            ->map(function (Placement $placement) use ($siteMappings): ?array {
+                $bids = $siteMappings->map(function ($siteMapping) use ($placement): ?array {
+                    $placementMapping = $siteMapping->placementMappings->firstWhere('placement_id', $placement->id);
+                    if (! $placementMapping || ! $siteMapping->account?->enabled || ! $siteMapping->account?->bidder?->enabled || ! $siteMapping->account?->bidder?->adapter?->enabled) {
+                        return null;
+                    }
+
+                    $bidder = $siteMapping->account->bidder;
+                    $adapter = $bidder->adapter;
+                    $params = array_merge(
+                        $bidder->default_public_parameters ?? [],
+                        $siteMapping->account->public_parameters ?? [],
+                        $siteMapping->public_parameters ?? [],
+                        $placementMapping->public_parameters ?? [],
+                    );
+                    if ($adapter->publisher_parameter && filled($siteMapping->account->publisher_id)) {
+                        $params[$adapter->publisher_parameter] = (string) $siteMapping->account->publisher_id;
+                    }
+                    if ($adapter->placement_parameter && filled($placementMapping->placement_id_value)) {
+                        $params[$adapter->placement_parameter] = (string) $placementMapping->placement_id_value;
+                    }
+                    $missing = collect($adapter->required_public_parameters ?? [])
+                        ->filter(fn ($key) => ! array_key_exists($key, $params) || $params[$key] === '')
+                        ->values();
+                    if ($missing->isNotEmpty()) {
+                        return null;
+                    }
+
+                    return ['bidder' => $bidder->code, 'params' => $params];
+                })->filter()->values()->all();
+
+                if ($bids === []) {
+                    return null;
+                }
+
+                return [
+                    'code' => $placement->code,
+                    'mediaTypes' => $this->mediaTypes($placement),
+                    'bids' => $bids,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        $enabled = (bool) $site->prebid_enabled
+            && (bool) $settings->enabled
+            && $build !== null
+            && $adUnits !== [];
+
+        return [
+            'enabled' => $enabled,
+            'build' => [
+                'version' => $build?->version,
+                'url' => $build ? config('prebid.cdn_url').'/'.ltrim($build->minified_path, '/') : null,
+                'checksum' => $build?->checksum,
+            ],
+            'auction' => [
+                'timeoutMs' => (int) $settings->auction_timeout_ms,
+                'priceGranularity' => $this->priceGranularity($connection, $settings->price_granularity),
+                'currency' => strtoupper((string) $settings->currency),
+                'bidderSequence' => $settings->bidder_sequence,
+                'consent' => $settings->consent_behavior ?? [],
+            ],
+            'delivery' => [
+                'lazyLoading' => $settings->lazy_loading ?? ['enabled' => true],
+                'refreshBehavior' => $settings->refresh_behavior ?? ['enabled' => true, 'minimumIntervalSeconds' => 30],
+                'bidderTimeoutReporting' => (bool) $settings->bidder_timeout_reporting,
+                'gamFallback' => (bool) $settings->gam_fallback,
+            ],
+            'adUnits' => $adUnits,
+        ];
+    }
+
+    private function mediaTypes(Placement $placement): array
+    {
+        $sizes = $placement->sizes
+            ->where('is_active', true)
+            ->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
+            ->map(fn ($size) => [(int) $size->width, (int) $size->height])
+            ->unique()
+            ->values()
+            ->all();
+
+        return match ($placement->type) {
+            PlacementType::Video, PlacementType::Rewarded => ['video' => ['playerSize' => $sizes, 'context' => 'outstream']],
+            PlacementType::Native => ['native' => []],
+            default => ['banner' => ['sizes' => $sizes]],
+        };
+    }
+
+    private function priceGranularity(GamConnection $connection, string $name): string|array
+    {
+        if ($name !== 'custom') {
+            return $name;
+        }
+
+        $buckets = PrebidPriceBucket::withoutGlobalScopes()
+            ->where('gam_connection_id', $connection->id)
+            ->where('enabled', true)
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn ($bucket) => [
+                'min' => (float) $bucket->minimum,
+                'max' => (float) $bucket->maximum,
+                'increment' => (float) $bucket->increment,
+                'precision' => (int) $bucket->precision,
+            ])
+            ->values()
+            ->all();
+
+        return ['buckets' => $buckets];
+    }
+}

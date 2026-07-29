@@ -12,11 +12,14 @@ use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
 use App\Services\Gam\GamConnectionResolver;
+use App\Services\Prebid\PrebidConfigurationBuilder;
 
 final class SiteConfigurationBuilder
 {
-    public function __construct(private readonly GamConnectionResolver $connections)
-    {
+    public function __construct(
+        private readonly GamConnectionResolver $connections,
+        private readonly PrebidConfigurationBuilder $prebid,
+    ) {
     }
 
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
@@ -38,6 +41,9 @@ final class SiteConfigurationBuilder
         $active = $config->status === 'ACTIVE'
             && ! $config->immediate_pause
             && $site->serving_mode !== ServingMode::Paused;
+        $prebid = $connection
+            ? $this->prebid->build($site, $connection)
+            : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -55,12 +61,13 @@ final class SiteConfigurationBuilder
             'environment' => $environment->value,
             'status' => $active ? 'active' : 'paused',
             'immediatePause' => (bool) $config->immediate_pause,
-            'prebidEnabled' => (bool) $site->prebid_enabled,
+            'prebidEnabled' => (bool) $prebid['enabled'],
+            'prebid' => $prebid,
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
-                'version' => $loader?->version ?? '1.0.0',
+                'version' => $loader?->version ?? '1.1.0',
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
@@ -93,6 +100,7 @@ final class SiteConfigurationBuilder
             ->groupBy(fn ($size) => $size->min_viewport_width.'x'.$size->min_viewport_height.'|'.$size->device->value)
             ->map(function ($group): array {
                 $first = $group->first();
+
                 return [
                     'viewport' => [(int) $first->min_viewport_width, (int) $first->min_viewport_height],
                     'device' => $first->device->value,

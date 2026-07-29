@@ -1,19 +1,22 @@
 (function (window, document) {
     'use strict';
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.1.0';
     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
     var state = window[STATE_KEY] = window[STATE_KEY] || {
         config: null,
         gptPromise: null,
+        prebidPromise: null,
         servicesEnabled: false,
+        initialLoadDisabled: false,
         slots: {},
         refreshTimers: {},
         observer: null,
         navigationPatched: false,
         scanTimer: null,
         script: null,
-        booting: null
+        booting: null,
+        prebidEventsInstalled: false
     };
 
     function log(config) {
@@ -96,27 +99,60 @@
         return window.googletag;
     }
 
-    function loadGpt(config) {
-        var googletag = ensureGoogletagQueue();
-        if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
-        if (state.gptPromise) return state.gptPromise;
+    function ensurePrebidQueue() {
+        window.pbjs = window.pbjs || {};
+        window.pbjs.que = window.pbjs.que || [];
+        return window.pbjs;
+    }
 
-        state.gptPromise = new Promise(function (resolve, reject) {
-            var existing = document.querySelector ? document.querySelector('script[data-hm-gpt="1"]') : null;
+    function loadExternalScript(selector, marker, url) {
+        return new Promise(function (resolve, reject) {
+            var existing = document.querySelector ? document.querySelector(selector) : null;
             if (existing) {
-                existing.addEventListener('load', function () { resolve(ensureGoogletagQueue()); }, { once: true });
+                existing.addEventListener('load', function () { resolve(); }, { once: true });
                 existing.addEventListener('error', reject, { once: true });
                 return;
             }
             var tag = document.createElement('script');
             tag.async = true;
-            tag.src = config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-            tag.setAttribute('data-hm-gpt', '1');
-            tag.onload = function () { resolve(ensureGoogletagQueue()); };
-            tag.onerror = function () { reject(new Error('GPT failed to load')); };
+            tag.src = url;
+            tag.setAttribute(marker, '1');
+            tag.onload = resolve;
+            tag.onerror = function () { reject(new Error(url + ' failed to load')); };
             (document.head || document.documentElement).appendChild(tag);
         });
+    }
+
+    function loadGpt(config) {
+        var googletag = ensureGoogletagQueue();
+        if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
+        if (state.gptPromise) return state.gptPromise;
+
+        state.gptPromise = loadExternalScript(
+            'script[data-hm-gpt="1"]',
+            'data-hm-gpt',
+            config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'
+        ).then(function () { return ensureGoogletagQueue(); });
         return state.gptPromise;
+    }
+
+    function loadPrebid(config) {
+        var selected = config.prebid || {};
+        if (!selected.enabled || !selected.build || !selected.build.url) return Promise.resolve(null);
+        var pbjs = ensurePrebidQueue();
+        if (typeof pbjs.requestBids === 'function') return Promise.resolve(pbjs);
+        if (state.prebidPromise) return state.prebidPromise;
+
+        state.prebidPromise = loadExternalScript(
+            'script[data-hm-prebid="1"]',
+            'data-hm-prebid',
+            selected.build.url
+        ).then(function () {
+            var loaded = ensurePrebidQueue();
+            if (typeof loaded.requestBids !== 'function') throw new Error('Prebid build did not initialize');
+            return loaded;
+        });
+        return state.prebidPromise;
     }
 
     function normalizeSizes(sizes) {
@@ -168,7 +204,9 @@
         return result;
     }
 
-    function lazyOptions(items) {
+    function lazyOptions(items, config) {
+        var globalSetting = config.prebid && config.prebid.delivery && config.prebid.delivery.lazyLoading;
+        if (globalSetting && globalSetting.enabled === false) return null;
         var enabled = items.map(function (item) { return item.placement.lazyLoad || {}; }).filter(function (item) { return item.enabled; });
         if (!enabled.length) return null;
         return {
@@ -176,6 +214,122 @@
             renderMarginPercent: Math.max.apply(Math, enabled.map(function (item) { return Number(item.renderMarginPercent || 0); })),
             mobileScaling: Math.max.apply(Math, enabled.map(function (item) { return Number(item.mobileScaling || 1); }))
         };
+    }
+
+    function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    function prebidAdUnits(config, entries) {
+        var templates = {};
+        ((config.prebid && config.prebid.adUnits) || []).forEach(function (adUnit) { templates[adUnit.code] = adUnit; });
+        return entries.map(function (entry) {
+            var template = templates[entry.placement.code];
+            if (!template) return null;
+            var adUnit = clone(template);
+            adUnit.code = entry.element.id;
+            return adUnit;
+        }).filter(Boolean);
+    }
+
+    function installPrebidEvents(config, pbjs) {
+        if (state.prebidEventsInstalled || !pbjs || !pbjs.onEvent) return;
+        state.prebidEventsInstalled = true;
+        if (config.prebid && config.prebid.delivery && config.prebid.delivery.bidderTimeoutReporting) {
+            pbjs.onEvent('bidTimeout', function (bidders) {
+                var diagnostics = window.__HM_DIAGNOSTICS__ = window.__HM_DIAGNOSTICS__ || {};
+                diagnostics.bidTimeouts = (diagnostics.bidTimeouts || 0) + (Array.isArray(bidders) ? bidders.length : 1);
+                log(config, 'Prebid bidder timeout', bidders);
+            });
+        }
+    }
+
+    function configurePrebid(config, pbjs) {
+        var auction = config.prebid && config.prebid.auction || {};
+        var prebidConfig = {
+            bidderSequence: auction.bidderSequence || 'fixed',
+            priceGranularity: auction.priceGranularity || 'medium'
+        };
+        if (auction.currency) prebidConfig.currency = { adServerCurrency: auction.currency };
+        if (auction.consent && Object.keys(auction.consent).length) prebidConfig.consentManagement = auction.consent;
+        if (pbjs.setConfig) pbjs.setConfig(prebidConfig);
+        installPrebidEvents(config, pbjs);
+    }
+
+    function hasBid(pbjs, codes) {
+        if (!pbjs || !pbjs.getBidResponsesForAdUnitCode) return false;
+        return codes.some(function (code) {
+            var response = pbjs.getBidResponsesForAdUnitCode(code);
+            return response && Array.isArray(response.bids) && response.bids.length > 0;
+        });
+    }
+
+    function requestGam(pubads, entries) {
+        if (!entries.length || !pubads || !pubads.refresh) return;
+        pubads.refresh(entries.map(function (entry) { return entry.slot; }));
+        entries.forEach(function (entry) { entry.element.setAttribute('data-hm-status', 'requested'); });
+    }
+
+    function requestEntries(config, googletag, pubads, entries) {
+        if (!entries.length) return Promise.resolve([]);
+        var prebid = config.prebid || {};
+        if (!prebid.enabled) {
+            requestGam(pubads, entries);
+            return Promise.resolve(entries);
+        }
+
+        var fallback = !prebid.delivery || prebid.delivery.gamFallback !== false;
+        var adUnits = prebidAdUnits(config, entries);
+        if (!adUnits.length) {
+            if (fallback) requestGam(pubads, entries);
+            return Promise.resolve(entries);
+        }
+
+        return loadPrebid(config).then(function (pbjs) {
+            return new Promise(function (resolve) {
+                var finished = false;
+                var timeout = Math.max(100, Number(prebid.auction && prebid.auction.timeoutMs || 1200));
+                function complete(timedOut) {
+                    if (finished) return;
+                    finished = true;
+                    try {
+                        var codes = adUnits.map(function (adUnit) { return adUnit.code; });
+                        if (pbjs.setTargetingForGPTAsync) pbjs.setTargetingForGPTAsync(codes);
+                        if (fallback || hasBid(pbjs, codes)) requestGam(pubads, entries);
+                        entries.forEach(function (entry) {
+                            entry.element.setAttribute('data-hm-prebid', timedOut ? 'timeout' : 'complete');
+                        });
+                    } catch (error) {
+                        log(config, 'Prebid targeting failed', error);
+                        if (fallback) requestGam(pubads, entries);
+                    }
+                    resolve(entries);
+                }
+
+                window.setTimeout(function () { complete(true); }, timeout + 100);
+                pbjs.que.push(function () {
+                    try {
+                        configurePrebid(config, pbjs);
+                        var codes = adUnits.map(function (adUnit) { return adUnit.code; });
+                        if (pbjs.removeAdUnit) pbjs.removeAdUnit(codes);
+                        if (pbjs.addAdUnits) pbjs.addAdUnits(adUnits);
+                        pbjs.requestBids({
+                            adUnitCodes: codes,
+                            timeout: timeout,
+                            bidsBackHandler: function () { complete(false); }
+                        });
+                    } catch (error) {
+                        log(config, 'Prebid auction failed', error);
+                        complete(false);
+                    }
+                });
+            });
+        }).catch(function (error) {
+            log(config, 'Prebid unavailable; continuing with GAM', error);
+            entries.forEach(function (entry) { entry.element.setAttribute('data-hm-prebid', 'failed'); });
+            if (fallback) requestGam(pubads, entries);
+            return entries;
+        });
     }
 
     function defineItems(config, items) {
@@ -186,9 +340,13 @@
                     try {
                         var pubads = googletag.pubads();
                         applyTargeting(pubads, config.pageTargeting || {});
-                        var lazy = lazyOptions(items);
+                        var lazy = lazyOptions(items, config);
                         if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
                         if (config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
+                        if (!state.initialLoadDisabled && pubads.disableInitialLoad) {
+                            pubads.disableInitialLoad();
+                            state.initialLoadDisabled = true;
+                        }
 
                         var defined = [];
                         items.forEach(function (item) {
@@ -222,11 +380,13 @@
                         defined.forEach(function (entry) {
                             if (entry.placement.outOfPageFormat) googletag.display(entry.slot);
                             else googletag.display(entry.element.id);
-                            entry.element.setAttribute('data-hm-status', 'requested');
-                            scheduleRefresh(googletag, pubads, entry);
                         });
-                        diagnostics(config, defined);
-                        resolve(defined);
+
+                        requestEntries(config, googletag, pubads, defined).then(function () {
+                            defined.forEach(function (entry) { scheduleRefresh(config, googletag, pubads, entry); });
+                            diagnostics(config, defined);
+                            resolve(defined);
+                        });
                     } catch (error) {
                         log(config, 'Slot definition failed', error);
                         resolve([]);
@@ -239,10 +399,13 @@
         });
     }
 
-    function scheduleRefresh(googletag, pubads, entry) {
+    function scheduleRefresh(config, googletag, pubads, entry) {
         var refresh = entry.placement.refresh || {};
+        var prebidRefresh = config.prebid && config.prebid.delivery && config.prebid.delivery.refreshBehavior || {};
+        if (prebidRefresh.enabled === false) return;
+        var minimum = Math.max(30, Number(prebidRefresh.minimumIntervalSeconds || 30));
         var interval = Number(refresh.intervalSeconds || 0);
-        if (!refresh.enabled || interval < 30 || !pubads.refresh) return;
+        if (!refresh.enabled || interval < minimum) return;
         var limit = Number(refresh.limit || 0);
         var key = entry.element.id;
         if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
@@ -254,21 +417,23 @@
                 return;
             }
             entry.refreshCount += 1;
-            googletag.cmd.push(function () { pubads.refresh([entry.slot]); });
+            googletag.cmd.push(function () { requestEntries(config, googletag, pubads, [entry]); });
         }, interval * 1000);
     }
 
     function diagnostics(config, defined) {
         if (!config.debug) return;
-        window.__HM_DIAGNOSTICS__ = {
+        window.__HM_DIAGNOSTICS__ = Object.assign(window.__HM_DIAGNOSTICS__ || {}, {
             loaderVersion: VERSION,
             configVersion: config.configVersion,
             siteKey: config.siteKey,
             hostname: currentHostname(),
             servingMode: config.servingMode,
             gamNetworkCode: config.gamNetworkCode,
+            prebidEnabled: Boolean(config.prebid && config.prebid.enabled),
+            prebidBuild: config.prebid && config.prebid.build && config.prebid.build.version,
             definedPlacements: defined.map(function (entry) { return entry.placement.code; })
-        };
+        });
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
     }
 
@@ -351,7 +516,16 @@
         getConfig: function () { return state.config; },
         _resetForTests: function () {
             Object.keys(state.refreshTimers).forEach(function (key) { window.clearInterval(state.refreshTimers[key]); });
-            state.config = null; state.gptPromise = null; state.servicesEnabled = false; state.slots = {}; state.refreshTimers = {}; state.booting = null; state.script = null;
+            state.config = null;
+            state.gptPromise = null;
+            state.prebidPromise = null;
+            state.servicesEnabled = false;
+            state.initialLoadDisabled = false;
+            state.slots = {};
+            state.refreshTimers = {};
+            state.booting = null;
+            state.script = null;
+            state.prebidEventsInstalled = false;
         }
     };
 
