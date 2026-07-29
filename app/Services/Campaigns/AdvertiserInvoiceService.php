@@ -37,6 +37,8 @@ final class AdvertiserInvoiceService
             'subtotal_minor' => $subtotal,
             'tax_minor' => $tax,
             'total_minor' => $subtotal + $tax,
+            'amount_paid_minor' => 0,
+            'balance_due_minor' => $subtotal + $tax,
             'issued_on' => $issued,
             'due_on' => now()->addDays($terms)->toDateString(),
             'line_items' => [[

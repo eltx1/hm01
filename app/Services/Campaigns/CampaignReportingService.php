@@ -9,6 +9,8 @@ use App\Models\CampaignDeliveryLog;
 use App\Models\CampaignNetworkInstance;
 use App\Models\GamRemoteObject;
 use App\Services\Gam\GamConnectorManager;
+use App\Services\Reporting\AdvertiserFinancialService;
+use App\Services\Reporting\ReportingBridge;
 use RuntimeException;
 use Throwable;
 
@@ -17,6 +19,8 @@ final class CampaignReportingService
     public function __construct(
         private readonly GamConnectorManager $connectors,
         private readonly CampaignNetworkPlanner $planner,
+        private readonly ReportingBridge $reportingBridge,
+        private readonly AdvertiserFinancialService $advertiserFinancials,
     ) {
     }
 
@@ -73,6 +77,8 @@ final class CampaignReportingService
             $count++;
         }
         $this->refreshGoals($instance->campaign);
+        $this->reportingBridge->recordCampaignRows($instance, $rows);
+        $instance->campaign->invoices()->get()->each(fn ($invoice) => $this->advertiserFinancials->synchronizeInvoice($invoice));
         return $count;
     }
 
