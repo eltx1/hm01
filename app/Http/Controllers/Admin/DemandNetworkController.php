@@ -1,0 +1,395 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Enums\ConfigEnvironment;
+use App\Enums\DemandAccountScope;
+use App\Enums\DemandApprovalStatus;
+use App\Enums\DemandIntegrationMode;
+use App\Enums\OrganizationType;
+use App\Http\Controllers\Controller;
+use App\Models\DemandAccount;
+use App\Models\DemandNetwork;
+use App\Models\DemandPlacement;
+use App\Models\DemandSite;
+use App\Models\Organization;
+use App\Models\Placement;
+use App\Models\Publisher;
+use App\Models\Site;
+use App\Services\Demand\DemandAccountService;
+use App\Services\Demand\DemandGamDeploymentService;
+use App\Services\Demand\DemandReportService;
+use App\Services\Inventory\SiteConfigPublisher;
+use Carbon\CarbonImmutable;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Illuminate\View\View;
+use JsonException;
+
+class DemandNetworkController extends Controller
+{
+    public function index(DemandReportService $reports): View
+    {
+        $accounts = DemandAccount::withoutGlobalScopes()
+            ->with(['network', 'publisher', 'sites.site', 'credentials'])
+            ->latest()
+            ->paginate(30);
+
+        return view('admin.demand.index', [
+            'networks' => DemandNetwork::query()->withCount('accounts')->orderBy('name')->get(),
+            'accounts' => $accounts,
+            'publishers' => Publisher::withoutGlobalScopes()->with('organization')->orderBy('display_name')->get(),
+            'partners' => Organization::withoutGlobalScopes()->where('type', OrganizationType::Partner->value)->orderBy('name')->get(),
+            'scopes' => DemandAccountScope::cases(),
+            'modes' => DemandIntegrationMode::cases(),
+            'statuses' => DemandApprovalStatus::cases(),
+            'summaries' => $accounts->getCollection()->mapWithKeys(fn ($account) => [$account->id => $reports->summary($account)]),
+        ]);
+    }
+
+    public function site(Site $site, DemandGamDeploymentService $gam): View
+    {
+        $site->load(['publisher', 'placements.adUnit', 'placements.sizes']);
+        $mappings = DemandSite::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->with(['account.network', 'placements.placement', 'placements.widgets', 'account.adsTxtRecords'])
+            ->get();
+
+        $plans = [];
+        foreach ($mappings as $mapping) {
+            try {
+                $plans[$mapping->id] = $gam->preview($mapping);
+            } catch (\Throwable $exception) {
+                $plans[$mapping->id] = ['issues' => [$exception->getMessage()], 'estimatedObjects' => 0, 'pendingObjects' => 0];
+            }
+        }
+
+        return view('admin.demand.site', [
+            'site' => $site,
+            'mappings' => $mappings,
+            'accounts' => DemandAccount::withoutGlobalScopes()
+                ->with('network')
+                ->where('is_enabled', true)
+                ->orderBy('fallback_priority')
+                ->get(),
+            'modes' => DemandIntegrationMode::cases(),
+            'statuses' => DemandApprovalStatus::cases(),
+            'plans' => $plans,
+        ]);
+    }
+
+    public function toggleSiteNative(Request $request, Site $site, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $site->update(['native_demand_enabled' => (bool) $data['enabled']]);
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', $site->native_demand_enabled ? 'Native demand enabled for this website.' : 'Native demand disabled and removed from the current configuration.');
+    }
+
+    public function storeAccount(Request $request, DemandAccountService $service): RedirectResponse
+    {
+        $data = $request->validate([
+            'demand_network_id' => ['required', 'ulid', 'exists:demand_networks,id'],
+            'organization_id' => ['nullable', 'ulid', 'exists:organizations,id'],
+            'publisher_id' => ['nullable', 'ulid', 'exists:publishers,id'],
+            'partner_organization_id' => ['nullable', 'ulid', 'exists:organizations,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'scope' => ['required', Rule::enum(DemandAccountScope::class)],
+            'integration_mode' => ['required', Rule::enum(DemandIntegrationMode::class)],
+            'approval_status' => ['nullable', Rule::enum(DemandApprovalStatus::class)],
+            'is_enabled' => ['sometimes', 'boolean'],
+            'is_default' => ['sometimes', 'boolean'],
+            'revenue_share_percent' => ['required', 'numeric', 'between:0,100'],
+            'fallback_priority' => ['required', 'integer', 'between:0,10000'],
+            'account_identifier' => ['nullable', 'string', 'max:255'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
+        unset($data['configuration_json']);
+
+        $account = $service->create($data, $request->user());
+
+        return redirect()->route('admin.demand.index')->with('status', "Demand account {$account->name} created.");
+    }
+
+    public function updateAccount(Request $request, DemandAccount $demandAccount, DemandAccountService $service): RedirectResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'scope' => ['required', Rule::enum(DemandAccountScope::class)],
+            'integration_mode' => ['required', Rule::enum(DemandIntegrationMode::class)],
+            'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
+            'is_enabled' => ['required', 'boolean'],
+            'is_default' => ['required', 'boolean'],
+            'revenue_share_percent' => ['required', 'numeric', 'between:0,100'],
+            'fallback_priority' => ['required', 'integer', 'between:0,10000'],
+            'account_identifier' => ['nullable', 'string', 'max:255'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
+        unset($data['configuration_json']);
+        $service->update($demandAccount, $data, $request->user());
+        $this->publishAccountSites($demandAccount, $request, app(SiteConfigPublisher::class));
+
+        return back()->with('status', 'Demand account updated and affected static configurations published.');
+    }
+
+    public function storeCredential(Request $request, DemandAccount $demandAccount, DemandAccountService $service): RedirectResponse
+    {
+        $data = $request->validate([
+            'credential_key' => ['required', 'alpha_dash', 'max:80'],
+            'reference' => ['required', 'string', 'max:1000'],
+            'hint' => ['nullable', 'string', 'max:255'],
+            'capability' => ['nullable', 'string', 'max:32'],
+            'expires_at' => ['nullable', 'date'],
+        ]);
+        $service->upsertCredential($demandAccount, $data, $request->user());
+
+        return back()->with('status', 'Encrypted credential reference saved.');
+    }
+
+    public function testAccount(Request $request, DemandAccount $demandAccount, DemandAccountService $service): RedirectResponse
+    {
+        $result = $service->test($demandAccount, $request->user(), $request->boolean('dry_run'));
+
+        return back()->with($result->success ? 'status' : 'error', $result->success ? 'Demand account test succeeded.' : $result->errorMessage);
+    }
+
+    public function reviewAccount(
+        Request $request,
+        DemandAccount $demandAccount,
+        DemandAccountService $service,
+        SiteConfigPublisher $publisher,
+    ): RedirectResponse {
+        $data = $request->validate([
+            'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
+            'reason' => ['nullable', 'string', 'max:10000'],
+        ]);
+        $service->reviewAccount($demandAccount, DemandApprovalStatus::from($data['approval_status']), $request->user(), $data['reason'] ?? null);
+        $this->publishAccountSites($demandAccount, $request, $publisher);
+
+        return back()->with('status', 'Demand account approval status updated and affected configurations published.');
+    }
+
+    public function toggleNetwork(Request $request, DemandNetwork $demandNetwork, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate(['is_enabled' => ['required', 'boolean']]);
+        $demandNetwork->update(['is_enabled' => (bool) $data['is_enabled']]);
+
+        $sites = Site::withoutGlobalScopes()
+            ->whereHas('demandSites.account', fn ($query) => $query->where('demand_network_id', $demandNetwork->id))
+            ->get();
+        foreach ($sites as $site) {
+            $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        }
+
+        return back()->with('status', 'Connector status updated and future configurations republished.');
+    }
+
+    public function assignSite(Request $request, Site $site, DemandAccount $demandAccount, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $this->siteData($request);
+        $service->assignSite($demandAccount, $site, $data, $request->user());
+        $site->update(['native_demand_enabled' => true]);
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Demand account assigned to website and configuration published.');
+    }
+
+    public function updateSite(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $data = $this->siteData($request);
+        $demandSite->update($data + ['updated_by' => $request->user()->id]);
+        $service->reviewSite($demandSite, DemandApprovalStatus::from($data['approval_status']), $request->user());
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Website demand mapping updated and configuration published.');
+    }
+
+    public function syncSite(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $result = $service->syncSite($demandSite, $request->user(), $request->boolean('dry_run', true));
+
+        return back()->with($result->success ? 'status' : 'error', $result->success ? 'Website mapping synchronized.' : $result->errorMessage);
+    }
+
+    public function refreshSiteStatus(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $result = $service->refreshSiteStatus($demandSite, $request->user());
+
+        return back()->with($result->success ? 'status' : 'error', $result->success ? 'Provider website status synchronized.' : $result->errorMessage);
+    }
+
+    public function syncAdsTxt(Request $request, Site $site, DemandSite $demandSite, DemandReportService $reports): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $count = $reports->syncAdsTxt($demandSite->account, $demandSite, $request->user());
+
+        return back()->with('status', "{$count} ads.txt record(s) synchronized.");
+    }
+
+    public function assignPlacement(Request $request, Site $site, DemandSite $demandSite, Placement $placement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id && $placement->site_id === $site->id, 404);
+        $service->assignPlacement($demandSite, $placement, $this->placementData($request), $request->user());
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Placement mapping saved and configuration published.');
+    }
+
+    public function updatePlacement(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
+        $data = $this->placementData($request);
+        $demandPlacement->update($data + ['updated_by' => $request->user()->id]);
+        $service->reviewPlacement($demandPlacement, DemandApprovalStatus::from($data['approval_status']), $request->user());
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Demand placement updated and configuration published.');
+    }
+
+    public function storeWidget(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'remote_widget_id' => ['nullable', 'string', 'max:128'],
+            'widget_code' => ['nullable', 'string', 'max:255'],
+            'integration_mode' => ['nullable', Rule::enum(DemandIntegrationMode::class)],
+            'direct_tag_template' => ['nullable', 'string', 'max:100000'],
+            'gam_creative_template' => ['nullable', 'string', 'max:100000'],
+            'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
+            'is_enabled' => ['required', 'boolean'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
+        unset($data['configuration_json']);
+        $service->upsertWidget($demandPlacement, $data, $request->user());
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Demand widget saved and configuration published.');
+    }
+
+    public function syncPlacement(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service): RedirectResponse
+    {
+        abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
+        $result = $service->syncPlacement($demandPlacement, $request->user(), $request->boolean('dry_run', true));
+
+        return back()->with($result->success ? 'status' : 'error', $result->success ? 'Demand placement synchronized.' : $result->errorMessage);
+    }
+
+    public function placementStatus(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, DemandGamDeploymentService $gam, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $mode = $demandPlacement->integration_mode
+            ?? $demandPlacement->demandSite->integration_mode
+            ?? $demandPlacement->demandSite->account->integration_mode;
+
+        if (in_array($mode, [DemandIntegrationMode::GamThirdPartyCreative, DemandIntegrationMode::GamLineItem], true)) {
+            $data['enabled'] ? $gam->resume($demandPlacement, $request->user()) : $gam->pause($demandPlacement, $request->user());
+        } else {
+            $result = $service->setPlacementEnabled($demandPlacement, (bool) $data['enabled'], $request->user());
+            if (! $result->success) {
+                return back()->with('error', $result->errorMessage);
+            }
+        }
+
+        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+
+        return back()->with('status', 'Placement delivery status synchronized and configuration published.');
+    }
+
+    public function deployGam(Request $request, Site $site, DemandSite $demandSite, DemandGamDeploymentService $gam): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $data = $request->validate([
+            'dry_run' => ['required', 'boolean'],
+            'confirm_external_writes' => ['nullable', 'accepted'],
+        ]);
+        $result = $gam->deploy($demandSite, $request->user(), (bool) $data['dry_run'], $request->boolean('confirm_external_writes'));
+
+        return back()->with($result['success'] ? 'status' : 'error', $result['success'] ? 'Native GAM deployment completed.' : ($result['error'] ?? implode(' ', $result['plan']['issues'] ?? [])));
+    }
+
+    public function runApiReport(Request $request, DemandAccount $demandAccount, DemandReportService $reports): RedirectResponse
+    {
+        $data = $request->validate(['from' => ['required', 'date'], 'to' => ['required', 'date', 'after_or_equal:from']]);
+        $import = $reports->runApi($demandAccount, CarbonImmutable::parse($data['from']), CarbonImmutable::parse($data['to']), $request->user());
+
+        return back()->with($import->status->value === 'COMPLETED' ? 'status' : 'error', $import->status->value === 'COMPLETED' ? 'API report imported.' : $import->error_message);
+    }
+
+    public function importCsv(Request $request, DemandAccount $demandAccount, DemandReportService $reports): RedirectResponse
+    {
+        $data = $request->validate([
+            'report' => ['required', 'file', 'mimes:csv,txt'],
+            'from' => ['required', 'date'],
+            'to' => ['required', 'date', 'after_or_equal:from'],
+        ]);
+        $import = $reports->importCsv($demandAccount, $data['report'], CarbonImmutable::parse($data['from']), CarbonImmutable::parse($data['to']), $request->user());
+
+        return back()->with('status', "{$import->row_count} aggregated report row(s) imported.");
+    }
+
+    private function siteData(Request $request): array
+    {
+        $data = $request->validate([
+            'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
+            'is_enabled' => ['required', 'boolean'],
+            'is_default' => ['required', 'boolean'],
+            'integration_mode' => ['nullable', Rule::enum(DemandIntegrationMode::class)],
+            'revenue_share_percent' => ['nullable', 'numeric', 'between:0,100'],
+            'fallback_priority' => ['nullable', 'integer', 'between:0,10000'],
+            'remote_site_id' => ['nullable', 'string', 'max:128'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
+        unset($data['configuration_json']);
+
+        return $data;
+    }
+
+    private function placementData(Request $request): array
+    {
+        $data = $request->validate([
+            'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
+            'is_enabled' => ['required', 'boolean'],
+            'integration_mode' => ['nullable', Rule::enum(DemandIntegrationMode::class)],
+            'fallback_priority' => ['nullable', 'integer', 'between:0,10000'],
+            'remote_placement_id' => ['nullable', 'string', 'max:128'],
+            'placement_code' => ['nullable', 'string', 'max:255'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
+        unset($data['configuration_json']);
+
+        return $data;
+    }
+
+    private function json(?string $json): array
+    {
+        if ($json === null || trim($json) === '') {
+            return [];
+        }
+
+        try {
+            return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw ValidationException::withMessages(['configuration_json' => $exception->getMessage()]);
+        }
+    }
+
+    private function publishAccountSites(DemandAccount $account, Request $request, SiteConfigPublisher $publisher): void
+    {
+        $account->sites()->with('site')->get()->each(
+            fn ($mapping) => $publisher->publish($mapping->site, ConfigEnvironment::Production, $request->user())
+        );
+    }
+}

@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var VERSION = '1.1.0';
+    var VERSION = '1.2.0';
     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
     var state = window[STATE_KEY] = window[STATE_KEY] || {
         config: null,
@@ -16,7 +16,10 @@
         scanTimer: null,
         script: null,
         booting: null,
-        prebidEventsInstalled: false
+        prebidEventsInstalled: false,
+        gamFallbackInstalled: false,
+        nativeAttempts: {},
+        nativeRendered: {}
     };
 
     function log(config) {
@@ -109,6 +112,10 @@
         return new Promise(function (resolve, reject) {
             var existing = document.querySelector ? document.querySelector(selector) : null;
             if (existing) {
+                if (existing.getAttribute && existing.getAttribute('data-hm-loaded') === '1') {
+                    resolve();
+                    return;
+                }
                 existing.addEventListener('load', function () { resolve(); }, { once: true });
                 existing.addEventListener('error', reject, { once: true });
                 return;
@@ -117,7 +124,10 @@
             tag.async = true;
             tag.src = url;
             tag.setAttribute(marker, '1');
-            tag.onload = resolve;
+            tag.onload = function () {
+                tag.setAttribute('data-hm-loaded', '1');
+                resolve();
+            };
             tag.onerror = function () { reject(new Error(url + ' failed to load')); };
             (document.head || document.documentElement).appendChild(tag);
         });
@@ -189,17 +199,33 @@
         return element.id;
     }
 
+    function nativeDefinition(config, code) {
+        var native = config.nativeDemand || {};
+        return native.enabled && native.placements ? native.placements[code] || null : null;
+    }
+
+    function nodeList(selector) {
+        return document.querySelectorAll ? document.querySelectorAll(selector) : [];
+    }
+
     function eligibleElements(config) {
-        var nodes = document.querySelectorAll ? document.querySelectorAll('.hm-ad[data-placement]') : [];
+        var nodes = [];
+        Array.prototype.forEach.call(nodeList('.hm-ad[data-placement]'), function (node) { nodes.push(node); });
+        Array.prototype.forEach.call(nodeList('.hm-native[data-placement]'), function (node) {
+            if (nodes.indexOf(node) === -1) nodes.push(node);
+        });
         var placements = {};
         (config.placements || []).forEach(function (placement) { placements[placement.code] = placement; });
         var result = [];
-        Array.prototype.forEach.call(nodes, function (element) {
+        nodes.forEach(function (element) {
             var code = element.getAttribute('data-placement');
             var placement = placements[code];
-            if (!placement || !placement.enabled || placement.status !== 'active' || !placement.adUnitPath) return;
+            var native = nativeDefinition(config, code);
+            var hasNative = native && native.enabled && ((native.candidates || []).length || native.house);
+            if (!placement || !placement.enabled || placement.status !== 'active') return;
+            if (!placement.adUnitPath && !hasNative) return;
             if (element.getAttribute('data-hm-defined') === '1') return;
-            result.push({ element: element, placement: placement });
+            result.push({ element: element, placement: placement, native: native });
         });
         return result;
     }
@@ -332,24 +358,184 @@
         });
     }
 
+    function candidateRank(config, candidate) {
+        var fallback = config.nativeDemand && config.nativeDemand.fallbackOrder || [];
+        var index = fallback.indexOf(candidate.network);
+        return Number(candidate.priority || 1000) * 100 + (index === -1 ? 99 : index);
+    }
+
+    function directCandidates(config, entry) {
+        var candidates = entry.native && Array.isArray(entry.native.candidates) ? entry.native.candidates.slice() : [];
+        return candidates.filter(function (candidate) {
+            return candidate && !candidate.gamManaged && candidate.tag && candidate.tag.scriptUrl;
+        }).sort(function (left, right) {
+            return candidateRank(config, left) - candidateRank(config, right);
+        });
+    }
+
+    function setCandidateAttributes(script, attributes) {
+        if (!attributes) return;
+        Object.keys(attributes).forEach(function (key) {
+            if (/^[A-Za-z_:][-A-Za-z0-9_:.]*$/.test(key)) script.setAttribute(key, String(attributes[key]));
+        });
+    }
+
+    function nativeContainer(entry, candidate) {
+        var tag = candidate.tag || {};
+        var container = document.createElement('div');
+        container.id = String(tag.containerId || (entry.element.id + '-native')).replace(/[^A-Za-z0-9_:-]/g, '-');
+        container.className = String(tag.containerClass || 'hm-native-container');
+        container.setAttribute('data-hm-native-network', String(candidate.network || 'CUSTOM'));
+        if (entry.element.appendChild) entry.element.appendChild(container);
+        return container;
+    }
+
+    function nativeRendered(container, tag) {
+        if (tag.successSelector && document.querySelector) {
+            try {
+                if (document.querySelector(tag.successSelector)) return true;
+            } catch (error) {
+                return false;
+            }
+        }
+        if (tag.assumeLoadedIsSuccess) return true;
+        if (container && container.childNodes && container.childNodes.length) return true;
+        return Boolean(container && typeof container.innerHTML === 'string' && container.innerHTML.replace(/\s/g, '') !== '');
+    }
+
+    function renderHouse(config, entry) {
+        var house = entry.native && entry.native.house;
+        if (!house || !house.html) {
+            entry.element.setAttribute('data-hm-native', 'exhausted');
+            entry.element.setAttribute('data-hm-status', 'empty');
+            return false;
+        }
+        if (typeof entry.element.innerHTML === 'string') entry.element.innerHTML = house.html;
+        entry.element.setAttribute('data-hm-native', 'HOUSE');
+        entry.element.setAttribute('data-hm-status', 'rendered');
+        state.nativeRendered[entry.element.id] = 'HOUSE';
+        log(config, 'Native fallback rendered house content', entry.placement.code);
+        return true;
+    }
+
+    function runNativeFallback(config, entry) {
+        if (!entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
+        var key = entry.element.id || ensureElementId(entry.element, config, entry.placement);
+        if (state.nativeRendered[key]) return Promise.resolve(true);
+        if (state.nativeAttempts[key]) return state.nativeAttempts[key];
+
+        var candidates = directCandidates(config, entry);
+        state.nativeAttempts[key] = new Promise(function (resolve) {
+            function tryCandidate(index) {
+                if (index >= candidates.length) {
+                    resolve(renderHouse(config, entry));
+                    return;
+                }
+
+                var candidate = candidates[index];
+                var tag = candidate.tag || {};
+                var container = nativeContainer(entry, candidate);
+                var script = document.createElement('script');
+                script.async = true;
+                script.src = tag.scriptUrl;
+                script.setAttribute('data-hm-native-script', String(candidate.network || 'CUSTOM'));
+                setCandidateAttributes(script, tag.attributes || {});
+                var settled = false;
+
+                function failed(reason) {
+                    if (settled) return;
+                    settled = true;
+                    entry.element.setAttribute('data-hm-native-last-error', String(reason || 'no-fill'));
+                    log(config, 'Native candidate failed', candidate.network, reason);
+                    tryCandidate(index + 1);
+                }
+
+                script.onerror = function () { failed('script-error'); };
+                script.onload = function () {
+                    var timeout = Math.max(0, Number(tag.renderTimeoutMs || 1500));
+                    window.setTimeout(function () {
+                        if (settled) return;
+                        if (!nativeRendered(container, tag)) {
+                            failed('no-render');
+                            return;
+                        }
+                        settled = true;
+                        state.nativeRendered[key] = candidate.network;
+                        entry.element.setAttribute('data-hm-native', String(candidate.network));
+                        entry.element.setAttribute('data-hm-status', 'rendered');
+                        log(config, 'Native candidate rendered', candidate.network, entry.placement.code);
+                        resolve(true);
+                    }, timeout);
+                };
+
+                try {
+                    (document.head || document.documentElement).appendChild(script);
+                } catch (error) {
+                    failed(error && error.message || 'injection-error');
+                }
+            }
+
+            tryCandidate(0);
+        }).finally(function () {
+            delete state.nativeAttempts[key];
+        });
+
+        return state.nativeAttempts[key];
+    }
+
+    function installGamEmptyFallback(config, pubads) {
+        if (state.gamFallbackInstalled || !pubads || !pubads.addEventListener) return;
+        state.gamFallbackInstalled = true;
+        pubads.addEventListener('slotRenderEnded', function (event) {
+            var entry = null;
+            Object.keys(state.slots).some(function (key) {
+                if (state.slots[key].slot === event.slot) {
+                    entry = state.slots[key];
+                    return true;
+                }
+                return false;
+            });
+            if (!entry) return;
+            if (event && event.isEmpty) {
+                entry.element.setAttribute('data-hm-gam', 'empty');
+                runNativeFallback(config, entry);
+            } else {
+                entry.element.setAttribute('data-hm-gam', 'rendered');
+                entry.element.setAttribute('data-hm-status', 'rendered');
+            }
+        });
+    }
+
     function defineItems(config, items) {
         if (!items.length) return Promise.resolve([]);
+        var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath; });
+        var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });
+
+        nativeOnly.forEach(function (item) {
+            ensureElementId(item.element, config, item.placement);
+            item.element.setAttribute('data-hm-defined', '1');
+            item.element.setAttribute('data-hm-status', 'fallback');
+        });
+        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }));
+        if (!gamItems.length) return nativePromise.then(function () { diagnostics(config, []); return nativeOnly; });
+
         return loadGpt(config).then(function (googletag) {
             return new Promise(function (resolve) {
                 googletag.cmd.push(function () {
                     try {
                         var pubads = googletag.pubads();
                         applyTargeting(pubads, config.pageTargeting || {});
-                        var lazy = lazyOptions(items, config);
+                        var lazy = lazyOptions(gamItems, config);
                         if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
                         if (config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
                         if (!state.initialLoadDisabled && pubads.disableInitialLoad) {
                             pubads.disableInitialLoad();
                             state.initialLoadDisabled = true;
                         }
+                        installGamEmptyFallback(config, pubads);
 
                         var defined = [];
-                        items.forEach(function (item) {
+                        gamItems.forEach(function (item) {
                             var placement = item.placement;
                             var element = item.element;
                             var elementId = ensureElementId(element, config, placement);
@@ -369,7 +555,7 @@
                             if (slot.addService) slot.addService(pubads);
                             element.setAttribute('data-hm-defined', '1');
                             element.setAttribute('data-hm-status', 'defined');
-                            state.slots[elementId] = { slot: slot, placement: placement, element: element, refreshCount: 0 };
+                            state.slots[elementId] = { slot: slot, placement: placement, element: element, native: item.native, refreshCount: 0 };
                             defined.push(state.slots[elementId]);
                         });
 
@@ -384,18 +570,24 @@
 
                         requestEntries(config, googletag, pubads, defined).then(function () {
                             defined.forEach(function (entry) { scheduleRefresh(config, googletag, pubads, entry); });
-                            diagnostics(config, defined);
-                            resolve(defined);
+                            nativePromise.then(function () {
+                                diagnostics(config, defined);
+                                resolve(defined.concat(nativeOnly));
+                            });
                         });
                     } catch (error) {
                         log(config, 'Slot definition failed', error);
-                        resolve([]);
+                        nativePromise.then(function () { resolve(nativeOnly); });
                     }
                 });
             });
         }).catch(function (error) {
-            log(config, 'GPT unavailable', error);
-            return [];
+            log(config, 'GPT unavailable; trying native demand', error);
+            return Promise.all(items.map(function (item) {
+                ensureElementId(item.element, config, item.placement);
+                item.element.setAttribute('data-hm-defined', '1');
+                return runNativeFallback(config, item);
+            })).then(function () { return items; });
         });
     }
 
@@ -432,6 +624,8 @@
             gamNetworkCode: config.gamNetworkCode,
             prebidEnabled: Boolean(config.prebid && config.prebid.enabled),
             prebidBuild: config.prebid && config.prebid.build && config.prebid.build.version,
+            nativeDemandEnabled: Boolean(config.nativeDemand && config.nativeDemand.enabled),
+            nativeRendered: Object.assign({}, state.nativeRendered),
             definedPlacements: defined.map(function (entry) { return entry.placement.code; })
         });
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
@@ -526,6 +720,9 @@
             state.booting = null;
             state.script = null;
             state.prebidEventsInstalled = false;
+            state.gamFallbackInstalled = false;
+            state.nativeAttempts = {};
+            state.nativeRendered = {};
         }
     };
 
