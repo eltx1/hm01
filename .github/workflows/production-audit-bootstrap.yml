@@ -1,0 +1,39 @@
+name: Production readiness source audit
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/production-readiness-release
+
+permissions:
+  contents: read
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build audit snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/horus-audit
+          find . -path './.git' -prune -o -type f -print | LC_ALL=C sort > /tmp/horus-audit/FILES.txt
+          find docs -type f -print 2>/dev/null | LC_ALL=C sort > /tmp/horus-audit/DOCS.txt || true
+          find database/migrations -type f -print 2>/dev/null | LC_ALL=C sort > /tmp/horus-audit/MIGRATIONS.txt || true
+          find app bootstrap config database resources routes tests -name '*.php' -print0 | xargs -0 -n1 php -l > /tmp/horus-audit/PHP_LINT.txt
+          zip -qr /tmp/horus-audit/repository-source.zip . -x '.git/*' 'vendor/*' 'node_modules/*' 'release/*'
+
+      - name: Upload complete source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: horus-production-audit-source
+          path: /tmp/horus-audit
+          retention-days: 3
