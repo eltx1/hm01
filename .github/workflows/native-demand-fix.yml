@@ -1,0 +1,73 @@
+name: Apply native demand test fixes
+
+on:
+  push:
+    branches:
+      - agent/fix-native-demand-complete
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: agent/fix-native-demand-complete
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Apply deterministic fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          report = Path('app/Services/Demand/DemandReportService.php')
+          text = report.read_text()
+          old = "            ->filter('is_array')"
+          new = "            ->filter(fn ($row) => is_array($row))"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one report filter occurrence, found {text.count(old)}')
+          report.write_text(text.replace(old, new))
+
+          deployment = Path('app/Services/Demand/DemandGamDeploymentService.php')
+          text = deployment.read_text()
+          old = "                    $mapping->delete();\n"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one destructive mapping deletion, found {text.count(old)}')
+          deployment.write_text(text.replace(old, ''))
+          PY
+
+          php -l app/Services/Demand/DemandReportService.php
+          php -l app/Services/Demand/DemandGamDeploymentService.php
+
+      - name: Run focused feature tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          composer install --prefer-dist --no-interaction --no-progress
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test tests/Feature/DemandNetworkSystemTest.php
+
+      - name: Commit fixes and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/native-demand-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix native demand reporting and replacement mappings"
+          git push origin HEAD:agent/fix-native-demand-complete
