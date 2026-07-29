@@ -93,6 +93,20 @@ The existing campaign invoice entity is extended rather than duplicated. It stor
 - Organization global scopes protect publisher and advertiser views; Horus administrators retain cross-organization reporting access.
 - External report reads are deterministic and idempotent. No reporting operation changes publisher installation code or the browser delivery path.
 
-## Validation expectations
+## Release validation
 
-A reporting release must pass duplicate and checksum import tests, closed-period immutability, rule specificity and versioning, financial formula and rounding, reconciliation warnings, statement threshold and carry-forward, full and partial payments, publisher and advertiser isolation, PHP 8.2/8.3/8.4, SQLite and MySQL migrations, and the existing Horus Loader browser and production asset checks.
+Run the focused financial and integration suite before the complete repository matrix:
+
+```bash
+php artisan migrate:fresh --seed --force
+php artisan route:list --path=reporting
+php artisan test \
+  tests/Unit/RevenueCalculationTest.php \
+  tests/Feature/ReportingFinancialSystemTest.php \
+  tests/Feature/DirectCampaignSystemTest.php \
+  tests/Feature/DemandNetworkSystemTest.php
+```
+
+The focused suite verifies duplicate and checksum protection, unified Horus GAM and alternative-source totals, revenue formulas and exact rounding, rule specificity and version history, reconciliation, closed-period immutability, statement thresholds and carry-forward, audited adjustments, private invoice upload, partial payment, advertiser balances, and publisher isolation.
+
+A reporting release must additionally pass PHP 8.2, PHP 8.3, PHP 8.4, SQLite and MySQL migrations, the complete backend suite, dependency audit, Horus Loader browser tests, production asset compilation, and browser distribution verification. Temporary transport or materialization files must never remain in the final tree.
