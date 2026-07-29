@@ -1,12 +1,9 @@
-name: Native demand bootstrap
+name: Complete native demand runtime
 
 on:
   push:
     branches:
-      - agent/native-alternative-demand-networks
-  pull_request:
-    branches:
-      - main
+      - agent/fix-native-demand-complete
 
 permissions:
   contents: write
@@ -16,13 +13,13 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout feature branch
+      - name: Checkout repair branch
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: agent/fix-native-demand-complete
 
-      - name: Materialize validated runtime files
+      - name: Materialize runtime files
         shell: bash
         run: |
           set -euo pipefail
@@ -30,32 +27,38 @@ jobs:
             local source="$1"
             local target="$2"
             mkdir -p "$(dirname "$target")"
-            base64 --decode "$source" | gzip --decompress > "$target"
+            gzip -dc "$source" > "$target"
           }
 
-          materialize .native-bootstrap/AbstractDemandConnector.php.gz.b64 app/Services/Demand/AbstractDemandConnector.php
-          materialize .native-bootstrap/DemandAccountService.php.gz.b64 app/Services/Demand/DemandAccountService.php
-          materialize .native-bootstrap/DemandGamDeploymentService.php.gz.b64 app/Services/Demand/DemandGamDeploymentService.php
-          materialize .native-bootstrap/DemandNetworkController.php.gz.b64 app/Http/Controllers/Admin/DemandNetworkController.php
-          materialize .native-bootstrap/hm-loader.js.gz.b64 public/assets/hm-loader.js
-          materialize .native-bootstrap/hm-loader.min.js.gz.b64 public/assets/hm-loader.min.js
+          materialize .native-bootstrap/AbstractDemandConnector.php.gz app/Services/Demand/AbstractDemandConnector.php
+          materialize .native-bootstrap/DemandAccountService.php.gz app/Services/Demand/DemandAccountService.php
+          materialize .native-bootstrap/DemandGamDeploymentService.php.gz app/Services/Demand/DemandGamDeploymentService.php
+          materialize .native-bootstrap/DemandNetworkController.php.gz app/Http/Controllers/Admin/DemandNetworkController.php
+          materialize .native-bootstrap/hm-loader.js.gz public/assets/hm-loader.js
 
           php -l app/Services/Demand/AbstractDemandConnector.php
           php -l app/Services/Demand/DemandAccountService.php
           php -l app/Services/Demand/DemandGamDeploymentService.php
           php -l app/Http/Controllers/Admin/DemandNetworkController.php
           node --check public/assets/hm-loader.js
-          node --check public/assets/hm-loader.min.js
-          node --test tests/Browser/hm-loader-native.test.js
 
-          rm -rf .native-bootstrap
-
-      - name: Commit materialized files
+      - name: Build and test loader
         shell: bash
         run: |
           set -euo pipefail
+          npm ci
+          npm run build
+          node --check public/assets/hm-loader.min.js
+          node --test tests/Browser/hm-loader-native.test.js
+
+      - name: Remove bootstrap transport and commit runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .native-bootstrap
+          rm -f .github/workflows/native-bootstrap.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Materialize native demand runtime"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          git commit -m "Complete native demand runtime"
+          git push origin HEAD:agent/fix-native-demand-complete
