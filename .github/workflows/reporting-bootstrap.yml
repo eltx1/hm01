@@ -1,0 +1,62 @@
+name: Materialize reporting and finance system
+
+on:
+  push:
+    branches:
+      - agent/reporting-finance-payments
+
+permissions:
+  contents: write
+
+jobs:
+  materialize-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout reporting branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: agent/reporting-finance-payments
+
+      - name: Materialize implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf .reporting-bootstrap/reporting-system.tar.gz
+          python3 .reporting-bootstrap/apply_existing.py
+          rm -rf .reporting-bootstrap
+          rm -f .github/workflows/reporting-bootstrap.yml
+
+      - name: Validate PHP syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find app config database bootstrap routes tests -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Install dependencies
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, soap, openssl
+          coverage: none
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: cp .env.example .env && php artisan key:generate
+
+      - name: Validate migrations, seeders, routes, and focused tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          php artisan migrate:fresh --seed --force
+          php artisan route:list --path=reporting
+          php artisan test tests/Unit/RevenueCalculationTest.php tests/Feature/ReportingFinancialSystemTest.php tests/Feature/DirectCampaignSystemTest.php tests/Feature/DemandNetworkSystemTest.php
+
+      - name: Commit completed implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Implement unified reporting and financial operations"
+          git push origin HEAD:agent/reporting-finance-payments
