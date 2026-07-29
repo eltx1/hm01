@@ -33,11 +33,17 @@ final class PrebidManager
             [
                 'organization_id' => $connection->organization_id,
                 'prebid_build_id' => $build?->id,
+                'enabled' => false,
                 'auction_timeout_ms' => config('prebid.default_timeout_ms', 1200),
+                'price_granularity' => 'medium',
                 'currency' => config('prebid.default_currency', 'USD'),
+                'bidder_sequence' => 'fixed',
                 'consent_behavior' => ['gdpr' => ['cmpApi' => 'iab', 'timeout' => 800, 'defaultGdprScope' => true], 'gpp' => ['cmpApi' => 'iab', 'timeout' => 800]],
                 'lazy_loading' => ['enabled' => true],
                 'refresh_behavior' => ['enabled' => true, 'minimumIntervalSeconds' => 30],
+                'bidder_timeout_reporting' => true,
+                'gam_fallback' => true,
+                'configuration' => [],
             ],
         );
 
