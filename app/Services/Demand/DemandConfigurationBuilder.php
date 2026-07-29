@@ -66,9 +66,11 @@ final class DemandConfigurationBuilder
 
                 if (! $candidate['gamManaged']) {
                     try {
-                        $candidate['tag'] = $this->connectors
-                            ->for($mapping->account)
-                            ->generateDirectTag($demandPlacement);
+                        $candidate['tag'] = $this->sanitizePublicTag(
+                            $this->connectors
+                                ->for($mapping->account)
+                                ->generateDirectTag($demandPlacement)
+                        );
                     } catch (Throwable) {
                         continue;
                     }
@@ -107,6 +109,33 @@ final class DemandConfigurationBuilder
             && $mapping->approval_status === DemandApprovalStatus::Approved
             && $mapping->placement
             && $mapping->placement->status === PlacementStatus::Active;
+    }
+
+    private function sanitizePublicTag(array $tag): array
+    {
+        $attributes = collect((array) ($tag['attributes'] ?? []))
+            ->filter(fn ($value, $key) => is_scalar($value)
+                && preg_match('/^data-[a-z0-9_.:-]+$/i', (string) $key)
+                && ! preg_match('/secret|token|password|credential|private|key/i', (string) $key))
+            ->map(fn ($value) => mb_substr((string) $value, 0, 2000))
+            ->reject(fn ($value) => preg_match('/javascript\s*:/i', $value))
+            ->all();
+
+        $containerId = preg_replace('/[^A-Za-z0-9_:-]/', '-', (string) ($tag['containerId'] ?? '')) ?: '';
+        $containerClass = preg_replace('/[^A-Za-z0-9_\- ]/', '-', (string) ($tag['containerClass'] ?? 'hm-native-container')) ?: 'hm-native-container';
+        $successSelector = isset($tag['successSelector']) && is_scalar($tag['successSelector'])
+            ? mb_substr((string) $tag['successSelector'], 0, 1000)
+            : null;
+
+        return [
+            'scriptUrl' => (string) ($tag['scriptUrl'] ?? ''),
+            'containerId' => $containerId,
+            'containerClass' => $containerClass,
+            'attributes' => $attributes,
+            'renderTimeoutMs' => max(500, min(10000, (int) ($tag['renderTimeoutMs'] ?? config('demand.direct_render_timeout_ms', 2500)))),
+            'successSelector' => $successSelector,
+            'assumeLoadedIsSuccess' => (bool) ($tag['assumeLoadedIsSuccess'] ?? false),
+        ];
     }
 
     private function sanitizeHouseHtml(string $html): string
