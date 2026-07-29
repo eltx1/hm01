@@ -10,6 +10,8 @@ use App\Models\DemandReportImport;
 use App\Models\DemandSite;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Reporting\ReportingBridge;
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +23,7 @@ final class DemandReportService
     public function __construct(
         private readonly DemandConnectorManager $connectors,
         private readonly AuditRecorder $audit,
+        private readonly ReportingBridge $reportingBridge,
     ) {
     }
 
@@ -76,6 +79,16 @@ final class DemandReportService
             'period_start' => $from->toDateString(),
             'period_end' => $to->toDateString(),
         ]);
+        $this->reportingBridge->recordDemandRows(
+            $account,
+            $rows,
+            CarbonImmutable::parse($from),
+            CarbonImmutable::parse($to),
+            $actor,
+            null,
+            (string) ($import->external_report_id ?: 'demand-api:'.$import->id),
+            'DEMAND_API_BRIDGE',
+        );
 
         return $import->refresh();
     }
@@ -135,6 +148,16 @@ final class DemandReportService
             'row_count' => count($rows),
             'checksum' => $checksum,
         ]);
+        $this->reportingBridge->recordDemandRows(
+            $account,
+            $rows,
+            CarbonImmutable::parse($from),
+            CarbonImmutable::parse($to),
+            $actor,
+            $site,
+            'demand-csv:'.$checksum,
+            'DEMAND_CSV_BRIDGE',
+        );
 
         return $import;
     }

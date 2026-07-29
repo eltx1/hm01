@@ -1,0 +1,10 @@
+@extends('layouts.admin')
+@section('title', $statement->statement_number)
+@section('heading', 'Publisher statement')
+@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('publisher.reporting.index') }}">Revenue reports</a>@endsection
+@section('content')
+<section class="hero"><div><p class="eyebrow">{{ $statement->statement_number }}</p><h2>{{ $statement->period->period_key }}</h2><p>Finalized immutable statement · {{ $statement->currency }}</p></div><a class="hm-button-primary button-link" href="{{ route('publisher.reporting.statements.csv',$statement) }}">Download CSV</a></section>
+<section class="metric-grid">@foreach ([['Gross revenue',$statement->gross_revenue_minor],['Deductions',$statement->deductions_minor],['Net revenue',$statement->net_revenue_minor],['Publisher earnings',$statement->publisher_earnings_minor],['Balance due',$statement->balance_due_minor]] as [$label,$minor])<article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ number_format($minor/100,2) }}</strong></article>@endforeach</section>
+<article><h2>Statement detail</h2>@foreach($statement->line_items as $line)<div class="event"><div><strong>{{ $line['source'] ?? 'SOURCE' }} · {{ $line['site'] ?? ($line['description'] ?? 'All inventory') }}</strong><br><span>{{ number_format($line['impressions'] ?? 0) }} impressions</span></div><span>{{ number_format(($line['publisher_earnings_minor'] ?? 0)/100,2) }}</span></div>@endforeach</article>
+@if(!$statement->publisher_invoice_path)<article><h2>Upload publisher invoice</h2><form method="post" enctype="multipart/form-data" action="{{ route('publisher.reporting.statements.invoice',$statement) }}">@csrf<label>Invoice number<input name="invoice_number" required maxlength="128"></label><label>PDF or image<input type="file" name="invoice" required accept=".pdf,.png,.jpg,.jpeg"></label><button class="hm-button-primary" type="submit">Upload invoice</button></form></article>@else<article><h2>Invoice received</h2><p>{{ $statement->publisher_invoice_number }} · {{ $statement->publisher_invoice_uploaded_at }}</p></article>@endif
+@endsection

@@ -1,0 +1,10 @@
+@extends('layouts.admin')
+@section('title', $statement->statement_number)
+@section('heading', 'Publisher statement')
+@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('admin.reporting.index') }}">Reporting</a>@endsection
+@section('content')
+<section class="hero"><div><p class="eyebrow">{{ $statement->statement_number }}</p><h2>{{ $statement->publisher->display_name }}</h2><p>{{ $statement->period->period_key }} · {{ $statement->currency }} · Snapshot {{ $statement->snapshot_hash }}</p></div><a class="hm-button-primary button-link" href="{{ route('admin.reporting.statements.csv',$statement) }}">Export CSV</a></section>
+<section class="metric-grid">@foreach ([['Gross',$statement->gross_revenue_minor],['Deductions',$statement->deductions_minor],['Net',$statement->net_revenue_minor],['Publisher earnings',$statement->publisher_earnings_minor],['Opening balance',$statement->opening_balance_minor],['Paid',$statement->paid_minor],['Balance due',$statement->balance_due_minor]] as [$label,$minor])<article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ number_format($minor/100,2) }} {{ $statement->currency }}</strong></article>@endforeach</section>
+<article><h2>Statement lines</h2>@foreach($statement->line_items as $line)<div class="event"><div><strong>{{ $line['source'] ?? 'SOURCE' }} · {{ $line['site'] ?? ($line['description'] ?? 'All inventory') }}</strong><br><span>{{ number_format($line['impressions'] ?? 0) }} impressions</span></div><span>{{ number_format(($line['publisher_earnings_minor'] ?? 0)/100,2) }}</span></div>@endforeach</article>
+<article><h2>Payments</h2>@forelse($statement->payments as $payment)<div class="event"><div><strong>{{ $payment->payment_number }}</strong><br><span>{{ $payment->horus_payment_reference ?: 'No payment reference' }}</span></div><span>{{ number_format($payment->amount_minor/100,2) }} · {{ $payment->status->value }}</span></div>@empty<p class="muted">No payments recorded.</p>@endforelse</article>
+@endsection
