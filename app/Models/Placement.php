@@ -40,6 +40,7 @@ class Placement extends Model
     public function adUnit(): BelongsTo { return $this->belongsTo(AdUnit::class); }
     public function sizes(): HasMany { return $this->hasMany(PlacementSize::class)->orderBy('priority'); }
     public function targeting(): HasMany { return $this->hasMany(PlacementTargeting::class); }
+    public function demandPlacements(): HasMany { return $this->hasMany(DemandPlacement::class); }
 
     public function installationCode(): string
     {
