@@ -30,6 +30,22 @@ jobs:
           gzip -t /tmp/reporting-system.tar.gz
           tar -xzf /tmp/reporting-system.tar.gz
           python3 .reporting-bootstrap/apply_existing.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/Services/Reporting/UnifiedReportService.php')
+          text = path.read_text()
+          replacements = {
+              "            ->whereBetween('effective_on', [$from->toDateString(), $to->toDateString()])": "            ->whereDate('effective_on', '>=', $from->toDateString())\n            ->whereDate('effective_on', '<=', $to->toDateString())",
+              "            ->whereBetween('report_date', [$from->toDateString(), $to->toDateString()])": "            ->whereDate('report_date', '>=', $from->toDateString())\n            ->whereDate('report_date', '<=', $to->toDateString())",
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count < 1:
+                  raise SystemExit(f'Expected reporting date filter not found: {old}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
           rm -rf .reporting-bootstrap
           rm -f .github/workflows/reporting-bootstrap.yml
 
