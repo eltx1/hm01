@@ -86,7 +86,6 @@ final class DemandGamDeploymentService
                     } elseif ($object['remoteType'] === 'creative_association') {
                         $this->deleteAssociation($connector, $mapping, $object);
                     }
-                    $mapping->delete();
                 }
 
                 if (! method_exists($connector, $method)) {

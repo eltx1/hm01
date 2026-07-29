@@ -223,7 +223,7 @@ final class DemandReportService
     private function normalizeRows(array $rows): array
     {
         return collect($rows)
-            ->filter('is_array')
+            ->filter(fn ($row) => is_array($row))
             ->map(function (array $row): array {
                 $date = $row['date'] ?? $row['day'] ?? $row['report_date'] ?? null;
                 $impressions = $row['impressions'] ?? $row['views'] ?? 0;
