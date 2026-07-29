@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
             IdentityAccessSeeder::class,
             InventoryDeliverySeeder::class,
             PrebidSeeder::class,
+            DemandNetworkSeeder::class,
         ]);
     }
 }

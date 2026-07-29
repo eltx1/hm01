@@ -43,6 +43,11 @@ class IdentityAccessSeeder extends Seeder
         'configs.view' => ['Preview static advertising configurations', 'inventory'],
         'configs.manage' => ['Manage loader and GPT configuration settings', 'inventory'],
         'configs.publish' => ['Publish and roll back static advertising configurations', 'inventory'],
+        'demand.view' => ['View native and alternative demand networks', 'demand'],
+        'demand.manage' => ['Manage demand connectors, accounts, websites, placements, and widgets', 'demand'],
+        'demand.test' => ['Test and synchronize approved demand accounts', 'demand'],
+        'demand.deploy' => ['Deploy and control demand objects in Google Ad Manager', 'demand'],
+        'demand.reports' => ['Import and view aggregated demand reports', 'demand'],
         'campaigns.view' => ['View direct campaigns', 'campaigns'],
         'campaigns.manage' => ['Create and edit direct campaigns', 'campaigns'],
         'campaigns.review' => ['Review and approve direct campaigns', 'campaigns'],
@@ -82,18 +87,19 @@ class IdentityAccessSeeder extends Seeder
         if ($role === RoleName::SuperAdmin) return $permissions->values()->all();
 
         $inventory = ['inventory.view', 'inventory.manage', 'inventory.sync', 'configs.view', 'configs.manage', 'configs.publish'];
+        $demandAdmin = ['demand.view', 'demand.manage', 'demand.test', 'demand.deploy', 'demand.reports'];
         $campaignAdmin = ['campaigns.view', 'campaigns.manage', 'campaigns.review', 'campaigns.deploy', 'campaigns.reports', 'creatives.manage', 'creatives.review', 'billing.advertiser.view', 'billing.advertiser.manage'];
         $names = match ($role) {
-            RoleName::OperationsAdmin => array_merge(['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'branding.manage', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'support.manage'], $inventory, $campaignAdmin),
-            RoleName::AdOpsAdmin => array_merge(['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign'], $inventory, $campaignAdmin),
-            RoleName::FinanceAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'finance.publisher.view', 'finance.internal_margin.view', 'billing.advertiser.view', 'billing.advertiser.manage', 'campaigns.view', 'campaigns.reports'],
-            RoleName::SupportAgent => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'inventory.view', 'configs.view', 'contracts.view', 'campaigns.view', 'campaigns.reports', 'support.manage'],
-            RoleName::PublisherAdmin => ['dashboard.publisher.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'sites.view', 'sites.manage', 'contracts.view', 'publisher_payments.manage', 'onboarding.manage', 'finance.publisher.view', 'support.manage'],
-            RoleName::PublisherViewer => ['dashboard.publisher.view', 'sites.view', 'contracts.view', 'finance.publisher.view'],
+            RoleName::OperationsAdmin => array_merge(['dashboard.admin.view', 'organizations.view', 'organizations.manage', 'publishers.view', 'publishers.manage', 'advertisers.view', 'advertisers.manage', 'users.view', 'users.manage', 'users.invite', 'roles.view', 'audit.view', 'internal_notes.view', 'branding.manage', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'support.manage'], $inventory, $demandAdmin, $campaignAdmin),
+            RoleName::AdOpsAdmin => array_merge(['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'sites.view', 'sites.manage', 'sites.review', 'sites.serving.manage', 'gam.connections.view', 'gam.connections.manage', 'gam.connections.test', 'gam.connections.assign'], $inventory, $demandAdmin, $campaignAdmin),
+            RoleName::FinanceAdmin => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'contracts.view', 'contracts.manage', 'publisher_payments.manage', 'finance.publisher.view', 'finance.internal_margin.view', 'billing.advertiser.view', 'billing.advertiser.manage', 'campaigns.view', 'campaigns.reports', 'demand.view', 'demand.reports'],
+            RoleName::SupportAgent => ['dashboard.admin.view', 'publishers.view', 'advertisers.view', 'users.view', 'audit.view', 'internal_notes.view', 'sites.view', 'gam.connections.view', 'inventory.view', 'configs.view', 'contracts.view', 'campaigns.view', 'campaigns.reports', 'demand.view', 'demand.reports', 'support.manage'],
+            RoleName::PublisherAdmin => ['dashboard.publisher.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'sites.view', 'sites.manage', 'contracts.view', 'publisher_payments.manage', 'onboarding.manage', 'finance.publisher.view', 'demand.view', 'demand.reports', 'support.manage'],
+            RoleName::PublisherViewer => ['dashboard.publisher.view', 'sites.view', 'contracts.view', 'finance.publisher.view', 'demand.view', 'demand.reports'],
             RoleName::AdvertiserAdmin => ['dashboard.advertiser.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'campaigns.view', 'campaigns.manage', 'campaigns.reports', 'creatives.manage', 'billing.advertiser.view', 'billing.advertiser.manage', 'support.manage'],
             RoleName::AdvertiserViewer => ['dashboard.advertiser.view', 'campaigns.view', 'campaigns.reports', 'billing.advertiser.view'],
-            RoleName::PartnerAdmin => ['users.view', 'users.manage', 'users.invite', 'branding.manage', 'support.manage'],
-            RoleName::PartnerViewer => [],
+            RoleName::PartnerAdmin => ['users.view', 'users.manage', 'users.invite', 'branding.manage', 'demand.view', 'demand.reports', 'support.manage'],
+            RoleName::PartnerViewer => ['demand.view', 'demand.reports'],
             default => [],
         };
 

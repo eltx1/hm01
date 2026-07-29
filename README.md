@@ -1,7 +1,8 @@
 # Horus Media White Label Ad Network Platform
 
 Control plane for Horus Media's publisher operations, advertising configuration,
-direct advertiser campaigns, aggregated reporting, revenue shares, and billing.
+direct advertiser campaigns, modular native demand, aggregated reporting,
+revenue shares, and billing.
 
 Repository: `eltx1/hm01`
 
@@ -20,7 +21,9 @@ does not change when the selection changes.
 
 The browser requests configuration from the CDN, runs Prebid.js and Google
 Publisher Tag, and sends advertising traffic directly to the selected serving
-network. Ad requests never transit the Laravel application.
+network. Optional approved native demand may run through GAM third-party
+creatives or public direct JavaScript fallback. Ad requests never transit the
+Laravel application.
 
 Direct advertisers use the Horus Media dashboard. Campaigns are split into
 isolated GAM network instances based on each selected website's configured
@@ -53,6 +56,9 @@ This release establishes the Laravel 12 control-plane foundation:
 - browser-side Prebid.js and centralized, idempotent Prebid GAM automation
 - direct advertiser campaigns, validated creatives, billing profiles, invoices,
   multi-network GAM deployment, lifecycle synchronization, reports, and drift detection
+- modular MGID, Taboola, Speakol, Outbrain, and custom demand connectors with
+  encrypted credential references, per-site and per-placement controls, GAM or
+  direct-JS delivery, ads.txt, aggregated API/CSV reporting, and safe Loader fallback
 
 Revenue ledger calculations and publisher payment execution remain future work.
 

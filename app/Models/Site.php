@@ -59,6 +59,7 @@ class Site extends Model
     public function layoutProfiles(): HasMany { return $this->hasMany(SiteLayoutProfile::class); }
     public function siteConfig(): HasOne { return $this->hasOne(SiteConfig::class); }
     public function configVersions(): HasMany { return $this->hasMany(ConfigVersion::class); }
+    public function demandSites(): HasMany { return $this->hasMany(DemandSite::class); }
 
     public function installationCode(): string
     {

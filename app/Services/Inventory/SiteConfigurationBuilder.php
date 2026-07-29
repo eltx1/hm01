@@ -11,6 +11,7 @@ use App\Models\Placement;
 use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
+use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
 
@@ -19,6 +20,7 @@ final class SiteConfigurationBuilder
     public function __construct(
         private readonly GamConnectionResolver $connections,
         private readonly PrebidConfigurationBuilder $prebid,
+        private readonly DemandConfigurationBuilder $demand,
     ) {
     }
 
@@ -44,6 +46,7 @@ final class SiteConfigurationBuilder
         $prebid = $connection
             ? $this->prebid->build($site, $connection)
             : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
+        $native = $this->demand->build($site);
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -63,11 +66,13 @@ final class SiteConfigurationBuilder
             'immediatePause' => (bool) $config->immediate_pause,
             'prebidEnabled' => (bool) $prebid['enabled'],
             'prebid' => $prebid,
+            'nativeDemandEnabled' => (bool) $native['enabled'],
+            'nativeDemand' => $native,
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
-                'version' => $loader?->version ?? '1.1.0',
+                'version' => $loader?->version ?? '1.2.0',
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
@@ -79,15 +84,26 @@ final class SiteConfigurationBuilder
             'pageTargeting' => $pageTargeting,
             'placements' => $site->placements
                 ->sortBy('sort_order')
-                ->map(fn (Placement $placement) => $this->placement($placement, $networkCode, $environment, $config->house_ad_testing))
+                ->map(fn (Placement $placement) => $this->placement(
+                    $placement,
+                    $networkCode,
+                    $environment,
+                    $config->house_ad_testing,
+                    (array) data_get($native, 'placements.'.$placement->code, []),
+                ))
                 ->values()
                 ->all(),
             'generatedAt' => now()->utc()->toIso8601String(),
         ];
     }
 
-    private function placement(Placement $placement, ?string $networkCode, ConfigEnvironment $environment, bool $houseMode): array
-    {
+    private function placement(
+        Placement $placement,
+        ?string $networkCode,
+        ConfigEnvironment $environment,
+        bool $houseMode,
+        array $native,
+    ): array {
         $sizes = $placement->sizes->where('is_active', true);
         $fixed = $sizes->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
             ->map(fn ($size) => [(int) $size->width, (int) $size->height])->unique()->values()->all();
@@ -113,13 +129,19 @@ final class SiteConfigurationBuilder
             $targeting['hm_house_test'] = ['1'];
         }
 
+        $gamEnabled = (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
+        $nativeEnabled = (bool) ($native['enabled'] ?? false)
+            && (((array) ($native['candidates'] ?? [])) !== [] || ! empty($native['house']));
+
         return [
             'code' => $placement->code,
             'name' => $placement->name,
             'type' => $placement->type->value,
             'status' => strtolower($placement->status->value),
-            'enabled' => $placement->status === PlacementStatus::Active && (bool) $placement->adUnit?->is_enabled,
-            'adUnitPath' => $networkCode && $placement->adUnit ? '/'.$networkCode.'/'.ltrim($placement->adUnit->code, '/') : null,
+            'enabled' => $placement->status === PlacementStatus::Active && ($gamEnabled || $nativeEnabled),
+            'gamEnabled' => $gamEnabled,
+            'nativeEnabled' => $nativeEnabled,
+            'adUnitPath' => $gamEnabled && $placement->adUnit ? '/'.$networkCode.'/'.ltrim($placement->adUnit->code, '/') : null,
             'sizes' => $fixed,
             'responsiveMappings' => $mappings,
             'targeting' => $targeting,

@@ -1,30 +1,213 @@
-# Native Networks
+# Native and Alternative Demand Networks
 
-Native networks are optional demand connectors. They do not replace
-`HORUS_GAM` as the default and are not required for onboarding.
+## Fixed serving architecture
 
-## Future connector contract
+Google Ad Manager remains the primary ad server. Native and alternative demand is
+an optional control-plane layer that may serve in either of two ways:
 
-Each connector should declare supported capabilities such as reporting read,
-campaign write, creative write, placement mapping, and direct browser serving.
-Credential storage, health state, rate limits, and last successful
-synchronization should be normalized without erasing provider-specific details.
+1. Horus deploys a third-party creative and line item to the GAM connection
+   selected for the website. GPT remains the browser delivery path.
+2. The permanent Horus Loader injects an approved public JavaScript tag only
+   after the website and placement configuration enables it.
 
-Every external write must support dry-run, use idempotent reconciliation, and
-produce a sensitive-operation audit record. Read and write credentials should
-be separated where providers allow it.
+Publishers continue to install only:
 
-## Serving options
+```html
+<script async
+        src="https://cdn.horusmedia.net/hm-loader.js"
+        data-site-key="PUBLIC_SITE_KEY"></script>
+```
 
-Native demand can participate through GAM-compatible creatives or line items,
-through Prebid-compatible adapters, or through the explicit
-`DIRECT_NATIVE_ONLY` website mode. Provider scripts must be loaded only from
-allowlisted origins and only when the published site configuration enables them.
+and the existing placement container:
+
+```html
+<div class="hm-ad" data-placement="article_native"></div>
+```
+
+Adding, disabling, reprioritizing, or removing a demand network publishes a new
+static configuration version. It never requires publisher code changes and
+never routes an impression through Laravel.
+
+## Data model
+
+- `demand_networks`: connector registry and public capabilities.
+- `demand_accounts`: Horus, publisher, or MCM-partner account definitions.
+- `demand_account_credentials`: encrypted `env:` or `file:` references only.
+- `demand_sites`: account-to-website assignments and remote website IDs.
+- `demand_placements`: placement assignments, approval, mode, and priority.
+- `demand_widgets`: provider widget mappings and approved templates.
+- `demand_ads_txt_records`: normalized provider seller declarations.
+- `demand_report_imports`: immutable aggregated API or CSV imports.
+- `demand_remote_objects`: provider and GAM local-to-remote mappings.
+- `demand_sync_logs`: sanitized dry-run and execution history.
+- `demand_errors`: categorized, retryable, and resolvable failures.
+
+Historical reports and remote mappings are not deleted when an account or
+connector is disabled.
+
+## Connector registry
+
+Initial connectors:
+
+- `MGID`
+- `TABOOLA`
+- `SPEAKOL`
+- `OUTBRAIN`
+- `CUSTOM_NATIVE`
+- `CUSTOM_DISPLAY`
+- `CUSTOM_THIRD_PARTY_TAG`
+
+Every registry entry names a class implementing
+`DemandConnectorInterface`. Adding a connector does not require changing the
+connector manager; the manager validates and instantiates the registered class.
+
+The interface provides:
+
+```text
+testConnection()
+validateConfiguration()
+createSite()
+getSiteStatus()
+createPlacement()
+getPlacementCode()
+generateDirectTag()
+generateGamCreative()
+getAdsTxtRecords()
+runReport()
+pausePlacement()
+activatePlacement()
+```
+
+All provider writes support dry-run, use deterministic idempotency keys where
+the provider accepts them, and persist remote IDs before a retry can advance.
+
+## Integration modes
+
+- `DIRECT_JS`: Loader injects the approved public script after GAM/Prebid no-fill
+  or directly when the placement has no GAM inventory.
+- `GAM_THIRD_PARTY_CREATIVE`: Horus deploys an advertiser, order, line item,
+  third-party creative, association, inventory targeting, and status controls.
+- `GAM_LINE_ITEM`: the same isolated deployment surface, available for accounts
+  whose commercial setup uses provider-managed GAM demand.
+- `MANUAL_TAG`: an administrator supplies a reviewed public tag configuration;
+  raw credentials remain prohibited.
+- `API_INTEGRATION`: approved API paths may create or synchronize remote sites,
+  placements, status, ads.txt records, and aggregated reports.
+
+The effective mode is resolved in this order:
+
+1. placement override;
+2. website assignment override;
+3. account default.
+
+## Account scopes and approval
+
+Accounts are scoped as `HORUS_MEDIA`, `PUBLISHER`, or `MCM_PARTNER`.
+Publisher-scoped accounts may only be assigned to websites owned by that
+publisher. Administrators configure the default account, revenue share,
+fallback priority, integration mode, enabled state, approval state, and public
+provider identifiers.
+
+Approval states are:
+
+- `NOT_SUBMITTED`
+- `PENDING`
+- `APPROVED`
+- `REJECTED`
+- `SUSPENDED`
+
+A public configuration includes a mapping only when the network, account,
+website assignment, placement assignment, and selected widget are enabled and
+approved. Rejected or suspended placements never run.
+
+## Credential boundary
+
+The database stores only Laravel-encrypted references such as:
+
+```text
+env:MGID_API_TOKEN
+file:/home/account/private/mgid-token.txt
+```
+
+Credential files must be readable and outside the public web directory.
+Configuration JSON rejects secret-like keys. Static configuration contains only
+allowlisted HTTPS script URLs, public widget IDs, public attributes, priorities,
+and sanitized house content. It never contains credential references, tokens,
+revenue shares, account notes, or private API endpoints.
+
+## MGID connector
+
+MGID is the first complete connector implementation. It supports:
+
+- account and provider-issued publisher identifier configuration;
+- remote website mapping or an approved create-site API path;
+- placement and widget mapping;
+- direct JavaScript output with an allowlisted MGID origin;
+- GAM third-party creative output;
+- normalized ads.txt records;
+- approved report API paths and encrypted token references;
+- CSV report fallback with duplicate checksum protection.
+
+No token, API endpoint, site ID, or widget ID is invented. Accounts without
+approved API access remain fully usable through manual remote mappings, direct
+or GAM tags, ads.txt configuration, and CSV reports.
+
+Taboola, Speakol, and Outbrain implement the same interface. Their account pages
+remain functional for public IDs, approved tags, ads.txt, and CSV reporting.
+API actions become active only after the provider grants access and an
+administrator supplies the documented paths and encrypted credential reference.
+
+## Static configuration and Loader
+
+The public payload contains a `nativeDemand` object with an ordered candidate
+list per placement. `GAM_THIRD_PARTY_CREATIVE` and `GAM_LINE_ITEM` candidates
+are marked `gamManaged` and expose no direct tag. Direct candidates contain only
+an allowlisted script URL, public container information, public data attributes,
+a bounded render timeout, and an optional success selector.
+
+Runtime order is:
+
+1. Prebid and GAM request.
+2. If the GAM slot is empty, try approved direct candidates by priority.
+3. Continue after script error or verified no-render.
+4. Render sanitized house content when configured.
+5. Stop safely without breaking the publisher page.
+
+A native-only placement can run without an ad-unit path while using the same
+`.hm-ad[data-placement]` publisher markup. Debug mode exposes only delivery
+state, selected public network code, and failure category.
+
+## GAM deployment
+
+For the GAM connection resolved from the website, Horus creates a deterministic
+plan containing:
+
+- one advertiser company per demand account;
+- one order per account and website;
+- one line item per approved GAM-mode placement;
+- one third-party creative per approved widget or placement;
+- one creative association;
+- selected ad-unit targeting, sizes, cost settings, and active dates/status.
+
+Dry-run performs no Google write. Remote objects are mapped in
+`demand_remote_objects`, while the existing GAM operation ledger retains its
+normal audit and retry behavior. A repeated deployment skips unchanged payload
+hashes. A partial failure preserves completed mappings, so retry resumes without
+duplicating earlier objects. Pausing or resuming a local GAM-mode placement
+performs the corresponding line-item action before publishing the next static
+configuration.
 
 ## Reporting
 
-Provider reports are imported on a schedule and normalized into aggregate daily
-facts. Source totals remain traceable for reconciliation. The backend does not
-collect native ad requests or visitor-level events.
+Connectors import aggregated daily rows only. API responses and CSV fallback are
+normalized to date, site, placement/widget, impressions, clicks, and revenue in
+integer minor units. Raw browser impressions and bids are never posted to
+Laravel. Disabling a connector affects future delivery configuration only;
+historical imports remain queryable.
 
-No native connector is implemented in the foundation release.
+## Operations
+
+After changing a network, account, website mapping, placement, or widget, publish
+a new production static configuration. The existing Laravel scheduler and
+normal request lifecycle are sufficient; no Redis, Supervisor, WebSockets,
+Docker, or permanent worker is required.
