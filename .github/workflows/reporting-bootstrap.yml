@@ -26,10 +26,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar -xzf .reporting-bootstrap/reporting-system.tar.gz
+          cat .reporting-bootstrap/chunk-* > /tmp/reporting-system.tar.gz
+          gzip -t /tmp/reporting-system.tar.gz
+          tar -xzf /tmp/reporting-system.tar.gz
           python3 .reporting-bootstrap/apply_existing.py
           rm -rf .reporting-bootstrap
           rm -f .github/workflows/reporting-bootstrap.yml
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, soap, openssl
+          coverage: none
 
       - name: Validate PHP syntax
         shell: bash
@@ -37,12 +46,6 @@ jobs:
           set -euo pipefail
           find app config database bootstrap routes tests -name '*.php' -print0 | xargs -0 -n1 php -l
 
-      - name: Install dependencies
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, soap, openssl
-          coverage: none
       - run: composer install --prefer-dist --no-interaction --no-progress
       - run: cp .env.example .env && php artisan key:generate
 
