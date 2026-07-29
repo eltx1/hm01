@@ -1,7 +1,7 @@
 # Horus Media White Label Ad Network Platform
 
 Control plane for Horus Media's publisher operations, advertising configuration,
-reporting imports, revenue shares, and publisher payments.
+direct advertiser campaigns, aggregated reporting, revenue shares, and billing.
 
 Repository: `eltx1/hm01`
 
@@ -21,6 +21,10 @@ does not change when the selection changes.
 The browser requests configuration from the CDN, runs Prebid.js and Google
 Publisher Tag, and sends advertising traffic directly to the selected serving
 network. Ad requests never transit the Laravel application.
+
+Direct advertisers use the Horus Media dashboard. Campaigns are split into
+isolated GAM network instances based on each selected website's configured
+network, with Horus GAM used by default.
 
 ## Implemented scope
 
@@ -44,9 +48,13 @@ This release establishes the Laravel 12 control-plane foundation:
 - contracts, private contract files, status transitions, and revenue-share terms
 - organization-scoped websites, authorized domains, and four verification modes
 - audited website review, status, serving-mode, revenue-share, and emergency controls
+- Google Ad Manager multi-network connection and synchronization layer
+- local inventory, static CDN configuration, GPT, and permanent Horus Loader
+- browser-side Prebid.js and centralized, idempotent Prebid GAM automation
+- direct advertiser campaigns, validated creatives, billing profiles, invoices,
+  multi-network GAM deployment, lifecycle synchronization, reports, and drift detection
 
-GAM API operations, loader publication, bidders, campaigns, reporting imports,
-revenue ledger calculations, and payment execution are intentionally not implemented yet.
+Revenue ledger calculations and publisher payment execution remain future work.
 
 ## Local setup
 
@@ -55,7 +63,7 @@ cp .env.example .env
 composer install
 php artisan key:generate
 php artisan migrate
-php artisan db:seed --class=IdentityAccessSeeder
+php artisan db:seed
 php artisan horus:create-super-admin
 npm ci
 npm run build
@@ -76,13 +84,19 @@ the web document root to `public/`, create a private `.env`, migrate with
 provider-neutral release archive containing optimized Composer dependencies and
 compiled frontend assets.
 
+Use the normal scheduler or cron to run `php artisan campaigns:monitor --reconcile`
+for direct campaign lifecycle, aggregated GAM report requests, and drift checks.
+
 ## Documentation
 
 - [Product](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Database](docs/DATABASE.md)
 - [GAM architecture](docs/GAM_ARCHITECTURE.md)
+- [Inventory and Horus Loader](docs/INVENTORY_AND_LOADER.md)
 - [Prebid architecture](docs/PREBID_ARCHITECTURE.md)
+- [Prebid operations](docs/PREBID_OPERATIONS.md)
+- [Direct campaigns](docs/DIRECT_CAMPAIGNS.md)
 - [Native networks](docs/NATIVE_NETWORKS.md)
 - [Reporting](docs/REPORTING.md)
 - [Security](docs/SECURITY.md)
