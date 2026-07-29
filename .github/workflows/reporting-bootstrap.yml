@@ -53,6 +53,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          touch database/database.sqlite
+          export DB_CONNECTION=sqlite
+          export DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite"
+          php artisan config:clear
           php artisan migrate:fresh --seed --force
           php artisan route:list --path=reporting
           php artisan test tests/Unit/RevenueCalculationTest.php tests/Feature/ReportingFinancialSystemTest.php tests/Feature/DirectCampaignSystemTest.php tests/Feature/DemandNetworkSystemTest.php
