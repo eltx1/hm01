@@ -16,8 +16,8 @@ class SuperAdministratorCommandTest extends TestCase
     public function test_initial_super_administrator_is_created_securely_and_audited(): void
     {
         $this->artisan('horus:create-super-admin', ['email' => 'owner@horusmedia.net', '--name' => 'Horus Owner'])
-            ->expectsQuestion('Password (minimum 12 characters)', 'secure-password-123')
-            ->expectsQuestion('Confirm password', 'secure-password-123')
+            ->expectsQuestion('Password (minimum 14 characters, mixed case, number, symbol)', 'Secure-Password-2026!')
+            ->expectsQuestion('Confirm password', 'Secure-Password-2026!')
             ->expectsOutput('Super administrator created. Two-factor enrollment is required on first sign-in.')
             ->assertSuccessful();
 
@@ -25,5 +25,16 @@ class SuperAdministratorCommandTest extends TestCase
         $this->assertSame(OrganizationType::HorusMedia, Organization::firstOrFail()->type);
         $this->assertTrue($user->hasRole(RoleName::SuperAdmin->value));
         $this->assertDatabaseHas('audit_logs', ['event' => 'bootstrap.super_admin.created', 'actor_id' => $user->id]);
+    }
+
+    public function test_initial_super_administrator_rejects_a_weak_password(): void
+    {
+        $this->artisan('horus:create-super-admin', ['email' => 'weak-owner@horusmedia.net', '--name' => 'Weak Owner'])
+            ->expectsQuestion('Password (minimum 14 characters, mixed case, number, symbol)', 'weak-password')
+            ->expectsQuestion('Confirm password', 'weak-password')
+            ->expectsOutput('Invalid email, name, password policy, or confirmation.')
+            ->assertFailed();
+
+        $this->assertDatabaseMissing('users', ['email' => 'weak-owner@horusmedia.net']);
     }
 }
