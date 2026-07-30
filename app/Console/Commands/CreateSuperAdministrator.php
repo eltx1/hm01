@@ -14,7 +14,9 @@ use Database\Seeders\IdentityAccessSeeder;
 use Illuminate\Console\Command;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password as PasswordRule;
 
 class CreateSuperAdministrator extends Command
 {
@@ -25,12 +27,21 @@ class CreateSuperAdministrator extends Command
     public function handle(AuditRecorder $audit): int
     {
         $email = str($this->argument('email') ?: $this->ask('Email address'))->lower()->trim()->value();
-        $name = $this->option('name') ?: $this->ask('Full name');
-        $password = $this->secret('Password (minimum 12 characters)');
-        $confirmation = $this->secret('Confirm password');
+        $name = trim((string) ($this->option('name') ?: $this->ask('Full name')));
+        $password = (string) $this->secret('Password (minimum 14 characters, mixed case, number, symbol)');
+        $confirmation = (string) $this->secret('Confirm password');
 
-        if (! filter_var($email, FILTER_VALIDATE_EMAIL) || strlen((string) $name) < 2 || strlen((string) $password) < 12 || ! hash_equals((string) $password, (string) $confirmation)) {
-            $this->error('Invalid email, name, password length, or confirmation.');
+        $validator = Validator::make(
+            ['email' => $email, 'name' => $name, 'password' => $password],
+            [
+                'email' => ['required', 'email'],
+                'name' => ['required', 'string', 'min:2'],
+                'password' => ['required', PasswordRule::min(14)->mixedCase()->numbers()->symbols()],
+            ],
+        );
+
+        if ($validator->fails() || ! hash_equals($password, $confirmation)) {
+            $this->error('Invalid email, name, password policy, or confirmation.');
 
             return self::FAILURE;
         }

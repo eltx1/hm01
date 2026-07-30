@@ -1,1 +1,1 @@
-36d3461f726b59d29bed93b6199d80623ddb20421d4f4285e0f231b3f65031b9  release/horus-media-platform.zip
+c1278ae8dee7ec997ff89be433b700ea597e962077b33cdaf5aaa8c71b051889  release/horus-media-platform.zip
