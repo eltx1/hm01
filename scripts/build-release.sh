@@ -17,4 +17,4 @@ find "$STAGE/horus-media-platform/storage" -type f ! -name '.gitignore' ! -name 
   cd "$STAGE"
   zip -qr "$OUT" horus-media-platform
 )
-sha256sum "$OUT" > "$ROOT/release/CHECKSUMS.txt"
+(cd "$ROOT" && sha256sum release/horus-media-platform.zip > release/CHECKSUMS.txt)
