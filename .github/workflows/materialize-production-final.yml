@@ -32,6 +32,25 @@ jobs:
           gzip --test /tmp/hm01-final-payload.tar.gz
           tar --extract --gzip --file /tmp/hm01-final-payload.tar.gz
           sed -i 's/new-secure-password/New-Secure-Password-2026!/g' tests/Feature/PasswordResetTest.php
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/validate-release.sh')
+          content = path.read_text()
+          old = """for forbidden in '.env' 'node_modules/' 'tests/' '.git/' '.github/' 'database/database.sqlite' 'phpunit.xml' 'package.json' 'package-lock.json' 'vite.config.js'; do
+            if unzip -Z1 \"$ZIP\" | grep -Fq \"horus-media-platform/$forbidden\"; then echo \"Forbidden release entry: $forbidden\" >&2; exit 1; fi
+          done
+          """
+          new = """for forbidden_file in '.env' 'database/database.sqlite' 'phpunit.xml' 'package.json' 'package-lock.json' 'vite.config.js'; do
+            if unzip -Z1 \"$ZIP\" | grep -Fxq \"horus-media-platform/$forbidden_file\"; then echo \"Forbidden release entry: $forbidden_file\" >&2; exit 1; fi
+          done
+          for forbidden_dir in 'node_modules/' 'tests/' '.git/' '.github/'; do
+            if unzip -Z1 \"$ZIP\" | grep -Fq \"horus-media-platform/$forbidden_dir\"; then echo \"Forbidden release entry: $forbidden_dir\" >&2; exit 1; fi
+          done
+          """
+          if old not in content:
+              raise SystemExit('Expected release validator block not found')
+          path.write_text(content.replace(old, new))
+          PY
           rm -rf .production-bootstrap
           rm -f .github/workflows/materialize-production-final.yml
           chmod +x scripts/build-release.sh scripts/validate-release.sh
