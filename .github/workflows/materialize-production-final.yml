@@ -23,13 +23,14 @@ jobs:
           fetch-depth: 0
           ref: agent/production-ready-final
 
-      - name: Verify and materialize reviewed implementation
+      - name: Assemble, verify, and materialize reviewed implementation
         shell: bash
         run: |
           set -euo pipefail
-          echo "1d8b385eef21bafca68d1880d54e132bf70554ae62b439862f94090fb007db8f  .production-bootstrap/payload.tar.gz" | sha256sum --check --strict
-          gzip --test .production-bootstrap/payload.tar.gz
-          tar --extract --gzip --file .production-bootstrap/payload.tar.gz
+          cat .production-bootstrap/part-*.bin > /tmp/hm01-final-payload.tar.gz
+          echo "1d8b385eef21bafca68d1880d54e132bf70554ae62b439862f94090fb007db8f  /tmp/hm01-final-payload.tar.gz" | sha256sum --check --strict
+          gzip --test /tmp/hm01-final-payload.tar.gz
+          tar --extract --gzip --file /tmp/hm01-final-payload.tar.gz
           rm -rf .production-bootstrap
           rm -f .github/workflows/materialize-production-final.yml
           chmod +x scripts/build-release.sh scripts/validate-release.sh
