@@ -28,7 +28,7 @@ Create a database and least-privilege user in hPanel. Grant that user access onl
 
 ## 4. Configure the environment
 
-Copy `.env.production.example` to `.env`. Set at minimum:
+Copy the packaged `.env.example` file to `.env`. Set at minimum:
 
 ```dotenv
 APP_ENV=production
@@ -89,7 +89,13 @@ php artisan optimize
 php artisan up
 ```
 
-Create the first super administrator using the project command and a strong unique password. Administrator two-factor authentication is mandatory before dashboard access.
+Create the first super administrator with the protected interactive command:
+
+```bash
+php artisan horus:create-super-admin admin@horusmedia.net --name="Horus Media Administrator"
+```
+
+The command securely prompts for a password containing at least 14 characters, uppercase and lowercase letters, a number, and a symbol. Administrator two-factor authentication is mandatory before dashboard access.
 
 ## 8. Publish browser files to the CDN
 
