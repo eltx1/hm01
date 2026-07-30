@@ -1,25 +1,23 @@
 <IfModule mod_rewrite.c>
-    <IfModule mod_negotiation.c>
-        Options -MultiViews -Indexes
-    </IfModule>
-
+    Options -Indexes -MultiViews
     RewriteEngine On
-
-    # Handle Authorization Header
+    RewriteCond %{THE_REQUEST} \s/+(.*/)?(?:\.env|composer\.(?:json|lock)|package(?:-lock)?\.json|phpunit\.xml|artisan)(?:[?\s]) [NC]
+    RewriteRule ^ - [F,L]
+    RewriteCond %{REQUEST_URI} ^/(?:storage/(?:app|framework|logs)|vendor|database|tests|bootstrap/cache)/ [NC]
+    RewriteRule ^ - [F,L]
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-
-    # Handle X-XSRF-Token Header
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
-
-    # Redirect Trailing Slashes If Not A Folder...
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteCond %{REQUEST_URI} (.+)/$
-    RewriteRule ^ %1 [L,R=301]
-
-    # Send Requests To Front Controller...
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+<FilesMatch "^(?:\.env|composer\.(?:json|lock)|package(?:-lock)?\.json|phpunit\.xml|artisan)$">
+    Require all denied
+</FilesMatch>

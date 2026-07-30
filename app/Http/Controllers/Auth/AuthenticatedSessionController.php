@@ -28,13 +28,21 @@ class AuthenticatedSessionController extends Controller
 
         if (! $user || $user->trashed() || ! Hash::check($credentials['password'], $user->password)) {
             $reason = 'invalid_credentials';
+        } elseif ($user->isLocked()) {
+            $reason = 'account_locked';
         } elseif (! $user->isActive()) {
             $reason = 'account_inactive';
         }
 
         if ($reason) {
             if ($user && ! $user->trashed()) {
-                $user->forceFill(['failed_login_count' => $user->failed_login_count + 1, 'last_failed_login_at' => now()])->save();
+                $attempts = ((int) $user->failed_login_count) + 1;
+                $values = ['failed_login_count' => $attempts, 'last_failed_login_at' => now()];
+                if ($attempts >= (int) config('security.authentication.max_failed_attempts', 8)) {
+                    $values['locked_until'] = now()->addMinutes((int) config('security.authentication.lock_minutes', 30));
+                    $values['lock_reason'] = 'too_many_failed_logins';
+                }
+                $user->forceFill($values)->save();
             }
             $this->recordLogin($request, $user, false, $reason, $email);
 
@@ -53,7 +61,7 @@ class AuthenticatedSessionController extends Controller
 
         Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
-        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0])->save();
+        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0, 'locked_until' => null, 'lock_reason' => null])->save();
         $this->recordLogin($request, $user, true, null, $email);
         $audit->record('auth.login.succeeded', $user->organization_id, $user);
 

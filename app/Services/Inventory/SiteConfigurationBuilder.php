@@ -14,6 +14,7 @@ use App\Models\TagVersion;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
+use App\Services\Operations\PlatformControlService;
 
 final class SiteConfigurationBuilder
 {
@@ -21,6 +22,7 @@ final class SiteConfigurationBuilder
         private readonly GamConnectionResolver $connections,
         private readonly PrebidConfigurationBuilder $prebid,
         private readonly DemandConfigurationBuilder $demand,
+        private readonly PlatformControlService $controls,
     ) {
     }
 
@@ -40,7 +42,10 @@ final class SiteConfigurationBuilder
         $networkCode = $connection?->network_code ?: $site->current_gam_network_code;
         $loader = $config->loaderRelease ?: LoaderRelease::query()->where('is_active', true)->latest('published_at')->first();
         $tag = $config->tagVersion ?: TagVersion::query()->where('is_active', true)->latest('published_at')->first();
-        $active = $config->status === 'ACTIVE'
+        $adServingDisabled = $this->controls->disabledForSite('AD_SERVING', $site->id, $connection?->id);
+        $prebidDisabled = $this->controls->disabledForSite('PREBID', $site->id);
+        $nativeDisabled = $this->controls->disabledForSite('NATIVE_DEMAND', $site->id);
+        $active = ! $adServingDisabled && $config->status === 'ACTIVE'
             && ! $config->immediate_pause
             && $site->serving_mode !== ServingMode::Paused;
         $prebid = $connection
@@ -64,15 +69,16 @@ final class SiteConfigurationBuilder
             'environment' => $environment->value,
             'status' => $active ? 'active' : 'paused',
             'immediatePause' => (bool) $config->immediate_pause,
-            'prebidEnabled' => (bool) $prebid['enabled'],
-            'prebid' => $prebid,
-            'nativeDemandEnabled' => (bool) $native['enabled'],
-            'nativeDemand' => $native,
+            'controls' => ['adServingDisabled' => $adServingDisabled, 'prebidDisabled' => $prebidDisabled, 'nativeDemandDisabled' => $nativeDisabled],
+            'prebidEnabled' => ! $prebidDisabled && (bool) $prebid['enabled'],
+            'prebid' => array_replace($prebid, ['enabled' => ! $prebidDisabled && (bool) $prebid['enabled']]),
+            'nativeDemandEnabled' => ! $nativeDisabled && (bool) $native['enabled'],
+            'nativeDemand' => array_replace($native, ['enabled' => ! $nativeDisabled && (bool) $native['enabled']]),
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
-                'version' => $loader?->version ?? '1.2.0',
+                'version' => $loader?->version ?? '1.3.0',
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
@@ -89,7 +95,7 @@ final class SiteConfigurationBuilder
                     $networkCode,
                     $environment,
                     $config->house_ad_testing,
-                    (array) data_get($native, 'placements.'.$placement->code, []),
+                    $nativeDisabled ? [] : (array) data_get($native, 'placements.'.$placement->code, []),
                 ))
                 ->values()
                 ->all(),
@@ -129,7 +135,8 @@ final class SiteConfigurationBuilder
             $targeting['hm_house_test'] = ['1'];
         }
 
-        $gamEnabled = (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
+        $placementDisabled = $this->controls->placementDisabled($placement->id);
+        $gamEnabled = ! $placementDisabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
         $nativeEnabled = (bool) ($native['enabled'] ?? false)
             && (((array) ($native['candidates'] ?? [])) !== [] || ! empty($native['house']));
 
@@ -138,7 +145,7 @@ final class SiteConfigurationBuilder
             'name' => $placement->name,
             'type' => $placement->type->value,
             'status' => strtolower($placement->status->value),
-            'enabled' => $placement->status === PlacementStatus::Active && ($gamEnabled || $nativeEnabled),
+            'enabled' => ! $placementDisabled && $placement->status === PlacementStatus::Active && ($gamEnabled || $nativeEnabled),
             'gamEnabled' => $gamEnabled,
             'nativeEnabled' => $nativeEnabled,
             'adUnitPath' => $gamEnabled && $placement->adUnit ? '/'.$networkCode.'/'.ltrim($placement->adUnit->code, '/') : null,

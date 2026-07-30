@@ -152,6 +152,7 @@ function createHarness(config, { hostname = 'publisher.example', placementCodes 
         history,
         fetch: async (url) => {
             metrics.fetches.push(String(url));
+            if (String(url).includes('/_global/control.json')) return { ok: true, json: async () => ({ controls: {} }) };
             return { ok: true, json: async () => structuredClone(config) };
         },
         addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
@@ -177,7 +178,7 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.singleRequest, 1);
     assert.equal(metrics.services, 1);
     assert.equal(metrics.displayed.length, 1);
-    assert.equal(metrics.fetches.length, 1);
+    assert.equal(metrics.fetches.length, 2);
 });
 
 test('paused sites never load GPT or define an advertising slot', async () => {
@@ -204,7 +205,7 @@ test('unauthorized hostnames cannot load valid placements', async () => {
     const { sandbox, metrics } = createHarness(activeConfig(), { hostname: 'attacker.example' });
     await sandbox.HorusMediaLoader.boot();
 
-    assert.equal(metrics.fetches.length, 1);
+    assert.equal(metrics.fetches.length, 2);
     assert.equal(metrics.gptLoads, 0);
     assert.equal(metrics.defined.length, 0);
 });
@@ -214,9 +215,31 @@ test('force refresh cache-busts the static configuration without a Laravel reque
     await sandbox.HorusMediaLoader.boot();
     await sandbox.HorusMediaLoader.refresh();
 
-    assert.equal(metrics.fetches.length, 2);
-    assert.match(metrics.fetches[0], /\/configs\/HM_TEST\/production\.json$/);
-    assert.match(metrics.fetches[1], /production\.json\?v=\d+$/);
+    assert.equal(metrics.fetches.length, 4);
+    assert.match(metrics.fetches[1], /\/configs\/HM_TEST\/production\.json$/);
+    assert.match(metrics.fetches[3], /production\.json\?v=\d+$/);
     assert.ok(metrics.fetches.every((url) => url.startsWith('https://cdn.horusmedia.net/configs/')));
     assert.equal(metrics.gptLoads, 1);
+});
+
+test('global ad-serving kill switch prevents GPT and slot activation', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig({ controls: { adServingDisabled: true } }));
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(metrics.defined.length, 0);
+    assert.equal(metrics.displayed.length, 0);
+});
+
+test('global CDN control stops before fetching site configuration', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig());
+    const originalFetch = sandbox.fetch;
+    sandbox.fetch = async (url) => {
+        metrics.fetches.push(String(url));
+        if (String(url).includes('/_global/control.json')) return { ok: true, json: async () => ({ controls: { adServingDisabled: true } }) };
+        return originalFetch(url);
+    };
+    metrics.fetches.length = 0;
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.fetches.length, 1);
+    assert.equal(metrics.gptLoads, 0);
 });

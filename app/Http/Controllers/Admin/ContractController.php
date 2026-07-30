@@ -8,6 +8,7 @@ use App\Models\Publisher;
 use App\Models\PublisherContract;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Contracts\ContractLifecycleService;
+use App\Services\Uploads\SecureUploadService;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -63,18 +64,23 @@ class ContractController extends Controller
         return back()->with('status', 'Contract status updated.');
     }
 
-    public function upload(Request $request, Publisher $publisher, PublisherContract $contract, AuditRecorder $audit): RedirectResponse
+    public function upload(Request $request, Publisher $publisher, PublisherContract $contract, AuditRecorder $audit, SecureUploadService $uploads): RedirectResponse
     {
         $this->belongsTo($publisher, $contract);
-        $data = $request->validate(['contract_file' => ['required', 'file', 'max:10240', 'mimes:pdf,doc,docx']]);
+        $data = $request->validate(['contract_file' => ['required', 'file']]);
         $file = $data['contract_file'];
+        $stored = $uploads->store($file, 'contracts/'.$publisher->id.'/'.$contract->id, [
+            'application/pdf' => 'pdf',
+            'application/msword' => 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        ], (int) config('security.uploads.contract_max_bytes'));
         $oldPath = $contract->contract_file_path;
-        $path = $file->storeAs('contracts/'.$publisher->id, $contract->id.'-'.bin2hex(random_bytes(8)).'.'.$file->extension(), 'local');
-        $contract->update(['contract_file_path' => $path, 'contract_file_name' => $file->getClientOriginalName(), 'contract_file_mime' => $file->getMimeType()]);
+        $path = $stored['path'];
+        $contract->update(['contract_file_path' => $path, 'contract_file_name' => basename($file->getClientOriginalName()), 'contract_file_mime' => $stored['mime']]);
         if ($oldPath) {
             Storage::disk('local')->delete($oldPath);
         }
-        $audit->record('publisher_contract.file_uploaded', $publisher->organization_id, $request->user(), $contract, metadata: ['file_name' => $contract->contract_file_name, 'mime' => $contract->contract_file_mime]);
+        $audit->record('publisher_contract.file_uploaded', $publisher->organization_id, $request->user(), $contract, metadata: ['file_name' => $contract->contract_file_name, 'mime' => $contract->contract_file_mime, 'checksum' => $stored['checksum']]);
 
         return back()->with('status', 'Contract document uploaded to private storage.');
     }

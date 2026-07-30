@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var VERSION = '1.2.0';
+    var VERSION = '1.3.0';
     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
     var state = window[STATE_KEY] = window[STATE_KEY] || {
         config: null,
@@ -93,6 +93,16 @@
             .then(function (config) {
                 if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
                 return config;
+            });
+    }
+
+    function fetchGlobalControl(script, force) {
+        var url = configBase(script) + '/_global/control.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
+        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
+            .then(function (response) { return response && response.ok ? response.json() : {}; })
+            .catch(function () { return {}; })
+            .then(function (payload) {
+                return payload && payload.controls ? payload.controls : {};
             });
     }
 
@@ -631,8 +641,12 @@
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
     }
 
+    function servingDisabled(config) {
+        return Boolean(config && config.controls && config.controls.adServingDisabled);
+    }
+
     function scan(config) {
-        if (!config || config.status !== 'active' || config.immediatePause) return Promise.resolve([]);
+        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return Promise.resolve([]);
         return defineItems(config, eligibleElements(config));
     }
 
@@ -680,14 +694,25 @@
         if (!siteKey || !window.fetch) return Promise.resolve([]);
         if (state.booting && !options.force) return state.booting;
 
-        state.booting = fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
+        state.booting = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
+            if (globalControls.adServingDisabled) {
+                state.config = { siteKey: siteKey, status: 'paused', controls: globalControls };
+                log(state.config, 'Global advertising kill switch is active');
+                return null;
+            }
+            return fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
+                config.controls = Object.assign({}, config.controls || {}, globalControls || {});
+                return config;
+            });
+        }).then(function (config) {
+            if (!config) return [];
             state.config = config;
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
                 log(config, 'Hostname rejected', currentHostname());
                 return [];
             }
-            if (config.status !== 'active' || config.immediatePause) {
-                log(config, 'Site is paused; no advertising calls were made');
+            if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
+                log(config, 'Advertising is disabled; no advertising calls were made');
                 return [];
             }
             if (maybeDelegateRelease(config, script)) return [];

@@ -20,9 +20,9 @@ class PasswordResetTest extends TestCase
         $user = $this->makeUser($this->makeOrganization(OrganizationType::Advertiser), RoleName::AdvertiserAdmin);
         $token = Password::createToken($user);
 
-        $this->post('/reset-password', ['token' => $token, 'email' => $user->email, 'password' => 'new-secure-password', 'password_confirmation' => 'new-secure-password'])->assertRedirect('/login');
+        $this->post('/reset-password', ['token' => $token, 'email' => $user->email, 'password' => 'New-Secure-Password-2026!', 'password_confirmation' => 'New-Secure-Password-2026!'])->assertRedirect('/login');
 
-        $this->assertTrue(Hash::check('new-secure-password', $user->fresh()->password));
+        $this->assertTrue(Hash::check('New-Secure-Password-2026!', $user->fresh()->password));
         $this->assertDatabaseHas('audit_logs', ['event' => 'auth.password.reset', 'actor_id' => $user->id]);
     }
 }
