@@ -31,6 +31,7 @@ jobs:
           echo "1d8b385eef21bafca68d1880d54e132bf70554ae62b439862f94090fb007db8f  /tmp/hm01-final-payload.tar.gz" | sha256sum --check --strict
           gzip --test /tmp/hm01-final-payload.tar.gz
           tar --extract --gzip --file /tmp/hm01-final-payload.tar.gz
+          sed -i 's/new-secure-password/New-Secure-Password-2026!/g' tests/Feature/PasswordResetTest.php
           rm -rf .production-bootstrap
           rm -f .github/workflows/materialize-production-final.yml
           chmod +x scripts/build-release.sh scripts/validate-release.sh
