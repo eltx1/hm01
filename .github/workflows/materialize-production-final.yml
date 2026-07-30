@@ -53,6 +53,7 @@ jobs:
           PY
           rm -rf .production-bootstrap
           rm -f .github/workflows/materialize-production-final.yml
+          rm -f .github/workflows/production-release.yml
           chmod +x scripts/build-release.sh scripts/validate-release.sh
 
       - name: Setup PHP
@@ -120,6 +121,7 @@ jobs:
           set -euo pipefail
           test ! -e .production-bootstrap
           test ! -e .github/workflows/materialize-production-final.yml
+          test ! -e .github/workflows/production-release.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add --all
