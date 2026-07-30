@@ -5,10 +5,9 @@ on:
   push:
     branches:
       - main
-      - agent/production-ready-final
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   production-release:
@@ -18,7 +17,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
@@ -46,7 +44,7 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan route:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan schedule:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
-      - name: Install production PHP dependencies and build ZIP
+      - name: Install production PHP dependencies and validate ZIP
         run: |
           composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
           ./scripts/build-release.sh
@@ -59,12 +57,3 @@ jobs:
             release/CHECKSUMS.txt
             release/*.md
           retention-days: 30
-      - name: Commit final release files to release branch
-        if: github.event_name == 'pull_request' && github.head_ref == 'agent/production-ready-final' && github.actor != 'github-actions[bot]'
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add release/horus-media-platform.zip release/CHECKSUMS.txt public/assets/hm-loader.min.js public/assets/prebid
-          git add -f public/build
-          git diff --cached --quiet || git commit -m 'Build verified Horus Media production release'
-          git push origin HEAD:agent/production-ready-final
