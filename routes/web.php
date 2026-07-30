@@ -34,7 +34,7 @@ Route::middleware('guest')->group(function (): void {
     Route::get('/forgot-password', [PasswordResetController::class, 'request'])->name('password.request');
     Route::post('/forgot-password', [PasswordResetController::class, 'email'])->middleware('throttle:5,1')->name('password.email');
     Route::get('/reset-password/{token}', [PasswordResetController::class, 'reset'])->name('password.reset');
-    Route::post('/reset-password', [PasswordResetController::class, 'update'])->name('password.update');
+    Route::post('/reset-password', [PasswordResetController::class, 'update'])->middleware('throttle:6,1')->name('password.update');
     Route::get('/invitations/{token}', [InvitationController::class, 'show'])->name('invitations.accept.show');
     Route::post('/invitations/{token}', [InvitationController::class, 'accept'])->name('invitations.accept');
     Route::get('/two-factor/challenge', [TwoFactorController::class, 'challenge'])->name('two-factor.challenge');

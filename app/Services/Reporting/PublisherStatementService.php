@@ -11,6 +11,7 @@ use App\Models\PublisherStatement;
 use App\Models\RevenueAdjustment;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Uploads\SecureUploadService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -19,7 +20,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class PublisherStatementService
 {
-    public function __construct(private readonly AuditRecorder $audit)
+    public function __construct(private readonly AuditRecorder $audit, private readonly SecureUploadService $uploads)
     {
     }
 
@@ -170,20 +171,11 @@ final class PublisherStatementService
         if ($statement->publisher_id !== $actor->organization?->publisher?->id && ! $actor->isHorusAdministrator()) {
             abort(403);
         }
-        if (! $file->isValid() || $file->getSize() > (int) config('reporting.statement_invoice_max_bytes', 10 * 1024 * 1024)) {
-            throw ValidationException::withMessages(['invoice' => 'The publisher invoice is invalid or exceeds the configured limit.']);
-        }
-        $extension = strtolower($file->getClientOriginalExtension());
-        if (! in_array($extension, ['pdf', 'png', 'jpg', 'jpeg'], true)) {
-            throw ValidationException::withMessages(['invoice' => 'Publisher invoices must be PDF, PNG, or JPEG files.']);
-        }
-
-        $checksum = hash_file('sha256', $file->getRealPath());
-        $path = $file->storeAs(
-            'publisher-invoices/'.$statement->publisher_id.'/'.$statement->financial_period_id,
-            $checksum.'.'.$extension,
-            'local',
-        );
+        $stored = $this->uploads->store($file, 'publisher-invoices/'.$statement->publisher_id.'/'.$statement->financial_period_id, [
+            'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpg',
+        ], (int) config('security.uploads.invoice_max_bytes'));
+        $checksum = $stored['checksum'];
+        $path = $stored['path'];
         $statement->update([
             'publisher_invoice_number' => $invoiceNumber,
             'publisher_invoice_path' => $path,

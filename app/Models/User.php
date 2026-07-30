@@ -61,6 +61,8 @@ class User extends Authenticatable implements MustVerifyEmail
             'suspended_at' => 'datetime',
             'last_login_at' => 'datetime',
             'last_failed_login_at' => 'datetime',
+            'locked_until' => 'datetime',
+            'password_changed_at' => 'datetime',
             'two_factor_secret' => 'encrypted',
             'two_factor_recovery_codes' => 'encrypted:array',
             'two_factor_confirmed_at' => 'datetime',
@@ -84,7 +86,12 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function isActive(): bool
     {
-        return $this->status === UserStatus::Active && $this->organization?->isActive();
+        return $this->status === UserStatus::Active && $this->organization?->isActive() && ! $this->isLocked();
+    }
+
+    public function isLocked(): bool
+    {
+        return $this->locked_until !== null && $this->locked_until->isFuture();
     }
 
     public function isHorusAdministrator(): bool

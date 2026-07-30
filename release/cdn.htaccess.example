@@ -1,0 +1,17 @@
+Options -Indexes
+<IfModule mod_headers.c>
+  Header always set Access-Control-Allow-Origin "*"
+  Header always set X-Content-Type-Options "nosniff"
+  <FilesMatch "\.(?:v[0-9]+\.json|[a-f0-9]{8,}\.(?:js|css)|min\.js)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "^(?:hm-loader\.js|hm-loader\.min\.js)$">
+    Header set Cache-Control "public, max-age=300, stale-while-revalidate=86400"
+  </FilesMatch>
+  <FilesMatch "^(?:production|test|preview)\.json$">
+    Header set Cache-Control "public, max-age=60, stale-while-revalidate=300"
+  </FilesMatch>
+</IfModule>
+<FilesMatch "(?:\.env|\.log|\.sql|\.gz|credentials|service-account)">
+  Require all denied
+</FilesMatch>

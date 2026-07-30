@@ -66,3 +66,7 @@ Back up MySQL and private storage before every release. Prefer versioned release
 directories and an atomic symlink/document-root switch. Preserve the previous
 release for rollback and use forward database migrations rather than destructive
 production rollbacks.
+
+## Final production package
+
+The authoritative deployment package and operational runbooks are generated under `release/`. Build with `scripts/build-release.sh` only after Composer production dependencies and browser assets have been compiled. Validate with `scripts/validate-release.sh`.
