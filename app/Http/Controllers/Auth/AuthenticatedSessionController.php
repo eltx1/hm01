@@ -26,15 +26,26 @@ class AuthenticatedSessionController extends Controller
         $user = User::withTrashed()->with('organization')->where('email', $email)->first();
         $reason = null;
 
-        if (! $user || $user->trashed() || ! Hash::check($credentials['password'], $user->password)) {
+        if ($user?->locked_until && $user->locked_until->isPast()) {
+            $user->forceFill(['locked_until' => null, 'failed_login_count' => 0])->save();
+        }
+
+        if ($user?->locked_until && $user->locked_until->isFuture()) {
+            $reason = 'account_locked';
+        } elseif (! $user || $user->trashed() || ! Hash::check($credentials['password'], $user->password)) {
             $reason = 'invalid_credentials';
         } elseif (! $user->isActive()) {
             $reason = 'account_inactive';
         }
 
         if ($reason) {
-            if ($user && ! $user->trashed()) {
-                $user->forceFill(['failed_login_count' => $user->failed_login_count + 1, 'last_failed_login_at' => now()])->save();
+            if ($user && ! $user->trashed() && $reason !== 'account_locked') {
+                $failed = ((int) $user->failed_login_count) + 1;
+                $values = ['failed_login_count' => $failed, 'last_failed_login_at' => now()];
+                if ($failed >= max(1, (int) config('security.lockout.attempts', 5))) {
+                    $values['locked_until'] = now()->addMinutes(max(1, (int) config('security.lockout.minutes', 15)));
+                }
+                $user->forceFill($values)->save();
             }
             $this->recordLogin($request, $user, false, $reason, $email);
 
@@ -53,7 +64,7 @@ class AuthenticatedSessionController extends Controller
 
         Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
-        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0])->save();
+        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0, 'locked_until' => null])->save();
         $this->recordLogin($request, $user, true, null, $email);
         $audit->record('auth.login.succeeded', $user->organization_id, $user);
 

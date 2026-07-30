@@ -4,12 +4,7 @@ use App\Providers\AppServiceProvider;
 use App\Providers\CampaignServiceProvider;
 use App\Providers\DemandServiceProvider;
 use App\Providers\PrebidServiceProvider;
+use App\Providers\OperationsServiceProvider;
 use App\Providers\ReportingServiceProvider;
 
-return [
-    AppServiceProvider::class,
-    PrebidServiceProvider::class,
-    CampaignServiceProvider::class,
-    DemandServiceProvider::class,
-    ReportingServiceProvider::class,
-];
+return [AppServiceProvider::class, PrebidServiceProvider::class, CampaignServiceProvider::class, DemandServiceProvider::class, ReportingServiceProvider::class, OperationsServiceProvider::class];

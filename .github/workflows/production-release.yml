@@ -1,0 +1,98 @@
+name: Production release build
+
+on:
+  push:
+    branches:
+      - agent/production-release-final-v2
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-package:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply reviewed Loader hardening patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply .github/production/hm-loader.patch
+          rm .github/production/hm-loader.patch
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, soap, openssl, fileinfo
+          coverage: none
+
+      - name: Install development dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Validate PHP, architecture, SQLite and full test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          find app bootstrap config database routes tests scripts -name '*.php' -print0 | xargs -0 -n1 php -l
+          php scripts/static-analysis.php
+          cp .env.example .env
+          php artisan key:generate
+          touch database/database.sqlite
+          export DB_CONNECTION=sqlite
+          export DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite"
+          php artisan config:clear
+          php artisan migrate:fresh --seed --force
+          php artisan route:list
+          php artisan schedule:list
+          php artisan test
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Audit, test and compile browser assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --audit-level=moderate
+          npm run test:browser
+          npm run build
+          test -s public/build/manifest.json
+          test -s public/assets/hm-loader.min.js
+          test -s public/assets/prebid/horus-prebid.min.js
+          grep -q "1.3.0" public/assets/hm-loader.min.js
+
+      - name: Build optimized production dependencies and exact ZIP
+        shell: bash
+        env:
+          RELEASE_DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          set -euo pipefail
+          composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+          release_date="$(date -u +%F)"
+          sed -i "s/__RELEASE_DATE__/${release_date}/g; s/__GITHUB_SHA__/${GITHUB_SHA}/g; s/__GITHUB_RUN_ID__/${GITHUB_RUN_ID}/g" release/SECURITY_REPORT.md release/TEST_REPORT.md
+          ./scripts/build-release.sh
+          ./scripts/validate-release.sh
+
+      - name: Commit exact release and compiled distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release public/assets
+          git add -u .github/production/hm-loader.patch
+          git add -f public/build release/horus-media-platform.zip
+          git commit -m "Build validated Horus Media production release"
+          git push origin HEAD:${GITHUB_REF_NAME}

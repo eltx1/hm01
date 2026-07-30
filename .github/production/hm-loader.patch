@@ -1,0 +1,104 @@
+diff --git a/public/assets/hm-loader.js b/public/assets/hm-loader.js
+index 8feff69..4139e18 100644
+--- a/public/assets/hm-loader.js
++++ b/public/assets/hm-loader.js
+@@ -1,10 +1,11 @@
+ (function (window, document) {
+     'use strict';
+ 
+-    var VERSION = '1.2.0';
++    var VERSION = '1.3.0';
+     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
+     var state = window[STATE_KEY] = window[STATE_KEY] || {
+         config: null,
++        control: null,
+         gptPromise: null,
+         prebidPromise: null,
+         servicesEnabled: false,
+@@ -58,6 +59,57 @@
+         }
+     }
+ 
++    function defaultControl() {
++        return { adsEnabled: true, gamEnabled: true, prebidEnabled: true, nativeEnabled: true };
++    }
++
++    function fetchControl(script, force) {
++        var url = configBase(script) + '/control.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
++        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'no-cache' })
++            .then(function (response) {
++                if (!response || !response.ok) throw new Error('Global browser control unavailable');
++                return response.json();
++            })
++            .then(function (control) {
++                var defaults = defaultControl();
++                Object.keys(defaults).forEach(function (key) {
++                    control[key] = control[key] !== false;
++                });
++                return control;
++            })
++            .catch(function () { return defaultControl(); });
++    }
++
++    function applyControl(config, control) {
++        control = control || defaultControl();
++        config.platformControls = control;
++        if (config.prebid && control.prebidEnabled === false) config.prebid.enabled = false;
++        if (config.nativeDemand && control.nativeEnabled === false) {
++            config.nativeDemand.enabled = false;
++            config.nativeDemand.placements = {};
++            config.nativeDemandEnabled = false;
++        }
++        (config.placements || []).forEach(function (placement) {
++            if (control.gamEnabled === false) {
++                placement.gamEnabled = false;
++                placement.adUnitPath = null;
++            }
++            if (control.nativeEnabled === false) placement.nativeEnabled = false;
++            var hasGam = control.gamEnabled !== false && placement.gamEnabled !== false && Boolean(placement.adUnitPath);
++            var hasNative = control.nativeEnabled !== false && placement.nativeEnabled === true;
++            placement.enabled = placement.status === 'active' && Boolean(hasGam || hasNative);
++        });
++        return config;
++    }
++
++    function loadConfiguration(script, siteKey, force) {
++        return fetchControl(script, force).then(function (control) {
++            state.control = control;
++            if (control.adsEnabled === false) return null;
++            return fetchConfig(script, siteKey, force).then(function (config) { return applyControl(config, control); });
++        });
++    }
++
+     function currentHostname() {
+         return String(window.location && window.location.hostname || '').toLowerCase().replace(/\.$/, '');
+     }
+@@ -625,6 +677,7 @@
+             prebidEnabled: Boolean(config.prebid && config.prebid.enabled),
+             prebidBuild: config.prebid && config.prebid.build && config.prebid.build.version,
+             nativeDemandEnabled: Boolean(config.nativeDemand && config.nativeDemand.enabled),
++            platformControls: state.control || defaultControl(),
+             nativeRendered: Object.assign({}, state.nativeRendered),
+             definedPlacements: defined.map(function (entry) { return entry.placement.code; })
+         });
+@@ -680,7 +733,11 @@
+         if (!siteKey || !window.fetch) return Promise.resolve([]);
+         if (state.booting && !options.force) return state.booting;
+ 
+-        state.booting = fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
++        state.booting = loadConfiguration(script, siteKey, Boolean(options.force)).then(function (config) {
++            if (!config) {
++                state.config = null;
++                return [];
++            }
+             state.config = config;
+             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
+                 log(config, 'Hostname rejected', currentHostname());
+@@ -711,6 +768,7 @@
+         _resetForTests: function () {
+             Object.keys(state.refreshTimers).forEach(function (key) { window.clearInterval(state.refreshTimers[key]); });
+             state.config = null;
++            state.control = null;
+             state.gptPromise = null;
+             state.prebidPromise = null;
+             state.servicesEnabled = false;

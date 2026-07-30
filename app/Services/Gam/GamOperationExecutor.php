@@ -9,6 +9,7 @@ use App\Models\GamError;
 use App\Models\GamRemoteObject;
 use App\Models\GamSyncLog;
 use App\Services\Gam\Data\GamResult;
+use App\Services\Operations\PlatformControlService;
 use Throwable;
 
 final class GamOperationExecutor
@@ -16,32 +17,19 @@ final class GamOperationExecutor
     public function __construct(
         private readonly GamPayloadSanitizer $sanitizer,
         private readonly GamExceptionClassifier $classifier,
-    ) {
-    }
+        private readonly PlatformControlService $controls,
+    ) {}
 
-    public function execute(
-        GamConnection $connection,
-        string $operationName,
-        string $service,
-        string $method,
-        array $payload,
-        callable $callback,
-        array $options = [],
-    ): GamResult {
+    public function execute(GamConnection $connection, string $operationName, string $service, string $method, array $payload, callable $callback, array $options = []): GamResult
+    {
         $isWrite = (bool) ($options['write'] ?? false);
         $dryRun = (bool) ($options['dry_run'] ?? $connection->dry_run_default ?? config('gam.dry_run_default', true));
         $idempotencyKey = $options['idempotency_key'] ?? ($isWrite ? $this->idempotencyKey($connection, $operationName, $payload, $options) : null);
         $existing = null;
 
         if ($idempotencyKey) {
-            $existing = GamApiOperation::withoutGlobalScopes()
-                ->where('gam_connection_id', $connection->id)
-                ->where('idempotency_key', $idempotencyKey)
-                ->first();
-
-            if ($existing?->status === GamOperationStatus::Succeeded) {
-                return GamResult::duplicate($existing->response_payload ?? [], $existing->id);
-            }
+            $existing = GamApiOperation::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->where('idempotency_key', $idempotencyKey)->first();
+            if ($existing?->status === GamOperationStatus::Succeeded) return GamResult::duplicate($existing->response_payload ?? [], $existing->id);
         }
 
         $operationData = [
@@ -72,34 +60,33 @@ final class GamOperationExecutor
             $apiOperation = GamApiOperation::withoutGlobalScopes()->create($operationData);
         }
 
-        if ($dryRun) {
-            $planned = [
-                'planned' => true,
-                'service' => $service,
-                'method' => $method,
-                'payload' => $this->sanitizer->sanitize($payload),
-            ];
+        if (! $this->controls->enabled('gam_enabled') && ! $dryRun) {
             $apiOperation->update([
-                'status' => GamOperationStatus::DryRun,
-                'response_payload' => $planned,
+                'status' => GamOperationStatus::Failed,
                 'attempts' => 0,
+                'error_category' => 'CONTROL',
+                'error_code' => 'GAM_KILL_SWITCH',
+                'error_message' => 'GAM connector operations are disabled by the global production kill switch.',
                 'completed_at' => now(),
             ]);
-            $this->syncLog($connection, $options, 'INFO', 'gam.operation.dry_run', "Planned {$operationName} without an external write.", ['operation_id' => $apiOperation->id]);
+            return GamResult::failure('CONTROL', 'GAM_KILL_SWITCH', 'GAM connector operations are disabled by the global production kill switch.', $apiOperation->id);
+        }
 
+        if ($dryRun) {
+            $planned = ['planned' => true, 'service' => $service, 'method' => $method, 'payload' => $this->sanitizer->sanitize($payload)];
+            $apiOperation->update(['status' => GamOperationStatus::DryRun, 'response_payload' => $planned, 'attempts' => 0, 'completed_at' => now()]);
+            $this->syncLog($connection, $options, 'INFO', 'gam.operation.dry_run', "Planned {$operationName} without an external write.", ['operation_id' => $apiOperation->id]);
             return GamResult::dryRun($planned, $apiOperation->id);
         }
 
         $maxAttempts = max(1, (int) config($isWrite ? 'gam.retry.write_attempts' : 'gam.retry.read_attempts', $isWrite ? 2 : 3));
         $attempt = 0;
-
         do {
             $attempt++;
             try {
                 $response = $callback();
                 $response = is_array($response) ? $response : ['value' => $response];
                 $sanitizedResponse = $this->sanitizer->sanitize($response);
-
                 $apiOperation->update([
                     'status' => GamOperationStatus::Succeeded,
                     'response_payload' => $sanitizedResponse,
@@ -110,22 +97,16 @@ final class GamOperationExecutor
                     'error_code' => null,
                     'error_message' => null,
                 ]);
-
                 $this->storeRemoteMapping($connection, $response, $payload, $idempotencyKey, $options);
                 $this->syncLog($connection, $options, 'INFO', 'gam.operation.succeeded', "Completed {$operationName}.", ['operation_id' => $apiOperation->id, 'attempts' => $attempt]);
-
                 return GamResult::success($sanitizedResponse, $apiOperation->id);
             } catch (Throwable $exception) {
                 $classification = $this->classifier->classify($exception);
-                $mayRetry = $classification['retryable']
-                    && (! $isWrite || $classification['safe_to_retry'])
-                    && $attempt < $maxAttempts;
-
+                $mayRetry = $classification['retryable'] && (! $isWrite || $classification['safe_to_retry']) && $attempt < $maxAttempts;
                 if ($mayRetry) {
                     usleep(((int) config('gam.retry.base_delay_ms', 250)) * $attempt * 1000);
                     continue;
                 }
-
                 $apiOperation->update([
                     'status' => GamOperationStatus::Failed,
                     'attempts' => $attempt,
@@ -134,7 +115,6 @@ final class GamOperationExecutor
                     'error_message' => mb_substr($exception->getMessage(), 0, 10000),
                     'completed_at' => now(),
                 ]);
-
                 GamError::withoutGlobalScopes()->create([
                     'organization_id' => $connection->organization_id,
                     'gam_connection_id' => $connection->id,
@@ -147,19 +127,8 @@ final class GamOperationExecutor
                     'context' => $this->sanitizer->sanitize(['service' => $service, 'method' => $method, 'attempts' => $attempt]),
                     'occurred_at' => now(),
                 ]);
-
-                $this->syncLog($connection, $options, 'ERROR', 'gam.operation.failed', "Failed {$operationName}.", [
-                    'operation_id' => $apiOperation->id,
-                    'category' => $classification['category']->value,
-                    'code' => $classification['code'],
-                ]);
-
-                return GamResult::failure(
-                    $classification['category']->value,
-                    $classification['code'],
-                    $exception->getMessage(),
-                    $apiOperation->id,
-                );
+                $this->syncLog($connection, $options, 'ERROR', 'gam.operation.failed', "Failed {$operationName}.", ['operation_id' => $apiOperation->id, 'category' => $classification['category']->value, 'code' => $classification['code']]);
+                return GamResult::failure($classification['category']->value, $classification['code'], $exception->getMessage(), $apiOperation->id);
             }
         } while ($attempt < $maxAttempts);
 
@@ -168,28 +137,20 @@ final class GamOperationExecutor
 
     private function idempotencyKey(GamConnection $connection, string $operation, array $payload, array $options): string
     {
-        $scope = [
+        return hash('sha256', json_encode([
             'connection' => $connection->id,
             'operation' => $operation,
             'local_type' => $options['local_type'] ?? null,
             'local_id' => $options['local_id'] ?? null,
             'payload' => $payload,
-        ];
-
-        return hash('sha256', json_encode($scope, JSON_THROW_ON_ERROR));
+        ], JSON_THROW_ON_ERROR));
     }
 
     private function storeRemoteMapping(GamConnection $connection, array $response, array $payload, ?string $idempotencyKey, array $options): void
     {
-        if (empty($options['local_type']) || empty($options['local_id']) || empty($options['remote_type'])) {
-            return;
-        }
-
+        if (empty($options['local_type']) || empty($options['local_id']) || empty($options['remote_type'])) return;
         $remoteId = data_get($response, $options['remote_id_path'] ?? 'id');
-        if (! is_scalar($remoteId) || (string) $remoteId === '') {
-            return;
-        }
-
+        if (! is_scalar($remoteId) || (string) $remoteId === '') return;
         GamRemoteObject::withoutGlobalScopes()->updateOrCreate(
             [
                 'gam_connection_id' => $connection->id,
@@ -211,10 +172,7 @@ final class GamOperationExecutor
 
     private function syncLog(GamConnection $connection, array $options, string $level, string $event, string $message, array $context): void
     {
-        if (empty($options['sync_run_id'])) {
-            return;
-        }
-
+        if (empty($options['sync_run_id'])) return;
         GamSyncLog::withoutGlobalScopes()->create([
             'organization_id' => $connection->organization_id,
             'gam_connection_id' => $connection->id,

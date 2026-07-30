@@ -16,7 +16,7 @@ class UserController extends Controller
     {
         $this->authorizeOrganization($request, $user);
         $before = ['status' => $user->status->value];
-        $user->update(['status' => UserStatus::Active, 'activated_at' => now(), 'suspended_at' => null]);
+        $user->update(['status' => UserStatus::Active, 'activated_at' => now(), 'suspended_at' => null, 'failed_login_count' => 0, 'last_failed_login_at' => null, 'locked_until' => null]);
         $audit->record('user.activated', $user->organization_id, $request->user(), $user, $before, ['status' => UserStatus::Active->value]);
 
         return back();

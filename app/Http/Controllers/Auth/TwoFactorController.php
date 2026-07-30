@@ -62,6 +62,10 @@ class TwoFactorController extends Controller
     {
         $data = $request->validate(['code' => ['required', 'string']]);
         $user = User::findOrFail($request->session()->get('two_factor_user_id'));
+        if ($user->locked_until && $user->locked_until->isFuture()) {
+            $request->session()->forget(['two_factor_user_id', 'two_factor_remember']);
+            throw ValidationException::withMessages(['code' => 'This account is temporarily locked. Try again later.']);
+        }
         $valid = $twoFactor->verify($user->two_factor_secret, $data['code']);
         $usedRecovery = false;
         if (! $valid) {
@@ -69,7 +73,12 @@ class TwoFactorController extends Controller
             $valid = $usedRecovery;
         }
         if (! $valid) {
-            $user->forceFill(['failed_login_count' => $user->failed_login_count + 1, 'last_failed_login_at' => now()])->save();
+            $failed = ((int) $user->failed_login_count) + 1;
+            $values = ['failed_login_count' => $failed, 'last_failed_login_at' => now()];
+            if ($failed >= max(1, (int) config('security.lockout.attempts', 5))) {
+                $values['locked_until'] = now()->addMinutes(max(1, (int) config('security.lockout.minutes', 15)));
+            }
+            $user->forceFill($values)->save();
             LoginEvent::create(['organization_id' => $user->organization_id, 'user_id' => $user->id, 'email' => $user->email, 'successful' => false, 'failure_reason' => 'two_factor_invalid', 'ip_address' => $request->ip(), 'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024)]);
             throw ValidationException::withMessages(['code' => 'The authentication or recovery code is invalid.']);
         }
@@ -78,7 +87,7 @@ class TwoFactorController extends Controller
         $request->session()->forget('two_factor_user_id');
         $request->session()->regenerate();
         $request->session()->put('two_factor_passed_at', now()->timestamp);
-        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0])->save();
+        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0, 'locked_until' => null])->save();
         LoginEvent::create(['organization_id' => $user->organization_id, 'user_id' => $user->id, 'email' => $user->email, 'successful' => true, 'ip_address' => $request->ip(), 'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024)]);
         $audit->record($usedRecovery ? 'auth.two_factor.recovery_used' : 'auth.two_factor.challenge_passed', $user->organization_id, $user);
 

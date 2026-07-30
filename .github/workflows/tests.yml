@@ -34,6 +34,9 @@ jobs:
         run: cp .env.example .env
       - name: Generate app key
         run: php artisan key:generate
+      - name: Validate production architecture
+        if: matrix.php == 8.2
+        run: php scripts/static-analysis.php
       - name: Execute tests
         run: php artisan test
 
@@ -117,12 +120,15 @@ jobs:
           cache: npm
       - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
       - run: npm ci && npm run test:browser && npm run build
-      - name: Verify compiled Prebid release files
-        run: test -s public/assets/prebid/horus-prebid.min.js && test -s public/assets/prebid/horus-prebid.sha256
-      - name: Create portable production release
-        run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
+      - name: Build and validate exact Hostinger release
+        run: |
+          ./scripts/build-release.sh
+          ./scripts/validate-release.sh
       - uses: actions/upload-artifact@v4
         with:
           name: horus-media-release-${{ github.sha }}
-          path: horus-media-release.zip
+          path: |
+            release/horus-media-platform.zip
+            release/CHECKSUMS.txt
+            release/*.md
           retention-days: 14

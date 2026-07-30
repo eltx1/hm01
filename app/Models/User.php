@@ -21,36 +21,10 @@ class User extends Authenticatable implements MustVerifyEmail
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasUlids, MustVerifyEmailTrait, Notifiable, SoftDeletes;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
-    protected $fillable = [
-        'name',
-        'email',
-        'password',
-        'organization_id',
-        'status',
-    ];
+    protected $fillable = ['name', 'email', 'password', 'organization_id', 'status'];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
-    protected $hidden = [
-        'password',
-        'remember_token',
-        'two_factor_secret',
-        'two_factor_recovery_codes',
-    ];
+    protected $hidden = ['password', 'remember_token', 'two_factor_secret', 'two_factor_recovery_codes'];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -61,6 +35,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'suspended_at' => 'datetime',
             'last_login_at' => 'datetime',
             'last_failed_login_at' => 'datetime',
+            'locked_until' => 'datetime',
             'two_factor_secret' => 'encrypted',
             'two_factor_recovery_codes' => 'encrypted:array',
             'two_factor_confirmed_at' => 'datetime',
@@ -72,33 +47,10 @@ class User extends Authenticatable implements MustVerifyEmail
         return Attribute::make(set: fn (string $value) => str($value)->lower()->trim()->value());
     }
 
-    public function organization(): BelongsTo
-    {
-        return $this->belongsTo(Organization::class);
-    }
-
-    public function roles(): BelongsToMany
-    {
-        return $this->belongsToMany(Role::class, 'user_roles')->withPivot('assigned_by');
-    }
-
-    public function isActive(): bool
-    {
-        return $this->status === UserStatus::Active && $this->organization?->isActive();
-    }
-
-    public function isHorusAdministrator(): bool
-    {
-        return $this->organization?->type === OrganizationType::HorusMedia;
-    }
-
-    public function hasRole(string $role): bool
-    {
-        return $this->roles->contains('name', $role);
-    }
-
-    public function hasPermission(string $permission): bool
-    {
-        return $this->roles()->whereHas('permissions', fn ($query) => $query->where('name', $permission))->exists();
-    }
+    public function organization(): BelongsTo { return $this->belongsTo(Organization::class); }
+    public function roles(): BelongsToMany { return $this->belongsToMany(Role::class, 'user_roles')->withPivot('assigned_by'); }
+    public function isActive(): bool { return $this->status === UserStatus::Active && $this->organization?->isActive(); }
+    public function isHorusAdministrator(): bool { return $this->organization?->type === OrganizationType::HorusMedia; }
+    public function hasRole(string $role): bool { return $this->roles->contains('name', $role); }
+    public function hasPermission(string $permission): bool { return $this->roles()->whereHas('permissions', fn ($query) => $query->where('name', $permission))->exists(); }
 }

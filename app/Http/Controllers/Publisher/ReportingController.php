@@ -48,7 +48,7 @@ class ReportingController extends Controller
         $this->authorizeStatement($request, $publisherStatement);
         $data = $request->validate([
             'invoice_number' => ['required', 'string', 'max:128'],
-            'invoice' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg'],
+            'invoice' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:10240'],
         ]);
         $statements->uploadInvoice($publisherStatement, $data['invoice'], $data['invoice_number'], $request->user());
 

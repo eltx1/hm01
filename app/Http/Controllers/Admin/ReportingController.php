@@ -107,7 +107,7 @@ class ReportingController extends Controller
     public function importCsv(Request $request, ReportSourceConnection $reportSourceConnection, ReportImportService $imports): RedirectResponse
     {
         $data = $request->validate([
-            'report' => ['required', 'file', 'mimes:csv,txt'],
+            'report' => ['required', 'file', 'mimes:csv,txt', 'max:25600'],
             'granularity' => ['required', Rule::enum(ReportGranularity::class)],
             'finality' => ['required', Rule::enum(ReportFinality::class)],
             'from' => ['required', 'date'],

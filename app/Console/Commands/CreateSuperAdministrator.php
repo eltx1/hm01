@@ -26,10 +26,10 @@ class CreateSuperAdministrator extends Command
     {
         $email = str($this->argument('email') ?: $this->ask('Email address'))->lower()->trim()->value();
         $name = $this->option('name') ?: $this->ask('Full name');
-        $password = $this->secret('Password (minimum 12 characters)');
+        $password = $this->secret('Password (14+ chars with upper, lower, number, and symbol)');
         $confirmation = $this->secret('Confirm password');
 
-        if (! filter_var($email, FILTER_VALIDATE_EMAIL) || strlen((string) $name) < 2 || strlen((string) $password) < 12 || ! hash_equals((string) $password, (string) $confirmation)) {
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL) || strlen((string) $name) < 2 || ! $this->strongPassword((string) $password) || ! hash_equals((string) $password, (string) $confirmation)) {
             $this->error('Invalid email, name, password length, or confirmation.');
 
             return self::FAILURE;
@@ -61,5 +61,14 @@ class CreateSuperAdministrator extends Command
         $this->info('Super administrator created. Two-factor enrollment is required on first sign-in.');
 
         return self::SUCCESS;
+    }
+
+    private function strongPassword(string $password): bool
+    {
+        return strlen($password) >= 14
+            && preg_match('/[a-z]/', $password) === 1
+            && preg_match('/[A-Z]/', $password) === 1
+            && preg_match('/[0-9]/', $password) === 1
+            && preg_match('/[^A-Za-z0-9]/', $password) === 1;
     }
 }

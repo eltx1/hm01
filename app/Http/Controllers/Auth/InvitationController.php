@@ -10,6 +10,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
+use Illuminate\Validation\Rules\Password;
 
 class InvitationController extends Controller
 {
@@ -36,7 +37,7 @@ class InvitationController extends Controller
 
     public function accept(Request $request, string $token, InvitationService $service): RedirectResponse
     {
-        $data = $request->validate(['name' => ['required', 'string', 'max:255'], 'password' => ['required', 'confirmed', 'min:12']]);
+        $data = $request->validate(['name' => ['required', 'string', 'max:255'], 'password' => ['required', 'confirmed', Password::defaults()]]);
         $user = $service->accept($token, $data['name'], $data['password']);
         Auth::login($user);
         $request->session()->regenerate();

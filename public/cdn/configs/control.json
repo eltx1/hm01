@@ -1,0 +1,9 @@
+{
+    "schemaVersion": 1,
+    "adsEnabled": true,
+    "gamEnabled": true,
+    "prebidEnabled": true,
+    "nativeEnabled": true,
+    "generatedAt": null,
+    "checksum": "90205bbdb7e8bd5275263edf113ff0da87ad3c3e47e1d7ac35b67024f94ef9ca"
+}

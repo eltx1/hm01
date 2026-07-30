@@ -14,6 +14,7 @@ use App\Models\TagVersion;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
+use App\Services\Operations\PlatformControlService;
 
 final class SiteConfigurationBuilder
 {
@@ -21,40 +22,33 @@ final class SiteConfigurationBuilder
         private readonly GamConnectionResolver $connections,
         private readonly PrebidConfigurationBuilder $prebid,
         private readonly DemandConfigurationBuilder $demand,
-    ) {
-    }
+        private readonly PlatformControlService $controls,
+    ) {}
 
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
     {
-        $site->loadMissing([
-            'domains', 'placements.adUnit', 'placements.sizes', 'placements.targeting',
-            'targeting', 'siteConfig.loaderRelease', 'siteConfig.tagVersion',
-        ]);
-
+        $site->loadMissing(['domains', 'placements.adUnit', 'placements.sizes', 'placements.targeting', 'targeting', 'siteConfig.loaderRelease', 'siteConfig.tagVersion']);
         $config = $site->siteConfig ?? SiteConfig::withoutGlobalScopes()->create([
             'organization_id' => $site->organization_id,
             'site_id' => $site->id,
             'cache_ttl_seconds' => config('horus.config_cache_ttl_seconds', 60),
         ]);
-        $connection = $this->connections->resolve($site);
-        $networkCode = $connection?->network_code ?: $site->current_gam_network_code;
+        $adsEnabled = $this->controls->enabled('ads_enabled');
+        $gamEnabled = $this->controls->enabled('gam_enabled');
+        $prebidEnabled = $this->controls->enabled('prebid_enabled');
+        $nativeEnabled = $this->controls->enabled('native_enabled');
+        $connection = $gamEnabled ? $this->connections->resolve($site) : null;
+        $networkCode = $gamEnabled ? ($connection?->network_code ?: $site->current_gam_network_code) : null;
         $loader = $config->loaderRelease ?: LoaderRelease::query()->where('is_active', true)->latest('published_at')->first();
         $tag = $config->tagVersion ?: TagVersion::query()->where('is_active', true)->latest('published_at')->first();
-        $active = $config->status === 'ACTIVE'
-            && ! $config->immediate_pause
-            && $site->serving_mode !== ServingMode::Paused;
-        $prebid = $connection
-            ? $this->prebid->build($site, $connection)
-            : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
-        $native = $this->demand->build($site);
+        $active = $adsEnabled && $config->status === 'ACTIVE' && ! $config->immediate_pause && $site->serving_mode !== ServingMode::Paused;
+        $prebid = $connection ? $this->prebid->build($site, $connection) : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
+        if (! $prebidEnabled) $prebid['enabled'] = false;
+        $native = $nativeEnabled ? $this->demand->build($site) : ['enabled' => false, 'fallbackOrder' => [], 'placements' => []];
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
-        foreach ($config->page_targeting ?? [] as $key => $values) {
-            $pageTargeting[$key] = array_values(array_map('strval', (array) $values));
-        }
-        if ($config->house_ad_testing) {
-            $pageTargeting['hm_house_test'] = ['1'];
-        }
+        foreach ($config->page_targeting ?? [] as $key => $values) $pageTargeting[$key] = array_values(array_map('strval', (array) $values));
+        if ($config->house_ad_testing) $pageTargeting['hm_house_test'] = ['1'];
 
         return [
             'siteKey' => $site->public_key,
@@ -68,6 +62,7 @@ final class SiteConfigurationBuilder
             'prebid' => $prebid,
             'nativeDemandEnabled' => (bool) $native['enabled'],
             'nativeDemand' => $native,
+            'platformControls' => ['adsEnabled' => $adsEnabled, 'gamEnabled' => $gamEnabled, 'prebidEnabled' => $prebidEnabled, 'nativeEnabled' => $nativeEnabled],
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
@@ -76,62 +71,36 @@ final class SiteConfigurationBuilder
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
-            'gpt' => [
-                'url' => $tag?->gpt_url ?: config('horus.gpt_url'),
-                'tagVersion' => $tag?->version ?? '1.0.0',
-                'singleRequest' => (bool) $config->single_request_mode,
-            ],
+            'gpt' => ['url' => $tag?->gpt_url ?: config('horus.gpt_url'), 'tagVersion' => $tag?->version ?? '1.0.0', 'singleRequest' => (bool) $config->single_request_mode],
             'pageTargeting' => $pageTargeting,
-            'placements' => $site->placements
-                ->sortBy('sort_order')
-                ->map(fn (Placement $placement) => $this->placement(
-                    $placement,
-                    $networkCode,
-                    $environment,
-                    $config->house_ad_testing,
-                    (array) data_get($native, 'placements.'.$placement->code, []),
-                ))
-                ->values()
-                ->all(),
+            'placements' => $site->placements->sortBy('sort_order')->map(fn (Placement $placement) => $this->placement(
+                $placement, $networkCode, $environment, $config->house_ad_testing,
+                (array) data_get($native, 'placements.'.$placement->code, []), $gamEnabled,
+            ))->values()->all(),
             'generatedAt' => now()->utc()->toIso8601String(),
         ];
     }
 
-    private function placement(
-        Placement $placement,
-        ?string $networkCode,
-        ConfigEnvironment $environment,
-        bool $houseMode,
-        array $native,
-    ): array {
+    private function placement(Placement $placement, ?string $networkCode, ConfigEnvironment $environment, bool $houseMode, array $native, bool $globalGamEnabled): array
+    {
         $sizes = $placement->sizes->where('is_active', true);
         $fixed = $sizes->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
             ->map(fn ($size) => [(int) $size->width, (int) $size->height])->unique()->values()->all();
-        if ($sizes->contains(fn ($size) => $size->size_type === 'FLUID')) {
-            $fixed[] = 'fluid';
-        }
-
-        $mappings = $sizes
-            ->filter(fn ($size) => $size->min_viewport_width > 0 || $size->device->value !== 'ALL')
+        if ($sizes->contains(fn ($size) => $size->size_type === 'FLUID')) $fixed[] = 'fluid';
+        $mappings = $sizes->filter(fn ($size) => $size->min_viewport_width > 0 || $size->device->value !== 'ALL')
             ->groupBy(fn ($size) => $size->min_viewport_width.'x'.$size->min_viewport_height.'|'.$size->device->value)
             ->map(function ($group): array {
                 $first = $group->first();
-
                 return [
                     'viewport' => [(int) $first->min_viewport_width, (int) $first->min_viewport_height],
                     'device' => $first->device->value,
                     'sizes' => $group->map(fn ($size) => $size->size_type === 'FLUID' ? 'fluid' : [(int) $size->width, (int) $size->height])->values()->all(),
                 ];
             })->sortByDesc(fn ($mapping) => $mapping['viewport'][0])->values()->all();
-
         $targeting = $this->targeting($placement->targeting, $environment);
-        if ($houseMode) {
-            $targeting['hm_house_test'] = ['1'];
-        }
-
-        $gamEnabled = (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
-        $nativeEnabled = (bool) ($native['enabled'] ?? false)
-            && (((array) ($native['candidates'] ?? [])) !== [] || ! empty($native['house']));
+        if ($houseMode) $targeting['hm_house_test'] = ['1'];
+        $gamEnabled = $globalGamEnabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
+        $nativeEnabled = (bool) ($native['enabled'] ?? false) && (((array) ($native['candidates'] ?? [])) !== [] || ! empty($native['house']));
 
         return [
             'code' => $placement->code,
@@ -145,46 +114,25 @@ final class SiteConfigurationBuilder
             'sizes' => $fixed,
             'responsiveMappings' => $mappings,
             'targeting' => $targeting,
-            'lazyLoad' => [
-                'enabled' => (bool) $placement->lazy_load_enabled,
-                'fetchMarginPercent' => (int) $placement->lazy_fetch_margin_percent,
-                'renderMarginPercent' => (int) $placement->lazy_render_margin_percent,
-                'mobileScaling' => (float) $placement->lazy_mobile_scaling,
-            ],
-            'refresh' => [
-                'enabled' => (bool) $placement->refresh_enabled,
-                'intervalSeconds' => $placement->refresh_interval_seconds ? (int) $placement->refresh_interval_seconds : null,
-                'limit' => $placement->refresh_limit ? (int) $placement->refresh_limit : null,
-            ],
+            'lazyLoad' => ['enabled' => (bool) $placement->lazy_load_enabled, 'fetchMarginPercent' => (int) $placement->lazy_fetch_margin_percent, 'renderMarginPercent' => (int) $placement->lazy_render_margin_percent, 'mobileScaling' => (float) $placement->lazy_mobile_scaling],
+            'refresh' => ['enabled' => (bool) $placement->refresh_enabled, 'intervalSeconds' => $placement->refresh_interval_seconds ? (int) $placement->refresh_interval_seconds : null, 'limit' => $placement->refresh_limit ? (int) $placement->refresh_limit : null],
             'collapseEmptyDiv' => (bool) $placement->collapse_empty_div,
             'safeFrame' => (bool) $placement->safeframe_enabled,
-            'outOfPageFormat' => match ($placement->type) {
-                PlacementType::Interstitial => 'INTERSTITIAL',
-                PlacementType::Rewarded => 'REWARDED',
-                default => null,
-            },
+            'outOfPageFormat' => match ($placement->type) { PlacementType::Interstitial => 'INTERSTITIAL', PlacementType::Rewarded => 'REWARDED', default => null },
         ];
     }
 
     private function targeting($records, ConfigEnvironment $environment): array
     {
-        return $records
-            ->filter(fn ($record) => $record->is_active && (! $record->environment || $record->environment === $environment->value))
-            ->sortBy('targeting_key')
-            ->mapWithKeys(fn ($record) => [$record->targeting_key => array_values(array_map('strval', $record->targeting_values ?? []))])
-            ->all();
+        return $records->filter(fn ($record) => $record->is_active && (! $record->environment || $record->environment === $environment->value))
+            ->sortBy('targeting_key')->mapWithKeys(fn ($record) => [$record->targeting_key => array_values(array_map('strval', $record->targeting_values ?? []))])->all();
     }
 
     private function hostnames(Site $site): array
     {
-        return collect([$site->primary_domain])
-            ->merge($site->domains->pluck('domain'))
+        return collect([$site->primary_domain])->merge($site->domains->pluck('domain'))
             ->map(fn ($domain) => strtolower(preg_replace('#^https?://#i', '', trim((string) $domain))))
-            ->map(fn ($domain) => explode('/', $domain)[0])
-            ->map(fn ($domain) => explode(':', $domain)[0])
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
+            ->map(fn ($domain) => explode('/', $domain)[0])->map(fn ($domain) => explode(':', $domain)[0])
+            ->filter()->unique()->values()->all();
     }
 }
