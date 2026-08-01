@@ -1,0 +1,114 @@
+name: Cloudflare Pages static delivery
+run-name: Static edge ${{ github.event.client_payload.batch_id || github.sha }}
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  repository_dispatch:
+    types: [cloudflare-pages-static-delivery]
+  workflow_dispatch:
+    inputs:
+      delivery_branch:
+        description: Sanitized static delivery branch
+        required: true
+        default: edge-delivery
+      deploy:
+        description: Deploy after validation
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pages-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-validate:
+    if: github.event_name != 'repository_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo, sqlite, pdo_sqlite, mbstring
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci && npm run build
+      - name: Build deterministic static snapshot
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:TjdJVrvlPuNPVt+Rh3VHiJyInFSQGaWPYIhDf49E48M=
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+        run: |
+          touch database/database.sqlite
+          php artisan migrate:fresh --seed --force
+          php artisan static-delivery:build cloudflare-pages-dist
+          php scripts/validate-static-delivery.php cloudflare-pages-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: static-delivery-validation-${{ github.sha }}
+          path: |
+            cloudflare-pages-dist/delivery-manifest.json
+            cloudflare-pages-dist/_headers
+          retention-days: 14
+
+  validate-delivery:
+    if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validator from main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          path: control
+      - name: Checkout sanitized delivery commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.client_payload.delivery_commit || inputs.delivery_branch }}
+          path: dist
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Validate sanitized Pages project
+        run: php control/scripts/validate-static-delivery.php dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pages-deploy-evidence-${{ github.event.client_payload.batch_id || github.sha }}
+          path: dist/delivery-manifest.json
+          retention-days: 30
+
+  deploy:
+    if: >-
+      (github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.deploy)) &&
+      needs.validate-delivery.result == 'success'
+    needs: validate-delivery
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.client_payload.delivery_commit || inputs.delivery_branch }}
+          path: dist
+      - name: Explain missing live credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo 'Static validation passed; live Cloudflare Pages deployment skipped because required GitHub Secrets are absent.'
+      - name: Deploy static project to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main

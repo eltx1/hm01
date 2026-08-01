@@ -11,9 +11,14 @@ use App\Models\PlatformControl;
 use App\Models\ReportImportJob;
 use App\Models\Site;
 use App\Models\SystemHeartbeat;
+use App\Models\StaticDeliveryBatch;
+use App\Models\StaticDeliveryItem;
+use App\Enums\StaticDeliveryStatus;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Operations\LoaderReleaseManager;
 use App\Services\Operations\PlatformControlService;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\StaticDelivery\StaticDeliveryManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -39,6 +44,15 @@ class OperationsController extends Controller
             'placements' => Placement::withoutGlobalScopes()->orderBy('name')->get(['id', 'name', 'site_id']),
             'gamConnections' => GamConnection::withoutGlobalScopes()->orderBy('name')->get(['id', 'name', 'type']),
             'loaderReleases' => LoaderRelease::query()->latest('published_at')->get(),
+            'deliveryBatches' => StaticDeliveryBatch::query()->latest()->limit(25)->get(),
+            'latestDelivery' => StaticDeliveryBatch::query()->where('status', StaticDeliveryStatus::Deployed->value)->latest('deployed_at')->first(),
+            'pendingDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])->count(),
+            'failedDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->where('status', StaticDeliveryStatus::Failed->value)->count(),
+            'urgentDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->where('priority', 'URGENT')->whereNotIn('status', [StaticDeliveryStatus::Deployed->value, StaticDeliveryStatus::Superseded->value])->count(),
+            'deliveryBudgetUsed' => StaticDeliveryBatch::query()->where('created_at', '>=', now()->startOfMonth())->whereIn('status', [StaticDeliveryStatus::Uploading->value, StaticDeliveryStatus::Deployed->value])->count(),
+            'deliveryBudget' => (int) config('static-delivery.monthly_deployment_budget', 450),
+            'deliveryFileWarning' => (int) config('static-delivery.file_budget.warning_threshold', 18000),
+            'deliveryFileLimit' => (int) config('static-delivery.file_budget.hard_limit', 20000),
         ]);
     }
 
@@ -54,8 +68,9 @@ class OperationsController extends Controller
             throw ValidationException::withMessages(['current_password' => 'The current password is incorrect.']);
         }
         $controls->set($data['scope_type'], $data['scope_id'] ?? null, $data['control_key'], (bool) $data['is_disabled'], $data['reason'], $request->user());
-        $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request);
-        return back()->with('status', 'Operational control updated, audited, and propagated to the CDN.');
+        $urgent = (bool) $data['is_disabled'] && $data['control_key'] === 'AD_SERVING';
+        $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request, $urgent);
+        return back()->with('status', 'Operational control updated, audited, and queued for static edge delivery.');
     }
 
     public function retryFailedJob(Request $request, string $uuid): RedirectResponse
@@ -73,7 +88,19 @@ class OperationsController extends Controller
         return back()->with('status', 'Failed job removed.');
     }
 
-    private function republishAffectedSites(string $scopeType, ?string $scopeId, SiteConfigPublisher $publisher, Request $request): void
+    public function retryStaticDelivery(Request $request, StaticDeliveryBatch $staticDeliveryBatch, StaticDeliveryManager $manager, AuditRecorder $audit): RedirectResponse
+    {
+        $request->validate(['current_password' => ['required', 'current_password']]);
+        $manager->retry($staticDeliveryBatch);
+        $audit->record('static.delivery.retry.requested', $request->user()->organization_id, $request->user(), $staticDeliveryBatch, newValues: [
+            'batch_id' => $staticDeliveryBatch->id,
+            'manifest_hash' => $staticDeliveryBatch->manifest_hash,
+        ]);
+
+        return back()->with('status', 'Static delivery retry scheduled and audited.');
+    }
+
+    private function republishAffectedSites(string $scopeType, ?string $scopeId, SiteConfigPublisher $publisher, Request $request, bool $urgent = false): void
     {
         $sites = match ($scopeType) {
             'SITE' => Site::withoutGlobalScopes()->whereKey($scopeId)->get(),
@@ -81,10 +108,13 @@ class OperationsController extends Controller
                 ? Site::withoutGlobalScopes()->whereKey($siteId)->get()
                 : collect(),
             'GAM_CONNECTION' => Site::withoutGlobalScopes()->where('gam_connection_id', $scopeId)->get(),
+            'PLATFORM' => Site::withoutGlobalScopes()->get(),
             default => collect(),
         };
         foreach ($sites as $site) {
-            $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+            $urgent
+                ? $publisher->publishUrgent($site, ConfigEnvironment::Production, $request->user())
+                : $publisher->publish($site, ConfigEnvironment::Production, $request->user());
         }
     }
 

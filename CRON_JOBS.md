@@ -29,8 +29,8 @@ release switch, keep only one active scheduler for the production application.
 ## Campaign and reporting operations
 
 The normal Laravel scheduler registers campaign lifecycle reconciliation,
-aggregated report requests/imports, drift detection, audit retention, and bounded
-queue draining. Keep these operations enabled in production and inspect failed
+aggregated report requests/imports, drift detection, audit retention, bounded
+queue draining, and static Pages delivery/reconciliation. Keep these operations enabled in production and inspect failed
 jobs before retrying them.
 
 For a manual operational check:
@@ -39,6 +39,7 @@ For a manual operational check:
 php artisan schedule:list
 php artisan campaigns:monitor --reconcile
 php artisan queue:failed
+php artisan static-delivery:process --reconcile-only
 ~~~
 
 Run manual commands in maintenance windows when they can produce external writes.

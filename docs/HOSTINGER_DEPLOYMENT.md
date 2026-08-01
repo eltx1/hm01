@@ -13,7 +13,8 @@ the application remains deployable on any compatible PHP/MySQL environment.
   document root. If hPanel cannot point there, use Hostinger's documented
   Laravel directory layout while keeping `.env`, `vendor`, storage, and
   application source outside the public directory.
-- `cdn.horusmedia.net` is a separate static/CDN origin in later releases.
+- `cdn.horusmedia.net` is a Cloudflare Pages static project and never resolves
+  publisher runtime traffic to Hostinger.
 
 Confirm current plan limits, PHP modules, cron frequency, execution time, memory,
 storage, and MySQL version before launch.
@@ -52,6 +53,8 @@ compiled `public/build/` and can be uploaded through hPanel or another provider'
 9. Run `php artisan config:cache`, `route:cache`, and `view:cache`.
 10. Verify `https://app.horusmedia.net/up` returns a successful response, then
     sign in and enroll the administrator's authenticator.
+11. Set the static delivery driver/token reference privately and configure the
+    GitHub/Cloudflare secrets in `CLOUDFLARE_SETUP.md`.
 
 Do not upload a development `.env`, database dump, credentials, logs, or
 `node_modules/`.
@@ -67,6 +70,8 @@ shown by Hostinger:
 
 The scheduler drains database queue work in a bounded process using
 `--stop-when-empty --max-time=50`; no permanent worker or Supervisor is needed.
+It also batches and reconciles static Pages deployments. Node and the Cloudflare
+token remain in GitHub Actions; neither is required on Hostinger.
 If the plan only allows a slower cron interval, report and import scheduling
 must be designed around that actual limit.
 

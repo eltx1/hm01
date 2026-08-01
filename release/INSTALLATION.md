@@ -46,7 +46,9 @@ MAIL_PASSWORD=...
 MAIL_ENCRYPTION=tls
 MAIL_FROM_ADDRESS=operations@horusmedia.net
 HORUS_CDN_URL=https://cdn.horusmedia.net
-HORUS_STATIC_CONFIG_ROOT=/home/ACCOUNT/domains/cdn.horusmedia.net/public_html/configs
+HORUS_STATIC_DELIVERY_DRIVER=cloudflare-pages-pipeline
+HORUS_EDGE_GITHUB_BRANCH=edge-delivery
+HORUS_EDGE_GITHUB_TOKEN_REFERENCE=env:HORUS_EDGE_GITHUB_TOKEN
 GAM_HORUS_NETWORK_CODE=...
 GAM_HORUS_SERVICE_ACCOUNT_PATH=/home/ACCOUNT/private/gam-horus-service-account.json
 ```
@@ -75,7 +77,8 @@ chmod 700 /home/ACCOUNT/private
 chmod 600 /home/ACCOUNT/private/gam-horus-service-account.json
 ```
 
-The application must be able to write to `storage/`, `bootstrap/cache/`, and the configured CDN `configs/` directory.
+The application writes only `storage/` and `bootstrap/cache/`. Cloudflare Pages
+files use the scheduled GitHub pipeline; there is no Hostinger CDN document root.
 
 ## 7. Safe initial migration
 

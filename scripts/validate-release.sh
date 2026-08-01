@@ -11,6 +11,7 @@ required=(
   'horus-media-platform/public/assets/hm-loader.min.js'
   'horus-media-platform/public/assets/prebid/horus-prebid.min.js'
   'horus-media-platform/database/migrations/2026_07_30_000000_create_production_operations_tables.php'
+  'horus-media-platform/database/migrations/2026_08_01_000000_create_static_delivery_tables.php'
   'horus-media-platform/.env.example'
   'horus-media-platform/release/INSTALLATION.md'
   'horus-media-platform/release/UPGRADE.md'
@@ -39,6 +40,7 @@ done
 
 for forbidden_dir in \
   'node_modules/' 'tests/' '.git/' '.github/' 'design/' 'docs/' 'scripts/' \
+  'cloudflare-pages-dist/' \
   'resources/js/' 'resources/css/' 'resources/prebid/' 'public/cdn/' \
   'storage/framework/testing/'; do
   if unzip -Z1 "$ZIP" | grep -Fq "horus-media-platform/$forbidden_dir"; then

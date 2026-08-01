@@ -19,11 +19,13 @@ Administrators may later select MCM_PARTNER_GAM, PUBLISHER_GAM,
 DIRECT_NATIVE_ONLY, or PAUSED per website. The permanent publisher loader does
 not change when the selection changes.
 
-The browser requests configuration from the CDN, runs Prebid.js and Google
+The browser requests the loader, manifest, and immutable configuration from a
+static Cloudflare Pages project, runs Prebid.js and Google
 Publisher Tag, and sends advertising traffic directly to the selected serving
 network. Optional approved native demand may run through GAM third-party
-creatives or public direct JavaScript fallback. Ad requests never transit the
-Laravel application.
+creatives or public direct JavaScript fallback. Ad requests and all other
+publisher runtime requests never transit the Laravel application. Hostinger is
+the control plane only.
 
 Direct advertisers use the Horus Media dashboard. Campaigns are split into
 isolated GAM network instances based on each selected website's configured
@@ -70,7 +72,8 @@ system:
 - organization-scoped websites, authorized domains, and four verification modes
 - audited website review, status, serving-mode, revenue-share, and emergency controls
 - Google Ad Manager multi-network connection and synchronization layer
-- local inventory, static CDN configuration, GPT, and permanent Horus Loader
+- local inventory, transactional static-delivery outbox, Cloudflare Pages pipeline,
+  GPT, and permanent Horus Loader
 - browser-side Prebid.js and centralized, idempotent Prebid GAM automation
 - direct advertiser campaigns, validated creatives, billing profiles, invoices,
   multi-network GAM deployment, lifecycle synchronization, reports, and drift detection

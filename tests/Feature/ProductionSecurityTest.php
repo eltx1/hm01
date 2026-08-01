@@ -39,7 +39,6 @@ class ProductionSecurityTest extends TestCase
     {
         $organization = Organization::create(['name' => 'Test', 'slug' => 'test-'.str()->random(8), 'type' => OrganizationType::Publisher, 'status' => AccountStatus::Active]);
         $user = User::factory()->for($organization)->create(['status' => UserStatus::Active]);
-        config(['horus.static_config_root' => storage_path('framework/testing/production-controls')]);
         $service = app(PlatformControlService::class);
         $service->set('PLATFORM', null, 'AD_SERVING', true, 'Emergency production test', $user);
         $this->assertTrue($service->disabled('PLATFORM', null, 'AD_SERVING'));

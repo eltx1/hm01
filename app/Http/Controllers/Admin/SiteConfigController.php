@@ -58,7 +58,7 @@ class SiteConfigController extends Controller
         $data = $request->validate(['environment' => ['required', Rule::enum(ConfigEnvironment::class)]]);
         $version = $publisher->publish($site, ConfigEnvironment::from($data['environment']), $request->user());
 
-        return back()->with('status', $version->environment->value.' configuration v'.$version->version.' published to the static CDN directory.');
+        return back()->with('status', $version->environment->value.' configuration v'.$version->version.' is pending batched static delivery.');
     }
 
     public function rollback(Request $request, Site $site, ConfigVersion $configVersion, SiteConfigPublisher $publisher): RedirectResponse
@@ -66,7 +66,7 @@ class SiteConfigController extends Controller
         abort_unless($configVersion->site_id === $site->id, 404);
         $version = $publisher->rollback($site, $configVersion->environment, $configVersion, $request->user());
 
-        return back()->with('status', $configVersion->environment->value.' rolled back through new version v'.$version->version.'.');
+        return back()->with('status', $configVersion->environment->value.' rollback v'.$version->version.' is pending static delivery.');
     }
 
     public function pause(Request $request, Site $site, SiteConfigPublisher $publisher): RedirectResponse
@@ -74,7 +74,7 @@ class SiteConfigController extends Controller
         $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         $version = $publisher->pauseImmediately($site, $request->user());
 
-        return back()->with('status', 'Immediate pause published as production configuration v'.$version->version.'.');
+        return back()->with('status', 'Emergency pause v'.$version->version.' was queued with urgent delivery priority.');
     }
 
     public function resume(Request $request, Site $site, SiteConfigPublisher $publisher): RedirectResponse
@@ -82,6 +82,6 @@ class SiteConfigController extends Controller
         $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         $version = $publisher->resume($site, $request->user());
 
-        return back()->with('status', 'Static ad delivery resumed through production configuration v'.$version->version.'.');
+        return back()->with('status', 'Resume configuration v'.$version->version.' is pending batched static delivery.');
     }
 }

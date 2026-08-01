@@ -11,6 +11,8 @@ operational controls.
 - Back up MySQL and private storage.
 - Record the previous release, new commit SHA, checksum, migration list, and rollback owner.
 - Confirm the CDN current-alias and versioned configuration policy.
+- Confirm the Pages batch is deployed, the manifest checksum matches, and no
+  `functions/` or `_worker.js` exists in the sanitized delivery branch.
 - Announce a maintenance window when migrations or external writes are involved.
 
 ## Monthly access review
@@ -20,6 +22,7 @@ Review:
 - Horus administrators and MFA enrollment;
 - organization memberships, roles, invitations, and suspended accounts;
 - GAM connection permissions and credential references;
+- GitHub delivery token scope and Cloudflare Pages Edit secret ownership;
 - provider account assignments and approval states;
 - support/finance access to payments, exports, and internal notes;
 - audit-log access and retention.
