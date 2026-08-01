@@ -219,7 +219,6 @@ final class StaticDeliveryManager
                 'next_retry_at' => $retryable ? now()->addSeconds($delay) : null,
             ]);
             $batch->items()->update([
-                'batch_id' => $retryable ? null : $batch->id,
                 'status' => $status->value,
                 'available_at' => $retryable ? now()->addSeconds($delay) : now(),
             ]);
