@@ -29,6 +29,7 @@ final class StaticDeliveryManager
     {
         $batch = DB::transaction(function (): ?StaticDeliveryBatch {
             $items = StaticDeliveryItem::withoutGlobalScopes()
+                ->with('configVersion:id,version')
                 ->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])
                 ->where('available_at', '<=', now())
                 ->orderByRaw("CASE WHEN priority = 'URGENT' THEN 0 ELSE 1 END")
@@ -41,7 +42,7 @@ final class StaticDeliveryManager
             }
 
             $selected = $items->groupBy(fn (StaticDeliveryItem $item) => $item->site_id.'|'.$item->environment->value)
-                ->map(fn ($group) => $group->sortByDesc('created_at')->first());
+                ->map(fn ($group) => $group->sortByDesc(fn (StaticDeliveryItem $item) => $item->configVersion->version)->first());
             $selectedIds = $selected->pluck('id');
             $supersededIds = $items->pluck('id')->diff($selectedIds);
             if ($supersededIds->isNotEmpty()) {
@@ -209,6 +210,7 @@ final class StaticDeliveryManager
         $status = $retryable ? StaticDeliveryStatus::RetryScheduled : StaticDeliveryStatus::Failed;
         $delay = max(1, (int) config('static-delivery.retry_delay_seconds', 300)) * (2 ** min(4, max(0, $attempts - 1)));
         DB::transaction(function () use ($batch, $exception, $attempts, $retryable, $status, $delay): void {
+            $versionIds = $batch->items()->pluck('config_version_id');
             $batch->update([
                 'status' => $status,
                 'attempts' => $attempts,
@@ -221,7 +223,7 @@ final class StaticDeliveryManager
                 'status' => $status->value,
                 'available_at' => $retryable ? now()->addSeconds($delay) : now(),
             ]);
-            ConfigVersion::withoutGlobalScopes()->whereIn('id', $batch->items()->pluck('config_version_id'))
+            ConfigVersion::withoutGlobalScopes()->whereIn('id', $versionIds)
                 ->update(['status' => ConfigVersionStatus::DeliveryFailed->value]);
         });
         $fresh = $batch->refresh();

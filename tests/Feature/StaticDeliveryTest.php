@@ -21,6 +21,7 @@ use App\Services\StaticDelivery\StaticPathGuard;
 use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
@@ -59,6 +60,7 @@ class StaticDeliveryTest extends TestCase
     public function test_publish_is_transactional_pending_and_remote_delivery_runs_after_commit(): void
     {
         [$site, $admin] = $this->siteWithPrimaryHorus();
+        $baselineTransactionLevel = DB::transactionLevel();
         $version = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
 
         $this->assertSame(ConfigVersionStatus::PendingDelivery, $version->status);
@@ -67,7 +69,7 @@ class StaticDeliveryTest extends TestCase
         $batch = app(StaticDeliveryManager::class)->processPending();
 
         $this->assertSame(StaticDeliveryStatus::Deployed, $batch->status);
-        $this->assertSame([0], $this->driver->transactionLevels);
+        $this->assertSame([$baselineTransactionLevel], $this->driver->transactionLevels);
         $this->assertCount(1, $this->driver->snapshots);
         $this->assertArrayHasKey('hm-loader.js', $this->driver->snapshots[0]->files);
         $this->assertArrayHasKey("configs/{$site->public_key}/manifest.json", $this->driver->snapshots[0]->files);
