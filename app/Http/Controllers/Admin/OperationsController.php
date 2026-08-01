@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\ConfigEnvironment;
+use App\Enums\StaticDeliveryPriority;
 use App\Http\Controllers\Controller;
 use App\Models\GamConnection;
 use App\Models\LoaderRelease;
@@ -112,9 +112,11 @@ class OperationsController extends Controller
             default => collect(),
         };
         foreach ($sites as $site) {
-            $urgent
-                ? $publisher->publishUrgent($site, ConfigEnvironment::Production, $request->user())
-                : $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+            $publisher->publishActiveProduction(
+                $site,
+                $request->user(),
+                $urgent ? StaticDeliveryPriority::Urgent : StaticDeliveryPriority::Normal,
+            );
         }
     }
 

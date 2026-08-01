@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\ConfigEnvironment;
+use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\ConfigVersion;
 use App\Models\LoaderRelease;
@@ -14,11 +15,12 @@ use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class SiteConfigController extends Controller
 {
-    public function update(Request $request, Site $site, AuditRecorder $audit): RedirectResponse
+    public function update(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate([
             'loader_release_id' => ['nullable', 'ulid', 'exists:loader_releases,id'],
@@ -28,22 +30,28 @@ class SiteConfigController extends Controller
             'single_request_mode' => ['sometimes', 'boolean'],
             'cache_ttl_seconds' => ['required', 'integer', 'between:0,86400'],
         ]);
-        $config = SiteConfig::withoutGlobalScopes()->firstOrCreate(
-            ['site_id' => $site->id],
-            ['organization_id' => $site->organization_id],
-        );
-        $before = $config->toArray();
-        $config->update([
-            'loader_release_id' => $data['loader_release_id'] ?? $config->loader_release_id,
-            'tag_version_id' => $data['tag_version_id'] ?? $config->tag_version_id,
-            'debug_enabled' => $request->boolean('debug_enabled'),
-            'house_ad_testing' => $request->boolean('house_ad_testing'),
-            'single_request_mode' => $request->boolean('single_request_mode'),
-            'cache_ttl_seconds' => $data['cache_ttl_seconds'],
-        ]);
-        $audit->record('site.config.settings.updated', $site->organization_id, $request->user(), $config, $before, $config->fresh()->toArray());
+        $version = DB::transaction(function () use ($site, $data, $request, $audit, $publisher) {
+            $config = SiteConfig::withoutGlobalScopes()->firstOrCreate(
+                ['site_id' => $site->id],
+                ['organization_id' => $site->organization_id],
+            );
+            $before = $config->toArray();
+            $config->update([
+                'loader_release_id' => $data['loader_release_id'] ?? $config->loader_release_id,
+                'tag_version_id' => $data['tag_version_id'] ?? $config->tag_version_id,
+                'debug_enabled' => $request->boolean('debug_enabled'),
+                'house_ad_testing' => $request->boolean('house_ad_testing'),
+                'single_request_mode' => $request->boolean('single_request_mode'),
+                'cache_ttl_seconds' => $data['cache_ttl_seconds'],
+            ]);
+            $audit->record('site.config.settings.updated', $site->organization_id, $request->user(), $config, $before, $config->fresh()->toArray());
 
-        return back()->with('status', 'Static configuration settings updated. Publish the required environment to deploy.');
+            return $publisher->publishActiveProduction($site, $request->user());
+        });
+
+        return back()->with('status', $version
+            ? 'Static settings updated and production configuration v'.$version->version.' was queued automatically.'
+            : 'Static settings saved. Production will publish automatically when the website is activated.');
     }
 
     public function preview(Request $request, Site $site, SiteConfigPublisher $publisher): JsonResponse
@@ -80,6 +88,7 @@ class SiteConfigController extends Controller
     public function resume(Request $request, Site $site, SiteConfigPublisher $publisher): RedirectResponse
     {
         $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+        abort_unless($site->status === SiteStatus::Active, 422, 'Activate the website before resuming its production configuration.');
         $version = $publisher->resume($site, $request->user());
 
         return back()->with('status', 'Resume configuration v'.$version->version.' is pending batched static delivery.');

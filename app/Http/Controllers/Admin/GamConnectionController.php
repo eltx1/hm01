@@ -2,13 +2,14 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\ConfigEnvironment;
 use App\Enums\GamConnectionType;
 use App\Enums\GamCredentialType;
+use App\Enums\ServingMode;
 use App\Http\Controllers\Controller;
 use App\Models\GamConnection;
 use App\Models\Organization;
 use App\Models\Site;
+use App\Models\User;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Inventory\SiteConfigPublisher;
@@ -49,9 +50,10 @@ class GamConnectionController extends Controller
         ]);
     }
 
-    public function store(Request $request, GamConnectionService $service): RedirectResponse
+    public function store(Request $request, GamConnectionService $service, SiteConfigPublisher $publisher): RedirectResponse
     {
         $connection = $service->create($this->validated($request, true), $request->user());
+        $this->republishAffectedSites($connection, $publisher, $request->user());
 
         return redirect()->route('admin.gam.connections.show', $connection)->with('status', 'Google Ad Manager connection created. Dry-run is enabled by default.');
     }
@@ -80,11 +82,13 @@ class GamConnectionController extends Controller
         ]);
     }
 
-    public function update(Request $request, GamConnection $gamConnection, GamConnectionService $service): RedirectResponse
+    public function update(Request $request, GamConnection $gamConnection, GamConnectionService $service, SiteConfigPublisher $publisher): RedirectResponse
     {
-        $service->update($gamConnection, $this->validated($request, false), $request->user());
+        $previousType = $gamConnection->type;
+        $connection = $service->update($gamConnection, $this->validated($request, false), $request->user());
+        $this->republishAffectedSites($connection, $publisher, $request->user(), [$previousType]);
 
-        return redirect()->route('admin.gam.connections.show', $gamConnection)->with('status', 'Google Ad Manager connection updated.');
+        return redirect()->route('admin.gam.connections.show', $gamConnection)->with('status', 'Google Ad Manager connection updated and active affected websites were queued automatically.');
     }
 
     public function test(Request $request, GamConnection $gamConnection, GamConnectionService $service): RedirectResponse
@@ -96,11 +100,12 @@ class GamConnectionController extends Controller
             : "Connection test failed: {$result->errorMessage}");
     }
 
-    public function primary(Request $request, GamConnection $gamConnection, GamConnectionService $service): RedirectResponse
+    public function primary(Request $request, GamConnection $gamConnection, GamConnectionService $service, SiteConfigPublisher $publisher): RedirectResponse
     {
-        $service->setPrimary($gamConnection, $request->user());
+        $connection = $service->setPrimary($gamConnection, $request->user());
+        $this->republishAffectedSites($connection, $publisher, $request->user());
 
-        return back()->with('status', 'Primary HORUS_GAM connection selected.');
+        return back()->with('status', 'Primary HORUS_GAM connection selected and active fallback websites were queued automatically.');
     }
 
     public function assignSite(Request $request, GamConnection $gamConnection, GamConnectionService $service, SiteConfigPublisher $publisher): RedirectResponse
@@ -111,9 +116,43 @@ class GamConnectionController extends Controller
         ]);
         $site = Site::withoutGlobalScopes()->findOrFail($data['site_id']);
         $service->assignToSite($site, $gamConnection, $request->user(), $data['reason']);
-        $version = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $version = $publisher->publishActiveProduction($site->refresh(), $request->user());
 
-        return back()->with('status', 'The website now uses the selected GAM connection and production configuration v'.$version->version.' was published. Other websites were not changed.');
+        $delivery = $version
+            ? 'production configuration v'.$version->version.' was queued automatically'
+            : 'the production configuration will publish automatically when the website is activated';
+
+        return back()->with('status', 'The website now uses the selected GAM connection and '.$delivery.'. Other websites were not changed.');
+    }
+
+    private function republishAffectedSites(
+        GamConnection $connection,
+        SiteConfigPublisher $publisher,
+        User $actor,
+        array $additionalTypes = [],
+    ): void {
+        $types = collect([$connection->type, ...$additionalTypes])->unique(fn (GamConnectionType $type) => $type->value);
+        $sites = Site::withoutGlobalScopes()
+            ->where(function ($query) use ($connection, $types): void {
+                $query->where('gam_connection_id', $connection->id);
+                foreach ($types as $type) {
+                    $query->orWhere(function ($fallback) use ($connection, $type): void {
+                        $fallback->whereNull('gam_connection_id')->where('serving_mode', match ($type) {
+                            GamConnectionType::HorusGam => ServingMode::HorusGam->value,
+                            GamConnectionType::McmPartnerGam => ServingMode::McmPartnerGam->value,
+                            GamConnectionType::PublisherGam => ServingMode::PublisherGam->value,
+                        });
+                        if ($type === GamConnectionType::PublisherGam) {
+                            $fallback->where('organization_id', $connection->organization_id);
+                        }
+                    });
+                }
+            })
+            ->get();
+
+        foreach ($sites as $site) {
+            $publisher->publishActiveProduction($site, $actor);
+        }
     }
 
     private function validated(Request $request, bool $creating): array

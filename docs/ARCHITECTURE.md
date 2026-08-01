@@ -61,6 +61,13 @@ deployment. Publication is marked deployed only after CI confirms Cloudflare.
 The loader resolves the immutable snapshot through a short-lived manifest with a
 compatibility alias fallback. No publisher browser request reaches Laravel.
 
+Runtime publication is lifecycle-driven. Draft and approved websites do not
+create production traffic; activation queues the complete first version.
+Subsequent active-site mutations queue automatically, while suspension and
+emergency pause queue urgent paused versions. The payload builder independently
+requires website status `ACTIVE`, so manual or concurrent publication cannot
+turn an inactive website on at the edge.
+
 See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane

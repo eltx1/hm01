@@ -131,12 +131,33 @@ database transaction with the public payload and SHA-256 checksum. No filesystem
 or network write occurs in the admin request. `static_delivery_batches` records
 batching, upload, retry, remote workflow evidence, and confirmed deployment.
 
+Production publication follows the website lifecycle automatically:
+
+- Draft, review, and approval changes remain control-plane-only and create no
+  production outbox traffic.
+- First activation queues the complete initial production configuration.
+- Runtime changes for an active website queue a new production version. This
+  includes domains, loader/GPT settings, placements, targeting, serving mode,
+  GAM resolution, Prebid, native demand, and operational controls.
+- Bulk placement changes create one production version after the transaction,
+  not one version per row.
+- Suspension, archive from active state, and emergency pause queue an urgent
+  paused version. Emergency pause creates exactly one urgent version.
+- Manual Preview/Test/Production and rollback remain available as explicit
+  operations. A non-active website can never generate an active payload.
+
+The active-state check and outbox write are serialized under a database lock.
+This prevents a concurrent suspension and settings update from publishing an
+incorrectly active production payload.
+
 A rollback never mutates old evidence. It copies the selected payload into a
 new version, records `source_version_id`, and replaces the current alias. This
 makes rollback history explicit and reversible.
 
-Changing the selected GAM connection or serving mode publishes a new production
-configuration. Changing one website does not change another website.
+Changing a selected GAM connection or serving mode publishes a new production
+configuration for active affected websites. Changing the primary fallback GAM
+connection republishes all active websites that resolve through that fallback;
+explicitly assigned unrelated websites are not changed.
 
 ## Public configuration shape
 

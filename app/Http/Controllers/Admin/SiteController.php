@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\ConfigEnvironment;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Enums\VerificationMethod;
@@ -91,9 +90,13 @@ class SiteController extends Controller
         $data = $request->validate(['serving_mode' => ['required', Rule::enum(ServingMode::class)], 'reason' => ['required', 'string', 'max:2000'], 'rollback_reference_id' => ['nullable', 'ulid']]);
         $rollback = isset($data['rollback_reference_id']) ? ServingModeChange::withoutGlobalScopes()->where('site_id', $site->id)->findOrFail($data['rollback_reference_id']) : null;
         $lifecycle->changeServingMode($site, ServingMode::from($data['serving_mode']), $request->user(), $data['reason'], $rollback);
-        $version = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $version = $publisher->publishActiveProduction($site->refresh(), $request->user());
 
-        return back()->with('status', 'Serving mode changed and production configuration v'.$version->version.' published. Publisher installation code remains unchanged.');
+        $delivery = $version
+            ? 'Production configuration v'.$version->version.' was queued automatically.'
+            : 'The configuration was saved and will publish automatically when the website is activated.';
+
+        return back()->with('status', 'Serving mode changed. '.$delivery.' Publisher installation code remains unchanged.');
     }
 
     public function revenueShare(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
@@ -123,13 +126,12 @@ class SiteController extends Controller
         return back()->with('status', 'Domain manually verified.');
     }
 
-    public function emergencyPause(Request $request, Site $site, SiteLifecycleService $lifecycle, SiteConfigPublisher $publisher): RedirectResponse
+    public function emergencyPause(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
     {
         $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
         $lifecycle->emergencyPause($site, $request->user(), $data['reason']);
-        $version = $publisher->pauseImmediately($site->refresh(), $request->user());
 
-        return back()->with('status', 'Emergency pause applied and static production configuration v'.$version->version.' published.');
+        return back()->with('status', 'Emergency pause applied and one urgent static production update was queued.');
     }
 
     private function review(Site $site, Request $request, string $decision, array $data): void

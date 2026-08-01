@@ -43,6 +43,8 @@ class PublisherOnboardingTest extends TestCase
         $rawPayment = (string) $this->getRawPaymentDetails($publisher->id);
         $this->assertStringNotContainsString('SECRET-ACCOUNT-1234', $rawPayment);
         $this->assertDatabaseHas('site_reviews', ['site_id' => $site->id, 'decision' => 'PENDING']);
+        $this->assertDatabaseCount('config_versions', 0);
+        $this->assertDatabaseCount('static_delivery_items', 0);
     }
 
     private function getRawPaymentDetails(string $publisherId): mixed

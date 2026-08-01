@@ -22,8 +22,8 @@
 </article>
 <article>
     <p class="eyebrow">Static configuration</p><h3>Delivery controls</h3>
-    <p class="muted">Saving creates a pending outbox item. Operations confirms the separate Cloudflare Pages deployment.</p>
-    <form class="inline-form" method="POST" action="{{ route('admin.sites.config.publish', $site) }}">@csrf<select class="hm-input" name="environment"><option>PREVIEW</option><option>TEST</option><option selected>PRODUCTION</option></select><button class="hm-button-primary">Queue delivery</button></form>
+    <p class="muted">Runtime changes publish Production automatically for active websites. Changes to inactive websites are saved and published together on first activation. Operations confirms the separate Cloudflare Pages deployment.</p>
+    <form class="inline-form" method="POST" action="{{ route('admin.sites.config.publish', $site) }}">@csrf<select class="hm-input" name="environment"><option>PREVIEW</option><option>TEST</option><option selected>PRODUCTION</option></select><button class="hm-button-primary">Force republish</button></form>
     <form class="inline-form" method="GET" target="_blank" action="{{ route('admin.sites.config.preview', $site) }}"><select class="hm-input" name="environment"><option>PREVIEW</option><option>TEST</option><option>PRODUCTION</option></select><button class="hm-button-secondary">Preview JSON</button></form>
     <div class="status-row"><span class="pill">Preview v{{ $site->siteConfig?->preview_version ?? 0 }}</span><span class="pill">Test v{{ $site->siteConfig?->test_version ?? 0 }}</span><span class="pill">Production v{{ $site->siteConfig?->production_version ?? 0 }}</span></div>
     @if($site->configVersions->first())<p class="muted">Latest request: {{ str_replace('_', ' ', $site->configVersions->first()->status->value) }} · {{ $site->configVersions->first()->environment->value }} v{{ $site->configVersions->first()->version }}</p>@endif

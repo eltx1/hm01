@@ -4,6 +4,7 @@ namespace App\Services\Inventory;
 
 use App\Enums\ConfigEnvironment;
 use App\Enums\ConfigVersionStatus;
+use App\Enums\SiteStatus;
 use App\Enums\StaticDeliveryPriority;
 use App\Enums\StaticDeliveryStatus;
 use App\Models\ConfigVersion;
@@ -42,6 +43,28 @@ final class SiteConfigPublisher
     public function publishUrgent(Site $site, ConfigEnvironment $environment, User $actor): ConfigVersion
     {
         return DB::transaction(fn () => $this->queueVersion($site, $environment, $actor, StaticDeliveryPriority::Urgent));
+    }
+
+    /**
+     * Queue the live production configuration only when the website is active.
+     *
+     * Runtime mutation paths should use this method instead of publishing
+     * production directly. Locking the website keeps the status decision and
+     * the outbox write atomic with lifecycle changes.
+     */
+    public function publishActiveProduction(
+        Site $site,
+        User $actor,
+        StaticDeliveryPriority $priority = StaticDeliveryPriority::Normal,
+    ): ?ConfigVersion {
+        return DB::transaction(function () use ($site, $actor, $priority): ?ConfigVersion {
+            $lockedSite = Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
+            if ($lockedSite->status !== SiteStatus::Active) {
+                return null;
+            }
+
+            return $this->queueVersion($lockedSite, ConfigEnvironment::Production, $actor, $priority);
+        });
     }
 
     public function rollback(Site $site, ConfigEnvironment $environment, ConfigVersion $target, User $actor): ConfigVersion

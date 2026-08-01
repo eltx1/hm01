@@ -9,6 +9,7 @@ use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\SiteLifecycleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -48,10 +49,11 @@ class SiteController extends Controller
         return view('publisher.sites.form', ['site' => $site, 'publisher' => $this->publisher($request)]);
     }
 
-    public function update(Request $request, Site $site, AuditRecorder $audit): RedirectResponse
+    public function update(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $configPublisher): RedirectResponse
     {
         $publisher = $this->publisher($request);
         $before = $site->only(['display_name', 'primary_domain', 'language', 'content_category', 'country', 'prebid_enabled', 'native_demand_enabled']);
+        $runtimeBefore = $site->only(['primary_domain', 'current_gam_network_code', 'prebid_enabled', 'native_demand_enabled']);
         $data = $this->validated($request, $publisher, $site);
         $originalDomain = $site->primary_domain;
         $site->update($data);
@@ -71,18 +73,26 @@ class SiteController extends Controller
             )->update(['is_primary' => true]);
         }
         $audit->record('site.updated', $site->organization_id, $request->user(), $site, $before, $site->only(array_keys($before)));
+        $version = $runtimeBefore !== $site->fresh()->only(array_keys($runtimeBefore))
+            ? $configPublisher->publishActiveProduction($site, $request->user())
+            : null;
 
-        return back()->with('status', 'Website details updated.');
+        return back()->with('status', $version
+            ? 'Website details updated and production configuration v'.$version->version.' was queued automatically.'
+            : 'Website details updated. Runtime changes will publish automatically when the website is active.');
     }
 
-    public function addDomain(Request $request, Site $site, AuditRecorder $audit): RedirectResponse
+    public function addDomain(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $configPublisher): RedirectResponse
     {
         $request->merge(['domain' => $this->normalizeDomain((string) $request->input('domain'))]);
         $data = $request->validate(['domain' => ['required', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i', Rule::unique('site_domains', 'domain')->where('site_id', $site->id)]]);
         $domain = SiteDomain::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'domain' => $data['domain'], 'verification_token' => Str::random(48)]);
         $audit->record('site.domain.added', $site->organization_id, $request->user(), $domain, newValues: ['domain' => $domain->domain]);
+        $version = $configPublisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Authorized domain added.');
+        return back()->with('status', $version
+            ? 'Authorized domain added and production configuration v'.$version->version.' was queued automatically.'
+            : 'Authorized domain added. It will publish automatically when the website is activated.');
     }
 
     public function submit(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse

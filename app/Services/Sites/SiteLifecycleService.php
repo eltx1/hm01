@@ -2,6 +2,7 @@
 
 namespace App\Services\Sites;
 
+use App\Enums\ConfigEnvironment;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\LoaderRelease;
@@ -14,13 +15,17 @@ use App\Models\SiteStatusHistory;
 use App\Models\TagVersion;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SiteLifecycleService
 {
-    public function __construct(private readonly AuditRecorder $audit) {}
+    public function __construct(
+        private readonly AuditRecorder $audit,
+        private readonly SiteConfigPublisher $publisher,
+    ) {}
 
     public function create(array $data, User $actor): Site
     {
@@ -93,6 +98,12 @@ class SiteLifecycleService
                 'changed_by' => $actor->id, 'reason' => $reason,
             ]);
             $this->audit->record('site.status.changed', $site->organization_id, $actor, $site, ['status' => $oldStatus->value], ['status' => $newStatus->value], ['reason' => $reason]);
+
+            if ($newStatus === SiteStatus::Active) {
+                $this->publisher->publishActiveProduction($site, $actor);
+            } elseif ($oldStatus === SiteStatus::Active && in_array($newStatus, [SiteStatus::Suspended, SiteStatus::Archived], true)) {
+                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $actor);
+            }
         });
 
         return $site->refresh();
@@ -136,11 +147,21 @@ class SiteLifecycleService
 
     public function emergencyPause(Site $site, User $administrator, string $reason): Site
     {
-        $this->changeServingMode($site, ServingMode::Paused, $administrator, $reason);
-        $site->refresh();
-        if ($site->status !== SiteStatus::Suspended && $site->status !== SiteStatus::Archived) {
-            $this->transition($site, SiteStatus::Suspended, $administrator, 'Emergency pause: '.$reason);
-        }
+        DB::transaction(function () use ($site, $administrator, $reason): void {
+            $wasActive = $site->status === SiteStatus::Active;
+            $this->changeServingMode($site, ServingMode::Paused, $administrator, $reason);
+            SiteConfig::withoutGlobalScopes()->updateOrCreate(
+                ['site_id' => $site->id],
+                ['organization_id' => $site->organization_id, 'immediate_pause' => true, 'status' => 'PAUSED'],
+            );
+            $site->refresh();
+            if ($site->status !== SiteStatus::Suspended && $site->status !== SiteStatus::Archived) {
+                $this->transition($site, SiteStatus::Suspended, $administrator, 'Emergency pause: '.$reason);
+            }
+            if (! $wasActive) {
+                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $administrator);
+            }
+        });
 
         return $site->refresh();
     }
