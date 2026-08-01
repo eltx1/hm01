@@ -12,6 +12,7 @@ use App\Models\SiteConfig;
 use App\Models\StaticDeliveryItem;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\StaticDelivery\PublicPayloadGuard;
 use App\Services\StaticDelivery\StaticPathGuard;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +23,7 @@ final class SiteConfigPublisher
     public function __construct(
         private readonly SiteConfigurationBuilder $builder,
         private readonly AuditRecorder $audit,
+        private readonly CanonicalJson $canonicalJson,
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
     ) {
@@ -100,7 +102,7 @@ final class SiteConfigPublisher
     ): ConfigVersion {
         $siteConfig = $this->ensureSiteConfig($site);
         $this->payloadGuard->validate($payload);
-        $encoded = $this->encode($payload);
+        $encoded = $this->canonicalJson->encode($payload);
         $checksum = hash('sha256', $encoded);
         $siteKey = $this->pathGuard->siteKey($site->public_key);
         $environmentName = strtolower($environment->value);
@@ -167,8 +169,4 @@ final class SiteConfigPublisher
         return ((int) $query->max('version')) + 1;
     }
 
-    private function encode(array $payload): string
-    {
-        return json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)."\n";
-    }
 }

@@ -12,6 +12,7 @@ use Illuminate\Support\Carbon;
 final class StaticDeliverySnapshotBuilder
 {
     public function __construct(
+        private readonly CanonicalJson $canonicalJson,
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
     ) {
@@ -39,7 +40,7 @@ final class StaticDeliverySnapshotBuilder
             $environment = strtolower($latest->environment->value);
             foreach ($group->take($retention) as $version) {
                 $this->payloadGuard->validate($version->payload);
-                $encoded = $this->encode($version->payload);
+                $encoded = $this->canonicalJson->encode($version->payload);
                 if (! hash_equals($version->checksum, hash('sha256', $encoded))) {
                     throw new StaticDeliveryException('CHECKSUM_MISMATCH', "Stored configuration checksum mismatch for {$siteKey} v{$version->version}.");
                 }
@@ -47,7 +48,7 @@ final class StaticDeliverySnapshotBuilder
                 $files[$this->pathGuard->path($path)] = $encoded;
             }
 
-            $current = $this->encode($latest->payload);
+            $current = $this->canonicalJson->encode($latest->payload);
             $immutablePath = "configs/{$siteKey}/{$environment}.v{$latest->version}.".substr($latest->checksum, 0, 16).'.json';
             $files[$this->pathGuard->path("configs/{$siteKey}/{$environment}.json")] = $current;
             $siteManifests[$siteKey]['siteKey'] = $siteKey;
@@ -61,13 +62,13 @@ final class StaticDeliverySnapshotBuilder
 
         foreach ($siteManifests as $siteKey => $manifest) {
             ksort($manifest['environments']);
-            $files[$this->pathGuard->path("configs/{$siteKey}/manifest.json")] = $this->encode($manifest);
+            $files[$this->pathGuard->path("configs/{$siteKey}/manifest.json")] = $this->canonicalJson->encode($manifest);
         }
 
-        $files['configs/_global/control.json'] = $this->encode($this->globalControl());
+        $files['configs/_global/control.json'] = $this->canonicalJson->encode($this->globalControl());
         ksort($files);
         $manifestHash = $this->hashFiles($files);
-        $files['delivery-manifest.json'] = $this->encode([
+        $files['delivery-manifest.json'] = $this->canonicalJson->encode([
             'schemaVersion' => 1,
             'manifestHash' => $manifestHash,
             'generatedAt' => $generatedAt,
@@ -202,11 +203,6 @@ HEADERS;
         }
 
         return $contents;
-    }
-
-    private function encode(array $value): string
-    {
-        return json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)."\n";
     }
 
     /** @param array<string, string> $files */

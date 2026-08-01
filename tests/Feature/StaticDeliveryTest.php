@@ -11,6 +11,7 @@ use App\Enums\StaticDeliveryStatus;
 use App\Models\AuditLog;
 use App\Models\StaticDeliveryItem;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
+use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
@@ -162,6 +163,17 @@ class StaticDeliveryTest extends TestCase
     {
         $this->expectException(StaticDeliveryException::class);
         app(StaticPathGuard::class)->siteKey('../escape');
+    }
+
+    public function test_canonical_json_is_stable_across_database_key_ordering(): void
+    {
+        $encoder = app(CanonicalJson::class);
+
+        $this->assertSame(
+            $encoder->encode(['z' => ['b' => 2, 'a' => 1], 'a' => [['y' => 2, 'x' => 1]]]),
+            $encoder->encode(['a' => [['x' => 1, 'y' => 2]], 'z' => ['a' => 1, 'b' => 2]]),
+        );
+        $this->assertNotSame($encoder->encode(['items' => [1, 2]]), $encoder->encode(['items' => [2, 1]]));
     }
 
     private function siteWithPrimaryHorus(): array
