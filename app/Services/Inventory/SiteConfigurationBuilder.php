@@ -6,6 +6,7 @@ use App\Enums\ConfigEnvironment;
 use App\Enums\PlacementStatus;
 use App\Enums\PlacementType;
 use App\Enums\ServingMode;
+use App\Enums\SiteStatus;
 use App\Models\LoaderRelease;
 use App\Models\Placement;
 use App\Models\Site;
@@ -45,7 +46,8 @@ final class SiteConfigurationBuilder
         $adServingDisabled = $this->controls->disabledForSite('AD_SERVING', $site->id, $connection?->id);
         $prebidDisabled = $this->controls->disabledForSite('PREBID', $site->id);
         $nativeDisabled = $this->controls->disabledForSite('NATIVE_DEMAND', $site->id);
-        $active = ! $adServingDisabled && $config->status === 'ACTIVE'
+        $active = $site->status === SiteStatus::Active
+            && ! $adServingDisabled && $config->status === 'ACTIVE'
             && ! $config->immediate_pause
             && $site->serving_mode !== ServingMode::Paused;
         $prebid = $connection

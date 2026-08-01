@@ -10,6 +10,7 @@ use App\Models\PublisherContract;
 use App\Models\PublisherPaymentProfile;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\SiteLifecycleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -32,7 +33,7 @@ class OnboardingController extends Controller
         ]);
     }
 
-    public function update(Request $request, int $step, SiteLifecycleService $lifecycle, AuditRecorder $audit): RedirectResponse
+    public function update(Request $request, int $step, SiteLifecycleService $lifecycle, AuditRecorder $audit, SiteConfigPublisher $configPublisher): RedirectResponse
     {
         abort_unless($step >= 1 && $step <= 7, 404);
         $publisher = $this->publisher($request);
@@ -41,7 +42,7 @@ class OnboardingController extends Controller
             1 => $this->company($request, $publisher),
             2 => $this->payment($request, $publisher),
             3 => $this->contract($request, $publisher),
-            4 => $this->website($request, $publisher, $lifecycle),
+            4 => $this->website($request, $publisher, $lifecycle, $configPublisher),
             5 => null,
             6 => $this->placements($request, $publisher),
             7 => $this->submit($request, $publisher, $lifecycle),
@@ -99,7 +100,7 @@ class OnboardingController extends Controller
         PublisherContract::updateOrCreate(['id' => $contract?->id], array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id, 'created_by' => $request->user()->id, 'status' => $contract?->status ?? ContractStatus::Draft]));
     }
 
-    private function website(Request $request, Publisher $publisher, SiteLifecycleService $lifecycle): void
+    private function website(Request $request, Publisher $publisher, SiteLifecycleService $lifecycle, SiteConfigPublisher $configPublisher): void
     {
         $site = $publisher->sites()->latest()->first();
         $request->merge(['primary_domain' => strtolower(rtrim((string) parse_url(str_contains((string) $request->input('primary_domain'), '://') ? $request->input('primary_domain') : 'https://'.$request->input('primary_domain'), PHP_URL_HOST), '.'))]);
@@ -116,6 +117,7 @@ class OnboardingController extends Controller
             ?? $publisher->applicableRevenueShare());
 
         if ($site) {
+            $runtimeBefore = $site->only(['primary_domain', 'current_gam_network_code', 'prebid_enabled', 'native_demand_enabled']);
             $oldDomain = $site->primary_domain;
             $site->update($data);
             $settings = $site->servingSettings()->firstOrFail();
@@ -132,6 +134,9 @@ class OnboardingController extends Controller
                     ['domain' => $site->primary_domain],
                     ['organization_id' => $site->organization_id, 'is_primary' => true, 'verification_token' => Str::random(48)],
                 )->update(['is_primary' => true]);
+            }
+            if ($runtimeBefore !== $site->fresh()->only(array_keys($runtimeBefore))) {
+                $configPublisher->publishActiveProduction($site, $request->user());
             }
         } else {
             $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());

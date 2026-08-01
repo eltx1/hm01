@@ -63,7 +63,9 @@ class InventoryController extends Controller
     {
         $inventory->createPlacement($site, $this->placementData($request), $request->user());
 
-        return back()->with('status', 'Placement created. The permanent Horus Loader code did not change.');
+        return back()->with('status', $site->status->value === 'ACTIVE'
+            ? 'Placement created and the production update was queued automatically. The permanent Horus Loader code did not change.'
+            : 'Placement created. It will publish automatically on first activation.');
     }
 
     public function updatePlacement(Request $request, Site $site, Placement $placement, InventoryManager $inventory): RedirectResponse
@@ -71,7 +73,9 @@ class InventoryController extends Controller
         abort_unless($placement->site_id === $site->id, 404);
         $inventory->updatePlacement($placement, $this->placementData($request), $request->user());
 
-        return back()->with('status', 'Placement settings updated. Publish a static configuration to deploy them.');
+        return back()->with('status', $site->status->value === 'ACTIVE'
+            ? 'Placement settings updated and the production update was queued automatically.'
+            : 'Placement settings saved. They will publish automatically when the website is activated.');
     }
 
     public function pageTargeting(Request $request, Site $site, InventoryManager $inventory): RedirectResponse
@@ -79,7 +83,7 @@ class InventoryController extends Controller
         $data = $request->validate(['targeting_text' => ['nullable', 'string', 'max:10000']]);
         $inventory->setPageTargeting($site, $this->parseTargeting($data['targeting_text'] ?? ''), $request->user());
 
-        return back()->with('status', 'Page-level targeting updated.');
+        return back()->with('status', 'Page-level targeting updated'.($site->status->value === 'ACTIVE' ? ' and queued for production.' : ' for the next activation.'));
     }
 
     public function bulkPlacements(Request $request, Site $site, InventoryManager $inventory): RedirectResponse
@@ -96,7 +100,7 @@ class InventoryController extends Controller
         }
         $inventory->bulkCreatePlacements($site, $rows, $request->user());
 
-        return back()->with('status', count($rows).' placements created.');
+        return back()->with('status', count($rows).' placements created'.($site->status->value === 'ACTIVE' ? ' and queued as one production update.' : ' for the next activation.'));
     }
 
     public function duplicateLayout(Request $request, Site $site, InventoryManager $inventory): RedirectResponse
@@ -105,7 +109,7 @@ class InventoryController extends Controller
         $target = Site::withoutGlobalScopes()->findOrFail($data['target_site_id']);
         $inventory->duplicateLayout($site, $target, $request->user());
 
-        return back()->with('status', 'Layout copied to '.$target->display_name.' without copying GAM remote IDs.');
+        return back()->with('status', 'Layout copied to '.$target->display_name.' without copying GAM remote IDs'.($target->status->value === 'ACTIVE' ? '; one production update was queued.' : '.'));
     }
 
     public function syncAdUnit(Request $request, Site $site, AdUnit $adUnit, AdUnitSyncService $sync): RedirectResponse

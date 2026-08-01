@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\ConfigEnvironment;
 use App\Http\Controllers\Controller;
 use App\Models\BidderAccount;
 use App\Models\BidderPlacementMapping;
@@ -83,9 +82,11 @@ class PrebidController extends Controller
 
         $site->update(['prebid_enabled' => $data['enabled']]);
         $manager->updateSettings($connections->requireFor($site), $data, $request->user());
-        $version = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $version = $publisher->publishActiveProduction($site->refresh(), $request->user());
 
-        return back()->with('status', 'Prebid settings saved and production configuration v'.$version->version.' published.');
+        return back()->with('status', $version
+            ? 'Prebid settings saved and production configuration v'.$version->version.' was queued automatically.'
+            : 'Prebid settings saved and will publish automatically when the website is activated.');
     }
 
     public function storeAccount(Request $request, PrebidManager $manager): RedirectResponse
@@ -119,9 +120,9 @@ class PrebidController extends Controller
         $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '');
         $data['enabled'] = $request->boolean('enabled', true);
         $manager->assignToSite($bidderAccount, $site, $data, $request->user());
-        $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site->refresh(), $request->user());
 
-        return back()->with('status', 'Bidder assigned to website and deployed.');
+        return back()->with('status', 'Bidder assigned. Active websites queue production automatically; inactive websites publish on activation.');
     }
 
     public function assignPlacement(
@@ -142,9 +143,9 @@ class PrebidController extends Controller
         $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '');
         $data['enabled'] = $request->boolean('enabled', true);
         $manager->assignToPlacement($bidderSiteMapping, $placement, $data, $request->user());
-        $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site->refresh(), $request->user());
 
-        return back()->with('status', 'Bidder placement parameters saved and deployed.');
+        return back()->with('status', 'Bidder placement parameters saved and queued automatically when the website is active.');
     }
 
     public function toggleSiteMapping(
@@ -156,7 +157,7 @@ class PrebidController extends Controller
     ): RedirectResponse {
         abort_unless($bidderSiteMapping->site_id === $site->id, 404);
         $manager->toggle($bidderSiteMapping, $request->boolean('enabled'), $request->user());
-        $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site->refresh(), $request->user());
 
         return back()->with('status', 'Bidder website mapping updated without changing publisher code.');
     }
@@ -171,7 +172,7 @@ class PrebidController extends Controller
         $bidderPlacementMapping->loadMissing('placement');
         abort_unless($bidderPlacementMapping->placement?->site_id === $site->id, 404);
         $manager->toggle($bidderPlacementMapping, $request->boolean('enabled'), $request->user());
-        $publisher->publish($site->refresh(), ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site->refresh(), $request->user());
 
         return back()->with('status', 'Bidder placement mapping updated without changing publisher code.');
     }

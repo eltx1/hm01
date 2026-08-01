@@ -17,9 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 final class InventoryManager
 {
-    public function __construct(private readonly AuditRecorder $audit)
-    {
-    }
+    public function __construct(
+        private readonly AuditRecorder $audit,
+        private readonly SiteConfigPublisher $publisher,
+    ) {}
 
     public function createAdUnit(Site $site, array $data, User $actor): AdUnit
     {
@@ -44,9 +45,9 @@ final class InventoryManager
         });
     }
 
-    public function createPlacement(Site $site, array $data, User $actor): Placement
+    public function createPlacement(Site $site, array $data, User $actor, bool $publish = true): Placement
     {
-        return DB::transaction(function () use ($site, $data, $actor): Placement {
+        return DB::transaction(function () use ($site, $data, $actor, $publish): Placement {
             $this->assertAdUnitBelongsToSite($site, $data['ad_unit_id'] ?? null);
             $placement = Placement::withoutGlobalScopes()->create($this->placementAttributes($site, $data, $actor));
             $this->replacePlacementSizes($placement, $data['sizes'] ?? []);
@@ -55,6 +56,9 @@ final class InventoryManager
             $this->audit->record('inventory.placement.created', $site->organization_id, $actor, $placement, newValues: [
                 'site_id' => $site->id, 'code' => $placement->code, 'type' => $placement->type->value,
             ]);
+            if ($publish) {
+                $this->publisher->publishActiveProduction($site, $actor);
+            }
 
             return $placement->load(['adUnit', 'sizes', 'targeting']);
         });
@@ -76,6 +80,7 @@ final class InventoryManager
             }
             $this->touchConfiguration($site);
             $this->audit->record('inventory.placement.updated', $site->organization_id, $actor, $placement, $before, $placement->fresh()->toArray());
+            $this->publisher->publishActiveProduction($site, $actor);
 
             return $placement->refresh()->load(['adUnit', 'sizes', 'targeting']);
         });
@@ -97,17 +102,21 @@ final class InventoryManager
             }
             $this->touchConfiguration($site);
             $this->audit->record('inventory.page_targeting.updated', $site->organization_id, $actor, $site, newValues: ['keys' => array_keys($targeting)]);
+            $this->publisher->publishActiveProduction($site, $actor);
         });
     }
 
     public function bulkCreatePlacements(Site $site, array $rows, User $actor): array
     {
-        $created = [];
-        foreach ($rows as $row) {
-            $created[] = $this->createPlacement($site, $row, $actor);
-        }
+        return DB::transaction(function () use ($site, $rows, $actor): array {
+            $created = [];
+            foreach ($rows as $row) {
+                $created[] = $this->createPlacement($site, $row, $actor, false);
+            }
+            $this->publisher->publishActiveProduction($site, $actor);
 
-        return $created;
+            return $created;
+        });
     }
 
     public function duplicateLayout(Site $source, Site $target, User $actor): SiteLayoutProfile
@@ -185,6 +194,7 @@ final class InventoryManager
             ]);
             $this->touchConfiguration($target);
             $this->audit->record('inventory.layout.duplicated', $target->organization_id, $actor, $profile, newValues: $snapshot);
+            $this->publisher->publishActiveProduction($target, $actor);
 
             return $profile;
         });

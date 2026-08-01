@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\ConfigEnvironment;
 use App\Enums\DemandAccountScope;
 use App\Enums\DemandApprovalStatus;
 use App\Enums\DemandIntegrationMode;
@@ -84,7 +83,7 @@ class DemandNetworkController extends Controller
     {
         $data = $request->validate(['enabled' => ['required', 'boolean']]);
         $site->update(['native_demand_enabled' => (bool) $data['enabled']]);
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
         return back()->with('status', $site->native_demand_enabled ? 'Native demand enabled for this website.' : 'Native demand disabled and removed from the current configuration.');
     }
@@ -183,7 +182,7 @@ class DemandNetworkController extends Controller
             ->whereHas('demandSites.account', fn ($query) => $query->where('demand_network_id', $demandNetwork->id))
             ->get();
         foreach ($sites as $site) {
-            $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+            $publisher->publishActiveProduction($site, $request->user());
         }
 
         return back()->with('status', 'Connector status updated and future configurations republished.');
@@ -194,9 +193,9 @@ class DemandNetworkController extends Controller
         $data = $this->siteData($request);
         $service->assignSite($demandAccount, $site, $data, $request->user());
         $site->update(['native_demand_enabled' => true]);
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Demand account assigned to website and configuration published.');
+        return back()->with('status', 'Demand account assigned. Active websites queue production automatically; inactive websites publish on activation.');
     }
 
     public function updateSite(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
@@ -205,9 +204,9 @@ class DemandNetworkController extends Controller
         $data = $this->siteData($request);
         $demandSite->update($data + ['updated_by' => $request->user()->id]);
         $service->reviewSite($demandSite, DemandApprovalStatus::from($data['approval_status']), $request->user());
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Website demand mapping updated and configuration published.');
+        return back()->with('status', 'Website demand mapping updated and queued automatically when active.');
     }
 
     public function syncSite(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service): RedirectResponse
@@ -238,9 +237,9 @@ class DemandNetworkController extends Controller
     {
         abort_unless($demandSite->site_id === $site->id && $placement->site_id === $site->id, 404);
         $service->assignPlacement($demandSite, $placement, $this->placementData($request), $request->user());
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Placement mapping saved and configuration published.');
+        return back()->with('status', 'Placement mapping saved and queued automatically when the website is active.');
     }
 
     public function updatePlacement(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
@@ -249,9 +248,9 @@ class DemandNetworkController extends Controller
         $data = $this->placementData($request);
         $demandPlacement->update($data + ['updated_by' => $request->user()->id]);
         $service->reviewPlacement($demandPlacement, DemandApprovalStatus::from($data['approval_status']), $request->user());
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Demand placement updated and configuration published.');
+        return back()->with('status', 'Demand placement updated and queued automatically when the website is active.');
     }
 
     public function storeWidget(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
@@ -271,9 +270,9 @@ class DemandNetworkController extends Controller
         $data['configuration'] = $this->json($data['configuration_json'] ?? null);
         unset($data['configuration_json']);
         $service->upsertWidget($demandPlacement, $data, $request->user());
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Demand widget saved and configuration published.');
+        return back()->with('status', 'Demand widget saved and queued automatically when the website is active.');
     }
 
     public function syncPlacement(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service): RedirectResponse
@@ -301,9 +300,9 @@ class DemandNetworkController extends Controller
             }
         }
 
-        $publisher->publish($site, ConfigEnvironment::Production, $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Placement delivery status synchronized and configuration published.');
+        return back()->with('status', 'Placement delivery status synchronized and queued automatically when the website is active.');
     }
 
     public function deployGam(Request $request, Site $site, DemandSite $demandSite, DemandGamDeploymentService $gam): RedirectResponse
@@ -389,7 +388,7 @@ class DemandNetworkController extends Controller
     private function publishAccountSites(DemandAccount $account, Request $request, SiteConfigPublisher $publisher): void
     {
         $account->sites()->with('site')->get()->each(
-            fn ($mapping) => $publisher->publish($mapping->site, ConfigEnvironment::Production, $request->user())
+            fn ($mapping) => $publisher->publishActiveProduction($mapping->site, $request->user())
         );
     }
 }
