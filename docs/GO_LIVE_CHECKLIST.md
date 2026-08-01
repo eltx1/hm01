@@ -18,14 +18,15 @@ Evidence: release commit, workflow run, artifact ID, ZIP checksum, owner.
 ## Gate 1 — Infrastructure
 
 - [ ] app.horusmedia.net points to the Laravel public/ directory.
-- [ ] cdn.horusmedia.net points to a separate static origin.
+- [ ] cdn.horusmedia.net is verified as the Cloudflare Pages custom domain and does not point to Hostinger.
 - [ ] TLS is valid on all production domains.
 - [ ] MySQL production database and least-privilege user exist.
 - [ ] .env is private, APP_DEBUG=false, and APP_KEY is stable.
-- [ ] storage/, bootstrap/cache/, and CDN config root are writable only as required.
+- [ ] storage/ and bootstrap/cache/ are writable; no Hostinger CDN document root is required.
 - [ ] SMTP delivery works for invitations, password reset, and operational alerts.
 - [ ] The once-per-minute scheduler is installed and healthy.
 - [ ] CDN cache and CORS headers match CLOUDFLARE_SETUP.md.
+- [ ] GitHub Pages workflow has least-privilege Cloudflare Secrets and the control plane uses a private token reference.
 
 Evidence: URLs, screenshots or command output, hosting configuration, and
 scheduler heartbeat.
@@ -49,11 +50,12 @@ Evidence: security-header scan, backup ID, restore timestamp, and access-review 
 - [ ] HORUS_GAM is connected, enabled, and passes a dry-run health check.
 - [ ] Network permissions and root ad unit configuration are validated.
 - [ ] A test website has an authorized domain and one test placement.
-- [ ] Its production static configuration is published to the CDN.
+- [ ] Its production batch is confirmed DEPLOYED with manifest hash, workflow run, and Pages evidence.
 - [ ] The permanent loader works on the authorized hostname.
 - [ ] GPT requests reach the selected GAM network directly from the browser.
 - [ ] House-ad testing proves slot rendering and empty-slot behavior.
 - [ ] Pause and rollback are tested using a non-critical site.
+- [ ] Browser Network evidence shows zero requests to app.horusmedia.net across load, refresh, and SPA navigation.
 - [ ] Prebid is enabled only after bidder consent, IDs, timeout, and GAM setup are reviewed.
 - [ ] Native fallback is tested for script failure, timeout, and no-render cases.
 

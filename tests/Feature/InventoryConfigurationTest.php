@@ -16,6 +16,7 @@ use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Inventory\SiteConfigurationBuilder;
+use App\Services\StaticDelivery\StaticDeliveryManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Tests\Concerns\InteractsWithGam;
@@ -36,9 +37,9 @@ class InventoryConfigurationTest extends TestCase
         parent::setUp();
         $this->staticRoot = storage_path('framework/testing/horus-configs-'.bin2hex(random_bytes(4)));
         config([
-            'horus.static_config_root' => $this->staticRoot,
-            'horus.static_config_public_path' => 'configs',
             'horus.cdn_url' => 'https://cdn.horusmedia.net',
+            'static-delivery.local_root' => $this->staticRoot,
+            'static-delivery.batch_delay_seconds' => 0,
         ]);
         $this->transport = new FakeGamSoapTransport;
         $this->app->instance(GamSoapTransportInterface::class, $this->transport);
@@ -108,16 +109,18 @@ class InventoryConfigurationTest extends TestCase
         $inventory->updatePlacement($placement, ['status' => 'PAUSED'], $admin);
         $versionTwo = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $admin);
         $rollback = $publisher->rollback($site->refresh(), ConfigEnvironment::Production, $versionOne, $admin);
+        app(StaticDeliveryManager::class)->processPending();
 
         $this->assertSame(1, $versionOne->version);
         $this->assertSame(2, $versionTwo->version);
         $this->assertSame(3, $rollback->version);
         $this->assertSame($versionOne->id, $rollback->source_version_id);
         $this->assertSame('active', $rollback->payload['placements'][0]['status']);
-        $this->assertFileExists($this->staticRoot.'/'.$site->public_key.'/production.v1.json');
-        $this->assertFileExists($this->staticRoot.'/'.$site->public_key.'/production.v3.json');
-        $this->assertFileExists($this->staticRoot.'/'.$site->public_key.'/production.json');
-        $current = json_decode((string) file_get_contents($this->staticRoot.'/'.$site->public_key.'/production.json'), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v1.*.json'));
+        $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v3.*.json'));
+        $this->assertFileExists($this->staticRoot.'/configs/'.$site->public_key.'/production.json');
+        $this->assertFileExists($this->staticRoot.'/configs/'.$site->public_key.'/manifest.json');
+        $current = json_decode((string) file_get_contents($this->staticRoot.'/configs/'.$site->public_key.'/production.json'), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame(3, $current['configVersion']);
         $this->assertSame(1, $current['rollbackSourceVersion']);
     }

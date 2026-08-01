@@ -16,4 +16,6 @@ php artisan operations:heartbeat manual-check
 php artisan queue:monitor database:default --max=100
 ```
 
-The Operations dashboard marks the scheduler stale when no heartbeat has been recorded within `HEARTBEAT_STALE_AFTER_SECONDS`.
+The scheduler also batches and reconciles Cloudflare Pages delivery. The
+Operations dashboard marks the scheduler stale when no heartbeat has been
+recorded within `HEARTBEAT_STALE_AFTER_SECONDS`.

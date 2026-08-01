@@ -48,7 +48,14 @@ function element(code) {
     };
 }
 
-function createHarness(config, { hostname = 'publisher.example', placementCodes = ['article_top'] } = {}) {
+function createHarness(config, {
+    hostname = 'publisher.example',
+    placementCodes = ['article_top'],
+    manifestMode = 'valid',
+    manifestVersion = config.configVersion,
+    immutableConfig = config,
+    aliasConfig = config,
+} = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
         pageTargeting: {}, slotTargeting: {}, lazy: null, singleRequest: 0,
@@ -153,7 +160,22 @@ function createHarness(config, { hostname = 'publisher.example', placementCodes 
         fetch: async (url) => {
             metrics.fetches.push(String(url));
             if (String(url).includes('/_global/control.json')) return { ok: true, json: async () => ({ controls: {} }) };
-            return { ok: true, json: async () => structuredClone(config) };
+            if (String(url).includes('/manifest.json')) {
+                if (manifestMode === 'missing') return { ok: false, status: 404, json: async () => ({}) };
+                if (manifestMode === 'invalid') return { ok: true, json: async () => ({ siteKey: config.siteKey, environments: {} }) };
+                return { ok: true, json: async () => ({
+                    siteKey: config.siteKey,
+                    environments: { production: {
+                        version: manifestVersion,
+                        path: `/configs/${config.siteKey}/production.v${manifestVersion}.${'a'.repeat(16)}.json`,
+                        sha256: 'a'.repeat(64),
+                    } },
+                }) };
+            }
+            if (/production\.v\d+\.[a-f0-9]+\.json/.test(String(url))) {
+                return immutableConfig ? { ok: true, json: async () => structuredClone(immutableConfig) } : { ok: false, status: 404, json: async () => ({}) };
+            }
+            return aliasConfig ? { ok: true, json: async () => structuredClone(aliasConfig) } : { ok: false, status: 404, json: async () => ({}) };
         },
         addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
         dispatchEvent(event) { (listeners[event.type] || []).forEach((callback) => callback(event)); },
@@ -178,7 +200,9 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.singleRequest, 1);
     assert.equal(metrics.services, 1);
     assert.equal(metrics.displayed.length, 1);
-    assert.equal(metrics.fetches.length, 2);
+    assert.equal(metrics.fetches.length, 3);
+    assert.match(metrics.fetches[1], /\/manifest\.json$/);
+    assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
 });
 
 test('paused sites never load GPT or define an advertising slot', async () => {
@@ -205,7 +229,7 @@ test('unauthorized hostnames cannot load valid placements', async () => {
     const { sandbox, metrics } = createHarness(activeConfig(), { hostname: 'attacker.example' });
     await sandbox.HorusMediaLoader.boot();
 
-    assert.equal(metrics.fetches.length, 2);
+    assert.equal(metrics.fetches.length, 3);
     assert.equal(metrics.gptLoads, 0);
     assert.equal(metrics.defined.length, 0);
 });
@@ -215,9 +239,9 @@ test('force refresh cache-busts the static configuration without a Laravel reque
     await sandbox.HorusMediaLoader.boot();
     await sandbox.HorusMediaLoader.refresh();
 
-    assert.equal(metrics.fetches.length, 4);
-    assert.match(metrics.fetches[1], /\/configs\/HM_TEST\/production\.json$/);
-    assert.match(metrics.fetches[3], /production\.json\?v=\d+$/);
+    assert.equal(metrics.fetches.length, 6);
+    assert.match(metrics.fetches[1], /\/configs\/HM_TEST\/manifest\.json$/);
+    assert.match(metrics.fetches[4], /manifest\.json\?v=\d+$/);
     assert.ok(metrics.fetches.every((url) => url.startsWith('https://cdn.horusmedia.net/configs/')));
     assert.equal(metrics.gptLoads, 1);
 });
@@ -242,4 +266,37 @@ test('global CDN control stops before fetching site configuration', async () => 
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.fetches.length, 1);
     assert.equal(metrics.gptLoads, 0);
+});
+
+test('falls back to the compatibility production alias when manifest propagation is incomplete', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig(), { manifestMode: 'missing' });
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.fetches.length, 3);
+    assert.match(metrics.fetches[2], /\/production\.json$/);
+});
+
+test('stale manifest version mismatch safely revalidates through the current alias', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig(), { manifestVersion: 4, immutableConfig: activeConfig({ configVersion: 5 }) });
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.fetches.length, 4);
+    assert.match(metrics.fetches[3], /\/production\.json$/);
+});
+
+test('missing or corrupted configuration stops safely without ad calls', async () => {
+    const corrupted = activeConfig({ siteKey: 'WRONG_SITE' });
+    const { sandbox, metrics } = createHarness(activeConfig(), { manifestMode: 'missing', aliasConfig: corrupted });
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(metrics.defined.length, 0);
+});
+
+test('all Horus runtime requests stay on the loader static origin with no telemetry or app request', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig());
+    await sandbox.HorusMediaLoader.boot();
+    await sandbox.HorusMediaLoader.scan();
+    assert.ok(metrics.fetches.every((url) => url.startsWith('https://cdn.horusmedia.net/configs/')));
+    assert.ok(metrics.fetches.every((url) => !url.includes('app.horusmedia.net')));
+    assert.ok(metrics.fetches.every((url) => !/telemetry|impression|event/i.test(url)));
 });

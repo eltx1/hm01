@@ -12,7 +12,9 @@ Runtime flow:
 ```text
 Publisher page
   -> https://cdn.horusmedia.net/hm-loader.js
-  -> https://cdn.horusmedia.net/configs/{SITE_KEY}/production.json
+  -> https://cdn.horusmedia.net/configs/_global/control.json
+  -> https://cdn.horusmedia.net/configs/{SITE_KEY}/manifest.json
+  -> https://cdn.horusmedia.net/configs/{SITE_KEY}/production.vN.HASH.json
   -> Google Publisher Tag
   -> selected Google Ad Manager network
 ```
@@ -114,17 +116,20 @@ Configurations are generated for three independent environments:
 - `TEST`
 - `PRODUCTION`
 
-Publishing creates both an immutable versioned file and a current alias:
+Publishing records a pending version and transactional outbox item. The
+scheduler batches changes into one complete Cloudflare Pages snapshot containing
+an immutable version, a short-lived manifest, and a compatibility alias:
 
 ```text
-configs/{SITE_KEY}/production.v5.json
+configs/{SITE_KEY}/manifest.json
+configs/{SITE_KEY}/production.v5.SHA.json
 configs/{SITE_KEY}/production.json
 ```
 
-Every publication stores a database record in `config_versions` with the JSON
-payload, SHA-256 checksum, file path, environment, version, actor, and timestamp.
-Files are written atomically to prevent a browser from receiving a partially
-written JSON document.
+Every publication stores `config_versions` and `static_delivery_items` in one
+database transaction with the public payload and SHA-256 checksum. No filesystem
+or network write occurs in the admin request. `static_delivery_batches` records
+batching, upload, retry, remote workflow evidence, and confirmed deployment.
 
 A rollback never mutates old evidence. It copies the selected payload into a
 new version, records `source_version_id`, and replaces the current alias. This
@@ -172,22 +177,20 @@ Example:
 1. reads the public site key from its script element
 2. derives or reads the static configuration base URL
 3. detects the current hostname
-4. fetches one static JSON file
-5. rejects unauthorized hostnames before loading GPT
-6. stops immediately when the site is paused
-7. loads GPT once for the page
-8. defines only active, enabled placements with valid ad-unit paths
-9. builds responsive GPT size mappings
-10. applies page and placement targeting
-11. configures lazy loading, single-request mode, SafeFrame, and empty collapse
-12. displays slots directly through GPT
-13. schedules explicitly configured refreshes while the page is visible
-14. observes added placement elements for practical SPA support
-15. exposes diagnostics only when debug mode is enabled
-16. catches failures so the publisher page continues normally
+4. fetches global control, then a manifest and immutable JSON file
+5. falls back to the current alias during manifest/deployment propagation
+6. rejects unauthorized hostnames before loading GPT
+7. stops immediately when the site is paused
+8. loads GPT once for the page
+9. defines only active, enabled placements with valid ad-unit paths
+10. builds responsive GPT size mappings and applies targeting
+11. displays and refreshes slots directly through GPT/Prebid
+12. supports SPA rescans without Horus telemetry
+13. catches failures so the publisher page continues normally
 
-The loader does not call Laravel. Its only Horus request is the cacheable static
-configuration file, normally once per page load.
+The loader does not call Laravel. All Horus requests use the loader's own static
+origin with `credentials: omit`. It never calls `app.horusmedia.net` or sends
+per-page, impression, bid, refresh, or click telemetry to Horus.
 
 `public/assets/hm-loader.min.js` is generated from the readable source by:
 
@@ -254,7 +257,8 @@ Recommended headers:
 |---|---|
 | `hm-loader.js` | `public, max-age=300, stale-while-revalidate=86400` |
 | versioned loader asset | `public, max-age=31536000, immutable` |
-| `production.vN.json` | `public, max-age=31536000, immutable` |
+| `production.vN.HASH.json` | `public, max-age=31536000, immutable` |
+| `manifest.json` | `public, max-age=15, must-revalidate, stale-while-revalidate=60` |
 | `production.json` | `public, max-age=30, must-revalidate, stale-while-revalidate=60` |
 | `test.json` and `preview.json` | `no-cache` or a very short public TTL |
 
@@ -270,17 +274,17 @@ headers, or credentials to CDN delivery.
 
 ## Deployment
 
-Production environment variables:
+Production uses the pipeline variables in `.env.production.example`, including:
 
 ```dotenv
 HORUS_CDN_URL=https://cdn.horusmedia.net
-HORUS_STATIC_CONFIG_ROOT=/home/ACCOUNT/domains/cdn.horusmedia.net/public_html/configs
-HORUS_STATIC_CONFIG_PUBLIC_PATH=configs
 HORUS_LOADER_URL=https://cdn.horusmedia.net/hm-loader.js
-HORUS_GPT_URL=https://securepubads.g.doubleclick.net/tag/js/gpt.js
-HORUS_CONFIG_CACHE_TTL=60
+HORUS_STATIC_DELIVERY_DRIVER=cloudflare-pages-pipeline
+HORUS_EDGE_GITHUB_BRANCH=edge-delivery
+HORUS_EDGE_GITHUB_TOKEN_REFERENCE=env:HORUS_EDGE_GITHUB_TOKEN
 ```
 
-The PHP account must be able to create directories and atomically rename files
-inside `HORUS_STATIC_CONFIG_ROOT`. No Node.js runtime, worker daemon, Redis,
-WebSocket service, or impression endpoint is required in production.
+Hostinger requires no Node.js and no writable CDN document root. Cron processes
+the database outbox; GitHub Actions runs Wrangler with Cloudflare secrets. No
+permanent worker, Redis, WebSocket, Pages Function, or impression endpoint is
+required. See `CLOUDFLARE_SETUP.md` and ADR 0001.

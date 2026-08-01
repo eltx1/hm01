@@ -1,25 +1,26 @@
-# Cloudflare Setup
+# Cloudflare Pages Setup
 
-Use Full (strict) TLS for all three domains.
+`cdn.horusmedia.net` must be a static Cloudflare Pages Direct Upload project,
+not a Hostinger origin. Add GitHub Secrets `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` (least-privilege Pages Edit), plus repository variable
+`CLOUDFLARE_PAGES_PROJECT` when the project is not `horus-media-cdn`.
 
-## app.horusmedia.net
+The control plane stores only a private `env:` or `file:` reference to its
+least-privilege GitHub delivery token. The scheduler batches outbox items,
+commits a sanitized `edge-delivery` tree, and dispatches Wrangler CI. Operations
+must show `DEPLOYED`; `UPLOADING` proves submission only.
 
-- Bypass cache for all application routes.
-- Do not cache authenticated HTML, CSRF responses, or `/up`.
-- Enable managed WAF rules and bot protections conservatively.
-- Preserve real visitor IP headers.
-- Redirect HTTP to HTTPS.
-- Add HSTS only after every required subdomain is permanently HTTPS.
+The static tree contains `_headers`, loader/Prebid assets, global control,
+manifests, aliases, immutable JSON, `404.html`, and no `functions/` or
+`_worker.js`. Static asset requests are free/unlimited only when no Function is
+invoked; Pages builds/files/Functions remain limited.
 
-## cdn.horusmedia.net
+Verify:
 
-Suggested cache policy:
+```bash
+curl -I https://cdn.horusmedia.net/hm-loader.js
+curl -I https://cdn.horusmedia.net/configs/PUBLIC_SITE_KEY/manifest.json
+```
 
-- Versioned loader and Prebid assets: `Cache-Control: public, max-age=31536000, immutable`.
-- Stable `hm-loader.min.js`: `public, max-age=300, stale-while-revalidate=86400`.
-- Versioned site JSON (`*.vN.json`): one year immutable.
-- Current site JSON (`production.json`): respect the configured short TTL, normally 60 seconds.
-- Enable CORS for GET/HEAD on public loader, Prebid, and JSON configuration files.
-- Never place credentials, invoices, contracts, logs, database exports, or `.env` on this origin.
-
-Purge only stable aliases during rollback; versioned assets should remain immutable.
+Browser Network evidence must show zero publisher requests to
+`app.horusmedia.net`; GAM, bidder, and native requests go directly to providers.

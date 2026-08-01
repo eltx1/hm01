@@ -50,9 +50,13 @@
 
     function configBase(script) {
         var explicit = scriptData(script, 'configBase');
-        if (explicit) return explicit.replace(/\/$/, '');
         try {
-            return new URL(script.src, window.location.href).origin + '/configs';
+            var scriptOrigin = new URL(script.src, window.location.href).origin;
+            if (explicit) {
+                var explicitUrl = new URL(explicit, script.src);
+                if (explicitUrl.origin === scriptOrigin) return explicitUrl.href.replace(/\/$/, '');
+            }
+            return scriptOrigin + '/configs';
         } catch (error) {
             return 'https://cdn.horusmedia.net/configs';
         }
@@ -75,25 +79,59 @@
         });
     }
 
+    function environmentName(script) {
+        return String(scriptData(script, 'environment') || 'production').toLowerCase();
+    }
+
     function buildConfigUrl(script, siteKey, force) {
-        var environment = String(scriptData(script, 'environment') || 'production').toLowerCase();
+        var environment = environmentName(script);
         var selectedVersion = scriptData(script, 'configVersion');
         var url = configBase(script) + '/' + encodeURIComponent(siteKey) + '/' + environment + '.json';
         var bust = selectedVersion || (force ? Date.now() : null);
         return bust ? url + '?v=' + encodeURIComponent(bust) : url;
     }
 
-    function fetchConfig(script, siteKey, force) {
-        var url = buildConfigUrl(script, siteKey, force);
+    function fetchJson(url, force) {
         return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
             .then(function (response) {
                 if (!response || !response.ok) throw new Error('Static configuration unavailable');
                 return response.json();
-            })
-            .then(function (config) {
-                if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
-                return config;
             });
+    }
+
+    function validateConfig(config, siteKey, expectedVersion) {
+        if (!config || config.siteKey !== siteKey) throw new Error('Static configuration site key mismatch');
+        if (expectedVersion && Number(config.configVersion) !== Number(expectedVersion)) {
+            throw new Error('Static configuration version mismatch');
+        }
+        return config;
+    }
+
+    function manifestEntry(manifest, script, siteKey) {
+        if (!manifest || manifest.siteKey !== siteKey || !manifest.environments) return null;
+        var entry = manifest.environments[environmentName(script)];
+        if (!entry || !entry.path || !entry.version || !/^[a-f0-9]{64}$/i.test(String(entry.sha256 || ''))) return null;
+        var expectedPrefix = '/configs/' + encodeURIComponent(siteKey) + '/' + environmentName(script) + '.v';
+        if (String(entry.path).indexOf(expectedPrefix) !== 0 || String(entry.path).indexOf('..') !== -1) return null;
+        return entry;
+    }
+
+    function fetchConfig(script, siteKey, force) {
+        var aliasUrl = buildConfigUrl(script, siteKey, force);
+        if (scriptData(script, 'configVersion')) {
+            return fetchJson(aliasUrl, force).then(function (config) { return validateConfig(config, siteKey); });
+        }
+        var manifestUrl = configBase(script) + '/' + encodeURIComponent(siteKey) + '/manifest.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
+        return fetchJson(manifestUrl, force).then(function (manifest) {
+            var entry = manifestEntry(manifest, script, siteKey);
+            if (!entry) throw new Error('Static configuration manifest is invalid');
+            var immutableUrl = new URL(entry.path, configBase(script) + '/').href;
+            return fetchJson(immutableUrl, false).then(function (config) {
+                return validateConfig(config, siteKey, entry.version);
+            });
+        }).catch(function () {
+            return fetchJson(aliasUrl, force).then(function (config) { return validateConfig(config, siteKey); });
+        });
     }
 
     function fetchGlobalControl(script, force) {
@@ -120,6 +158,15 @@
 
     function loadExternalScript(selector, marker, url) {
         return new Promise(function (resolve, reject) {
+            try {
+                if (new URL(url, window.location.href).hostname === 'app.horusmedia.net') {
+                    reject(new Error('Control-plane URLs are forbidden in publisher runtime'));
+                    return;
+                }
+            } catch (error) {
+                reject(new Error('External script URL is invalid'));
+                return;
+            }
             var existing = document.querySelector ? document.querySelector(selector) : null;
             if (existing) {
                 if (existing.getAttribute && existing.getAttribute('data-hm-loaded') === '1') {
@@ -676,6 +723,11 @@
     function maybeDelegateRelease(config, script) {
         var selected = config.loader || {};
         if (!selected.assetUrl || !selected.version || selected.version === VERSION || window.__HM_RELEASE_DELEGATED__) return false;
+        try {
+            if (new URL(selected.assetUrl, window.location.href).hostname === 'app.horusmedia.net') return false;
+        } catch (error) {
+            return false;
+        }
         window.__HM_RELEASE_DELEGATED__ = true;
         var replacement = document.createElement('script');
         replacement.async = true;

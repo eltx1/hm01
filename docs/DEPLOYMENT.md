@@ -42,6 +42,9 @@ pass. Its `horus-media-release-<sha>` ZIP is provider-neutral.
    `php artisan view:cache`.
 9. Smoke-test `/up`, authentication, TOTP, one tenant-isolation check, and
    private contract download authorization.
+10. Configure the private static-delivery GitHub token reference, then complete
+    `CLOUDFLARE_SETUP.md`. Cloudflare API credentials belong in GitHub Secrets,
+    never on the web server.
 
 Configure the equivalent of this cron command once per minute:
 
@@ -49,7 +52,9 @@ Configure the equivalent of this cron command once per minute:
 * * * * * /path/to/php /path/to/release/artisan schedule:run >> /dev/null 2>&1
 ```
 
-The scheduler drains database-backed jobs in bounded, stop-when-empty runs.
+The scheduler drains database-backed jobs in bounded, stop-when-empty runs and
+processes/reconciles the static-delivery outbox. Publisher traffic does not use
+the scheduler or this server.
 
 ## Server-specific notes
 

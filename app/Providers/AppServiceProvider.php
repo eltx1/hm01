@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamNativeSoapTransport;
+use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
+use App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver;
+use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -17,6 +20,13 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(GamSoapTransportInterface::class, GamNativeSoapTransport::class);
+        $this->app->bind(StaticDeliveryDriverInterface::class, function ($app): StaticDeliveryDriverInterface {
+            return match (config('static-delivery.driver')) {
+                'cloudflare-pages-pipeline' => $app->make(CloudflarePagesPipelineDriver::class),
+                'local' => $app->make(LocalFilesystemStaticDeliveryDriver::class),
+                default => throw new \RuntimeException('Unsupported static delivery driver.'),
+            };
+        });
     }
 
     /**

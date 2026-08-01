@@ -11,6 +11,17 @@
 <article><p class="eyebrow">Failed imports</p><strong class="metric">{{ $failedImports->count() }}</strong></article>
 <article><p class="eyebrow">Active kill switches</p><strong class="metric">{{ $controls->where('is_disabled', true)->count() }}</strong></article>
 </section>
+<section class="metric-grid">
+<article><p class="eyebrow">Edge deployment</p><strong class="metric">{{ $latestDelivery ? 'DEPLOYED' : 'NONE' }}</strong><p class="muted">{{ $latestDelivery?->deployed_at ?: 'No confirmed Pages deployment' }} · {{ $latestDelivery?->file_count ?? 0 }}/{{ $deliveryFileLimit }} files @if(($latestDelivery?->file_count ?? 0) >= $deliveryFileWarning) · WARNING @endif</p></article>
+<article><p class="eyebrow">Pending delivery</p><strong class="metric">{{ $pendingDeliveries }}</strong><p class="muted">Batched by the scheduler</p></article>
+<article><p class="eyebrow">Failed delivery</p><strong class="metric">{{ $failedDeliveries }}</strong><p class="muted">Requires retry or investigation</p></article>
+<article><p class="eyebrow">Monthly safety budget</p><strong class="metric">{{ max(0, $deliveryBudget - $deliveryBudgetUsed) }}</strong><p class="muted">{{ $deliveryBudgetUsed }} used of configured {{ $deliveryBudget }} · {{ $urgentDeliveries }} urgent</p></article>
+</section>
+<section><h2>Cloudflare Pages static delivery</h2><p class="muted">A batch is marked deployed only after the Pages workflow succeeds. Publisher runtime traffic is served by static edge files; it never enters this dashboard application.</p>
+<div class="table-wrap"><table><thead><tr><th>Batch</th><th>Status</th><th>Manifest</th><th>Remote evidence</th><th>Age / retry</th></tr></thead><tbody>
+@forelse($deliveryBatches as $batch)<tr><td><code>{{ $batch->id }}</code><br><span class="muted">{{ $batch->priority->value }} · {{ $batch->item_count }} items · {{ $batch->file_count }} files</span></td><td>{{ str_replace('_', ' ', $batch->status->value) }}@if($batch->error_code)<br><span class="muted">{{ $batch->error_code }}: {{ $batch->error_message }}</span>@endif</td><td><code>{{ $batch->manifest_hash ? substr($batch->manifest_hash, 0, 16).'…' : 'pending' }}</code></td><td>@if($batch->remote_url)<a href="{{ $batch->remote_url }}" rel="noopener noreferrer">{{ $batch->remote_deployment_id ?: 'Open evidence' }}</a>@else{{ $batch->remote_deployment_id ?: 'Not submitted' }}@endif</td><td>{{ $batch->deployed_at ?: $batch->submitted_at ?: $batch->created_at }}@if(in_array($batch->status->value, ['FAILED', 'RETRY_SCHEDULED'], true))<form class="inline" method="POST" action="{{ route('admin.operations.static-delivery.retry', $batch) }}">@csrf<input type="password" name="current_password" required placeholder="Password"><button>Retry</button></form>@endif</td></tr>
+@empty<tr><td colspan="5">No static delivery batches yet.</td></tr>@endforelse
+</tbody></table></div></section>
 <section class="split-grid">
 <article><h2>Operational kill switch</h2><p class="muted">Changes require your current password and are written to the audit log. HORUS_GAM remains the default route whenever its serving control is enabled.</p>
 <form method="POST" action="{{ route('admin.operations.controls') }}">@csrf

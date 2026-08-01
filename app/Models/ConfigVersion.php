@@ -8,6 +8,7 @@ use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class ConfigVersion extends Model
 {
@@ -35,4 +36,5 @@ class ConfigVersion extends Model
     public function siteConfig(): BelongsTo { return $this->belongsTo(SiteConfig::class); }
     public function sourceVersion(): BelongsTo { return $this->belongsTo(ConfigVersion::class, 'source_version_id'); }
     public function creator(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
+    public function deliveryItem(): HasOne { return $this->hasOne(StaticDeliveryItem::class); }
 }

@@ -8,8 +8,9 @@ request path.
 
 ~~~mermaid
 flowchart LR
-    A["Publisher Website"] --> B["Horus Loader<br/>cdn.horusmedia.net"]
-    B --> C["Prebid.js"]
+    A["Publisher Website"] --> B["Cloudflare Pages static edge<br/>cdn.horusmedia.net"]
+    B --> J["Loader + manifest + immutable config"]
+    J --> C["Prebid.js"]
     C --> D["Google Publisher Tag"]
     D --> E{"Selected GAM Network<br/>Default: HORUS_GAM"}
     E --> F["HORUS_GAM"]
@@ -45,7 +46,7 @@ payment execution remain governed by the go-live and finance gates.
 ## Runtime components
 
 - app.horusmedia.net: Laravel control plane and dashboard
-- cdn.horusmedia.net: versioned loader, browser bundles, and published configuration artifacts
+- cdn.horusmedia.net: Cloudflare Pages static loader, browser bundles, manifests, and configuration artifacts
 - MySQL: transactional control-plane data, sessions, cache, queue, audit log, and aggregated reporting
 - cron: Laravel scheduler once per minute
 - browser: Prebid.js auctions, GPT setup, native fallback, and direct advertising requests
@@ -53,9 +54,14 @@ payment execution remain governed by the go-live and finance gates.
 
 ## Configuration publication
 
-The application publishes immutable, cacheable configuration snapshots to the
-CDN. The loader resolves the current snapshot by stable site key. Publication is
-atomic, versioned, idempotent, auditable, and supports rollback.
+The application records immutable public configuration and an outbox item in one
+database transaction. A scheduled batch builds a deterministic snapshot, commits
+only public files to a sanitized delivery branch, and dispatches a Wrangler Pages
+deployment. Publication is marked deployed only after CI confirms Cloudflare.
+The loader resolves the immutable snapshot through a short-lived manifest with a
+compatibility alias fallback. No publisher browser request reaches Laravel.
+
+See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane
 
