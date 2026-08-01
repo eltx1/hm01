@@ -37,7 +37,7 @@ jobs:
           php-version: '8.2'
           extensions: pdo, sqlite, pdo_sqlite, mbstring
           coverage: none
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -54,7 +54,7 @@ jobs:
           php artisan migrate:fresh --seed --force
           php artisan static-delivery:build cloudflare-pages-dist
           php scripts/validate-static-delivery.php cloudflare-pages-dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: static-delivery-validation-${{ github.sha }}
           path: |
@@ -82,7 +82,7 @@ jobs:
           coverage: none
       - name: Validate sanitized Pages project
         run: php control/scripts/validate-static-delivery.php dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pages-deploy-evidence-${{ github.event.client_payload.batch_id || github.sha }}
           path: dist/delivery-manifest.json
