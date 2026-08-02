@@ -22,6 +22,6 @@ jobs:
       - name: Emit resolved lock
         run: |
           echo HORUS_LOCK_BEGIN
-          base64 -w0 composer.lock
+          base64 composer.lock
           echo
           echo HORUS_LOCK_END
