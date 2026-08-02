@@ -6,7 +6,7 @@ Deployment targets:
 - `app.horusmedia.net`: Laravel application; its document root must be the package `public/` directory.
 - `cdn.horusmedia.net`: static Horus Loader, Prebid build, and published site configurations.
 
-The package supports PHP 8.2+, MySQL 8/MariaDB-compatible hosting, Composer, and cron. It does not require root access, Docker, Redis, Supervisor, WebSockets, Node.js in production, or a permanent worker.
+The package supports PHP 8.2+, the PHP SOAP extension, MySQL 8/MariaDB-compatible hosting, Composer, and cron. It does not require root access, Docker, Redis, Supervisor, WebSockets, Node.js in production, or a permanent worker.
 
 ## 1. Create the subdomains
 
@@ -51,9 +51,13 @@ HORUS_EDGE_GITHUB_BRANCH=edge-delivery
 HORUS_EDGE_GITHUB_TOKEN_REFERENCE=env:HORUS_EDGE_GITHUB_TOKEN
 GAM_HORUS_NETWORK_CODE=...
 GAM_HORUS_SERVICE_ACCOUNT_PATH=/home/ACCOUNT/private/gam-horus-service-account.json
+GAM_SOAP_VERSION_OVERRIDE=
 ```
 
 Never place GAM JSON inside either public document root.
+Confirm the `soap` PHP extension is enabled in hPanel before enabling live
+Direct or automatic Prebid writes. The production ZIP already contains the
+Composer-locked official Google Ads PHP library.
 
 ## 5. Generate the Laravel key
 

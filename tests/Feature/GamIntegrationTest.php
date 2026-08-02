@@ -198,7 +198,7 @@ class GamIntegrationTest extends TestCase
             'name' => $name,
             'type' => $type->value,
             'credential_type' => GamCredentialType::ServiceAccount->value,
-            'driver' => 'REST',
+            'driver' => 'HYBRID',
             'network_code' => fake()->unique()->numerify('#########'),
             'application_name' => 'Horus Media Test',
             'is_enabled' => true,

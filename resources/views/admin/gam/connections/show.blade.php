@@ -28,6 +28,14 @@
     <article><span class="muted">Last successful sync</span><strong class="metric-small">{{ $connection->last_successful_sync_at?->diffForHumans() ?? 'Never' }}</strong></article>
 </div>
 
+<article style="margin-top:1rem">
+    <div class="section-heading"><div><p class="eyebrow">Hybrid capability router</p><h3>REST-first execution matrix</h3></div><span class="pill">SOAP {{ $soapFallbackVersion ?: 'not installed' }}</span></div>
+    <p class="muted">The transport is selected before each request. A failed REST write is never replayed through SOAP.</p>
+    <div class="table-wrap"><table><thead><tr><th>Operation</th><th>Transport</th></tr></thead><tbody>
+        @foreach($capabilityMatrix as $operation => $transport)<tr><td>{{ $operation }}</td><td><span class="pill">{{ $transport }}</span></td></tr>@endforeach
+    </tbody></table></div>
+</article>
+
 <div class="split-grid">
 <article>
     <div class="section-heading"><div><p class="eyebrow">Website routing</p><h3>Assign this connection</h3></div></div>

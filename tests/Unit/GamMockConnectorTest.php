@@ -43,6 +43,7 @@ class GamMockConnectorTest extends TestCase
             $connector->associateCreative(['lineItemId' => '5', 'creativeId' => '6']),
             $connector->pauseLineItem(['query' => 'WHERE id = 5']),
             $connector->activateLineItem(['query' => 'WHERE id = 5']),
+            $connector->resumeLineItem(['query' => 'WHERE id = 5']),
             $connector->archiveObject(['service' => 'OrderService']),
             $connector->runReport(['dimensions' => ['DATE']]),
             $connector->getObjectByRemoteId('OrderService', '4'),
@@ -52,7 +53,7 @@ class GamMockConnectorTest extends TestCase
             $this->assertTrue($result->success);
         }
 
-        $this->assertCount(22, $connector->calls());
+        $this->assertCount(23, $connector->calls());
         $this->assertSame($connection->id, $connector->connection()->id);
     }
 }

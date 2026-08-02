@@ -6,6 +6,11 @@ return [
         'base_url' => env('GAM_REST_BASE_URL', 'https://admanager.googleapis.com/v1'),
         'timeout' => (int) env('GAM_REST_TIMEOUT', 30),
     ],
+    'soap' => [
+        // Emergency rollback only. Empty means discover the newest generated
+        // version shipped by googleads/googleads-php-lib at runtime.
+        'version_override' => env('GAM_SOAP_VERSION_OVERRIDE'),
+    ],
     'oauth' => [
         'scope' => 'https://www.googleapis.com/auth/admanager',
         'token_uri' => 'https://oauth2.googleapis.com/token',

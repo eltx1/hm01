@@ -250,11 +250,6 @@ final class CampaignNetworkPlanner
             'startDateTime' => $campaign->starts_at->utc()->toIso8601String(),
             'endDateTime' => $campaign->ends_at->utc()->toIso8601String(),
             'unlimitedEndDateTime' => false,
-            'budgetAllocation' => [
-                'totalMinor' => (int) $instance->budget_allocated_minor,
-                'dailyMinor' => $campaign->daily_budget_minor ? (int) floor($campaign->daily_budget_minor * $instance->budget_allocated_minor / max($campaign->total_budget_minor, 1)) : null,
-                'currency' => $campaign->currency,
-            ],
         ];
         if ($campaign->frequency_cap_impressions && $campaign->frequency_cap_days) {
             $payload['frequencyCaps'] = [[
@@ -299,18 +294,20 @@ final class CampaignNetworkPlanner
             'name' => $creative->name,
             'advertiserId' => '@company',
             'size' => ['width' => $creative->width ?? 1, 'height' => $creative->height ?? 1, 'isAspectRatio' => false],
-            'destinationUrl' => $creative->click_through_url ?: $creative->landing_url,
         ];
+        $destinationUrl = $creative->click_through_url ?: $creative->landing_url;
         $file = $creative->files->first();
         return match ($creative->type) {
-            CampaignCreativeType::Image => $base + ['__type' => 'ImageCreative', '_file' => $file?->only(['disk', 'path', 'mime_type', 'original_name'])],
+            CampaignCreativeType::Image => $base + ['__type' => 'ImageCreative', 'destinationUrl' => $destinationUrl, '_file' => $file?->only(['disk', 'path', 'mime_type', 'original_name'])],
             CampaignCreativeType::Html5 => $base + ['__type' => 'Html5Creative', '_file' => $file?->only(['disk', 'path', 'mime_type', 'original_name'])],
             CampaignCreativeType::ThirdPartyTag => $base + ['__type' => 'ThirdPartyCreative', 'snippet' => $creative->html_content, 'isSafeFrameCompatible' => true],
-            CampaignCreativeType::Native => $base + $this->nativePayload($creative, $connectionConfig, $issues),
+            CampaignCreativeType::Native => $base + ['destinationUrl' => $destinationUrl] + $this->nativePayload($creative, $connectionConfig, $issues),
             CampaignCreativeType::VideoVast => $base + ['__type' => 'VastRedirectCreative', 'vastXmlUrl' => $creative->vast_url],
             CampaignCreativeType::Text => $base + ['__type' => 'ThirdPartyCreative', 'snippet' => '<a rel="sponsored noopener" target="_blank" href="'.e($creative->click_through_url ?: $creative->landing_url).'">'.e($creative->text_content).'</a>', 'isSafeFrameCompatible' => true],
             CampaignCreativeType::House => $file
-                ? $base + ['__type' => str_ends_with(strtolower((string) $file->original_name), '.zip') ? 'Html5Creative' : 'ImageCreative', '_file' => $file->only(['disk', 'path', 'mime_type', 'original_name'])]
+                ? $base + ['__type' => str_ends_with(strtolower((string) $file->original_name), '.zip') ? 'Html5Creative' : 'ImageCreative']
+                    + (str_ends_with(strtolower((string) $file->original_name), '.zip') ? [] : ['destinationUrl' => $destinationUrl])
+                    + ['_file' => $file->only(['disk', 'path', 'mime_type', 'original_name'])]
                 : $base + ['__type' => 'ThirdPartyCreative', 'snippet' => $creative->html_content ?: '<span>'.e($creative->text_content).'</span>', 'isSafeFrameCompatible' => true],
         };
     }
@@ -322,7 +319,11 @@ final class CampaignNetworkPlanner
         return [
             '__type' => 'TemplateCreative',
             'creativeTemplateId' => $templateId,
-            'creativeTemplateVariableValues' => collect($creative->native_assets ?? [])->map(fn ($value, $key) => ['uniqueName' => (string) $key, 'value' => is_scalar($value) ? (string) $value : json_encode($value)])->values()->all(),
+            'creativeTemplateVariableValues' => collect($creative->native_assets ?? [])->map(fn ($value, $key) => [
+                '__type' => 'StringCreativeTemplateVariableValue',
+                'uniqueName' => (string) $key,
+                'value' => is_scalar($value) ? (string) $value : json_encode($value),
+            ])->values()->all(),
         ];
     }
 

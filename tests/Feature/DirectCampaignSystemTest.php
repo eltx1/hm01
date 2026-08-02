@@ -18,14 +18,19 @@ use App\Services\Campaigns\CampaignDeploymentService;
 use App\Services\Campaigns\CampaignNetworkPlanner;
 use App\Services\Campaigns\CampaignReportingService;
 use App\Services\Campaigns\CampaignWorkflowService;
+use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Inventory\InventoryManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
+use Tests\Fakes\FakeGamSoapTransport;
 use Tests\TestCase;
 use ZipArchive;
 
@@ -75,6 +80,41 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(10, $summary['clicks']);
         $this->assertSame(700, $summary['spend_minor']);
         $this->assertDatabaseHas('advertiser_invoices', ['campaign_id' => $campaign->id, 'status' => 'ISSUED']);
+    }
+
+    public function test_direct_campaign_completes_over_rest_first_hybrid_connections(): void
+    {
+        [$campaign, $admin, $horus, $partner] = $this->campaignAcrossTwoNetworks('HYBRID');
+        $horus->update(['driver' => 'HYBRID', 'dry_run_default' => false]);
+        foreach ([$horus->refresh()->load('credential'), $partner->refresh()->load('credential')] as $connection) {
+            $credential = $connection->credential;
+            Cache::put(
+                'gam:oauth:'.hash('sha256', $connection->id.'|'.($credential->rotated_at?->timestamp ?? '0')),
+                Crypt::encryptString('test-access-token'),
+                now()->addMinutes(30),
+            );
+        }
+        $soap = new FakeGamSoapTransport;
+        $this->app->instance(GamSoapTransportInterface::class, $soap);
+        $orderSequence = 9500;
+        Http::fake(function ($request) use (&$orderSequence) {
+            preg_match('#networks/(\d+)/orders#', $request->url(), $match);
+
+            return Http::response(['orders' => [[
+                'name' => 'networks/'.($match[1] ?? '0').'/orders/'.++$orderSequence,
+            ]]]);
+        });
+
+        $result = app(CampaignDeploymentService::class)->deployCampaign($campaign, $admin, false, true);
+
+        $this->assertFalse(collect($result['results'])->contains(fn (array $row) => ! $row['success']));
+        $this->assertCount(10, $soap->calls);
+        $this->assertSame(2, collect($soap->calls)->where('method', 'createCompanies')->count());
+        $this->assertSame(2, collect($soap->calls)->where('method', 'createLineItems')->count());
+        $this->assertSame(2, collect($soap->calls)->where('method', 'createCreatives')->count());
+        $this->assertSame(2, collect($soap->calls)->where('method', 'createLineItemCreativeAssociations')->count());
+        $this->assertSame(2, collect($soap->calls)->where('method', 'performLineItemAction')->count());
+        Http::assertSentCount(2);
     }
 
     public function test_one_network_failure_is_isolated_and_retry_does_not_duplicate_horus_objects(): void

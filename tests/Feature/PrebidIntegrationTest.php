@@ -10,15 +10,20 @@ use App\Models\PrebidBidder;
 use App\Models\PrebidGamRemoteObject;
 use App\Models\PrebidPriceBucket;
 use App\Services\Gam\GamConnectionService;
+use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\Prebid\PrebidGamSetupService;
 use App\Services\Prebid\PrebidManager;
 use Database\Seeders\PrebidSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
+use Tests\Fakes\FakeGamSoapTransport;
 use Tests\TestCase;
 
 class PrebidIntegrationTest extends TestCase
@@ -84,6 +89,26 @@ class PrebidIntegrationTest extends TestCase
     public function test_gam_setup_is_previewable_confirmed_resumable_and_idempotent(): void
     {
         [, $admin, $connection] = $this->siteWithPrimaryHorus();
+        $connection->update(['driver' => 'HYBRID', 'dry_run_default' => false]);
+        $credential = $connection->credential;
+        Cache::put(
+            'gam:oauth:'.hash('sha256', $connection->id.'|'.($credential->rotated_at?->timestamp ?? '0')),
+            Crypt::encryptString('test-access-token'),
+            now()->addMinutes(30),
+        );
+        $soap = new FakeGamSoapTransport;
+        $this->app->instance(GamSoapTransportInterface::class, $soap);
+        $restSequence = 9000;
+        Http::fake(function ($request) use (&$restSequence) {
+            $id = (string) ++$restSequence;
+            if (str_contains($request->url(), 'orders:batchCreate')) {
+                return Http::response(['orders' => [['name' => 'networks/123456789/orders/'.$id]]]);
+            }
+
+            $resource = str_contains($request->url(), 'customTargetingValues') ? 'customTargetingValues' : 'customTargetingKeys';
+
+            return Http::response(['name' => 'networks/123456789/'.$resource.'/'.$id]);
+        });
         $this->seed(PrebidSeeder::class);
         $manager = app(PrebidManager::class);
         $manager->settingsFor($connection);
@@ -102,20 +127,26 @@ class PrebidIntegrationTest extends TestCase
 
         $service = app(PrebidGamSetupService::class);
         $preview = $service->preview($connection);
-        $this->assertSame(14, $preview['estimatedObjects']);
-        $this->assertSame(14, $preview['pendingObjects']);
+        $this->assertSame(16, $preview['estimatedObjects']);
+        $this->assertSame(16, $preview['pendingObjects']);
 
         $dryRun = $service->start($connection, $admin, true, false);
         $this->assertSame('DRY_RUN', $dryRun->status);
 
         $completed = $service->start($connection, $admin, false, true);
         $this->assertSame('SUCCEEDED', $completed->status);
-        $this->assertSame(14, $completed->completed_objects);
-        $this->assertSame(14, PrebidGamRemoteObject::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->count());
+        $this->assertSame(16, $completed->completed_objects);
+        $this->assertSame(16, PrebidGamRemoteObject::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->count());
+        $this->assertCount(8, $soap->calls);
+        $this->assertSame(
+            ['CompanyService', 'CreativeService', 'LineItemService', 'LineItemCreativeAssociationService', 'LineItemService', 'LineItemService', 'LineItemCreativeAssociationService', 'LineItemService'],
+            array_column($soap->calls, 'service'),
+        );
 
         $rerun = $service->start($connection, $admin, false, true);
         $this->assertSame('SUCCEEDED', $rerun->status);
         $this->assertSame(0, $service->preview($connection)['pendingObjects']);
+        $this->assertCount(8, $soap->calls);
     }
 
     private function siteWithPrimaryHorus(): array

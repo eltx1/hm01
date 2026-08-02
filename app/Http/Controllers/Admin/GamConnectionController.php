@@ -12,6 +12,8 @@ use App\Models\Site;
 use App\Models\User;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Gam\GamConnectionService;
+use App\Services\Gam\GamCapabilityRegistry;
+use App\Services\Gam\GamSoapVersionResolver;
 use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -42,7 +44,7 @@ class GamConnectionController extends Controller
             'connection' => new GamConnection([
                 'type' => GamConnectionType::HorusGam,
                 'credential_type' => GamCredentialType::ServiceAccount,
-                'driver' => 'REST',
+                'driver' => 'HYBRID',
                 'is_enabled' => true,
                 'dry_run_default' => true,
             ]),
@@ -58,7 +60,11 @@ class GamConnectionController extends Controller
         return redirect()->route('admin.gam.connections.show', $connection)->with('status', 'Google Ad Manager connection created. Dry-run is enabled by default.');
     }
 
-    public function show(GamConnection $gamConnection): View
+    public function show(
+        GamConnection $gamConnection,
+        GamCapabilityRegistry $capabilities,
+        GamSoapVersionResolver $soapVersions,
+    ): View
     {
         $gamConnection->load([
             'credential', 'networks', 'permissions',
@@ -71,6 +77,8 @@ class GamConnectionController extends Controller
         return view('admin.gam.connections.show', [
             'connection' => $gamConnection,
             'sites' => Site::withoutGlobalScopes()->with('publisher')->orderBy('display_name')->get(),
+            'capabilityMatrix' => $capabilities->matrix(),
+            'soapFallbackVersion' => $soapVersions->installedVersions()[0] ?? null,
         ]);
     }
 
@@ -162,7 +170,7 @@ class GamConnectionController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', Rule::enum(GamConnectionType::class)],
             'credential_type' => ['required', Rule::enum(GamCredentialType::class)],
-            'driver' => ['required', Rule::in(['REST'])],
+            'driver' => ['required', Rule::in(['HYBRID'])],
             'network_code' => ['nullable', 'string', 'max:64', 'regex:/^\d+$/'],
             'application_name' => ['required', 'string', 'max:255'],
             'is_primary' => ['sometimes', 'boolean'],

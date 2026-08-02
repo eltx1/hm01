@@ -197,7 +197,9 @@ final class CampaignDeploymentService
         if (! $mapping) throw new RuntimeException('The network line item has not been deployed.');
         $connector = $this->connectors->for($instance->connection);
         $statement = ['query' => 'WHERE id = :id', 'values' => [['key' => 'id', 'value' => ['__type' => 'NumberValue', 'value' => $mapping->remote_object_id]]]];
-        $method = $activate ? 'activateLineItem' : 'pauseLineItem';
+        $method = $activate
+            ? ($instance->remote_status === 'PAUSED' ? 'resumeLineItem' : 'activateLineItem')
+            : 'pauseLineItem';
         $result = $connector->{$method}($statement, [
             'dry_run' => false,
             'idempotency_key' => 'campaign-status:'.hash('sha256', $instance->id.'|'.$method.'|'.$instance->campaign->updated_at?->timestamp),

@@ -44,6 +44,7 @@ final class GamMockConnector implements GamConnectorInterface
     public function associateCreative(array $attributes, array $options = []): GamResult { return $this->created(__FUNCTION__, $attributes); }
     public function pauseLineItem(array $filterStatement, array $options = []): GamResult { return $this->respond(__FUNCTION__, ['numChanges' => 1, 'statement' => $filterStatement]); }
     public function activateLineItem(array $filterStatement, array $options = []): GamResult { return $this->respond(__FUNCTION__, ['numChanges' => 1, 'statement' => $filterStatement]); }
+    public function resumeLineItem(array $filterStatement, array $options = []): GamResult { return $this->respond(__FUNCTION__, ['numChanges' => 1, 'statement' => $filterStatement]); }
     public function archiveObject(array $attributes, array $options = []): GamResult { return $this->respond(__FUNCTION__, ['numChanges' => 1, 'attributes' => $attributes]); }
     public function runReport(array $reportQuery, array $options = []): GamResult { return $this->created(__FUNCTION__, ['status' => 'IN_PROGRESS', 'reportQuery' => $reportQuery]); }
     public function getObjectByRemoteId(string $service, string $remoteId, array $options = []): GamResult { return $this->respond(__FUNCTION__, ['service' => $service, 'id' => $remoteId]); }
