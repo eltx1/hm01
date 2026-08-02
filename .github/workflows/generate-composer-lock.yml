@@ -1,0 +1,26 @@
+name: Generate Composer lock
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  composer-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: soap
+          coverage: none
+      - run: composer update googleads/googleads-php-lib --with-all-dependencies --no-interaction --no-progress --no-scripts
+      - run: composer validate --strict
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gam-composer-lock
+          path: composer.lock
+          retention-days: 1
