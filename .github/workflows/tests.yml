@@ -26,7 +26,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
           coverage: none
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
@@ -83,7 +83,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, pdo_mysql, openssl
+          extensions: mbstring, pdo_mysql, openssl, soap
           coverage: none
       - run: composer install --prefer-dist --no-interaction --no-progress
       - name: Run MySQL migrations and tests
@@ -109,7 +109,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: openssl
+          extensions: openssl, soap
           coverage: none
       - uses: actions/setup-node@v6
         with:

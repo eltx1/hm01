@@ -19,8 +19,12 @@ network and to optional MCM partner or publisher networks.
 4. Enable it for the project.
 5. Do not enable unrelated APIs merely for convenience.
 
-The application uses Google Ad Manager REST `v1`. It does not use a dated SOAP
-version, so quarterly SOAP-version rotations are not part of deployment.
+The application is REST-first. Google Ad Manager REST `v1` handles every
+implemented capability it publishes. Line-item, creative, association, company,
+and lifecycle writes that REST does not yet publish use Google's official PHP
+library as a narrowly scoped SOAP fallback. Horus discovers the newest generated
+version installed by Composer; there is no quarterly version hard-coded in the
+application.
 
 ## 3. Create a service account
 
@@ -61,6 +65,7 @@ Set the production environment variables:
 ```dotenv
 GAM_REST_BASE_URL=https://admanager.googleapis.com/v1
 GAM_REST_TIMEOUT=30
+GAM_SOAP_VERSION_OVERRIDE=
 GAM_APPLICATION_NAME="Horus Media Platform"
 GAM_HORUS_NETWORK_CODE=123456789
 GAM_HORUS_SERVICE_ACCOUNT_PATH=/home/ACCOUNT/private/gam-horus-service-account.json
@@ -72,7 +77,7 @@ In the Horus Media administrator dashboard:
 1. Open **Google Ad Manager → Add connection**.
 2. Select `HORUS_GAM`.
 3. Select `SERVICE_ACCOUNT`.
-4. Confirm the fixed `REST v1` driver.
+4. Confirm the fixed `REST-first · official SOAP fallback` driver.
 5. Enter the network code.
 6. Enter this credential reference:
 
@@ -146,7 +151,8 @@ only as Laravel-encrypted ciphertext.
 2. Test network access.
 3. Review permission results.
 4. Use a GAM test network where possible.
-5. Run one inventory or order creation plan supported by REST v1.
+5. Run one REST-backed inventory plan and one fallback-backed Direct or Prebid
+   plan in dry-run mode.
 6. Inspect `gam_api_operations` for a `DRY_RUN` result.
 7. Disable dry-run only for one approved write.
 8. Verify the remote object and its `gam_remote_objects` mapping.
@@ -155,8 +161,11 @@ only as Laravel-encrypted ciphertext.
 
 ## 10. Troubleshooting
 
-- `REST_CAPABILITY_UNAVAILABLE`: Google has not published that write operation
-  in REST v1 yet. Horus does not silently fall back to SOAP.
+- `SOAP_EXTENSION_MISSING`: enable PHP `soap` in Hostinger before live fallback writes.
+- `SOAP_LIBRARY_VERSION_MISSING`: run the release's locked Composer install.
+- `SOAP_VERSION_UNAVAILABLE`: remove an invalid emergency override or install that version.
+- `REST_CAPABILITY_UNAVAILABLE`: an operation was called directly on the REST
+  connector instead of through the hybrid router.
 - `AUTHENTICATION`: verify the credential file, clock, service account, and API.
 - `PERMISSION`: confirm the service-account email and GAM user role.
 - `NETWORK_NOT_FOUND`: confirm the network code is accessible to the credential.

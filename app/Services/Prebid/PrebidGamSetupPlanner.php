@@ -119,11 +119,20 @@ final class PrebidGamSetupPlanner
                         'valueIds' => ['@targeting-value-'.$price],
                     ],
                 ],
+                'primaryGoal' => ['goalType' => 'NONE'],
+                'startDateTimeType' => 'IMMEDIATELY',
                 'unlimitedEndDateTime' => true,
             ]);
             $objects[] = $this->object('association', 'creative-association-'.$currency.'-'.$price, 'associateCreative', [
                 'lineItemId' => '@'.$lineKey,
                 'creativeId' => '@universal-creative',
+            ]);
+            $objects[] = $this->object('activation', 'line-item-activation-'.$currency.'-'.$price, 'activateLineItem', [
+                'query' => 'WHERE id = :id',
+                'values' => [[
+                    'key' => 'id',
+                    'value' => ['__type' => 'NumberValue', 'value' => '@'.$lineKey],
+                ]],
             ]);
         }
 

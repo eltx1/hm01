@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Services\Gam\Contracts\GamSoapTransportInterface;
+use App\Services\Gam\GamOfficialSoapTransport;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
@@ -17,6 +19,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(GamSoapTransportInterface::class, GamOfficialSoapTransport::class);
         $this->app->bind(StaticDeliveryDriverInterface::class, function ($app): StaticDeliveryDriverInterface {
             return match (config('static-delivery.driver')) {
                 'cloudflare-pages-pipeline' => $app->make(CloudflarePagesPipelineDriver::class),

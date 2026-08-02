@@ -129,20 +129,26 @@ The loader and configuration are public CDN resources. No cookie or credential
 is needed to retrieve them. See `docs/INVENTORY_AND_LOADER.md` for the complete
 runtime and cache policy.
 
-## Version-stable REST integration
+## REST-first hybrid GAM integration
 
-Production uses the Google Ad Manager REST `v1` endpoint exclusively. New and
-existing connection records are normalized to `REST`; stale non-test driver
-values are also routed through `GamRestConnector`. There is no dated SOAP
-version in runtime configuration and no silent SOAP fallback.
+Production connection records use the `HYBRID` driver. `GamHybridConnector`
+consults `GamCapabilityRegistry` before every request: networks, inventory,
+placements, custom targeting, orders, and reports use REST `v1`; currently
+unpublished company, line-item, creative, association, and lifecycle writes use
+the official `googleads/googleads-php-lib` SOAP client.
 
-Google is expanding the REST surface incrementally. Horus currently writes ad
-units, placements, custom targeting, orders, and reports through REST. At the
-time of this release, Google publishes line items and companies as read-only
-resources and does not publish creative or line-item association writes. Those
-operations return `REST_CAPABILITY_UNAVAILABLE`, remain audited, and are never
-reported as successful. This protects production from false-positive traffic
-deployment while preserving a stable API boundary as Google adds capabilities.
+The route is chosen before sending anything. A REST authentication, permission,
+quota, timeout, or ambiguous write failure is never replayed through SOAP. Both
+transports use the same dry-run, idempotency, sanitized audit, retry, and remote
+mapping executor. REST canonical resource names are normalized to terminal IDs
+when a downstream SOAP object needs a numeric reference.
+
+No dated API version is embedded in business code. `GamSoapVersionResolver`
+discovers the newest generated version installed by the Composer-locked official
+library. `GAM_SOAP_VERSION_OVERRIDE` is empty by default and exists only for an
+emergency rollback. When Google publishes and Horus verifies a missing REST
+write, its capability route and connector implementation can be promoted without
+changing publisher code, CDN files, connection credentials, or business flows.
 
 ## Credentials
 
@@ -189,11 +195,11 @@ layer. Creating the first Horus connection automatically makes it primary.
 - report jobs
 - remote-object lookup
 
-`GamRestConnector` implements every published REST capability and explicitly
-rejects unpublished writes. `GamMockConnector` implements the entire contract
-for deterministic tests. The application contains no SOAP transport or dated API
-version. All production traffic passes through `GamOperationExecutor` for dry-run,
-idempotency, retries, sanitization, mappings, and error capture.
+`GamRestConnector` implements published REST capabilities. `GamSoapConnector`
+and `GamOfficialSoapTransport` cover only the fallback route using generated
+official value objects. `GamMockConnector` implements the entire contract for
+deterministic tests. All production calls pass through `GamOperationExecutor`
+for dry-run, idempotency, retries, sanitization, mappings, and error capture.
 
 ## Administrator workflow
 

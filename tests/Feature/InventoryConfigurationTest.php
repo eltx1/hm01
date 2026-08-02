@@ -153,7 +153,7 @@ class InventoryConfigurationTest extends TestCase
     public function test_ad_unit_sync_is_dry_run_safe_idempotent_and_detects_changes(): void
     {
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
-        $connection->update(['driver' => 'REST']);
+        $connection->update(['driver' => 'HYBRID']);
         $this->cacheToken($connection->refresh()->load('credential'));
         Http::fake([
             'https://admanager.googleapis.com/v1/networks/123456789/adUnits' => Http::response([

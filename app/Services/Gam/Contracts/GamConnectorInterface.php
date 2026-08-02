@@ -28,6 +28,7 @@ interface GamConnectorInterface
     public function associateCreative(array $attributes, array $options = []): GamResult;
     public function pauseLineItem(array $filterStatement, array $options = []): GamResult;
     public function activateLineItem(array $filterStatement, array $options = []): GamResult;
+    public function resumeLineItem(array $filterStatement, array $options = []): GamResult;
     public function archiveObject(array $attributes, array $options = []): GamResult;
     public function runReport(array $reportQuery, array $options = []): GamResult;
     public function getObjectByRemoteId(string $service, string $remoteId, array $options = []): GamResult;

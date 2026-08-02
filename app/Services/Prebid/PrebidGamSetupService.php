@@ -102,6 +102,9 @@ final class PrebidGamSetupService
                         throw new RuntimeException($result->errorMessage ?: 'GAM rejected the Prebid setup operation.');
                     }
                     $remoteId = data_get($result->data, 'rval.0.id') ?? data_get($result->data, 'id');
+                    if ($object['type'] === 'activation') {
+                        $remoteId = data_get($payload, 'values.0.value.value');
+                    }
                     if (! is_scalar($remoteId) || (string) $remoteId === '') {
                         throw new RuntimeException('GAM did not return a remote object ID for '.$object['key'].'.');
                     }

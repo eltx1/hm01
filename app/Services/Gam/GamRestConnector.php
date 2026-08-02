@@ -14,9 +14,9 @@ use Throwable;
 /**
  * Version-stable Google Ad Manager REST v1 connector.
  *
- * Unlike the retired SOAP path this connector never embeds a dated API version.
- * Unsupported REST capabilities fail explicitly; there is deliberately no silent
- * SOAP fallback because that would reintroduce the upgrade cycle this driver removes.
+ * This connector never embeds a dated API version. Unsupported methods remain
+ * explicit so the hybrid capability router can select the audited fallback
+ * before a request is sent.
  */
 final class GamRestConnector implements GamConnectorInterface
 {
@@ -71,11 +71,19 @@ final class GamRestConnector implements GamConnectorInterface
 
     public function createCustomTargetingKey(array $attributes, array $options = []): GamResult
     {
+        if (isset($attributes['name']) && ! isset($attributes['adTagName'])) $attributes['adTagName'] = $attributes['name'];
+        unset($attributes['name']);
+
         return $this->write('createCustomTargetingKey', 'customTargetingKeys', 'create', $this->collection('customTargetingKeys'), $attributes, $options);
     }
 
     public function createCustomTargetingValue(array $attributes, array $options = []): GamResult
     {
+        $key = $attributes['customTargetingKey'] ?? $attributes['customTargetingKeyId'] ?? null;
+        if ($key !== null) $attributes['customTargetingKey'] = $this->relatedResource('customTargetingKeys', (string) $key);
+        if (isset($attributes['name']) && ! isset($attributes['adTagName'])) $attributes['adTagName'] = $attributes['name'];
+        unset($attributes['customTargetingKeyId'], $attributes['name']);
+
         return $this->write('createCustomTargetingValue', 'customTargetingValues', 'create', $this->collection('customTargetingValues'), $attributes, $options);
     }
 
@@ -97,6 +105,7 @@ final class GamRestConnector implements GamConnectorInterface
     public function associateCreative(array $attributes, array $options = []): GamResult { return $this->unsupported('associateCreative', 'lineItemCreativeAssociations.create'); }
     public function pauseLineItem(array $filterStatement, array $options = []): GamResult { return $this->unsupported('pauseLineItem', 'lineItems.pause'); }
     public function activateLineItem(array $filterStatement, array $options = []): GamResult { return $this->unsupported('activateLineItem', 'lineItems.activate'); }
+    public function resumeLineItem(array $filterStatement, array $options = []): GamResult { return $this->unsupported('resumeLineItem', 'lineItems.resume'); }
 
     public function archiveObject(array $attributes, array $options = []): GamResult
     {
@@ -146,7 +155,14 @@ final class GamRestConnector implements GamConnectorInterface
     private function batchWrite(string $operation, string $resource, string $method, string $action, string $itemKey, array $attributes, array $options, bool $update = false): GamResult
     {
         $request = [$itemKey => $attributes];
-        if ($update) $request['updateMask'] = $options['update_mask'] ?? $this->updateMask($attributes);
+        if ($update) {
+            $request['updateMask'] = $options['update_mask'] ?? $this->updateMask($attributes);
+        } else {
+            // GAM follows the Google AIP batch envelope: each create request
+            // repeats the same parent used by the outer batch endpoint.
+            $request['parent'] = 'networks/'.$this->networkCode();
+        }
+
         return $this->write($operation, $resource, $method, $this->collection($resource).':'.$action, ['requests' => [$request]], $options);
     }
 
@@ -213,8 +229,10 @@ final class GamRestConnector implements GamConnectorInterface
             }
         }
         if (is_string($name) && $name !== '') {
-            $payload['id'] ??= $name;
-            $payload['rval'] ??= [['id' => $name, 'name' => $name]];
+            $id = basename($name);
+            $payload['id'] ??= $id;
+            $payload['resourceName'] ??= $name;
+            $payload['rval'] ??= [['id' => $id, 'name' => $name]];
         }
 
         return $payload;
@@ -222,7 +240,7 @@ final class GamRestConnector implements GamConnectorInterface
 
     private function unsupported(string $operation, string $capability): GamResult
     {
-        return GamResult::failure('CONFIGURATION', 'REST_CAPABILITY_UNAVAILABLE', "Google Ad Manager REST v1 does not currently publish {$capability}; {$operation} was not sent and SOAP fallback is disabled.");
+        return GamResult::failure('CONFIGURATION', 'REST_CAPABILITY_UNAVAILABLE', "Google Ad Manager REST v1 does not currently publish {$capability}; {$operation} was not sent.");
     }
 
     private function collection(string $resource): string { return '/networks/'.$this->networkCode().'/'.$resource; }

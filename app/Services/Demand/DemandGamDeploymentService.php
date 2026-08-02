@@ -372,7 +372,9 @@ final class DemandGamDeploymentService
             ]],
         ];
         $connector = $this->gamConnectors->for($connection);
-        $method = $activate ? 'activateLineItem' : 'pauseLineItem';
+        $method = $activate
+            ? ($mapping->remote_status === 'PAUSED' ? 'resumeLineItem' : 'activateLineItem')
+            : 'pauseLineItem';
         $result = $connector->{$method}($statement, [
             'dry_run' => false,
             'idempotency_key' => hash('sha256', 'demand-status|'.$placement->id.'|'.$method.'|'.$placement->updated_at?->timestamp),

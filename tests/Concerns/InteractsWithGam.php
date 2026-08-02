@@ -21,7 +21,7 @@ trait InteractsWithGam
             'name' => fake()->unique()->company().' GAM',
             'type' => $type,
             'credential_type' => GamCredentialType::ServiceAccount,
-            'driver' => 'REST',
+            'driver' => 'HYBRID',
             'network_code' => (string) fake()->unique()->numberBetween(100000000, 999999999),
             'application_name' => 'Horus Media Test',
             'is_primary' => $type === GamConnectionType::HorusGam,
