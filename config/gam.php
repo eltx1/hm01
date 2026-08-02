@@ -1,16 +1,13 @@
 <?php
 
 return [
-    'api_version' => env('GAM_API_VERSION', 'v202602'),
     'application_name' => env('GAM_APPLICATION_NAME', 'Horus Media Platform'),
-    'soap' => [
-        'base_url' => env('GAM_SOAP_BASE_URL', 'https://ads.google.com/apis/ads/publisher'),
-        'connect_timeout' => (int) env('GAM_SOAP_CONNECT_TIMEOUT', 10),
-        'timeout' => (int) env('GAM_SOAP_TIMEOUT', 30),
-        'wsdl_cache' => env('GAM_SOAP_WSDL_CACHE', true),
+    'rest' => [
+        'base_url' => env('GAM_REST_BASE_URL', 'https://admanager.googleapis.com/v1'),
+        'timeout' => (int) env('GAM_REST_TIMEOUT', 30),
     ],
     'oauth' => [
-        'scope' => 'https://www.googleapis.com/auth/dfp',
+        'scope' => 'https://www.googleapis.com/auth/admanager',
         'token_uri' => 'https://oauth2.googleapis.com/token',
     ],
     'retry' => [

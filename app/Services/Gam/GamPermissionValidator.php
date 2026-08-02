@@ -16,7 +16,8 @@ final class GamPermissionValidator
         $checks = [
             'api.access' => [
                 'status' => $current->success ? 'GRANTED' : 'DENIED',
-                'details' => $current->success ? ['network_code' => data_get($current->data, 'networkCode')] : ['error' => $current->errorCode],
+                'details' => $current->success ? ['network_code' => data_get($current->data, 'networkCode')
+                    ?: str((string) data_get($current->data, 'name'))->afterLast('/')->toString()] : ['error' => $current->errorCode],
             ],
             'network.read' => [
                 'status' => $accessible->success ? 'GRANTED' : 'DENIED',

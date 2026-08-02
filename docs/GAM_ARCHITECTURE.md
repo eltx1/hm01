@@ -129,16 +129,20 @@ The loader and configuration are public CDN resources. No cookie or credential
 is needed to retrieve them. See `docs/INVENTORY_AND_LOADER.md` for the complete
 runtime and cache policy.
 
-## Centralized API versioning
+## Version-stable REST integration
 
-The SOAP API version exists only in `config/gam.php` and defaults to `v202602`.
-No service class hard-codes a version. Upgrading an active SOAP version is a
-single configuration change followed by the automated test suite and a live
-connection test.
+Production uses the Google Ad Manager REST `v1` endpoint exclusively. New and
+existing connection records are normalized to `REST`; stale non-test driver
+values are also routed through `GamRestConnector`. There is no dated SOAP
+version in runtime configuration and no silent SOAP fallback.
 
-The REST connector is intentionally isolated behind
-`GamRestConnectorPlaceholder` until the beta surface is deliberately enabled.
-It cannot silently replace the production SOAP connector.
+Google is expanding the REST surface incrementally. Horus currently writes ad
+units, placements, custom targeting, orders, and reports through REST. At the
+time of this release, Google publishes line items and companies as read-only
+resources and does not publish creative or line-item association writes. Those
+operations return `REST_CAPABILITY_UNAVAILABLE`, remain audited, and are never
+reported as successful. This protects production from false-positive traffic
+deployment while preserving a stable API boundary as Google adds capabilities.
 
 ## Credentials
 
@@ -172,7 +176,7 @@ layer. Creating the first Horus connection automatically makes it primary.
 
 ## Connector surface
 
-`GamConnectorInterface` supports:
+`GamConnectorInterface` provides a stable internal contract for:
 
 - connection and network discovery
 - companies
@@ -185,9 +189,10 @@ layer. Creating the first Horus connection automatically makes it primary.
 - report jobs
 - remote-object lookup
 
-`GamSoapConnector` maps this surface to the corresponding Ad Manager SOAP
-services. `GamMockConnector` implements the entire contract for deterministic
-tests. All traffic passes through `GamOperationExecutor` for dry-run,
+`GamRestConnector` implements every published REST capability and explicitly
+rejects unpublished writes. `GamMockConnector` implements the entire contract
+for deterministic tests. The application contains no SOAP transport or dated API
+version. All production traffic passes through `GamOperationExecutor` for dry-run,
 idempotency, retries, sanitization, mappings, and error capture.
 
 ## Administrator workflow
@@ -211,7 +216,6 @@ The control plane never exposes credential material to browser JavaScript.
 
 ## Deployment profile
 
-Production requires PHP 8.2+, OpenSSL, cURL, and the PHP SOAP extension for live
-SOAP calls. The application remains compatible with Hostinger shared/cloud
+Production requires PHP 8.2+, OpenSSL, and cURL. The application remains compatible with Hostinger shared/cloud
 hosting: no root process, Redis, Supervisor, Docker, WebSockets, permanent
 worker, or impression endpoint is required.

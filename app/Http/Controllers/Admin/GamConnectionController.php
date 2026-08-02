@@ -42,7 +42,7 @@ class GamConnectionController extends Controller
             'connection' => new GamConnection([
                 'type' => GamConnectionType::HorusGam,
                 'credential_type' => GamCredentialType::ServiceAccount,
-                'driver' => 'SOAP',
+                'driver' => 'REST',
                 'is_enabled' => true,
                 'dry_run_default' => true,
             ]),
@@ -162,7 +162,7 @@ class GamConnectionController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', Rule::enum(GamConnectionType::class)],
             'credential_type' => ['required', Rule::enum(GamCredentialType::class)],
-            'driver' => ['required', Rule::in(['SOAP', 'REST'])],
+            'driver' => ['required', Rule::in(['REST'])],
             'network_code' => ['nullable', 'string', 'max:64', 'regex:/^\d+$/'],
             'application_name' => ['required', 'string', 'max:255'],
             'is_primary' => ['sometimes', 'boolean'],

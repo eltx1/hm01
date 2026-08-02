@@ -6,13 +6,17 @@ use App\Enums\PlacementStatus;
 use App\Enums\PlacementType;
 use App\Http\Controllers\Controller;
 use App\Models\AdUnit;
+use App\Models\AdFormat;
 use App\Models\GamRemoteObject;
 use App\Models\LoaderRelease;
 use App\Models\Placement;
 use App\Models\Site;
+use App\Models\SellerDeclaration;
 use App\Models\TagVersion;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
+use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -39,7 +43,32 @@ class InventoryController extends Controller
             'otherSites' => Site::withoutGlobalScopes()->where('id', '!=', $site->id)->orderBy('display_name')->get(),
             'loaderReleases' => LoaderRelease::query()->orderByDesc('published_at')->get(),
             'tagVersions' => TagVersion::query()->orderByDesc('published_at')->get(),
+            'adFormats' => AdFormat::query()->where('is_active', true)->orderBy('sort_order')->get(),
+            'sellerDeclarations' => SellerDeclaration::withoutGlobalScopes()->where('site_id', $site->id)->orderBy('seller_id')->get(),
         ]);
+    }
+
+    public function storeSellerDeclaration(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate([
+            'seller_id' => ['required', 'string', 'max:255'],
+            'seller_type' => ['required', Rule::in(['PUBLISHER', 'INTERMEDIARY', 'BOTH'])],
+            'name' => ['required', 'string', 'max:255'],
+            'domain' => ['required', 'string', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i'],
+            'is_confidential' => ['sometimes', 'boolean'],
+        ]);
+        $declaration = SellerDeclaration::withoutGlobalScopes()->updateOrCreate(
+            ['organization_id' => $site->organization_id, 'site_id' => $site->id, 'seller_id' => $data['seller_id']],
+            [
+                'seller_type' => $data['seller_type'], 'name' => $data['name'],
+                'domain' => strtolower($data['domain']), 'is_confidential' => $request->boolean('is_confidential'),
+                'status' => 'ACTIVE', 'last_verified_at' => now(),
+            ],
+        );
+        $audit->record('supply_chain.seller.updated', $site->organization_id, $request->user(), $declaration, newValues: $declaration->toArray());
+        $publisher->publishActiveProduction($site, $request->user());
+
+        return back()->with('status', 'Seller declaration saved and static supply-chain artifacts were queued.');
     }
 
     public function storeAdUnit(Request $request, Site $site, InventoryManager $inventory): RedirectResponse
@@ -131,22 +160,39 @@ class InventoryController extends Controller
     private function placementData(Request $request): array
     {
         $data = $request->validate([
-            'ad_unit_id' => ['nullable', 'ulid'], 'name' => ['required', 'string', 'max:255'], 'code' => ['required', 'string', 'max:120'],
+            'ad_unit_id' => ['nullable', 'ulid'], 'ad_format_id' => ['nullable', 'ulid', 'exists:ad_formats,id'], 'name' => ['required', 'string', 'max:255'], 'code' => ['required', 'string', 'max:120'],
             'type' => ['required', Rule::enum(PlacementType::class)], 'status' => ['required', Rule::enum(PlacementStatus::class)],
-            'sizes_text' => ['required', 'string', 'max:5000'], 'responsive_text' => ['nullable', 'string', 'max:10000'], 'targeting_text' => ['nullable', 'string', 'max:10000'],
+            'sizes_text' => ['nullable', 'string', 'max:5000'], 'responsive_text' => ['nullable', 'string', 'max:10000'], 'targeting_text' => ['nullable', 'string', 'max:10000'],
             'lazy_load_enabled' => ['sometimes', 'boolean'], 'lazy_fetch_margin_percent' => ['required', 'integer', 'between:0,5000'],
             'lazy_render_margin_percent' => ['required', 'integer', 'between:0,5000'], 'lazy_mobile_scaling' => ['required', 'numeric', 'between:0.1,10'],
             'refresh_enabled' => ['sometimes', 'boolean'], 'refresh_interval_seconds' => ['nullable', 'integer', 'between:30,3600'],
             'refresh_limit' => ['nullable', 'integer', 'between:1,100'], 'collapse_empty_div' => ['sometimes', 'boolean'],
-            'safeframe_enabled' => ['sometimes', 'boolean'], 'sort_order' => ['nullable', 'integer', 'between:0,100000'],
+            'safeframe_enabled' => ['sometimes', 'boolean'], 'sort_order' => ['nullable', 'integer', 'between:0,100000'], 'format_settings_json' => ['nullable', 'string', 'max:20000'],
         ]);
         $data['lazy_load_enabled'] = $request->boolean('lazy_load_enabled');
         $data['refresh_enabled'] = $request->boolean('refresh_enabled');
         $data['collapse_empty_div'] = $request->boolean('collapse_empty_div');
         $data['safeframe_enabled'] = $request->boolean('safeframe_enabled');
-        $data['sizes'] = array_merge($this->parseFixedSizes($data['sizes_text']), $this->parseResponsiveSizes($data['responsive_text'] ?? ''));
+        $format = filled($data['ad_format_id'] ?? null) ? AdFormat::query()->findOrFail($data['ad_format_id']) : null;
+        if ($format && $format->placement_type !== $data['type']) abort(422, 'The selected format is not compatible with the placement type.');
+        $fixedSizes = $this->parseFixedSizes($data['sizes_text'] ?? '');
+        if ($fixedSizes === [] && $format) {
+            $fixedSizes = collect($format->default_sizes ?? [])->map(fn ($size) => $size === 'fluid'
+                ? ['size_type' => 'FLUID', 'device' => 'ALL']
+                : ['size_type' => 'FIXED', 'width' => (int) $size[0], 'height' => (int) $size[1], 'device' => 'ALL'])->all();
+        }
+        $data['sizes'] = array_merge($fixedSizes, $this->parseResponsiveSizes($data['responsive_text'] ?? ''));
+        if ($data['sizes'] === [] && ! in_array($data['type'], [PlacementType::Interstitial->value, PlacementType::Native->value], true)) {
+            abort(422, 'Select a format with default sizes or enter at least one size.');
+        }
         $data['targeting'] = $this->parseTargeting($data['targeting_text'] ?? '');
-        unset($data['sizes_text'], $data['responsive_text'], $data['targeting_text']);
+        try {
+            $data['format_settings'] = filled($data['format_settings_json'] ?? null)
+                ? json_decode($data['format_settings_json'], true, 512, JSON_THROW_ON_ERROR) : [];
+        } catch (\JsonException) {
+            abort(422, 'Format settings must be valid JSON.');
+        }
+        unset($data['sizes_text'], $data['responsive_text'], $data['targeting_text'], $data['format_settings_json']);
 
         return $data;
     }
@@ -168,9 +214,20 @@ class InventoryController extends Controller
         $sizes = [];
         foreach (preg_split('/\r\n|\r|\n/', trim($text)) as $line) {
             if (trim($line) === '') continue;
-            if (! preg_match('/^(\d+)x(\d+)\s*\|\s*(ALL|DESKTOP|TABLET|MOBILE)\s*\|\s*(.+)$/i', trim($line), $match)) abort(422, 'Responsive size lines must be MINWIDTHxMINHEIGHT|DEVICE|300x250,728x90.');
-            foreach ($this->parseFixedSizes($match[4]) as $size) {
-                $size['min_viewport_width'] = (int) $match[1]; $size['min_viewport_height'] = (int) $match[2]; $size['device'] = strtoupper($match[3]); $sizes[] = $size;
+            if (! preg_match('/^(\d+)x(\d+)(?:-(\d+)x(\d+))?\s*\|\s*(ALL|DESKTOP|TABLET|MOBILE)\s*\|\s*(.+)$/i', trim($line), $match)) abort(422, 'Responsive lines must be MINxMIN[-MAXxMAX]|DEVICE|300x250,728x90.');
+            foreach (array_filter(array_slice($match, 1, 4), fn ($value) => $value !== '') as $viewport) {
+                if ((int) $viewport > 65535) abort(422, 'Responsive viewport dimensions cannot exceed 65535.');
+            }
+            if (filled($match[3] ?? null) && ((int) $match[3] < (int) $match[1] || (int) $match[4] < (int) $match[2])) {
+                abort(422, 'Responsive maximum viewport must be greater than or equal to the minimum viewport.');
+            }
+            foreach ($this->parseFixedSizes($match[6]) as $size) {
+                $size['min_viewport_width'] = (int) $match[1];
+                $size['min_viewport_height'] = (int) $match[2];
+                $size['max_viewport_width'] = filled($match[3] ?? null) ? (int) $match[3] : null;
+                $size['max_viewport_height'] = filled($match[4] ?? null) ? (int) $match[4] : null;
+                $size['device'] = strtoupper($match[5]);
+                $sizes[] = $size;
             }
         }
 

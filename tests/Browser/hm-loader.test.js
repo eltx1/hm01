@@ -55,10 +55,13 @@ function createHarness(config, {
     manifestVersion = config.configVersion,
     immutableConfig = config,
     aliasConfig = config,
+    unifiedConfig = false,
+    deferredTcf = false,
 } = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
         pageTargeting: {}, slotTargeting: {}, lazy: null, singleRequest: 0,
+        pageConfigs: [], privacySettings: [], tcfCallback: null,
     };
     const elements = placementCodes.map(element);
     const scriptAttributes = {
@@ -78,6 +81,7 @@ function createHarness(config, {
         setTargeting(key, values) { metrics.pageTargeting[key] = values; return this; },
         enableLazyLoad(value) { metrics.lazy = value; },
         enableSingleRequest() { metrics.singleRequest += 1; },
+        setPrivacySettings(value) { metrics.privacySettings.push(value); return this; },
         refresh() {},
     };
     const immediateQueue = { push(callback) { callback(); return 1; } };
@@ -106,6 +110,7 @@ function createHarness(config, {
         display(value) { metrics.displayed.push(typeof value === 'string' ? value : 'out-of-page'); },
         enums: { OutOfPageFormat: { INTERSTITIAL: 'INTERSTITIAL', REWARDED: 'REWARDED' } },
     };
+    if (unifiedConfig) googletag.setConfig = (value) => { metrics.pageConfigs.push(value); };
 
     const document = {
         currentScript: script,
@@ -181,6 +186,13 @@ function createHarness(config, {
         dispatchEvent(event) { (listeners[event.type] || []).forEach((callback) => callback(event)); },
         __HM_DISABLE_AUTOBOOT__: true,
     };
+    if (deferredTcf) {
+        sandbox.__tcfapi = (command, version, callback) => {
+            assert.equal(command, 'addEventListener');
+            assert.equal(version, 2);
+            metrics.tcfCallback = callback;
+        };
+    }
     sandbox.window = sandbox;
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
 
@@ -203,6 +215,56 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.fetches.length, 3);
     assert.match(metrics.fetches[1], /\/manifest\.json$/);
     assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
+});
+
+test('privacy gate waits for TCF and applies unified GPT privacy configuration', async () => {
+    const selected = activeConfig({
+        privacy: {
+            mode: 'STRICT', requireConsentBeforeAds: true,
+            cmp: { timeoutMs: 200, actionOnTimeout: 'LIMITED_ADS' },
+            signals: { coppa: true, underAgeOfConsent: true },
+        },
+        gpt: {
+            url: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', singleRequest: true,
+            config: { threadYield: 'ENABLED_ALL_SLOTS', autoRefresh: { heavyAds: true } },
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, { unifiedConfig: true, deferredTcf: true });
+    const boot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && !metrics.tcfCallback; attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(typeof metrics.tcfCallback, 'function');
+    metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: true, purpose: { consents: { 1: false } } }, true);
+    await boot;
+
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.pageConfigs.length, 1);
+    assert.equal(metrics.pageConfigs[0].disableInitialLoad, true);
+    assert.equal(metrics.pageConfigs[0].singleRequest, true);
+    assert.equal(metrics.pageConfigs[0].privacyTreatments.treatments[0], 'disablePersonalization');
+    assert.equal(metrics.singleRequest, 0);
+    assert.equal(metrics.privacySettings[0].childDirectedTreatment, true);
+    assert.equal(metrics.privacySettings[0].underAgeOfConsent, true);
+    assert.equal(metrics.pageTargeting.hm_limited_ads[0], '1');
+});
+
+test('strict privacy mode can block every advertising call after its bounded CMP timeout', async () => {
+    const selected = activeConfig({
+        privacy: {
+            mode: 'STRICT', requireConsentBeforeAds: true,
+            cmp: { timeoutMs: 100, actionOnTimeout: 'BLOCK_ADS' },
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected);
+
+    await sandbox.HorusMediaLoader.boot();
+
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(metrics.defined.length, 0);
+    assert.equal(metrics.displayed.length, 0);
 });
 
 test('paused sites never load GPT or define an advertising slot', async () => {

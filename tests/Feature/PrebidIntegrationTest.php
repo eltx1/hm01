@@ -9,7 +9,6 @@ use App\Enums\RoleName;
 use App\Models\PrebidBidder;
 use App\Models\PrebidGamRemoteObject;
 use App\Models\PrebidPriceBucket;
-use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\SiteConfigurationBuilder;
@@ -20,21 +19,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
-use Tests\Fakes\FakeGamSoapTransport;
 use Tests\TestCase;
 
 class PrebidIntegrationTest extends TestCase
 {
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
-
-    private FakeGamSoapTransport $transport;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->transport = new FakeGamSoapTransport;
-        $this->app->instance(GamSoapTransportInterface::class, $this->transport);
-    }
 
     public function test_selected_gam_network_controls_prebid_configuration_and_bidder_disable_is_static(): void
     {
@@ -54,7 +43,7 @@ class PrebidIntegrationTest extends TestCase
             'enabled' => true, 'auction_timeout_ms' => 900, 'price_granularity' => 'medium',
             'currency' => 'USD', 'bidder_sequence' => 'fixed', 'gam_fallback' => true,
         ], $admin);
-        $bidder = PrebidBidder::withoutGlobalScopes()->where('code', 'appnexus')->firstOrFail();
+        $bidder = PrebidBidder::withoutGlobalScopes()->where('code', 'msft')->firstOrFail();
         $account = $manager->addAccount($bidder, ['name' => 'Primary', 'enabled' => true], $admin);
         $siteMapping = $manager->assignToSite($account, $site, ['enabled' => true], $admin);
         $placementMapping = $manager->assignToPlacement($siteMapping, $placement, ['placement_id_value' => '42', 'enabled' => true], $admin);
@@ -62,8 +51,8 @@ class PrebidIntegrationTest extends TestCase
         $central = app(SiteConfigurationBuilder::class)->build($site->refresh(), ConfigEnvironment::Production, 1);
         $this->assertTrue($central['prebidEnabled']);
         $this->assertSame('HORUS_GAM', $central['servingMode']);
-        $this->assertSame('appnexus', $central['prebid']['adUnits'][0]['bids'][0]['bidder']);
-        $this->assertSame('42', $central['prebid']['adUnits'][0]['bids'][0]['params']['placementId']);
+        $this->assertSame('msft', $central['prebid']['adUnits'][0]['bids'][0]['bidder']);
+        $this->assertSame('42', $central['prebid']['adUnits'][0]['bids'][0]['params']['placement_id']);
 
         $manager->toggle($placementMapping, false, $admin);
         $disabled = app(SiteConfigurationBuilder::class)->build($site->refresh(), ConfigEnvironment::Production, 2);
@@ -118,17 +107,14 @@ class PrebidIntegrationTest extends TestCase
 
         $dryRun = $service->start($connection, $admin, true, false);
         $this->assertSame('DRY_RUN', $dryRun->status);
-        $this->assertCount(0, $this->transport->calls);
 
         $completed = $service->start($connection, $admin, false, true);
         $this->assertSame('SUCCEEDED', $completed->status);
         $this->assertSame(14, $completed->completed_objects);
-        $this->assertCount(14, $this->transport->calls);
         $this->assertSame(14, PrebidGamRemoteObject::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->count());
 
         $rerun = $service->start($connection, $admin, false, true);
         $this->assertSame('SUCCEEDED', $rerun->status);
-        $this->assertCount(14, $this->transport->calls);
         $this->assertSame(0, $service->preview($connection)['pendingObjects']);
     }
 
@@ -140,6 +126,7 @@ class PrebidIntegrationTest extends TestCase
         $connection = $this->makeGamConnection($horus, $admin, [
             'type' => GamConnectionType::HorusGam,
             'network_code' => '123456789',
+            'driver' => 'MOCK',
             'is_primary' => true,
             'configuration' => ['root_ad_unit_id' => '1111'],
         ]);

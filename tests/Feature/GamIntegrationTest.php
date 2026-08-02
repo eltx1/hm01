@@ -11,29 +11,21 @@ use App\Enums\SiteStatus;
 use App\Models\GamApiOperation;
 use App\Models\GamConnection;
 use App\Models\GamRemoteObject;
-use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Gam\GamConnectorManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
-use Tests\Fakes\FakeGamSoapTransport;
 use Tests\TestCase;
 
 class GamIntegrationTest extends TestCase
 {
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
-
-    private FakeGamSoapTransport $transport;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->transport = new FakeGamSoapTransport;
-        $this->app->instance(GamSoapTransportInterface::class, $this->transport);
-    }
 
     public function test_first_horus_connection_is_primary_and_another_can_replace_it(): void
     {
@@ -101,33 +93,37 @@ class GamIntegrationTest extends TestCase
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $admin = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $admin, ['dry_run_default' => true]);
+        $this->cacheToken($connection);
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/*/adUnits' => Http::response(['name' => 'networks/'.$connection->network_code.'/adUnits/9001']),
+        ]);
         $connector = app(GamConnectorManager::class)->for($connection);
-        $attributes = ['name' => 'Direct Advertiser', 'type' => 'ADVERTISER'];
+        $attributes = ['displayName' => 'Article top', 'adUnitCode' => 'article_top'];
         $options = [
-            'local_type' => 'advertiser',
-            'local_id' => 'local-advertiser-1',
-            'remote_type' => 'company',
-            'remote_id_path' => 'id',
+            'local_type' => 'ad_unit',
+            'local_id' => 'local-ad-unit-1',
+            'remote_type' => 'ad_unit',
+            'remote_id_path' => 'name',
         ];
 
-        $planned = $connector->createCompany($attributes, $options);
+        $planned = $connector->createAdUnit($attributes, $options);
         $this->assertTrue($planned->dryRun);
-        $this->assertCount(0, $this->transport->calls);
+        Http::assertNothingSent();
 
-        $created = $connector->createCompany($attributes, array_merge($options, ['dry_run' => false]));
-        $duplicate = $connector->createCompany($attributes, array_merge($options, ['dry_run' => false]));
+        $created = $connector->createAdUnit($attributes, array_merge($options, ['dry_run' => false]));
+        $duplicate = $connector->createAdUnit($attributes, array_merge($options, ['dry_run' => false]));
 
         $this->assertTrue($created->success);
         $this->assertTrue($duplicate->duplicate);
-        $this->assertCount(1, $this->transport->calls);
+        Http::assertSentCount(1);
         $this->assertSame(1, GamApiOperation::withoutGlobalScopes()->count());
         $this->assertDatabaseHas('gam_api_operations', ['id' => $created->operationId, 'status' => 'SUCCEEDED', 'attempts' => 1]);
         $this->assertDatabaseHas('gam_remote_objects', [
             'gam_connection_id' => $connection->id,
-            'local_object_type' => 'advertiser',
-            'local_object_id' => 'local-advertiser-1',
-            'remote_object_type' => 'company',
-            'remote_object_id' => '9001',
+            'local_object_type' => 'ad_unit',
+            'local_object_id' => 'local-ad-unit-1',
+            'remote_object_type' => 'ad_unit',
+            'remote_object_id' => 'networks/'.$connection->network_code.'/adUnits/9001',
         ]);
         $this->assertSame(1, GamRemoteObject::withoutGlobalScopes()->count());
     }
@@ -138,10 +134,14 @@ class GamIntegrationTest extends TestCase
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $admin = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $admin, ['dry_run_default' => false]);
+        $this->cacheToken($connection);
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/*/placements' => Http::response(['name' => 'networks/'.$connection->network_code.'/placements/9001']),
+        ]);
         $connector = app(GamConnectorManager::class)->for($connection);
 
-        $connector->createCompany([
-            'name' => 'Safe Company',
+        $connector->createPlacement([
+            'displayName' => 'Safe placement',
             'client_secret' => 'must-not-be-stored',
             'nested' => ['access_token' => 'must-also-disappear'],
         ], ['dry_run' => false]);
@@ -160,6 +160,15 @@ class GamIntegrationTest extends TestCase
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $admin = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $admin, ['network_code' => '123456789', 'dry_run_default' => true]);
+        $this->cacheToken($connection);
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/123456789' => Http::response([
+                'name' => 'networks/123456789', 'networkCode' => '123456789', 'displayName' => 'Horus Media GAM',
+            ]),
+            'https://admanager.googleapis.com/v1/networks' => Http::response(['networks' => [[
+                'name' => 'networks/123456789', 'networkCode' => '123456789', 'displayName' => 'Horus Media GAM',
+            ]]]),
+        ]);
 
         $result = app(GamConnectionService::class)->test($connection, $admin);
 
@@ -189,7 +198,7 @@ class GamIntegrationTest extends TestCase
             'name' => $name,
             'type' => $type->value,
             'credential_type' => GamCredentialType::ServiceAccount->value,
-            'driver' => 'SOAP',
+            'driver' => 'REST',
             'network_code' => fake()->unique()->numerify('#########'),
             'application_name' => 'Horus Media Test',
             'is_enabled' => true,
@@ -198,5 +207,12 @@ class GamIntegrationTest extends TestCase
             'client_email_hint' => 'gam-test@project.iam.gserviceaccount.com',
             'scopes' => [config('gam.oauth.scope')],
         ];
+    }
+
+    private function cacheToken(GamConnection $connection): void
+    {
+        $credential = $connection->credential;
+        $key = 'gam:oauth:'.hash('sha256', $connection->id.'|'.($credential->rotated_at?->timestamp ?? '0'));
+        Cache::put($key, Crypt::encryptString('test-access-token'), now()->addMinutes(30));
     }
 }

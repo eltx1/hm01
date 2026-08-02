@@ -38,7 +38,7 @@ function config(overrides = {}) {
             build: { version: '11.14.0', url: 'https://cdn.horusmedia.net/assets/prebid/horus-prebid.min.js' },
             auction: { timeoutMs: 25, priceGranularity: 'medium', currency: 'USD', bidderSequence: 'fixed', consent: {} },
             delivery: { bidderTimeoutReporting: true, gamFallback: true, lazyLoading: { enabled: true }, refreshBehavior: { enabled: true, minimumIntervalSeconds: 30 } },
-            adUnits: [{ code: 'article_top', mediaTypes: { banner: { sizes: [[300, 250]] } }, bids: [{ bidder: 'appnexus', params: { placementId: '42' } }] }],
+            adUnits: [{ code: 'article_top', mediaTypes: { banner: { sizes: [[300, 250]] } }, bids: [{ bidder: 'msft', params: { placement_id: 42 } }] }],
         },
         ...overrides,
     };

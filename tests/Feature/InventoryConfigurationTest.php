@@ -10,7 +10,8 @@ use App\Enums\PlacementType;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Models\GamRemoteObject;
-use App\Services\Gam\Contracts\GamSoapTransportInterface;
+use App\Models\AdFormat;
+use Database\Seeders\AdFormatSeeder;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
@@ -22,7 +23,6 @@ use Illuminate\Support\Facades\File;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
-use Tests\Fakes\FakeGamSoapTransport;
 use Tests\TestCase;
 
 class InventoryConfigurationTest extends TestCase
@@ -30,7 +30,6 @@ class InventoryConfigurationTest extends TestCase
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private string $staticRoot;
-    private FakeGamSoapTransport $transport;
 
     protected function setUp(): void
     {
@@ -41,8 +40,6 @@ class InventoryConfigurationTest extends TestCase
             'static-delivery.local_root' => $this->staticRoot,
             'static-delivery.batch_delay_seconds' => 0,
         ]);
-        $this->transport = new FakeGamSoapTransport;
-        $this->app->instance(GamSoapTransportInterface::class, $this->transport);
     }
 
     protected function tearDown(): void
@@ -54,6 +51,8 @@ class InventoryConfigurationTest extends TestCase
     public function test_new_site_defaults_to_horus_gam_and_generated_configuration_uses_primary_network(): void
     {
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
+        $this->seed(AdFormatSeeder::class);
+        $format = AdFormat::query()->where('code', 'display_banner')->firstOrFail();
         $inventory = app(InventoryManager::class);
         $adUnit = $inventory->createAdUnit($site, [
             'name' => 'Article Top', 'code' => 'article_top',
@@ -62,6 +61,7 @@ class InventoryConfigurationTest extends TestCase
         $inventory->createPlacement($site, [
             'name' => 'Article Top', 'code' => 'article_top', 'type' => PlacementType::Display->value,
             'status' => PlacementStatus::Active->value, 'ad_unit_id' => $adUnit->id,
+            'ad_format_id' => $format->id, 'format_settings' => ['reserveSpace' => true],
             'sizes' => [['width' => 300, 'height' => 250], ['width' => 728, 'height' => 90]],
         ], $admin);
 
@@ -69,7 +69,10 @@ class InventoryConfigurationTest extends TestCase
 
         $this->assertSame(ServingMode::HorusGam, $site->serving_mode);
         $this->assertSame($connection->network_code, $config['gamNetworkCode']);
+        $this->assertSame(2, $config['schemaVersion']);
         $this->assertSame('HORUS_GAM', $config['servingMode']);
+        $this->assertSame('display_banner', $config['placements'][0]['format']['code']);
+        $this->assertTrue($config['placements'][0]['format']['settings']['reserveSpace']);
         $this->assertSame('/'.$connection->network_code.'/article_top', $config['placements'][0]['adUnitPath']);
         $this->assertContains($site->primary_domain, $config['allowedHostnames']);
         $this->assertStringContainsString('hm-loader.js', $site->installationCode());
@@ -149,8 +152,6 @@ class InventoryConfigurationTest extends TestCase
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
         $inventory = app(InventoryManager::class);
         $adUnit = $inventory->createAdUnit($site, ['name' => 'Hero', 'code' => 'hero', 'sizes' => [['width' => 970, 'height' => 250]]], $admin);
-        $this->transport->responses['InventoryService.createAdUnits'] = ['rval' => [['id' => '9001', 'status' => 'ACTIVE']]];
-        $this->transport->responses['InventoryService.updateAdUnits'] = ['rval' => [['id' => '9001', 'status' => 'ACTIVE']]];
         $sync = app(AdUnitSyncService::class);
 
         $dryRun = $sync->sync($adUnit, $admin, true);
@@ -165,12 +166,11 @@ class InventoryConfigurationTest extends TestCase
         $this->assertTrue($duplicate->duplicate);
         $this->assertTrue($difference['different']);
         $this->assertTrue($updated->success);
-        $this->assertCount(2, $this->transport->calls);
         $this->assertDatabaseHas('gam_remote_objects', [
             'gam_connection_id' => $connection->id,
             'local_object_type' => 'ad_unit',
             'local_object_id' => $adUnit->id,
-            'remote_object_id' => '9001',
+            'remote_object_id' => '1001',
         ]);
         $this->assertSame(1, GamRemoteObject::withoutGlobalScopes()->where('local_object_id', $adUnit->id)->count());
     }
@@ -204,6 +204,7 @@ class InventoryConfigurationTest extends TestCase
         $connection = $this->makeGamConnection($horus, $admin, [
             'type' => GamConnectionType::HorusGam,
             'network_code' => '123456789',
+            'driver' => 'MOCK',
             'is_primary' => true,
             'configuration' => ['root_ad_unit_id' => '1111'],
         ]);

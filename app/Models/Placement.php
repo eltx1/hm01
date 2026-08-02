@@ -16,10 +16,10 @@ class Placement extends Model
     use BelongsToOrganization, HasUlids, SoftDeletes;
 
     protected $fillable = [
-        'organization_id', 'site_id', 'ad_unit_id', 'name', 'code', 'type', 'status',
+        'organization_id', 'site_id', 'ad_unit_id', 'ad_format_id', 'name', 'code', 'type', 'status',
         'lazy_load_enabled', 'lazy_fetch_margin_percent', 'lazy_render_margin_percent',
         'lazy_mobile_scaling', 'refresh_enabled', 'refresh_interval_seconds', 'refresh_limit',
-        'collapse_empty_div', 'safeframe_enabled', 'sort_order', 'metadata', 'created_by', 'updated_by',
+        'collapse_empty_div', 'safeframe_enabled', 'sort_order', 'metadata', 'format_settings', 'created_by', 'updated_by',
     ];
 
     protected function casts(): array
@@ -33,11 +33,13 @@ class Placement extends Model
             'collapse_empty_div' => 'boolean',
             'safeframe_enabled' => 'boolean',
             'metadata' => 'array',
+            'format_settings' => 'array',
         ];
     }
 
     public function site(): BelongsTo { return $this->belongsTo(Site::class); }
     public function adUnit(): BelongsTo { return $this->belongsTo(AdUnit::class); }
+    public function adFormat(): BelongsTo { return $this->belongsTo(AdFormat::class); }
     public function sizes(): HasMany { return $this->hasMany(PlacementSize::class)->orderBy('priority'); }
     public function targeting(): HasMany { return $this->hasMany(PlacementTargeting::class); }
     public function demandPlacements(): HasMany { return $this->hasMany(DemandPlacement::class); }

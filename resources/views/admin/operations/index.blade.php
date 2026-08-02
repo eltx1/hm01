@@ -12,6 +12,13 @@
 <article><p class="eyebrow">Active kill switches</p><strong class="metric">{{ $controls->where('is_disabled', true)->count() }}</strong></article>
 </section>
 <section class="metric-grid">
+<article><p class="eyebrow">Pilot go/no-go</p><strong class="metric">{{ $pilotReady ? 'GO' : 'NO-GO' }}</strong><p class="muted">Requires fresh passing CDN probes, scheduler heartbeat, and no failed delivery.</p></article>
+<article><p class="eyebrow">Synthetic coverage</p><strong class="metric">{{ $latestProbes->where('status', 'PASS')->count() }}/{{ $latestProbes->count() }}</strong><p class="muted">No per-impression telemetry reaches Hostinger.</p></article>
+</section>
+<section><h2>Static runtime probes</h2><div class="table-wrap"><table><thead><tr><th>Site</th><th>Status</th><th>Latency</th><th>Observed</th></tr></thead><tbody>
+@forelse($latestProbes as $probe)<tr><td>{{ $probe->site_id }}</td><td>{{ $probe->status }}</td><td>{{ $probe->latency_ms }} ms</td><td>{{ $probe->observed_at }}</td></tr>@empty<tr><td colspan="4">Run <code>php artisan adtech:probe</code> before pilot approval.</td></tr>@endforelse
+</tbody></table></div></section>
+<section class="metric-grid">
 <article><p class="eyebrow">Edge deployment</p><strong class="metric">{{ $latestDelivery ? 'DEPLOYED' : 'NONE' }}</strong><p class="muted">{{ $latestDelivery?->deployed_at ?: 'No confirmed Pages deployment' }} · {{ $latestDelivery?->file_count ?? 0 }}/{{ $deliveryFileLimit }} files @if(($latestDelivery?->file_count ?? 0) >= $deliveryFileWarning) · WARNING @endif</p></article>
 <article><p class="eyebrow">Pending delivery</p><strong class="metric">{{ $pendingDeliveries }}</strong><p class="muted">Batched by the scheduler</p></article>
 <article><p class="eyebrow">Failed delivery</p><strong class="metric">{{ $failedDeliveries }}</strong><p class="muted">Requires retry or investigation</p></article>

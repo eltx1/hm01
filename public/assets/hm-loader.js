@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var VERSION = '1.3.0';
+    var VERSION = '2.0.0';
     var STATE_KEY = '__HORUS_MEDIA_LOADER_STATE__';
     var state = window[STATE_KEY] = window[STATE_KEY] || {
         config: null,
@@ -19,7 +19,10 @@
         prebidEventsInstalled: false,
         gamFallbackInstalled: false,
         nativeAttempts: {},
-        nativeRendered: {}
+        nativeRendered: {},
+        privacyPromise: null,
+        privacyDecision: null,
+        rewardedListenersInstalled: false
     };
 
     function log(config) {
@@ -203,6 +206,59 @@
         return state.gptPromise;
     }
 
+    function resolvePrivacy(config) {
+        if (state.privacyPromise) return state.privacyPromise;
+        var privacy = config.privacy || {};
+        var cmp = privacy.cmp || {};
+        var timeout = Math.max(100, Number(cmp.timeoutMs || 1200));
+        state.privacyPromise = new Promise(function (resolve) {
+            var pending = 0;
+            var settled = false;
+            var tcfDone = false;
+            var gppDone = false;
+            var decision = { tcf: null, gpp: null, gpc: Boolean(window.navigator && window.navigator.globalPrivacyControl), limitedAds: false, blocked: false };
+            function finish() {
+                if (settled || pending > 0) return;
+                settled = true;
+                var tcfDenied = decision.tcf && decision.tcf.gdprApplies === true
+                    && (!decision.tcf.purpose || !decision.tcf.purpose.consents || decision.tcf.purpose.consents[1] !== true);
+                decision.limitedAds = decision.gpc || Boolean(tcfDenied) || decision.limitedAds;
+                state.privacyDecision = decision;
+                resolve(decision);
+            }
+            if (typeof window.__tcfapi === 'function') {
+                pending += 1;
+                try {
+                    window.__tcfapi('addEventListener', 2, function (tcData, success) {
+                        if (tcfDone || settled) return;
+                        if (!success || !tcData || ['tcloaded', 'useractioncomplete'].indexOf(tcData.eventStatus) === -1) return;
+                        tcfDone = true; decision.tcf = tcData; pending -= 1; finish();
+                    });
+                } catch (error) { tcfDone = true; pending -= 1; }
+            }
+            if (typeof window.__gpp === 'function') {
+                pending += 1;
+                try {
+                    window.__gpp('ping', function (data, success) {
+                        if (gppDone || settled) return;
+                        gppDone = true; if (success !== false) decision.gpp = data || {}; pending -= 1; finish();
+                    });
+                } catch (error) { gppDone = true; pending -= 1; }
+            }
+            if (pending === 0 && String(privacy.mode || 'AUTO').toUpperCase() === 'STRICT' && privacy.requireConsentBeforeAds !== false) pending = 1;
+            window.setTimeout(function () {
+                if (settled) return;
+                pending = 0;
+                var timeoutAction = String(cmp.actionOnTimeout || 'LIMITED_ADS').toUpperCase();
+                if (timeoutAction === 'LIMITED_ADS') decision.limitedAds = true;
+                if (timeoutAction === 'BLOCK_ADS') decision.blocked = true;
+                finish();
+            }, timeout);
+            finish();
+        });
+        return state.privacyPromise;
+    }
+
     function loadPrebid(config) {
         var selected = config.prebid || {};
         if (!selected.enabled || !selected.build || !selected.build.url) return Promise.resolve(null);
@@ -240,8 +296,12 @@
     function buildSizeMapping(googletag, mappings) {
         if (!googletag.sizeMapping || !Array.isArray(mappings) || !mappings.length) return null;
         var builder = googletag.sizeMapping();
+        var width = Number(window.innerWidth || document.documentElement && document.documentElement.clientWidth || 0);
+        var height = Number(window.innerHeight || document.documentElement && document.documentElement.clientHeight || 0);
         mappings.forEach(function (mapping) {
             var viewport = Array.isArray(mapping.viewport) ? mapping.viewport : [0, 0];
+            var maximum = Array.isArray(mapping.maxViewport) ? mapping.maxViewport : [];
+            if ((maximum[0] && width > Number(maximum[0])) || (maximum[1] && height > Number(maximum[1]))) return;
             var sizes = normalizeSizes(mapping.sizes);
             if (sizes.length) builder.addSize(viewport, sizes);
         });
@@ -331,10 +391,19 @@
         var auction = config.prebid && config.prebid.auction || {};
         var prebidConfig = {
             bidderSequence: auction.bidderSequence || 'fixed',
-            priceGranularity: auction.priceGranularity || 'medium'
+            priceGranularity: auction.priceGranularity || 'medium',
+            storageControl: { enforce: true },
+            allowActivities: auction.allowActivities || {}
         };
         if (auction.currency) prebidConfig.currency = { adServerCurrency: auction.currency };
         if (auction.consent && Object.keys(auction.consent).length) prebidConfig.consentManagement = auction.consent;
+        if (auction.ortb2) prebidConfig.ortb2 = auction.ortb2;
+        if (config.supplyChain && config.supplyChain.schain && config.supplyChain.schain.nodes && config.supplyChain.schain.nodes.length) {
+            prebidConfig.ortb2 = prebidConfig.ortb2 || {};
+            prebidConfig.ortb2.source = prebidConfig.ortb2.source || {};
+            prebidConfig.ortb2.source.ext = prebidConfig.ortb2.source.ext || {};
+            prebidConfig.ortb2.source.ext.schain = config.supplyChain.schain;
+        }
         if (pbjs.setConfig) pbjs.setConfig(prebidConfig);
         installPrebidEvents(config, pbjs);
     }
@@ -581,11 +650,40 @@
                 googletag.cmd.push(function () {
                     try {
                         var pubads = googletag.pubads();
+                        var privacy = state.privacyDecision || {};
+                        var privacySignals = config.privacy && config.privacy.signals || {};
+                        var unifiedConfig = typeof googletag.setConfig === 'function';
+                        if (googletag.setConfig) {
+                            var pageConfig = Object.assign({}, config.gpt && config.gpt.config || {});
+                            if (privacy.gpc || privacy.limitedAds) pageConfig.privacyTreatments = { treatments: ['disablePersonalization'] };
+                            pageConfig.disableInitialLoad = true;
+                            pageConfig.singleRequest = Boolean(config.gpt && config.gpt.singleRequest);
+                            googletag.setConfig(pageConfig);
+                            state.initialLoadDisabled = true;
+                        }
+                        if (pubads.setPrivacySettings) {
+                            var privacySettings = {
+                                childDirectedTreatment: Boolean(privacySignals.coppa),
+                                underAgeOfConsent: Boolean(privacySignals.underAgeOfConsent),
+                                restrictDataProcessing: Boolean(privacy.gpc),
+                                nonPersonalizedAds: Boolean(privacy.limitedAds)
+                            };
+                            var age = String(privacySignals.ageTreatment || '').toUpperCase();
+                            if (age && googletag.enums && googletag.enums.TagForAgeTreatment && googletag.enums.TagForAgeTreatment[age]) {
+                                privacySettings.tagForAgeTreatment = googletag.enums.TagForAgeTreatment[age];
+                            }
+                            pubads.setPrivacySettings(privacySettings);
+                        } else {
+                            if (pubads.setTagForChildDirectedTreatment) pubads.setTagForChildDirectedTreatment(privacySignals.coppa ? 1 : 0);
+                            if (pubads.setTagForUnderAgeOfConsent) pubads.setTagForUnderAgeOfConsent(privacySignals.underAgeOfConsent ? 1 : 0);
+                        }
                         applyTargeting(pubads, config.pageTargeting || {});
+                        if (privacy.gpc) pubads.setTargeting('hm_gpc', ['1']);
+                        if (privacy.limitedAds) pubads.setTargeting('hm_limited_ads', ['1']);
                         var lazy = lazyOptions(gamItems, config);
                         if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
-                        if (config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
-                        if (!state.initialLoadDisabled && pubads.disableInitialLoad) {
+                        if (!unifiedConfig && config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
+                        if (!unifiedConfig && !state.initialLoadDisabled && pubads.disableInitialLoad) {
                             pubads.disableInitialLoad();
                             state.initialLoadDisabled = true;
                         }
@@ -596,6 +694,16 @@
                             var placement = item.placement;
                             var element = item.element;
                             var elementId = ensureElementId(element, config, placement);
+                            var formatSettings = placement.format && placement.format.settings || {};
+                            if (element.style && formatSettings.reserveSpace !== false) {
+                                var firstSize = normalizeSizes(placement.sizes).filter(Array.isArray)[0];
+                                if (firstSize) { element.style.minWidth = firstSize[0] + 'px'; element.style.minHeight = firstSize[1] + 'px'; }
+                            }
+                            if (placement.format && placement.format.code) element.setAttribute('data-hm-format', placement.format.code);
+                            if (formatSettings.position && element.style && placement.type === 'STICKY') {
+                                element.style.position = 'fixed'; element.style.zIndex = '2147483000'; element.style.left = '50%'; element.style.transform = 'translateX(-50%)';
+                                element.style[formatSettings.position === 'top' ? 'top' : 'bottom'] = '0';
+                            }
                             var slot = null;
                             if (placement.outOfPageFormat && googletag.defineOutOfPageSlot && googletag.enums && googletag.enums.OutOfPageFormat) {
                                 var format = googletag.enums.OutOfPageFormat[placement.outOfPageFormat];
@@ -604,6 +712,13 @@
                                 slot = googletag.defineSlot(placement.adUnitPath, normalizeSizes(placement.sizes), elementId);
                             }
                             if (!slot) return;
+                            if (slot.setConfig && placement.type === 'INTERSTITIAL') {
+                                var configuredTriggers = (formatSettings.triggers || []).reduce(function (values, trigger) {
+                                    if (trigger !== 'backward') values[trigger] = true;
+                                    return values;
+                                }, {});
+                                slot.setConfig({ interstitial: { triggers: configuredTriggers, requireStorageAccess: Boolean(formatSettings.requireStorageAccess) } });
+                            }
                             var mapping = buildSizeMapping(googletag, placement.responsiveMappings);
                             if (mapping && slot.defineSizeMapping) slot.defineSizeMapping(mapping);
                             applyTargeting(slot, placement.targeting || {});
@@ -624,6 +739,8 @@
                             if (entry.placement.outOfPageFormat) googletag.display(entry.slot);
                             else googletag.display(entry.element.id);
                         });
+
+                        installRewardedLifecycle(config, pubads);
 
                         requestEntries(config, googletag, pubads, defined).then(function () {
                             defined.forEach(function (entry) { scheduleRefresh(config, googletag, pubads, entry); });
@@ -646,6 +763,18 @@
                 return runNativeFallback(config, item);
             })).then(function () { return items; });
         });
+    }
+
+    function installRewardedLifecycle(config, pubads) {
+        if (state.rewardedListenersInstalled || !pubads || !pubads.addEventListener) return;
+        state.rewardedListenersInstalled = true;
+        pubads.addEventListener('rewardedSlotReady', function (event) {
+            window.dispatchEvent(new CustomEvent('horus:rewarded-ready', { detail: { makeRewardedVisible: event.makeRewardedVisible } }));
+        });
+        pubads.addEventListener('rewardedSlotGranted', function (event) {
+            window.dispatchEvent(new CustomEvent('horus:rewarded-granted', { detail: event.payload || {} }));
+        });
+        pubads.addEventListener('rewardedSlotClosed', function () { window.dispatchEvent(new Event('horus:rewarded-closed')); });
     }
 
     function scheduleRefresh(config, googletag, pubads, entry) {
@@ -754,7 +883,7 @@
             }
             return fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
                 config.controls = Object.assign({}, config.controls || {}, globalControls || {});
-                return config;
+                return resolvePrivacy(config).then(function () { return config; });
             });
         }).then(function (config) {
             if (!config) return [];
@@ -765,6 +894,10 @@
             }
             if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
                 log(config, 'Advertising is disabled; no advertising calls were made');
+                return [];
+            }
+            if (state.privacyDecision && state.privacyDecision.blocked) {
+                log(config, 'Privacy gate blocked advertising after the bounded CMP timeout');
                 return [];
             }
             if (maybeDelegateRelease(config, script)) return [];

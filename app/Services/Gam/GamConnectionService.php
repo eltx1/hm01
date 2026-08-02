@@ -44,7 +44,7 @@ final class GamConnectionService
                 'name' => $data['name'],
                 'type' => $type,
                 'credential_type' => $data['credential_type'],
-                'driver' => strtoupper($data['driver'] ?? 'SOAP'),
+                'driver' => 'REST',
                 'network_code' => $data['network_code'] ?? null,
                 'application_name' => $data['application_name'] ?? config('gam.application_name'),
                 'is_primary' => $shouldBePrimary,
@@ -100,7 +100,7 @@ final class GamConnectionService
                 'name' => $data['name'] ?? $connection->name,
                 'type' => $type,
                 'credential_type' => $data['credential_type'] ?? $connection->credential_type,
-                'driver' => strtoupper($data['driver'] ?? $connection->driver),
+                'driver' => 'REST',
                 'network_code' => array_key_exists('network_code', $data) ? $data['network_code'] : $connection->network_code,
                 'application_name' => $data['application_name'] ?? $connection->application_name,
                 'is_primary' => $makePrimary,
@@ -226,7 +226,11 @@ final class GamConnectionService
             return;
         }
 
-        $networkCode = data_get($network, 'networkCode') ?? $connection->network_code;
+        $networkCode = data_get($network, 'networkCode');
+        if (! is_scalar($networkCode) || (string) $networkCode === '') {
+            $networkCode = str($network['name'] ?? '')->afterLast('/')->toString();
+        }
+        if ((string) $networkCode === '') $networkCode = $connection->network_code;
         if (! is_scalar($networkCode) || (string) $networkCode === '') {
             return;
         }

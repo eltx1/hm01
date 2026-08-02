@@ -8,6 +8,8 @@ use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Carbon;
+use App\Services\SupplyChain\SupplyChainArtifactBuilder;
+use App\Models\SyntheticProbeResult;
 
 final class StaticDeliverySnapshotBuilder
 {
@@ -15,12 +17,13 @@ final class StaticDeliverySnapshotBuilder
         private readonly CanonicalJson $canonicalJson,
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
+        private readonly SupplyChainArtifactBuilder $supplyChain,
     ) {
     }
 
     public function build(): StaticDeliverySnapshot
     {
-        $files = $this->baseAssets();
+        $files = array_merge($this->baseAssets(), $this->supplyChain->files());
         $generatedAt = $this->snapshotTimestamp();
         $retention = max(1, (int) config('static-delivery.retention_per_environment', 5));
         $versions = ConfigVersion::withoutGlobalScopes()
@@ -66,6 +69,7 @@ final class StaticDeliverySnapshotBuilder
         }
 
         $files['configs/_global/control.json'] = $this->canonicalJson->encode($this->globalControl());
+        $files['health/delivery.json'] = $this->canonicalJson->encode($this->deliveryHealth());
         ksort($files);
         $manifestHash = $this->hashFiles($files);
         $files['delivery-manifest.json'] = $this->canonicalJson->encode([
@@ -146,6 +150,17 @@ final class StaticDeliverySnapshotBuilder
         return collect($timestamps)->map(fn ($value) => Carbon::parse($value)->utc())->sortDesc()->first()->toIso8601String();
     }
 
+    private function deliveryHealth(): array
+    {
+        $latest = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
+        return [
+            'schemaVersion' => 1,
+            'status' => $latest->isNotEmpty() && $latest->every(fn ($probe) => $probe->status === 'PASS') ? 'healthy' : 'unknown',
+            'probeCount' => $latest->count(),
+            'lastObservedAt' => $latest->max('observed_at')?->utc()->toIso8601String(),
+        ];
+    }
+
     private function headers(): string
     {
         return <<<'HEADERS'
@@ -192,6 +207,10 @@ final class StaticDeliverySnapshotBuilder
   Cache-Control: public, max-age=30, must-revalidate, stale-while-revalidate=60
   Content-Type: application/json; charset=utf-8
   X-Robots-Tag: noindex
+
+/supply/*
+  Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=3600
+  X-Content-Type-Options: nosniff
 HEADERS;
     }
 
