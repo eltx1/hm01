@@ -19,7 +19,10 @@ use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\StaticDelivery\StaticDeliveryManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
@@ -150,6 +153,16 @@ class InventoryConfigurationTest extends TestCase
     public function test_ad_unit_sync_is_dry_run_safe_idempotent_and_detects_changes(): void
     {
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
+        $connection->update(['driver' => 'REST']);
+        $this->cacheToken($connection->refresh()->load('credential'));
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/123456789/adUnits' => Http::response([
+                'name' => 'networks/123456789/adUnits/9001',
+            ]),
+            'https://admanager.googleapis.com/v1/networks/123456789/adUnits/9001*' => Http::response([
+                'name' => 'networks/123456789/adUnits/9001',
+            ]),
+        ]);
         $inventory = app(InventoryManager::class);
         $adUnit = $inventory->createAdUnit($site, ['name' => 'Hero', 'code' => 'hero', 'sizes' => [['width' => 970, 'height' => 250]]], $admin);
         $sync = app(AdUnitSyncService::class);
@@ -170,7 +183,7 @@ class InventoryConfigurationTest extends TestCase
             'gam_connection_id' => $connection->id,
             'local_object_type' => 'ad_unit',
             'local_object_id' => $adUnit->id,
-            'remote_object_id' => '1001',
+            'remote_object_id' => 'networks/123456789/adUnits/9001',
         ]);
         $this->assertSame(1, GamRemoteObject::withoutGlobalScopes()->where('local_object_id', $adUnit->id)->count());
     }
@@ -212,5 +225,12 @@ class InventoryConfigurationTest extends TestCase
         $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser, ['primary_domain' => 'publisher.example']);
 
         return [$site, $admin, $connection];
+    }
+
+    private function cacheToken($connection): void
+    {
+        $credential = $connection->credential;
+        $key = 'gam:oauth:'.hash('sha256', $connection->id.'|'.($credential->rotated_at?->timestamp ?? '0'));
+        Cache::put($key, Crypt::encryptString('test-access-token'), now()->addMinutes(30));
     }
 }

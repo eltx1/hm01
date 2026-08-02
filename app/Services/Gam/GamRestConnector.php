@@ -232,6 +232,7 @@ final class GamRestConnector implements GamConnectorInterface
         $value = trim($value, '/');
         if (str_starts_with($value, 'networks/')) return $value;
         if ($value === '') throw new InvalidArgumentException("{$resource} resource name or ID is required.");
+        if ($resource === 'networks') return 'networks/'.$value;
         return 'networks/'.$this->networkCode().'/'.$resource.'/'.$value;
     }
     private function networkCode(): string
