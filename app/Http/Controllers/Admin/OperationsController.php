@@ -13,6 +13,7 @@ use App\Models\Site;
 use App\Models\SystemHeartbeat;
 use App\Models\StaticDeliveryBatch;
 use App\Models\StaticDeliveryItem;
+use App\Models\SyntheticProbeResult;
 use App\Enums\StaticDeliveryStatus;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Operations\LoaderReleaseManager;
@@ -34,6 +35,7 @@ class OperationsController extends Controller
     {
         $heartbeat = SystemHeartbeat::query()->find('scheduler');
         $staleAfter = (int) config('operations.heartbeat_stale_after_seconds', 180);
+        $latestProbes = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
         return view('admin.operations.index', [
             'heartbeat' => $heartbeat,
             'heartbeatStale' => ! $heartbeat || $heartbeat->last_seen_at->lt(now()->subSeconds($staleAfter)),
@@ -53,6 +55,11 @@ class OperationsController extends Controller
             'deliveryBudget' => (int) config('static-delivery.monthly_deployment_budget', 450),
             'deliveryFileWarning' => (int) config('static-delivery.file_budget.warning_threshold', 18000),
             'deliveryFileLimit' => (int) config('static-delivery.file_budget.hard_limit', 20000),
+            'latestProbes' => $latestProbes,
+            'pilotReady' => $latestProbes->isNotEmpty()
+                && $latestProbes->every(fn ($probe) => $probe->status === 'PASS' && $probe->observed_at->gte(now()->subMinutes(30)))
+                && $heartbeat && ! $heartbeat->last_seen_at->lt(now()->subSeconds($staleAfter))
+                && StaticDeliveryItem::withoutGlobalScopes()->where('status', StaticDeliveryStatus::Failed->value)->doesntExist(),
         ]);
     }
 

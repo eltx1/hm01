@@ -12,6 +12,7 @@ use App\Models\Placement;
 use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
+use App\Models\SellerDeclaration;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
@@ -30,7 +31,7 @@ final class SiteConfigurationBuilder
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
     {
         $site->loadMissing([
-            'domains', 'placements.adUnit', 'placements.sizes', 'placements.targeting',
+            'domains', 'placements.adUnit', 'placements.adFormat', 'placements.sizes', 'placements.targeting',
             'targeting', 'siteConfig.loaderRelease', 'siteConfig.tagVersion',
         ]);
 
@@ -64,6 +65,7 @@ final class SiteConfigurationBuilder
         }
 
         return [
+            'schemaVersion' => 2,
             'siteKey' => $site->public_key,
             'servingMode' => $site->serving_mode->value,
             'gamNetworkCode' => $networkCode,
@@ -80,7 +82,7 @@ final class SiteConfigurationBuilder
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
-                'version' => $loader?->version ?? '1.3.0',
+                'version' => $loader?->version ?? '2.0.0',
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
@@ -88,7 +90,28 @@ final class SiteConfigurationBuilder
                 'url' => $tag?->gpt_url ?: config('horus.gpt_url'),
                 'tagVersion' => $tag?->version ?? '1.0.0',
                 'singleRequest' => (bool) $config->single_request_mode,
+                'config' => array_replace_recursive([
+                    'threadYield' => 'ENABLED_ALL_SLOTS',
+                    'autoRefresh' => ['heavyAds' => true],
+                ], $config->gpt_settings ?? []),
             ],
+            'privacy' => array_replace_recursive([
+                'mode' => 'AUTO',
+                'cmp' => ['tcfVersion' => '2.3', 'gppVersion' => '1.1', 'timeoutMs' => 1200, 'actionOnTimeout' => 'LIMITED_ADS'],
+                'signals' => ['gpc' => true, 'coppa' => false, 'underAgeOfConsent' => false],
+                'requireConsentBeforeAds' => true,
+            ], $config->privacy_settings ?? []),
+            'supplyChain' => array_replace_recursive([
+                'adsTxtUrl' => 'https://'.$site->primary_domain.'/ads.txt',
+                'sellersJsonUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sellers.json',
+                'cdnAdsTxtUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sites/'.$site->public_key.'/ads.txt',
+                'schain' => ['complete' => 1, 'ver' => '1.0', 'nodes' => $this->schainNodes($site)],
+            ], $config->supply_chain_settings ?? []),
+            'observability' => array_replace_recursive([
+                'runtimeTelemetry' => false,
+                'localDiagnostics' => (bool) $config->debug_enabled,
+                'syntheticProbeUrl' => rtrim((string) config('horus.cdn_url'), '/').'/health/delivery.json',
+            ], $config->observability_settings ?? []),
             'pageTargeting' => $pageTargeting,
             'placements' => $site->placements
                 ->sortBy('sort_order')
@@ -127,6 +150,7 @@ final class SiteConfigurationBuilder
 
                 return [
                     'viewport' => [(int) $first->min_viewport_width, (int) $first->min_viewport_height],
+                    'maxViewport' => [$first->max_viewport_width ? (int) $first->max_viewport_width : null, $first->max_viewport_height ? (int) $first->max_viewport_height : null],
                     'device' => $first->device->value,
                     'sizes' => $group->map(fn ($size) => $size->size_type === 'FLUID' ? 'fluid' : [(int) $size->width, (int) $size->height])->values()->all(),
                 ];
@@ -146,6 +170,12 @@ final class SiteConfigurationBuilder
             'code' => $placement->code,
             'name' => $placement->name,
             'type' => $placement->type->value,
+            'format' => $placement->adFormat ? [
+                'code' => $placement->adFormat->code,
+                'mediaType' => $placement->adFormat->media_type,
+                'capabilities' => $placement->adFormat->capabilities ?? [],
+                'settings' => array_replace_recursive($placement->adFormat->defaults ?? [], $placement->format_settings ?? []),
+            ] : null,
             'status' => strtolower($placement->status->value),
             'enabled' => ! $placementDisabled && $placement->status === PlacementStatus::Active && ($gamEnabled || $nativeEnabled),
             'gamEnabled' => $gamEnabled,
@@ -195,5 +225,20 @@ final class SiteConfigurationBuilder
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function schainNodes(Site $site): array
+    {
+        return SellerDeclaration::withoutGlobalScopes()
+            ->where('organization_id', $site->organization_id)
+            ->where(fn ($query) => $query->whereNull('site_id')->orWhere('site_id', $site->id))
+            ->where('status', 'ACTIVE')
+            ->orderBy('seller_id')
+            ->get()
+            ->map(fn ($seller) => [
+                'asi' => config('supply-chain.manager_domain', 'horusmedia.net'),
+                'sid' => $seller->seller_id,
+                'hp' => 1,
+            ])->values()->all();
     }
 }

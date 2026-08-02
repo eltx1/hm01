@@ -10,6 +10,7 @@ use App\Enums\RoleName;
 use App\Enums\StaticDeliveryStatus;
 use App\Models\AuditLog;
 use App\Models\StaticDeliveryItem;
+use App\Models\SellerDeclaration;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
@@ -174,6 +175,30 @@ class StaticDeliveryTest extends TestCase
             $encoder->encode(['a' => [['x' => 1, 'y' => 2]], 'z' => ['a' => 1, 'b' => 2]]),
         );
         $this->assertNotSame($encoder->encode(['items' => [1, 2]]), $encoder->encode(['items' => [2, 1]]));
+    }
+
+    public function test_snapshot_contains_ads_txt_1_1_sellers_json_and_synthetic_health(): void
+    {
+        [$site] = $this->siteWithPrimaryHorus();
+        SellerDeclaration::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id,
+            'site_id' => $site->id,
+            'seller_id' => 'publisher-42',
+            'seller_type' => 'PUBLISHER',
+            'name' => 'Publisher Example',
+            'domain' => $site->primary_domain,
+            'status' => 'ACTIVE',
+        ]);
+
+        $files = app(StaticDeliverySnapshotBuilder::class)->build()->files;
+        $adsTxt = $files['supply/sites/'.$site->public_key.'/ads.txt'];
+        $sellers = json_decode($files['supply/sellers.json'], true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertStringContainsString('OWNERDOMAIN='.$site->primary_domain, $adsTxt);
+        $this->assertStringContainsString('MANAGERDOMAIN=', $adsTxt);
+        $this->assertSame('publisher-42', $sellers['sellers'][0]['seller_id']);
+        $this->assertArrayNotHasKey('identifiers', $sellers);
+        $this->assertArrayHasKey('health/delivery.json', $files);
     }
 
     private function siteWithPrimaryHorus(): array

@@ -4,6 +4,7 @@ namespace App\Services\Inventory;
 
 use App\Models\AdUnit;
 use App\Models\GamRemoteObject;
+use App\Models\GamConnection;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Gam\Data\GamResult;
@@ -24,7 +25,7 @@ final class AdUnitSyncService
     {
         $adUnit->loadMissing(['site', 'sizes']);
         $connection = $this->connections->requireFor($adUnit->site);
-        $attributes = $this->attributes($adUnit, $connection->configuration ?? []);
+        $attributes = $this->attributes($adUnit, $connection);
         $hash = hash('sha256', json_encode($attributes, JSON_THROW_ON_ERROR));
         $mapping = $this->mapping($adUnit, $connection->id);
         $mappedLocalHash = data_get($mapping?->metadata, 'local_hash');
@@ -43,7 +44,7 @@ final class AdUnitSyncService
             'local_type' => 'ad_unit',
             'local_id' => $adUnit->id,
             'remote_type' => 'ad_unit',
-            'remote_id_path' => 'rval.0.id',
+            'remote_id_path' => 'name',
             'idempotency_key' => hash('sha256', $connection->id.'|ad_unit|'.$adUnit->id.'|'.$hash.'|'.($mapping ? 'update' : 'create')),
             'mapping_metadata' => ['site_id' => $adUnit->site_id, 'code' => $adUnit->code, 'local_hash' => $hash],
         ];
@@ -85,7 +86,7 @@ final class AdUnitSyncService
     {
         $adUnit->loadMissing(['site', 'sizes']);
         $connection = $this->connections->requireFor($adUnit->site);
-        $attributes = $this->attributes($adUnit, $connection->configuration ?? []);
+        $attributes = $this->attributes($adUnit, $connection);
         $hash = hash('sha256', json_encode($attributes, JSON_THROW_ON_ERROR));
         $mapping = $this->mapping($adUnit, $connection->id);
         $remoteHash = data_get($mapping?->metadata, 'local_hash');
@@ -99,9 +100,9 @@ final class AdUnitSyncService
         ];
     }
 
-    private function attributes(AdUnit $adUnit, array $connectionConfiguration): array
+    private function attributes(AdUnit $adUnit, GamConnection $connection): array
     {
-        $rootAdUnitId = $connectionConfiguration['root_ad_unit_id'] ?? null;
+        $rootAdUnitId = data_get($connection->configuration, 'root_ad_unit_id');
         if (! $rootAdUnitId) {
             throw ValidationException::withMessages([
                 'gam_connection' => 'The selected GAM connection must define configuration.root_ad_unit_id before inventory synchronization.',
@@ -109,19 +110,19 @@ final class AdUnitSyncService
         }
 
         return [
-            'parentId' => (string) $rootAdUnitId,
-            'name' => $adUnit->name,
+            'parentAdUnit' => str_starts_with((string) $rootAdUnitId, 'networks/')
+                ? (string) $rootAdUnitId
+                : 'networks/'.$connection->network_code.'/adUnits/'.$rootAdUnitId,
+            'displayName' => $adUnit->name,
             'adUnitCode' => $adUnit->code,
             'description' => $adUnit->description,
-            'targetWindow' => 'BLANK',
-            'status' => $adUnit->is_enabled ? 'ACTIVE' : 'INACTIVE',
+            'appliedTargetWindow' => 'BLANK',
             'adUnitSizes' => $adUnit->sizes
                 ->where('is_active', true)
                 ->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
                 ->map(fn ($size) => [
-                    'size' => ['width' => (int) $size->width, 'height' => (int) $size->height, 'isAspectRatio' => false],
+                    'size' => ['width' => (int) $size->width, 'height' => (int) $size->height],
                     'environmentType' => 'BROWSER',
-                    'fullDisplayString' => $size->width.'x'.$size->height,
                 ])->values()->all(),
         ];
     }

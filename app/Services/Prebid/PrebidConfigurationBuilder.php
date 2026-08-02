@@ -73,6 +73,7 @@ final class PrebidConfigurationBuilder
                 return [
                     'code' => $placement->code,
                     'mediaTypes' => $this->mediaTypes($placement),
+                    'ortb2Imp' => ['ext' => ['gpid' => $placement->code]],
                     'bids' => $bids,
                 ];
             })
@@ -98,6 +99,12 @@ final class PrebidConfigurationBuilder
                 'currency' => strtoupper((string) $settings->currency),
                 'bidderSequence' => $settings->bidder_sequence,
                 'consent' => $settings->consent_behavior ?? [],
+                'allowActivities' => [
+                    'accessDevice' => ['default' => false],
+                    'syncUser' => ['default' => false],
+                    'transmitPreciseGeo' => ['default' => false],
+                ],
+                'ortb2' => ['site' => ['domain' => $site->primary_domain, 'publisher' => ['id' => $site->public_key]]],
             ],
             'delivery' => [
                 'lazyLoading' => $settings->lazy_loading ?? ['enabled' => true],
@@ -120,8 +127,22 @@ final class PrebidConfigurationBuilder
             ->all();
 
         return match ($placement->type) {
-            PlacementType::Video, PlacementType::Rewarded => ['video' => ['playerSize' => $sizes, 'context' => 'outstream']],
-            PlacementType::Native => ['native' => []],
+            PlacementType::Video, PlacementType::Rewarded => ['video' => [
+                'playerSize' => $sizes, 'context' => 'outstream', 'plcmt' => 4,
+                'mimes' => ['video/mp4', 'video/webm'], 'protocols' => [2, 3, 5, 6],
+                'api' => [2, 7], 'linearity' => 1,
+            ]],
+            PlacementType::Native => ['native' => ['ortb' => [
+                'assets' => [
+                    ['id' => 1, 'required' => 1, 'title' => ['len' => 90]],
+                    ['id' => 2, 'required' => 1, 'img' => ['type' => 3, 'wmin' => 300, 'hmin' => 200]],
+                    ['id' => 3, 'required' => 1, 'data' => ['type' => 2, 'len' => 140]],
+                ],
+                'eventtrackers' => [
+                    ['event' => 1, 'methods' => [1]],
+                    ['event' => 2, 'methods' => [1, 2]],
+                ],
+            ]]],
             default => ['banner' => ['sizes' => $sizes]],
         };
     }

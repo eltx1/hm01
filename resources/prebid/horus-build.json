@@ -2,7 +2,7 @@
   "name": "horus-default",
   "version": "11.14.0",
   "modules": [
-    "appnexusBidAdapter",
+    "msftBidAdapter",
     "rubiconBidAdapter",
     "openxBidAdapter",
     "pubmaticBidAdapter",
@@ -10,6 +10,12 @@
     "tripleliftBidAdapter",
     "consentManagementTcf",
     "consentManagementGpp",
+    "tcfControl",
+    "gppControl_usnat",
+    "gppControl_usstates",
+    "storageControl",
+    "gptPreAuction",
+    "validationFpdModule",
     "currency"
   ]
 }

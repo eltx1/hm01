@@ -29,7 +29,20 @@ class SiteConfigController extends Controller
             'house_ad_testing' => ['sometimes', 'boolean'],
             'single_request_mode' => ['sometimes', 'boolean'],
             'cache_ttl_seconds' => ['required', 'integer', 'between:0,86400'],
+            'privacy_settings_json' => ['nullable', 'string', 'max:30000'],
+            'gpt_settings_json' => ['nullable', 'string', 'max:30000'],
+            'supply_chain_settings_json' => ['nullable', 'string', 'max:30000'],
+            'observability_settings_json' => ['nullable', 'string', 'max:30000'],
         ]);
+        foreach (['privacy_settings', 'gpt_settings', 'supply_chain_settings', 'observability_settings'] as $field) {
+            try {
+                $data[$field] = filled($data[$field.'_json'] ?? null)
+                    ? json_decode($data[$field.'_json'], true, 512, JSON_THROW_ON_ERROR) : [];
+            } catch (\JsonException) {
+                abort(422, str_replace('_', ' ', ucfirst($field)).' must be valid JSON.');
+            }
+            unset($data[$field.'_json']);
+        }
         $version = DB::transaction(function () use ($site, $data, $request, $audit, $publisher) {
             $config = SiteConfig::withoutGlobalScopes()->firstOrCreate(
                 ['site_id' => $site->id],
@@ -43,6 +56,10 @@ class SiteConfigController extends Controller
                 'house_ad_testing' => $request->boolean('house_ad_testing'),
                 'single_request_mode' => $request->boolean('single_request_mode'),
                 'cache_ttl_seconds' => $data['cache_ttl_seconds'],
+                'privacy_settings' => $data['privacy_settings'],
+                'gpt_settings' => $data['gpt_settings'],
+                'supply_chain_settings' => $data['supply_chain_settings'],
+                'observability_settings' => $data['observability_settings'],
             ]);
             $audit->record('site.config.settings.updated', $site->organization_id, $request->user(), $config, $before, $config->fresh()->toArray());
 

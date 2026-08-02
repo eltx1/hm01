@@ -132,6 +132,16 @@ class DirectCampaignSystemTest extends TestCase
             $this->assertArrayHasKey('html_content', $exception->errors());
         }
 
+        try {
+            $service->create($campaign, [
+                'name' => 'Private URL tag', 'type' => 'THIRD_PARTY_TAG', 'click_through_url' => 'https://example.test',
+                'html_content' => '<script src="https://127.0.0.1/creative.js"></script>',
+            ], null, $advertiserUser);
+            $this->fail('Private creative resources should be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('html_content', $exception->errors());
+        }
+
         $zipPath = tempnam(sys_get_temp_dir(), 'hmzip');
         $zip = new ZipArchive;
         $zip->open($zipPath, ZipArchive::OVERWRITE);
@@ -140,6 +150,19 @@ class DirectCampaignSystemTest extends TestCase
         try {
             $service->create($campaign, ['name' => 'Broken HTML5', 'type' => 'HTML5', 'click_through_url' => 'https://example.test'], new UploadedFile($zipPath, 'creative.zip', 'application/zip', null, true), $advertiserUser);
             $this->fail('Missing HTML5 assets should be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('creative_file', $exception->errors());
+        }
+
+        config(['campaigns.html5_archive.max_compression_ratio' => 2]);
+        $bombPath = tempnam(sys_get_temp_dir(), 'hmbomb');
+        $bomb = new ZipArchive;
+        $bomb->open($bombPath, ZipArchive::OVERWRITE);
+        $bomb->addFromString('index.html', str_repeat('A', 100_000));
+        $bomb->close();
+        try {
+            $service->create($campaign, ['name' => 'Compressed bomb', 'type' => 'HTML5', 'click_through_url' => 'https://example.test'], new UploadedFile($bombPath, 'bomb.zip', 'application/zip', null, true), $advertiserUser);
+            $this->fail('Excessive ZIP compression should be rejected.');
         } catch (ValidationException $exception) {
             $this->assertArrayHasKey('creative_file', $exception->errors());
         }

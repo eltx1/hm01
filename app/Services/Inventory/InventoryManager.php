@@ -151,6 +151,7 @@ final class InventoryManager
                     [
                         'organization_id' => $target->organization_id,
                         'ad_unit_id' => $sourcePlacement->ad_unit_id ? ($adUnitMap[$sourcePlacement->ad_unit_id] ?? null) : null,
+                        'ad_format_id' => $sourcePlacement->ad_format_id,
                         'name' => $sourcePlacement->name,
                         'type' => $sourcePlacement->type,
                         'status' => $sourcePlacement->status,
@@ -165,6 +166,7 @@ final class InventoryManager
                         'safeframe_enabled' => $sourcePlacement->safeframe_enabled,
                         'sort_order' => $sourcePlacement->sort_order,
                         'metadata' => $sourcePlacement->metadata,
+                        'format_settings' => $sourcePlacement->format_settings,
                         'created_by' => $actor->id,
                         'updated_by' => $actor->id,
                     ],
@@ -206,6 +208,7 @@ final class InventoryManager
             'organization_id' => $site->organization_id,
             'site_id' => $site->id,
             'ad_unit_id' => $data['ad_unit_id'] ?? $existing?->ad_unit_id,
+            'ad_format_id' => $data['ad_format_id'] ?? $existing?->ad_format_id,
             'name' => $data['name'] ?? $existing?->name,
             'code' => $this->code($data['code'] ?? $existing?->code),
             'type' => isset($data['type']) ? PlacementType::from($data['type']) : $existing?->type ?? PlacementType::Display,
@@ -221,6 +224,7 @@ final class InventoryManager
             'safeframe_enabled' => (bool) ($data['safeframe_enabled'] ?? $existing?->safeframe_enabled ?? false),
             'sort_order' => (int) ($data['sort_order'] ?? $existing?->sort_order ?? 0),
             'metadata' => $data['metadata'] ?? $existing?->metadata,
+            'format_settings' => $data['format_settings'] ?? $existing?->format_settings,
             'created_by' => $existing?->created_by ?? $actor->id,
             'updated_by' => $actor->id,
         ];

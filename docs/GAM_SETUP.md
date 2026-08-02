@@ -19,8 +19,8 @@ network and to optional MCM partner or publisher networks.
 4. Enable it for the project.
 5. Do not enable unrelated APIs merely for convenience.
 
-The application uses the version in `config/gam.php`. Never place an API
-version directly inside service classes.
+The application uses Google Ad Manager REST `v1`. It does not use a dated SOAP
+version, so quarterly SOAP-version rotations are not part of deployment.
 
 ## 3. Create a service account
 
@@ -59,7 +59,8 @@ writes. Dry-run remains enabled by default in Horus Media.
 Set the production environment variables:
 
 ```dotenv
-GAM_API_VERSION=v202602
+GAM_REST_BASE_URL=https://admanager.googleapis.com/v1
+GAM_REST_TIMEOUT=30
 GAM_APPLICATION_NAME="Horus Media Platform"
 GAM_HORUS_NETWORK_CODE=123456789
 GAM_HORUS_SERVICE_ACCOUNT_PATH=/home/ACCOUNT/private/gam-horus-service-account.json
@@ -71,7 +72,7 @@ In the Horus Media administrator dashboard:
 1. Open **Google Ad Manager → Add connection**.
 2. Select `HORUS_GAM`.
 3. Select `SERVICE_ACCOUNT`.
-4. Select the `SOAP` driver.
+4. Confirm the fixed `REST v1` driver.
 5. Enter the network code.
 6. Enter this credential reference:
 
@@ -145,7 +146,7 @@ only as Laravel-encrypted ciphertext.
 2. Test network access.
 3. Review permission results.
 4. Use a GAM test network where possible.
-5. Run one mocked or house-campaign creation plan.
+5. Run one inventory or order creation plan supported by REST v1.
 6. Inspect `gam_api_operations` for a `DRY_RUN` result.
 7. Disable dry-run only for one approved write.
 8. Verify the remote object and its `gam_remote_objects` mapping.
@@ -154,8 +155,8 @@ only as Laravel-encrypted ciphertext.
 
 ## 10. Troubleshooting
 
-- `SOAP_EXTENSION_MISSING`: enable the PHP SOAP extension in the hosting PHP
-  configuration.
+- `REST_CAPABILITY_UNAVAILABLE`: Google has not published that write operation
+  in REST v1 yet. Horus does not silently fall back to SOAP.
 - `AUTHENTICATION`: verify the credential file, clock, service account, and API.
 - `PERMISSION`: confirm the service-account email and GAM user role.
 - `NETWORK_NOT_FOUND`: confirm the network code is accessible to the credential.

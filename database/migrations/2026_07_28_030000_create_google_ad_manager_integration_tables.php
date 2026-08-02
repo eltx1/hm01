@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('type', 32)->index();
             $table->string('credential_type', 32);
-            $table->string('driver', 24)->default('SOAP');
+            $table->string('driver', 24)->default('REST');
             $table->string('network_code', 64)->nullable()->index();
             $table->string('application_name')->default('Horus Media Platform');
             $table->boolean('is_primary')->default(false)->index();
