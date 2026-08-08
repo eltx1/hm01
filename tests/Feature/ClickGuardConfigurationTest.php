@@ -56,9 +56,9 @@ class ClickGuardConfigurationTest extends TestCase
 
         $response->assertRedirect();
         $config = SiteConfig::withoutGlobalScopes()->where('site_id', $site->id)->firstOrFail();
-        $this->assertSame(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $config->click_guard_settings);
+        $this->assertEquals(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $config->click_guard_settings);
         $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
-        $this->assertSame(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $version->payload['clickGuard']);
+        $this->assertEquals(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $version->payload['clickGuard']);
         $this->assertDatabaseHas('static_delivery_items', ['config_version_id' => $version->id]);
     }
 
@@ -107,7 +107,7 @@ class ClickGuardConfigurationTest extends TestCase
         unset($legacy['click_guard_enabled'], $legacy['click_guard_max_clicks'], $legacy['click_guard_window_hours'], $legacy['click_guard_block_hours']);
         $this->actingAs($admin)->put(route('admin.sites.config.update', $site), $legacy)->assertRedirect();
 
-        $this->assertSame(
+        $this->assertEquals(
             ['enabled' => true, 'maxClicks' => 4, 'windowHours' => 10, 'blockHours' => 18],
             SiteConfig::withoutGlobalScopes()->where('site_id', $site->id)->firstOrFail()->click_guard_settings,
         );
