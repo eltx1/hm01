@@ -82,6 +82,15 @@
         <label><input type="hidden" name="debug_enabled" value="0"><input type="checkbox" name="debug_enabled" value="1" @checked($site->siteConfig?->debug_enabled)> Debug diagnostics</label>
         <label><input type="hidden" name="house_ad_testing" value="0"><input type="checkbox" name="house_ad_testing" value="1" @checked($site->siteConfig?->house_ad_testing)> House-ad testing mode</label>
         <label><input type="hidden" name="single_request_mode" value="0"><input type="checkbox" name="single_request_mode" value="1" @checked($site->siteConfig?->single_request_mode ?? true)> GPT single-request mode</label>
+        @php($clickGuard = $site->siteConfig?->click_guard_settings ?? [])
+        <div>
+            <p class="eyebrow">Click protection</p>
+            <p class="muted">Temporarily stops new advertising requests in this browser after repeated detected interactions with Horus-managed advertising iframes. Detection is heuristic and browser-dependent.</p>
+            <label><input type="hidden" name="click_guard_enabled" value="0"><input type="checkbox" name="click_guard_enabled" value="1" @checked((bool) old('click_guard_enabled', $clickGuard['enabled'] ?? false))> Enable Click Protection</label>
+            <label>Maximum detected ad clicks<input class="hm-input" type="number" min="1" max="50" name="click_guard_max_clicks" value="{{ old('click_guard_max_clicks', $clickGuard['maxClicks'] ?? 3) }}" required></label>
+            <label>Within<input class="hm-input" type="number" min="1" max="168" name="click_guard_window_hours" value="{{ old('click_guard_window_hours', $clickGuard['windowHours'] ?? 6) }}" required><span class="muted">Hours</span></label>
+            <label>Block ads for<input class="hm-input" type="number" min="1" max="720" name="click_guard_block_hours" value="{{ old('click_guard_block_hours', $clickGuard['blockHours'] ?? 12) }}" required><span class="muted">Hours</span></label>
+        </div>
         <label>Privacy/CMP JSON<textarea class="hm-input" rows="7" name="privacy_settings_json">{{ json_encode($site->siteConfig?->privacy_settings ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
         <label>GPT 2026 JSON<textarea class="hm-input" rows="6" name="gpt_settings_json">{{ json_encode($site->siteConfig?->gpt_settings ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
         <label>Supply chain JSON<textarea class="hm-input" rows="6" name="supply_chain_settings_json">{{ json_encode($site->siteConfig?->supply_chain_settings ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
