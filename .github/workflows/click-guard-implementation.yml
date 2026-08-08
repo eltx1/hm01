@@ -19,7 +19,9 @@ jobs:
           ref: agent/horus-click-guard
           fetch-depth: 0
       - name: Apply implementation
-        run: python scripts/apply-click-guard.py
+        run: |
+          rm -f tests/.click-guard-test-output.txt
+          python scripts/apply-click-guard.py
       - name: Harden generated test harness
         run: |
           python - <<'PY'
@@ -63,11 +65,25 @@ jobs:
       - name: Prepare test environment
         run: cp .env.example .env && php artisan key:generate
       - name: Run PHP tests
-        run: php artisan test
+        shell: bash
+        run: |
+          set +e
+          php artisan test 2>&1 | tee tests/.click-guard-test-output.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add tests/.click-guard-test-output.txt
+            git commit -m "Capture Click Guard PHP test failure"
+            git push origin HEAD:agent/horus-click-guard
+            exit "$status"
+          fi
       - name: Commit implementation and generated loader
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f tests/.click-guard-test-output.txt
           git add app database docs public resources tests
           git commit -m "Implement Horus Click Guard"
           git push origin HEAD:agent/horus-click-guard
