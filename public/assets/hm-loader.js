@@ -22,8 +22,26 @@
         nativeRendered: {},
         privacyPromise: null,
         privacyDecision: null,
-        rewardedListenersInstalled: false
+        rewardedListenersInstalled: false,
+        clickGuard: null
     };
+
+    var CLICK_GUARD_STATE_VERSION = 1;
+    var CLICK_GUARD_STORAGE_PREFIX = 'hm:click-guard:v1:';
+    var CLICK_GUARD_HOUR_MS = 60 * 60 * 1000;
+    var CLICK_GUARD_DEBOUNCE_MS = 400;
+    var CLICK_GUARD_MAX_TIMEOUT_MS = 2147483647;
+
+    function freshClickGuardRuntime() {
+        return {
+            storageKey: null, settings: null, persisted: { v: CLICK_GUARD_STATE_VERSION, clicks: [], blockedUntil: 0 },
+            storageAvailable: true, blocked: false, trackedIframes: typeof WeakSet !== 'undefined' ? new WeakSet() : null,
+            trackedIframeEntries: [], activeIframe: null, armed: false, lastClickAt: 0, listenersInstalled: false,
+            blurListener: null, storageListener: null, blockTimer: null
+        };
+    }
+
+    state.clickGuard = state.clickGuard || freshClickGuardRuntime();
 
     function log(config) {
         if (!config || !config.debug || !window.console || !window.console.info) return;
@@ -147,6 +165,379 @@
             });
     }
 
+
+    function boundedInteger(value, fallback, minimum, maximum) {
+        var numeric = Number(value);
+        if (!Number.isFinite(numeric) || Math.floor(numeric) !== numeric) return fallback;
+        return Math.max(minimum, Math.min(maximum, numeric));
+    }
+
+    function clickGuardSettings(config) {
+        var selected = config && config.clickGuard || {};
+        return {
+            enabled: selected.enabled === true,
+            maxClicks: boundedInteger(selected.maxClicks, 3, 1, 50),
+            windowHours: boundedInteger(selected.windowHours, 6, 1, 168),
+            blockHours: boundedInteger(selected.blockHours, 12, 1, 720)
+        };
+    }
+
+    function clickGuardStorageKey(config) {
+        return CLICK_GUARD_STORAGE_PREFIX + String(config && config.siteKey || '');
+    }
+
+    function emptyClickGuardState() {
+        return { v: CLICK_GUARD_STATE_VERSION, clicks: [], blockedUntil: 0 };
+    }
+
+    function normalizeClickGuardState(value, settings, now) {
+        var clean = emptyClickGuardState();
+        if (!value || typeof value !== 'object' || Number(value.v) !== CLICK_GUARD_STATE_VERSION) return clean;
+        var windowStart = now - settings.windowHours * CLICK_GUARD_HOUR_MS;
+        var latestReasonableTimestamp = now + 5 * 60 * 1000;
+        if (Array.isArray(value.clicks)) {
+            clean.clicks = value.clicks.map(Number).filter(function (timestamp) {
+                return Number.isFinite(timestamp) && timestamp >= 0 && timestamp >= windowStart && timestamp <= latestReasonableTimestamp;
+            }).sort(function (left, right) { return left - right; }).slice(-settings.maxClicks);
+        }
+        var blockedUntil = Number(value.blockedUntil || 0);
+        var maximumBlock = now + 720 * CLICK_GUARD_HOUR_MS + 5 * 60 * 1000;
+        if (Number.isFinite(blockedUntil) && blockedUntil > now && blockedUntil <= maximumBlock) {
+            clean.blockedUntil = blockedUntil;
+            return clean;
+        }
+        if (Number.isFinite(blockedUntil) && blockedUntil > 0 && blockedUntil <= now) {
+            return emptyClickGuardState();
+        }
+        return clean;
+    }
+
+    function storageValue(config, raw, settings, now) {
+        try {
+            return normalizeClickGuardState(JSON.parse(raw), settings, now);
+        } catch (error) {
+            return emptyClickGuardState();
+        }
+    }
+
+    function readClickGuardState(config) {
+        var guard = state.clickGuard;
+        var settings = clickGuardSettings(config);
+        var now = Date.now();
+        if (!settings.enabled || !guard.storageAvailable) {
+            guard.persisted = emptyClickGuardState();
+            guard.blocked = false;
+            return guard.persisted;
+        }
+        try {
+            var storage = window.localStorage;
+            if (!storage) {
+                guard.storageAvailable = false;
+                guard.persisted = emptyClickGuardState();
+                guard.blocked = false;
+                return guard.persisted;
+            }
+            var raw = storage.getItem(guard.storageKey);
+            if (!raw) {
+                guard.persisted = emptyClickGuardState();
+                guard.blocked = false;
+                return guard.persisted;
+            }
+            var normalized = storageValue(config, raw, settings, now);
+            guard.persisted = normalized;
+            var normalizedJson = JSON.stringify(normalized);
+            if (normalizedJson !== raw) storage.setItem(guard.storageKey, normalizedJson);
+            return normalized;
+        } catch (error) {
+            guard.storageAvailable = false;
+            guard.persisted = emptyClickGuardState();
+            guard.blocked = false;
+            log(config, 'Click Guard storage unavailable; failing open');
+            return guard.persisted;
+        }
+    }
+
+    function writeClickGuardState(config, value) {
+        var guard = state.clickGuard;
+        if (!guard.storageAvailable) return false;
+        try {
+            var storage = window.localStorage;
+            if (!storage) {
+                guard.storageAvailable = false;
+                guard.persisted = emptyClickGuardState();
+                guard.blocked = false;
+                return false;
+            }
+            storage.setItem(guard.storageKey, JSON.stringify(value));
+            guard.persisted = value;
+            return true;
+        } catch (error) {
+            guard.storageAvailable = false;
+            guard.persisted = emptyClickGuardState();
+            guard.blocked = false;
+            log(config, 'Click Guard storage write failed; failing open');
+            return false;
+        }
+    }
+
+    function clearAllRefreshTimers() {
+        Object.keys(state.refreshTimers).forEach(function (key) {
+            window.clearInterval(state.refreshTimers[key]);
+            delete state.refreshTimers[key];
+        });
+    }
+
+    function clearClickGuardBlockTimer() {
+        if (!state.clickGuard.blockTimer) return;
+        window.clearTimeout(state.clickGuard.blockTimer);
+        state.clickGuard.blockTimer = null;
+    }
+
+    function scheduleClickGuardBlockExpiry(config, blockedUntil) {
+        clearClickGuardBlockTimer();
+        if (!blockedUntil || blockedUntil <= Date.now()) return;
+        var delay = Math.min(CLICK_GUARD_MAX_TIMEOUT_MS, Math.max(1, blockedUntil - Date.now()));
+        state.clickGuard.blockTimer = window.setTimeout(function () {
+            state.clickGuard.blockTimer = null;
+            var persisted = readClickGuardState(config);
+            if (persisted.blockedUntil > Date.now()) {
+                scheduleClickGuardBlockExpiry(config, persisted.blockedUntil);
+                return;
+            }
+            state.clickGuard.blocked = false;
+            if (canRequestAds(config)) {
+                installSpaSupport();
+                scan(config);
+            }
+        }, delay);
+    }
+
+    function applyClickGuardState(config, persisted) {
+        var blocked = Boolean(persisted && persisted.blockedUntil > Date.now());
+        if (blocked) {
+            if (!state.clickGuard.blocked) clearAllRefreshTimers();
+            state.clickGuard.blocked = true;
+            scheduleClickGuardBlockExpiry(config, persisted.blockedUntil);
+        } else {
+            state.clickGuard.blocked = false;
+            clearClickGuardBlockTimer();
+        }
+        return blocked;
+    }
+
+    function clickGuardBlocked(config) {
+        var settings = clickGuardSettings(config);
+        if (!settings.enabled) return false;
+        if (!state.clickGuard.storageAvailable) return false;
+        return applyClickGuardState(config, readClickGuardState(config));
+    }
+
+    function canRequestAds(config) {
+        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;
+        if (state.privacyDecision && state.privacyDecision.blocked) return false;
+        return !clickGuardBlocked(config);
+    }
+
+    function managedPlacementContainers(config) {
+        var active = {};
+        (config && config.placements || []).forEach(function (placement) {
+            if (placement && placement.enabled && placement.status === 'active') active[String(placement.code)] = true;
+        });
+        var result = [];
+        ['.hm-ad[data-placement]', '.hm-native[data-placement]'].forEach(function (selector) {
+            Array.prototype.forEach.call(nodeList(selector), function (node) {
+                var code = node && node.getAttribute ? node.getAttribute('data-placement') : null;
+                if (code && active[String(code)] && result.indexOf(node) === -1) result.push(node);
+            });
+        });
+        return result;
+    }
+
+    function isIframe(node) {
+        return Boolean(node && String(node.tagName || '').toLowerCase() === 'iframe');
+    }
+
+    function containerContains(container, node) {
+        if (!container || !node) return false;
+        if (typeof container.contains === 'function') return container.contains(node);
+        var current = node;
+        while (current) {
+            if (current === container) return true;
+            current = current.parentNode;
+        }
+        return false;
+    }
+
+    function isEligibleClickGuardIframe(config, iframe) {
+        if (!isIframe(iframe)) return false;
+        return managedPlacementContainers(config).some(function (container) { return containerContains(container, iframe); });
+    }
+
+    function disarmClickGuardIframe(iframe) {
+        if (!iframe || state.clickGuard.activeIframe === iframe) {
+            state.clickGuard.activeIframe = null;
+            state.clickGuard.armed = false;
+        }
+    }
+
+    function untrackClickGuardIframe(iframe) {
+        var entries = state.clickGuard.trackedIframeEntries;
+        for (var index = entries.length - 1; index >= 0; index -= 1) {
+            var entry = entries[index];
+            if (entry.iframe !== iframe) continue;
+            if (entry.iframe.removeEventListener) {
+                entry.iframe.removeEventListener(entry.enterEvent, entry.enter);
+                entry.iframe.removeEventListener(entry.leaveEvent, entry.leave);
+            }
+            entries.splice(index, 1);
+        }
+        if (state.clickGuard.trackedIframes && state.clickGuard.trackedIframes.delete) state.clickGuard.trackedIframes.delete(iframe);
+        disarmClickGuardIframe(iframe);
+    }
+
+    function iframeNodes(node) {
+        var frames = [];
+        if (isIframe(node)) frames.push(node);
+        if (node && node.querySelectorAll) {
+            Array.prototype.forEach.call(node.querySelectorAll('iframe'), function (iframe) {
+                if (frames.indexOf(iframe) === -1) frames.push(iframe);
+            });
+        }
+        return frames;
+    }
+
+    function trackClickGuardIframe(config, iframe) {
+        if (!state.clickGuard.settings || !state.clickGuard.settings.enabled || !isEligibleClickGuardIframe(config, iframe)) return;
+        if (state.clickGuard.trackedIframes && state.clickGuard.trackedIframes.has(iframe)) return;
+        var usePointer = typeof window.PointerEvent === 'function';
+        var enterEvent = usePointer ? 'pointerenter' : 'mouseenter';
+        var leaveEvent = usePointer ? 'pointerleave' : 'mouseleave';
+        var enter = function () {
+            if (!canRequestAds(config) || !isEligibleClickGuardIframe(config, iframe)) return;
+            state.clickGuard.activeIframe = iframe;
+            state.clickGuard.armed = true;
+        };
+        var leave = function () { disarmClickGuardIframe(iframe); };
+        if (!iframe.addEventListener) return;
+        iframe.addEventListener(enterEvent, enter);
+        iframe.addEventListener(leaveEvent, leave);
+        if (state.clickGuard.trackedIframes) state.clickGuard.trackedIframes.add(iframe);
+        state.clickGuard.trackedIframeEntries.push({ iframe: iframe, enterEvent: enterEvent, leaveEvent: leaveEvent, enter: enter, leave: leave });
+    }
+
+    function discoverClickGuardIframes(config) {
+        if (!state.clickGuard.settings || !state.clickGuard.settings.enabled) return;
+        managedPlacementContainers(config).forEach(function (container) {
+            iframeNodes(container).forEach(function (iframe) { trackClickGuardIframe(config, iframe); });
+        });
+    }
+
+    function inspectClickGuardMutations(config, mutations) {
+        if (!state.clickGuard.settings || !state.clickGuard.settings.enabled || !mutations || !mutations.length) return;
+        Array.prototype.forEach.call(mutations || [], function (mutation) {
+            Array.prototype.forEach.call(mutation.removedNodes || [], function (node) {
+                iframeNodes(node).forEach(untrackClickGuardIframe);
+            });
+            Array.prototype.forEach.call(mutation.addedNodes || [], function (node) {
+                iframeNodes(node).forEach(function (iframe) { trackClickGuardIframe(config, iframe); });
+            });
+        });
+    }
+
+    function recordProbableAdClick(config) {
+        var guard = state.clickGuard;
+        var settings = clickGuardSettings(config);
+        if (!settings.enabled || !guard.storageAvailable) return false;
+        var now = Date.now();
+        var persisted = readClickGuardState(config);
+        if (!guard.storageAvailable || applyClickGuardState(config, persisted)) return false;
+        var windowStart = now - settings.windowHours * CLICK_GUARD_HOUR_MS;
+        var clicks = persisted.clicks.filter(function (timestamp) { return timestamp >= windowStart && timestamp <= now + 5 * 60 * 1000; });
+        clicks.push(now);
+        if (clicks.length >= settings.maxClicks) {
+            var blockedState = { v: CLICK_GUARD_STATE_VERSION, clicks: [], blockedUntil: now + settings.blockHours * CLICK_GUARD_HOUR_MS };
+            if (!writeClickGuardState(config, blockedState)) return false;
+            applyClickGuardState(config, blockedState);
+            diagnostics(config, []);
+            return true;
+        }
+        writeClickGuardState(config, { v: CLICK_GUARD_STATE_VERSION, clicks: clicks, blockedUntil: 0 });
+        diagnostics(config, []);
+        return false;
+    }
+
+    function installClickGuardListeners(config) {
+        if (state.clickGuard.listenersInstalled || !window.addEventListener) return;
+        state.clickGuard.blurListener = function () {
+            var guard = state.clickGuard;
+            var iframe = guard.activeIframe;
+            if (!guard.armed || !iframe || !canRequestAds(state.config)) return;
+            if (document.visibilityState && document.visibilityState !== 'visible') {
+                disarmClickGuardIframe(iframe);
+                return;
+            }
+            if (!isEligibleClickGuardIframe(state.config, iframe)) {
+                disarmClickGuardIframe(iframe);
+                return;
+            }
+            var activeElement = document.activeElement;
+            if (activeElement && isIframe(activeElement) && activeElement !== iframe) {
+                disarmClickGuardIframe(iframe);
+                return;
+            }
+            var now = Date.now();
+            disarmClickGuardIframe(iframe);
+            if (now - guard.lastClickAt < CLICK_GUARD_DEBOUNCE_MS) return;
+            guard.lastClickAt = now;
+            recordProbableAdClick(state.config);
+        };
+        state.clickGuard.storageListener = function (event) {
+            if (!state.config || !state.clickGuard.settings || !state.clickGuard.settings.enabled) return;
+            if (!event || event.key !== state.clickGuard.storageKey) return;
+            var wasBlocked = state.clickGuard.blocked;
+            var settings = clickGuardSettings(state.config);
+            var persisted = emptyClickGuardState();
+            if (event.newValue) persisted = storageValue(state.config, event.newValue, settings, Date.now());
+            state.clickGuard.persisted = persisted;
+            var blocked = applyClickGuardState(state.config, persisted);
+            if (wasBlocked && !blocked && canRequestAds(state.config)) {
+                installSpaSupport();
+                scan(state.config);
+            }
+        };
+        window.addEventListener('blur', state.clickGuard.blurListener);
+        window.addEventListener('storage', state.clickGuard.storageListener);
+        state.clickGuard.listenersInstalled = true;
+    }
+
+    function resetClickGuardRuntime() {
+        var guard = state.clickGuard || freshClickGuardRuntime();
+        clearClickGuardBlockTimer();
+        (guard.trackedIframeEntries || []).slice().forEach(function (entry) { untrackClickGuardIframe(entry.iframe); });
+        if (guard.listenersInstalled && window.removeEventListener) {
+            if (guard.blurListener) window.removeEventListener('blur', guard.blurListener);
+            if (guard.storageListener) window.removeEventListener('storage', guard.storageListener);
+        }
+        state.clickGuard = freshClickGuardRuntime();
+    }
+
+    function initializeClickGuard(config) {
+        var settings = clickGuardSettings(config);
+        var key = clickGuardStorageKey(config);
+        if (state.clickGuard.storageKey && state.clickGuard.storageKey !== key) resetClickGuardRuntime();
+        if (!settings.enabled) {
+            if (state.clickGuard.listenersInstalled || state.clickGuard.trackedIframeEntries.length) resetClickGuardRuntime();
+            state.clickGuard.storageKey = key;
+            state.clickGuard.settings = settings;
+            return false;
+        }
+        state.clickGuard.storageKey = key;
+        state.clickGuard.settings = settings;
+        state.clickGuard.storageAvailable = true;
+        installClickGuardListeners(config);
+        return applyClickGuardState(config, readClickGuardState(config));
+    }
+
     function ensureGoogletagQueue() {
         window.googletag = window.googletag || { cmd: [] };
         window.googletag.cmd = window.googletag.cmd || [];
@@ -194,6 +585,7 @@
     }
 
     function loadGpt(config) {
+        if (!canRequestAds(config)) return Promise.resolve(null);
         var googletag = ensureGoogletagQueue();
         if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
         if (state.gptPromise) return state.gptPromise;
@@ -260,6 +652,7 @@
     }
 
     function loadPrebid(config) {
+        if (!canRequestAds(config)) return Promise.resolve(null);
         var selected = config.prebid || {};
         if (!selected.enabled || !selected.build || !selected.build.url) return Promise.resolve(null);
         var pbjs = ensurePrebidQueue();
@@ -416,50 +809,53 @@
         });
     }
 
-    function requestGam(pubads, entries) {
-        if (!entries.length || !pubads || !pubads.refresh) return;
+    function requestGam(config, pubads, entries) {
+        if (!canRequestAds(config) || !entries.length || !pubads || !pubads.refresh) return;
         pubads.refresh(entries.map(function (entry) { return entry.slot; }));
         entries.forEach(function (entry) { entry.element.setAttribute('data-hm-status', 'requested'); });
     }
 
     function requestEntries(config, googletag, pubads, entries) {
-        if (!entries.length) return Promise.resolve([]);
+        if (!canRequestAds(config) || !entries.length) return Promise.resolve([]);
         var prebid = config.prebid || {};
         if (!prebid.enabled) {
-            requestGam(pubads, entries);
+            requestGam(config, pubads, entries);
             return Promise.resolve(entries);
         }
 
         var fallback = !prebid.delivery || prebid.delivery.gamFallback !== false;
         var adUnits = prebidAdUnits(config, entries);
         if (!adUnits.length) {
-            if (fallback) requestGam(pubads, entries);
+            if (fallback) requestGam(config, pubads, entries);
             return Promise.resolve(entries);
         }
 
         return loadPrebid(config).then(function (pbjs) {
+            if (!pbjs || !canRequestAds(config)) return [];
             return new Promise(function (resolve) {
                 var finished = false;
                 var timeout = Math.max(100, Number(prebid.auction && prebid.auction.timeoutMs || 1200));
                 function complete(timedOut) {
                     if (finished) return;
                     finished = true;
+                    if (!canRequestAds(config)) { resolve([]); return; }
                     try {
                         var codes = adUnits.map(function (adUnit) { return adUnit.code; });
                         if (pbjs.setTargetingForGPTAsync) pbjs.setTargetingForGPTAsync(codes);
-                        if (fallback || hasBid(pbjs, codes)) requestGam(pubads, entries);
+                        if (fallback || hasBid(pbjs, codes)) requestGam(config, pubads, entries);
                         entries.forEach(function (entry) {
                             entry.element.setAttribute('data-hm-prebid', timedOut ? 'timeout' : 'complete');
                         });
                     } catch (error) {
                         log(config, 'Prebid targeting failed', error);
-                        if (fallback) requestGam(pubads, entries);
+                        if (fallback) requestGam(config, pubads, entries);
                     }
                     resolve(entries);
                 }
 
                 window.setTimeout(function () { complete(true); }, timeout + 100);
                 pbjs.que.push(function () {
+                    if (!canRequestAds(config)) { resolve([]); return; }
                     try {
                         configurePrebid(config, pbjs);
                         var codes = adUnits.map(function (adUnit) { return adUnit.code; });
@@ -479,7 +875,7 @@
         }).catch(function (error) {
             log(config, 'Prebid unavailable; continuing with GAM', error);
             entries.forEach(function (entry) { entry.element.setAttribute('data-hm-prebid', 'failed'); });
-            if (fallback) requestGam(pubads, entries);
+            if (fallback && canRequestAds(config)) requestGam(config, pubads, entries);
             return entries;
         });
     }
@@ -545,7 +941,7 @@
     }
 
     function runNativeFallback(config, entry) {
-        if (!entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
+        if (!canRequestAds(config) || !entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
         var key = entry.element.id || ensureElementId(entry.element, config, entry.placement);
         if (state.nativeRendered[key]) return Promise.resolve(true);
         if (state.nativeAttempts[key]) return state.nativeAttempts[key];
@@ -553,6 +949,7 @@
         var candidates = directCandidates(config, entry);
         state.nativeAttempts[key] = new Promise(function (resolve) {
             function tryCandidate(index) {
+                if (!canRequestAds(config)) { resolve(false); return; }
                 if (index >= candidates.length) {
                     resolve(renderHouse(config, entry));
                     return;
@@ -613,6 +1010,7 @@
         if (state.gamFallbackInstalled || !pubads || !pubads.addEventListener) return;
         state.gamFallbackInstalled = true;
         pubads.addEventListener('slotRenderEnded', function (event) {
+            if (!canRequestAds(config)) return;
             var entry = null;
             Object.keys(state.slots).some(function (key) {
                 if (state.slots[key].slot === event.slot) {
@@ -633,7 +1031,7 @@
     }
 
     function defineItems(config, items) {
-        if (!items.length) return Promise.resolve([]);
+        if (!canRequestAds(config) || !items.length) return Promise.resolve([]);
         var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath; });
         var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });
 
@@ -646,8 +1044,10 @@
         if (!gamItems.length) return nativePromise.then(function () { diagnostics(config, []); return nativeOnly; });
 
         return loadGpt(config).then(function (googletag) {
+            if (!googletag || !canRequestAds(config)) return [];
             return new Promise(function (resolve) {
                 googletag.cmd.push(function () {
+                    if (!canRequestAds(config)) { resolve(nativeOnly); return; }
                     try {
                         var pubads = googletag.pubads();
                         var privacy = state.privacyDecision || {};
@@ -778,6 +1178,7 @@
     }
 
     function scheduleRefresh(config, googletag, pubads, entry) {
+        if (!canRequestAds(config)) return;
         var refresh = entry.placement.refresh || {};
         var prebidRefresh = config.prebid && config.prebid.delivery && config.prebid.delivery.refreshBehavior || {};
         if (prebidRefresh.enabled === false) return;
@@ -788,6 +1189,11 @@
         var key = entry.element.id;
         if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
         state.refreshTimers[key] = window.setInterval(function () {
+            if (!canRequestAds(config)) {
+                window.clearInterval(state.refreshTimers[key]);
+                delete state.refreshTimers[key];
+                return;
+            }
             if (document.visibilityState && document.visibilityState !== 'visible') return;
             if (limit > 0 && entry.refreshCount >= limit) {
                 window.clearInterval(state.refreshTimers[key]);
@@ -795,7 +1201,9 @@
                 return;
             }
             entry.refreshCount += 1;
-            googletag.cmd.push(function () { requestEntries(config, googletag, pubads, [entry]); });
+            googletag.cmd.push(function () {
+                if (canRequestAds(config)) requestEntries(config, googletag, pubads, [entry]);
+            });
         }, interval * 1000);
     }
 
@@ -812,6 +1220,12 @@
             prebidBuild: config.prebid && config.prebid.build && config.prebid.build.version,
             nativeDemandEnabled: Boolean(config.nativeDemand && config.nativeDemand.enabled),
             nativeRendered: Object.assign({}, state.nativeRendered),
+            clickGuard: {
+                enabled: Boolean(state.clickGuard.settings && state.clickGuard.settings.enabled),
+                blocked: Boolean(state.clickGuard.blocked),
+                clicksInWindow: state.clickGuard.persisted && state.clickGuard.persisted.clicks ? state.clickGuard.persisted.clicks.length : 0,
+                blockedUntil: state.clickGuard.blocked ? state.clickGuard.persisted.blockedUntil : null
+            },
             definedPlacements: defined.map(function (entry) { return entry.placement.code; })
         });
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
@@ -822,17 +1236,23 @@
     }
 
     function scan(config) {
-        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return Promise.resolve([]);
-        return defineItems(config, eligibleElements(config));
+        if (!canRequestAds(config)) return Promise.resolve([]);
+        discoverClickGuardIframes(config);
+        return defineItems(config, eligibleElements(config)).then(function (defined) {
+            discoverClickGuardIframes(config);
+            return defined;
+        });
     }
 
     function installSpaSupport() {
         if (!state.observer && window.MutationObserver && document.documentElement) {
-            state.observer = new window.MutationObserver(function () {
+            state.observer = new window.MutationObserver(function (mutations) {
+                inspectClickGuardMutations(state.config, mutations || []);
                 window.clearTimeout(state.scanTimer);
                 state.scanTimer = window.setTimeout(function () { scan(state.config); }, 25);
             });
             state.observer.observe(document.documentElement, { childList: true, subtree: true });
+            discoverClickGuardIframes(state.config);
         }
         if (state.navigationPatched || !window.history) return;
         state.navigationPatched = true;
@@ -900,6 +1320,11 @@
                 log(config, 'Privacy gate blocked advertising after the bounded CMP timeout');
                 return [];
             }
+            initializeClickGuard(config);
+            if (!canRequestAds(config)) {
+                log(config, 'Click Guard blocked future advertising requests in this browser');
+                return [];
+            }
             if (maybeDelegateRelease(config, script)) return [];
             installSpaSupport();
             return scan(config);
@@ -919,7 +1344,12 @@
         scan: function () { return scan(state.config); },
         getConfig: function () { return state.config; },
         _resetForTests: function () {
-            Object.keys(state.refreshTimers).forEach(function (key) { window.clearInterval(state.refreshTimers[key]); });
+            clearAllRefreshTimers();
+            resetClickGuardRuntime();
+            if (state.observer && state.observer.disconnect) state.observer.disconnect();
+            state.observer = null;
+            if (state.scanTimer) window.clearTimeout(state.scanTimer);
+            state.scanTimer = null;
             state.config = null;
             state.gptPromise = null;
             state.prebidPromise = null;

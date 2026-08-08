@@ -16,7 +16,7 @@ class SiteConfig extends Model
         'organization_id', 'site_id', 'loader_release_id', 'tag_version_id', 'status',
         'immediate_pause', 'debug_enabled', 'house_ad_testing', 'single_request_mode',
         'cache_ttl_seconds', 'preview_version', 'test_version', 'production_version', 'page_targeting',
-        'privacy_settings', 'gpt_settings', 'supply_chain_settings', 'observability_settings',
+        'privacy_settings', 'gpt_settings', 'supply_chain_settings', 'observability_settings', 'click_guard_settings',
     ];
 
     protected function casts(): array
@@ -27,6 +27,7 @@ class SiteConfig extends Model
             'cache_ttl_seconds' => 'integer', 'page_targeting' => 'array',
             'privacy_settings' => 'array', 'gpt_settings' => 'array',
             'supply_chain_settings' => 'array', 'observability_settings' => 'array',
+            'click_guard_settings' => 'array',
         ];
     }
 

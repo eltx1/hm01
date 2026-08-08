@@ -175,6 +175,12 @@ Example:
   "prebidEnabled": false,
   "debug": false,
   "houseAdTesting": false,
+  "clickGuard": {
+    "enabled": false,
+    "maxClicks": 3,
+    "windowHours": 6,
+    "blockHours": 12
+  },
   "allowedHostnames": ["publisher.example"],
   "loader": {
     "version": "1.0.0",
@@ -220,6 +226,58 @@ npm run build:loader
 ```
 
 The normal production build runs that command automatically.
+
+## Horus Click Guard
+
+Horus Click Guard is an optional browser-local protection in the Horus Loader.
+It is disabled by default. Delivery Settings publishes only these public values:
+
+```json
+{
+  "clickGuard": {
+    "enabled": true,
+    "maxClicks": 3,
+    "windowHours": 6,
+    "blockHours": 12
+  }
+}
+```
+
+When enabled, the loader stores a minimal versioned record under
+`hm:click-guard:v1:{SITE_KEY}` in the publisher origin's `localStorage`. The
+record contains only click timestamps in Unix epoch milliseconds and a
+`blockedUntil` timestamp. It contains no URL, creative data, user identifier,
+IP address, fingerprint, page history, or Horus account/database identifier,
+and it is never transmitted to Laravel.
+
+At every relevant read/write, timestamps outside the rolling `windowHours`
+window are pruned. Reaching `maxClicks` creates `blockedUntil` for
+`blockHours`, clears the prior click window, cancels Horus refresh timers, and
+prevents future Horus-managed GPT, Prebid, native-demand, refresh, and SPA scan
+requests. Advertising already rendered before the threshold is not destroyed.
+A browser that loads the page while a valid block is active stops after static
+configuration/privacy/host gates and before advertising libraries initialize.
+When the block expires the state is reset to a fresh click window and normal
+eligibility resumes.
+
+Probable iframe interaction is detected without reading or modifying cross-origin
+iframe contents. Click Guard tracks only iframes inside active `.hm-ad` and
+`.hm-native` placement containers, arms on pointer entry (with mouse fallback),
+and records one probable click when the top window subsequently loses focus.
+The existing SPA `MutationObserver` is reused to register dynamically inserted
+or replaced ad iframes and remove listeners from removed frames; unrelated page
+iframes are ignored. A small internal debounce and re-entry requirement prevent
+one interaction from being counted repeatedly.
+
+Same-origin tabs synchronize blocks through the browser's native `storage`
+event. No WebSocket or backend synchronization is used. Corrupt storage is
+normalized safely. If `localStorage` is unavailable or throws a security/policy
+exception, Click Guard fails open and normal advertising continues.
+
+Cross-origin iframe click detection is necessarily heuristic and
+browser-dependent. Desktop pointer/focus behavior is the most reliable case;
+mobile/touch interaction is inherently less reliable. Click Guard does not claim
+to detect every advertising click or to be complete click-fraud detection.
 
 ## Pausing
 
