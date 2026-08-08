@@ -1,0 +1,52 @@
+name: Click Guard Implementation
+
+on:
+  push:
+    branches:
+      - agent/horus-click-guard
+
+permissions:
+  contents: write
+
+jobs:
+  implement-test-build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/horus-click-guard
+          fetch-depth: 0
+      - name: Apply implementation
+        run: python scripts/apply-click-guard.py
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run browser tests
+        run: npm run test:browser
+      - name: Rebuild minified loader
+        run: npm run build:loader
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
+          coverage: none
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Prepare test environment
+        run: cp .env.example .env && php artisan key:generate
+      - name: Run PHP tests
+        run: php artisan test
+      - name: Commit implementation and generated loader
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app database docs public resources tests
+          git commit -m "Implement Horus Click Guard"
+          git push origin HEAD:agent/horus-click-guard
