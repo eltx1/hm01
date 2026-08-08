@@ -198,7 +198,7 @@
         if (Array.isArray(value.clicks)) {
             clean.clicks = value.clicks.map(Number).filter(function (timestamp) {
                 return Number.isFinite(timestamp) && timestamp >= 0 && timestamp >= windowStart && timestamp <= latestReasonableTimestamp;
-            }).sort(function (left, right) { return left - right; });
+            }).sort(function (left, right) { return left - right; }).slice(-settings.maxClicks);
         }
         var blockedUntil = Number(value.blockedUntil || 0);
         var maximumBlock = now + 720 * CLICK_GUARD_HOUR_MS + 5 * 60 * 1000;
@@ -224,13 +224,20 @@
         var guard = state.clickGuard;
         var settings = clickGuardSettings(config);
         var now = Date.now();
-        if (!settings.enabled || !guard.storageAvailable || !window.localStorage) {
+        if (!settings.enabled || !guard.storageAvailable) {
             guard.persisted = emptyClickGuardState();
             guard.blocked = false;
             return guard.persisted;
         }
         try {
-            var raw = window.localStorage.getItem(guard.storageKey);
+            var storage = window.localStorage;
+            if (!storage) {
+                guard.storageAvailable = false;
+                guard.persisted = emptyClickGuardState();
+                guard.blocked = false;
+                return guard.persisted;
+            }
+            var raw = storage.getItem(guard.storageKey);
             if (!raw) {
                 guard.persisted = emptyClickGuardState();
                 guard.blocked = false;
@@ -239,7 +246,7 @@
             var normalized = storageValue(config, raw, settings, now);
             guard.persisted = normalized;
             var normalizedJson = JSON.stringify(normalized);
-            if (normalizedJson !== raw) window.localStorage.setItem(guard.storageKey, normalizedJson);
+            if (normalizedJson !== raw) storage.setItem(guard.storageKey, normalizedJson);
             return normalized;
         } catch (error) {
             guard.storageAvailable = false;
@@ -252,9 +259,16 @@
 
     function writeClickGuardState(config, value) {
         var guard = state.clickGuard;
-        if (!guard.storageAvailable || !window.localStorage) return false;
+        if (!guard.storageAvailable) return false;
         try {
-            window.localStorage.setItem(guard.storageKey, JSON.stringify(value));
+            var storage = window.localStorage;
+            if (!storage) {
+                guard.storageAvailable = false;
+                guard.persisted = emptyClickGuardState();
+                guard.blocked = false;
+                return false;
+            }
+            storage.setItem(guard.storageKey, JSON.stringify(value));
             guard.persisted = value;
             return true;
         } catch (error) {
@@ -1332,6 +1346,10 @@
         _resetForTests: function () {
             clearAllRefreshTimers();
             resetClickGuardRuntime();
+            if (state.observer && state.observer.disconnect) state.observer.disconnect();
+            state.observer = null;
+            if (state.scanTimer) window.clearTimeout(state.scanTimer);
+            state.scanTimer = null;
             state.config = null;
             state.gptPromise = null;
             state.prebidPromise = null;

@@ -85,7 +85,7 @@ function memoryStorage(seed = {}, throws = false) {
     };
 }
 
-function createHarness(config, { storage = memoryStorage(), containers = null } = {}) {
+function createHarness(config, { storage = memoryStorage(), containers = null, storageAccessThrows = false } = {}) {
     const selectedContainers = containers || [placementElement('article_top')];
     const metrics = { fetches: [], gptLoads: 0, prebidLoads: 0, nativeLoads: 0, defined: 0, displayed: 0, refreshes: 0, intervals: new Map(), clearedIntervals: [] };
     let observerCallback = null;
@@ -132,7 +132,7 @@ function createHarness(config, { storage = memoryStorage(), containers = null } 
     });
     const sandbox = eventTarget({
         console, URL, Promise, DOMException, structuredClone, queueMicrotask, Event, PointerEvent, MutationObserver, document, googletag,
-        localStorage: storage, navigator: {}, location: { hostname: 'publisher.example', href: 'https://publisher.example/article' },
+        navigator: {}, location: { hostname: 'publisher.example', href: 'https://publisher.example/article' },
         history: { pushState() {}, replaceState() {} }, __HM_DISABLE_AUTOBOOT__: true,
         setTimeout(callback, delay, ...args) { if (Number(delay) > 5000) return { __hmLongTimer: true }; return setTimeout(callback, delay, ...args); },
         clearTimeout(id) { if (!id?.__hmLongTimer) clearTimeout(id); },
@@ -163,6 +163,14 @@ function createHarness(config, { storage = memoryStorage(), containers = null } 
         node.appendChild = (child) => { child.parentNode = node; node.children.push(child); node.childNodes = node.children; return child; };
         return node;
     };
+    if (storageAccessThrows) {
+        Object.defineProperty(sandbox, 'localStorage', {
+            configurable: true,
+            get() { throw new DOMException('Denied', 'SecurityError'); },
+        });
+    } else {
+        sandbox.localStorage = storage;
+    }
     sandbox.window = sandbox;
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
     return {
@@ -260,6 +268,13 @@ test('corrupt localStorage fails open and is normalized without breaking the loa
 
 test('localStorage SecurityError fails open and ads continue', async () => {
     const harness = createHarness(activeConfig(), { storage: memoryStorage({}, true) });
+    await harness.sandbox.HorusMediaLoader.boot();
+    assert.equal(harness.metrics.gptLoads, 1);
+    assert.equal(harness.metrics.defined, 1);
+});
+
+test('localStorage property access SecurityError also fails open', async () => {
+    const harness = createHarness(activeConfig(), { storageAccessThrows: true });
     await harness.sandbox.HorusMediaLoader.boot();
     assert.equal(harness.metrics.gptLoads, 1);
     assert.equal(harness.metrics.defined, 1);
