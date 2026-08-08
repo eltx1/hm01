@@ -1,0 +1,273 @@
+
+   PASS  Tests\Unit\DemandConfigurationSecurityTest
+  ✓ public native tag exposes only allowlisted structured fields and da… 0.06s  
+
+   PASS  Tests\Unit\ExampleTest
+  ✓ that true is true                                                    0.01s  
+
+   PASS  Tests\Unit\GamHybridConnectorTest
+  ✓ routes supported operation to rest and unpublished write to soap     0.02s  
+  ✓ does not replay a failed rest write through soap                     0.01s  
+  ✓ contextual archive routes legacy action to soap                      0.01s  
+
+   PASS  Tests\Unit\GamMockConnectorTest
+  ✓ mock connector implements every api operation                        0.22s  
+
+   PASS  Tests\Unit\GamPayloadSanitizerTest
+  ✓ it redacts nested credentials tokens and bearer values
+
+   PASS  Tests\Unit\GamSoapPayloadHydratorTest
+  ✓ hydrates version neutral nested payloads from generated method meta… 0.01s  
+  ✓ current official library accepts horus line item and creative shape… 0.01s  
+
+   PASS  Tests\Unit\RevenueCalculationTest
+  ✓ financial formula uses minor units and exact share remainder
+  ✓ fill ctr ecpm and cpc rates are deterministic
+
+   PASS  Tests\Unit\TwoFactorServiceTest
+  ✓ totp matches rfc 6238 sha1 vector reduced to six digits
+
+   PASS  Tests\Feature\AccountManagementTest
+  ✓ horus admin can create update and soft delete publisher              0.06s  
+  ✓ horus admin can create advertiser and contact                        0.04s  
+  ✓ horus admin can review submitted publisher                           0.03s  
+
+   PASS  Tests\Feature\AccountStatusTest
+  ✓ horus admin can suspend publisher account with audit event           0.04s  
+
+   PASS  Tests\Feature\AdminDashboardTest
+  ✓ dashboard identifies horus gam as default                            0.04s  
+
+   PASS  Tests\Feature\AuditRecorderTest
+  ✓ sensitive event can be recorded                                      0.01s  
+
+   PASS  Tests\Feature\AuthenticationTest
+  ✓ active verified user can login and logout                            0.04s  
+  ✓ failed login is tracked without disclosing account                   0.03s  
+
+   PASS  Tests\Feature\AutomaticRuntimePublishingTest
+  ✓ draft and approval do not publish but first activation queues live…  0.05s  
+  ✓ active runtime changes publish automatically and bulk changes publi… 0.05s  
+  ✓ suspension and emergency pause each queue one urgent paused version  0.06s  
+  ✓ inactive runtime mutations do not queue and manual production is fo… 0.04s  
+  ✓ active admin settings and publisher domains queue new versions       0.06s  
+
+   PASS  Tests\Feature\BrandingTest
+  ✓ tenant admin can update own branding and upload logo                 0.04s  
+  ✓ tenant cannot edit another organization branding                     0.03s  
+  ✓ tenant viewer cannot edit branding                                   0.03s  
+
+   FAIL  Tests\Feature\ClickGuardConfigurationTest
+  ✓ default public configuration is disabled and safe                    0.04s  
+  ⨯ delivery settings persist and publish normalized click guard config… 0.04s  
+  ⨯ click guard validation rejects out of bounds values                  0.04s  
+  ⨯ inactive site saves click guard without publishing production        0.04s  
+  ✓ legacy settings request keeps existing click guard values when fiel… 0.04s  
+  ⨯ publisher without config permission cannot change click guard setti… 0.04s  
+
+   PASS  Tests\Feature\ContractManagementTest
+  ✓ contract status transitions are enforced and audited                 0.04s  
+  ✓ contract upload uses private storage and other publisher cannot dow… 0.04s  
+
+   PASS  Tests\Feature\CrossAccountAccessTest
+  ✓ publisher cannot access another publisher                            0.03s  
+  ✓ advertiser cannot access another advertiser or publisher finance     0.03s  
+  ✓ publisher cannot view internal margin permission                     0.03s  
+
+   PASS  Tests\Feature\DemandNetworkSystemTest
+  ✓ registry exposes all modular connectors through one contract         0.06s  
+  ✓ public configuration contains only approved enabled mappings and ne… 0.06s  
+  ✓ direct js and gam modes produce distinct delivery outputs            0.05s  
+  ✓ disabling connector removes future delivery but preserves reports    0.06s  
+  ✓ gam native deployment is repeat safe and pause resume are synchroni… 0.07s  
+
+   PASS  Tests\Feature\DirectCampaignSystemTest
+  ✓ one local campaign deploys repeat safely to horus and selected part… 0.14s  
+  ✓ direct campaign completes over rest first hybrid connections         0.11s  
+  ✓ one network failure is isolated and retry does not duplicate horus…  0.09s  
+  ✓ creative validation rejects unsafe html missing assets and duplicat… 0.04s  
+
+   PASS  Tests\Feature\DomainVerificationTest
+  ✓ meta tag domain verification succeeds and is audited                 0.04s  
+  ✓ all verification methods produce complete instructions               0.03s  
+  ✓ text file and dns txt verification succeed                           0.04s  
+  ✓ horus administrator can manually verify domain                       0.04s  
+  ✓ domain safety rejects private addresses                              0.01s  
+
+   PASS  Tests\Feature\EmailVerificationTest
+  ✓ user can verify email with signed link                               0.03s  
+
+   PASS  Tests\Feature\GamIntegrationTest
+  ✓ first horus connection is primary and another can replace it         0.03s  
+  ✓ approved horus site automatically resolves primary horus connection  0.04s  
+  ✓ assigning optional connection changes only selected website          0.04s  
+  ✓ dry run does not call google and real write is idempotent and mappe… 0.03s  
+  ✓ api operation logs never store credentials                           0.04s  
+  ✓ connection test synchronizes health networks and permissions         0.04s  
+  ✓ only authorized administrator can open connection dashboard          0.04s  
+
+   PASS  Tests\Feature\GamRestConnectorTest
+  ✓ rest connector reads network and writes ad unit without dated versi… 0.04s  
+  ✓ rest dry run is audited without external request                     0.03s  
+  ✓ rest order batch uses the google aip requests envelope               0.03s  
+  ✓ rest custom targeting translates soap neutral names to v1 resources  0.04s  
+  ✓ unpublished rest write is planned through audited soap fallback      0.03s  
+
+   PASS  Tests\Feature\HealthCheckTest
+  ✓ health check is available                                            0.01s  
+
+   PASS  Tests\Feature\ImpersonationAuditTest
+  ✓ authorized admin impersonation start and stop are audited            0.04s  
+
+   PASS  Tests\Feature\InventoryConfigurationTest
+  ✓ new site defaults to horus gam and generated configuration uses pri… 0.05s  
+  ✓ switching selected gam changes static configuration without changin… 0.05s  
+  ✓ publish and rollback create versioned and current static files       0.13s  
+  ✓ pause and disabled placement are reflected without private values    0.05s  
+  ✓ ad unit sync is dry run safe idempotent and detects changes          0.05s  
+  ✓ bulk creation and layout duplication copy local configuration only   0.04s  
+
+   PASS  Tests\Feature\InvitationTest
+  ✓ secure single use invitation creates scoped user                     0.04s  
+  ✓ publisher cannot invite horus administrator role                     0.03s  
+
+   PASS  Tests\Feature\OrganizationIsolationTest
+  ✓ publisher queries are automatically scoped to authenticated organiz… 0.03s  
+  ✓ horus admin can operate across organizations                         0.03s  
+
+   PASS  Tests\Feature\PasswordResetTest
+  ✓ password can be reset with valid token and is audited                0.04s  
+
+   PASS  Tests\Feature\PrebidIntegrationTest
+  ✓ selected gam network controls prebid configuration and bidder disab… 0.08s  
+  ✓ gam setup is previewable confirmed resumable and idempotent          0.09s  
+
+   PASS  Tests\Feature\ProductionSecurityTest
+  ✓ security headers are applied                                         0.01s  
+  ✓ account is locked after configured failed attempts                   0.02s  
+  ✓ platform control is cached and audited                               0.01s  
+
+   PASS  Tests\Feature\PublisherOnboardingTest
+  ✓ all seven onboarding steps persist and submit without optional gam…  0.06s  
+
+   PASS  Tests\Feature\PublisherPaymentProfileTest
+  ✓ finance admin can update encrypted payment profile with audit        0.04s  
+
+   PASS  Tests\Feature\ReportingFinancialSystemTest
+  ✓ same report is idempotent and multiple sources are unified with hor… 0.06s  
+  ✓ most specific rule wins every change versions and closed history is… 0.05s  
+  ✓ financial close statements adjustments partial payment and closed p… 0.07s  
+  ✓ advertiser reports are unified and publisher cannot open another pu… 0.05s  
+
+   PASS  Tests\Feature\RolePermissionTest
+  ✓ only authorized horus admin can change permissions and change is au… 0.04s  
+
+   PASS  Tests\Feature\SessionInvalidationTest
+  ✓ all database sessions for user can be invalidated                    0.03s  
+
+   PASS  Tests\Feature\SiteManagementTest
+  ✓ new website defaults to horus gam in site and serving settings       0.03s  
+  ✓ publisher cannot access another publishers website and viewer canno… 0.04s  
+  ✓ publisher cannot override revenue share and configuration changes a… 0.04s  
+  ✓ complete website status workflow is historic and audited             0.06s  
+  ✓ serving mode can change back to horus gam without changing installa… 0.04s  
+  ✓ revenue share and emergency pause are synchronized and audited       0.05s  
+  ✓ rejection internal data is hidden from publisher and site can be ar… 0.05s  
+
+   PASS  Tests\Feature\StaticDeliveryTest
+  ✓ publish is transactional pending and remote delivery runs after com… 0.06s  
+  ✓ batch deduplicates same site and combines multiple sites             0.07s  
+  ✓ failed upload is retryable and keeps database payload                0.07s  
+  ✓ emergency pause is urgent and ready without batch delay              0.05s  
+  ✓ local driver writes snapshot and guards paths and secret keys        0.01s  
+  ✓ snapshot retention hashing and file budget are enforced              0.07s  
+  ✓ site key path traversal is rejected                                  0.01s  
+  ✓ canonical json is stable across database key ordering                0.01s  
+  ✓ snapshot contains ads txt 1 1 sellers json and synthetic health      0.04s  
+
+   PASS  Tests\Feature\SuperAdministratorCommandTest
+  ✓ initial super administrator is created securely and audited          0.04s  
+  ✓ initial super administrator rejects a weak password                  0.01s  
+
+   PASS  Tests\Feature\SuspensionTest
+  ✓ suspended user cannot login                                          0.04s  
+  ✓ suspending user is audited                                           0.03s  
+
+   PASS  Tests\Feature\TwoFactorAuthenticationTest
+  ✓ horus administrator must pass totp before authentication             0.04s  
+  ✓ recovery code is single use                                          0.03s  
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Feature\ClickGuardConfigurationTest > delivery settings per…   
+  Failed asserting that null is identical to Array &0 [
+    'enabled' => true,
+    'maxClicks' => 5,
+    'windowHours' => 8,
+    'blockHours' => 24,
+].
+
+  at tests/Feature/ClickGuardConfigurationTest.php:59
+     55▕         ]));
+     56▕ 
+     57▕         $response->assertRedirect();
+     58▕         $config = SiteConfig::withoutGlobalScopes()->where('site_id', $site->id)->firstOrFail();
+  ➜  59▕         $this->assertSame(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $config->click_guard_settings);
+     60▕         $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
+     61▕         $this->assertSame(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $version->payload['clickGuard']);
+     62▕         $this->assertDatabaseHas('static_delivery_items', ['config_version_id' => $version->id]);
+     63▕     }
+
+  1   tests/Feature/ClickGuardConfigurationTest.php:59
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Feature\ClickGuardConfigurationTest > click guard validatio…   
+  Failed asserting that two strings are equal.
+  -'http://localhost/admin/sites/01kzhpt34hyf41afjhqz4aaarv/inventory'
+  +'http://localhost/two-factor/challenge'
+  
+
+  at tests/Feature/ClickGuardConfigurationTest.php:78
+     74▕                 'click_guard_block_hours' => 721,
+     75▕             ]),
+     76▕         );
+     77▕ 
+  ➜  78▕         $response->assertRedirect(route('admin.sites.inventory.index', $site));
+     79▕         $response->assertSessionHasErrors(['click_guard_max_clicks', 'click_guard_window_hours', 'click_guard_block_hours']);
+     80▕     }
+     81▕ 
+     82▕     public function test_inactive_site_saves_click_guard_without_publishing_production(): void
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Feature\ClickGuardConfigurationTest > inact…  ErrorException   
+  Trying to access array offset on value of type null
+
+  at tests/Feature/ClickGuardConfigurationTest.php:92
+     88▕             'click_guard_enabled' => '1',
+     89▕         ]))->assertRedirect();
+     90▕ 
+     91▕         $config = SiteConfig::withoutGlobalScopes()->where('site_id', $site->id)->firstOrFail();
+  ➜  92▕         $this->assertTrue($config->click_guard_settings['enabled']);
+     93▕         $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->count());
+     94▕     }
+     95▕ 
+     96▕     public function test_legacy_settings_request_keeps_existing_click_guard_values_when_fields_are_omitted(): void
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Feature\ClickGuardConfigurationTest > publisher without con…   
+  Expected response status code [403] but received 404.
+Failed asserting that 404 is identical to 403.
+
+  at tests/Feature/ClickGuardConfigurationTest.php:124
+    120▕         $otherUser = $this->makeUser($otherOrganization, RoleName::PublisherAdmin);
+    121▕ 
+    122▕         $this->actingAs($otherUser)->put(route('admin.sites.config.update', $site), $this->validSettings([
+    123▕             'click_guard_enabled' => '1',
+  ➜ 124▕         ]))->assertForbidden();
+    125▕     }
+    126▕ 
+    127▕     private function validSettings(array $overrides = []): array
+    128▕     {
+
+
+  Tests:    4 failed, 110 passed (616 assertions)
+  Duration: 4.92s
+
