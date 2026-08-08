@@ -1,4 +1,4 @@
-name: NPM Audit Diagnostic
+name: NPM Audit Remediation
 
 on:
   push:
@@ -9,24 +9,47 @@ permissions:
   contents: write
 
 jobs:
-  audit:
+  remediate-and-verify:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           ref: agent/horus-click-guard
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
-      - name: Capture audit report
-        run: npm audit --audit-level=moderate --json > npm-audit-diagnostic.json || true
-      - name: Commit diagnostic
+      - name: Update vulnerable transitive nanoid patch only
+        run: npm update nanoid --package-lock-only
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify npm audit
+        run: npm audit --audit-level=moderate
+      - name: Run browser tests
+        run: npm run test:browser
+      - name: Rebuild minified loader
+        run: npm run build:loader
+      - name: Run full frontend build
+        run: npm run build
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
+          coverage: none
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Prepare test environment
+        run: cp .env.example .env && php artisan key:generate
+      - name: Run PHP tests
+        run: php artisan test
+      - name: Commit minimal audit remediation
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add npm-audit-diagnostic.json
-          git commit -m "Capture npm audit diagnostic"
+          rm -f npm-audit-diagnostic.json
+          git add package-lock.json npm-audit-diagnostic.json
+          git commit -m "Patch vulnerable transitive nanoid dependency"
           git push origin HEAD:agent/horus-click-guard
