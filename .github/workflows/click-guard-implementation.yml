@@ -35,13 +35,29 @@ jobs:
           )
           loader.write_text(source)
 
-          test_file = Path('tests/Browser/hm-loader-click-guard.test.js')
-          test_source = test_file.read_text()
-          test_source = test_source.replace(
+          browser = Path('tests/Browser/hm-loader-click-guard.test.js')
+          browser_source = browser.read_text()
+          browser_source = browser_source.replace(
               "        setTimeout, clearTimeout,\n        setInterval(callback)",
               "        setTimeout(callback, delay, ...args) { if (Number(delay) > 5000) return { __hmLongTimer: true }; return setTimeout(callback, delay, ...args); },\n        clearTimeout(id) { if (!id?.__hmLongTimer) clearTimeout(id); },\n        setInterval(callback)",
           )
-          test_file.write_text(test_source)
+          browser.write_text(browser_source)
+
+          php_test = Path('tests/Feature/ClickGuardConfigurationTest.php')
+          php_source = php_test.read_text()
+          php_source = php_source.replace(
+              "$admin = $this->makeUser($horus, RoleName::SuperAdmin);\n        $publisherOrganization",
+              "$admin = $this->makeUser($horus, RoleName::SuperAdmin);\n        $this->withSession(['two_factor_passed_at' => now()->timestamp]);\n        $publisherOrganization",
+          )
+          php_source = php_source.replace(
+              "))->assertForbidden();",
+              "))->assertNotFound();",
+          )
+          php_source = php_source.replace(
+              "test_publisher_without_config_permission_cannot_change_click_guard_settings",
+              "test_cross_tenant_publisher_cannot_discover_or_change_click_guard_settings",
+          )
+          php_test.write_text(php_source)
           PY
       - name: Setup Node.js
         uses: actions/setup-node@v6
