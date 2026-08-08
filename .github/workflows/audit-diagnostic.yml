@@ -1,0 +1,32 @@
+name: NPM Audit Diagnostic
+
+on:
+  push:
+    branches:
+      - agent/horus-click-guard
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/horus-click-guard
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Capture audit report
+        run: npm audit --audit-level=moderate --json > npm-audit-diagnostic.json || true
+      - name: Commit diagnostic
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add npm-audit-diagnostic.json
+          git commit -m "Capture npm audit diagnostic"
+          git push origin HEAD:agent/horus-click-guard
