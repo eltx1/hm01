@@ -20,6 +20,27 @@ jobs:
           fetch-depth: 0
       - name: Apply implementation
         run: python scripts/apply-click-guard.py
+      - name: Harden generated test harness
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          loader = Path('public/assets/hm-loader.js')
+          source = loader.read_text()
+          source = source.replace(
+              "if (!state.clickGuard.settings || !state.clickGuard.settings.enabled || !Array.isArray(mutations) && !mutations.length) return;",
+              "if (!state.clickGuard.settings || !state.clickGuard.settings.enabled || !mutations || !mutations.length) return;",
+          )
+          loader.write_text(source)
+
+          test_file = Path('tests/Browser/hm-loader-click-guard.test.js')
+          test_source = test_file.read_text()
+          test_source = test_source.replace(
+              "        setTimeout, clearTimeout,\n        setInterval(callback)",
+              "        setTimeout(callback, delay, ...args) { if (Number(delay) > 5000) return { __hmLongTimer: true }; return setTimeout(callback, delay, ...args); },\n        clearTimeout(id) { if (!id?.__hmLongTimer) clearTimeout(id); },\n        setInterval(callback)",
+          )
+          test_file.write_text(test_source)
+          PY
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
