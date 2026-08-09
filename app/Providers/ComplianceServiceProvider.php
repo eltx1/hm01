@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Http\Controllers\Admin\AdsTxtComplianceController as AdminAdsTxtComplianceController;
+use App\Http\Controllers\Admin\SellerComplianceController;
 use App\Http\Controllers\Publisher\AdsTxtComplianceController as PublisherAdsTxtComplianceController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -28,6 +29,23 @@ final class ComplianceServiceProvider extends ServiceProvider
                 ->middleware(['horus', 'permission:supply_chain.ads_txt.manage'])->name('admin.compliance.ads-txt.records.disable');
             Route::post('/admin/compliance/ads-txt/bulk-assign', [AdminAdsTxtComplianceController::class, 'bulkAssign'])
                 ->middleware(['horus', 'permission:supply_chain.ads_txt.manage'])->name('admin.compliance.ads-txt.bulk-assign');
+
+            Route::get('/admin/compliance/sellers', [SellerComplianceController::class, 'index'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.view'])->name('admin.compliance.sellers.index');
+            Route::get('/admin/compliance/sellers/artifact', [SellerComplianceController::class, 'artifact'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.view', 'throttle:30,1'])->name('admin.compliance.sellers.artifact');
+            Route::post('/admin/compliance/sellers', [SellerComplianceController::class, 'store'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.manage'])->name('admin.compliance.sellers.store');
+            Route::get('/admin/compliance/sellers/{seller}', [SellerComplianceController::class, 'show'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.view'])->name('admin.compliance.sellers.show');
+            Route::put('/admin/compliance/sellers/{seller}', [SellerComplianceController::class, 'update'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.manage'])->name('admin.compliance.sellers.update');
+            Route::post('/admin/compliance/sellers/{seller}/review', [SellerComplianceController::class, 'review'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.review'])->name('admin.compliance.sellers.review');
+            Route::patch('/admin/compliance/sellers/{seller}/activate', [SellerComplianceController::class, 'activate'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.manage'])->name('admin.compliance.sellers.activate');
+            Route::patch('/admin/compliance/sellers/{seller}/deactivate', [SellerComplianceController::class, 'deactivate'])
+                ->middleware(['horus', 'permission:supply_chain.sellers.manage'])->name('admin.compliance.sellers.deactivate');
 
             Route::get('/publisher/ads-txt', [PublisherAdsTxtComplianceController::class, 'index'])
                 ->middleware('permission:publisher.ads_txt.view')->name('publisher.ads-txt.index');

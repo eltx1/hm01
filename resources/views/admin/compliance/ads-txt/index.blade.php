@@ -6,6 +6,11 @@
     <div><p class="eyebrow">Supply Chain & Compliance</p><h2>Network ads.txt</h2><p>Computed compliance across every publisher website. Status is derived from the canonical control-plane records and the latest safely fetched public file.</p></div>
 </section>
 
+<x-control-plane.workspace-tabs :items="[
+    ['label' => 'Ads.txt', 'href' => route('admin.compliance.ads-txt.index')],
+    ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
+]" label="Supply chain compliance sections" />
+
 <div class="table-wrap"><table><thead><tr><th>Publisher / website</th><th>Domain</th><th>Status</th><th>Required</th><th>Correct</th><th>Missing</th><th>Invalid / conflict</th><th>Last check</th><th>Verification</th><th>Action required</th></tr></thead><tbody>
 @forelse($sites as $site)
     @php($summary = $summaries[$site->id])

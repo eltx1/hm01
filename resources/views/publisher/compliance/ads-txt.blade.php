@@ -1,8 +1,19 @@
 @extends('layouts.admin')
-@section('title', 'Ads.txt & Compliance')
-@section('heading', 'Ads.txt & Compliance')
+@section('title', 'Supply Chain Compliance')
+@section('heading', 'Supply Chain Compliance')
 @section('content')
-<section class="hero"><div><p class="eyebrow">Publisher compliance</p><h2>Exact files, clear remediation</h2><p>Publish the exact canonical content at <code>/ads.txt</code> on each verified website. Checks read only your authorized domains and never reveal private demand credentials.</p></div></section>
+<section class="hero"><div><p class="eyebrow">Publisher compliance · Ads.txt &amp; Compliance</p><h2>One identity across every artifact</h2><p>Your reviewed seller identity connects the exact <code>/ads.txt</code> file to Horus sellers.json and the schain sent by the permanent browser loader. Private demand credentials and other publishers’ identities are never exposed here.</p></div></section>
+
+<article class="workspace-section"><p class="eyebrow">Your public seller identity</p><h2>sellers.json &amp; schain health</h2>
+@forelse($sellerIdentities as $identity)
+    <div class="publisher-compliance-card managed-record">
+        <div class="workspace-heading"><div><strong><code>{{ $identity['seller_id'] }}</code></strong><p>{{ $identity['seller_type'] }} · {{ $identity['is_confidential'] ? 'Confidential public declaration' : ($identity['public_name'].' · '.$identity['public_domain']) }}</p></div><div class="status-row"><x-status-badge :status="$identity['status']" /><x-status-badge :status="$identity['review_status']" /></div></div>
+        <div class="status-row"><span>sellers.json</span><x-status-badge :status="$identity['sellers_json_health']" /><span>Ads.txt</span><x-status-badge :status="$identity['ads_txt_health']" /><span>schain</span><x-status-badge :status="$identity['schain_health']" /></div>
+        @foreach($identity['sites'] as $identitySite)<div class="compact-row"><span>{{ $identitySite['domain'] }}</span><div class="status-row"><x-status-badge :status="$identitySite['ads_txt_health']" /><x-status-badge :status="$identitySite['schain_health']" /></div></div>@endforeach
+        @if($identity['review_status'] !== \App\Enums\SupplyChainReviewStatus::Verified)<p class="muted">Structural identity changes require Horus Admin review. Contact your account team; publisher users cannot change seller IDs.</p>@endif
+    </div>
+@empty<p class="muted">Horus has not configured a seller identity for this publisher. Ads.txt demand records remain visible below; contact your account team before programmatic activation that requires Horus sellers.json and schain.</p>@endforelse
+</article>
 
 @forelse($sites as $site)
 @php($summary = $summaries[$site->id])

@@ -22,10 +22,34 @@ final class AdsTxtComplianceService
     {
         $result = $this->invariants->adsTxtForSite($site);
         $content = $this->artifacts->adsTxtForSite($site, $result);
-        $records = collect($result['records'])->values()->map(function ($record, int $index) use ($result): array {
+        $entries = $result['entries'] ?? collect($result['records'])->values()->map(
+            fn ($record, int $index): array => [
+                'record' => $record,
+                'declaration' => null,
+                'source_type' => 'DEMAND_RECORD',
+                'line' => $result['lines'][$index] ?? $record->raw_record,
+            ],
+        )->all();
+        $records = collect($entries)->map(function (array $entry): array {
+            if ($entry['source_type'] === 'SELLER_DECLARATION') {
+                $declaration = $entry['declaration'];
+
+                return [
+                    'id' => $declaration->id,
+                    'canonical' => $entry['line'],
+                    'source' => 'CANONICAL_SELLER_IDENTITY',
+                    'scope' => $declaration->site_id ? 'WEBSITE' : 'PUBLISHER_GLOBAL',
+                    'account_id' => null,
+                    'account_label' => 'Horus Media seller identity',
+                    'status' => $declaration->status,
+                ];
+            }
+
+            $record = $entry['record'];
+
             return [
                 'id' => $record->id,
-                'canonical' => $result['lines'][$index] ?? $record->raw_record,
+                'canonical' => $entry['line'],
                 'source' => $record->source,
                 'scope' => $record->site_id ? 'WEBSITE' : 'ACCOUNT_GLOBAL',
                 'account_id' => $record->demand_account_id,

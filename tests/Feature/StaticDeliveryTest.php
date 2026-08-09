@@ -192,12 +192,15 @@ class StaticDeliveryTest extends TestCase
 
         $files = app(StaticDeliverySnapshotBuilder::class)->build()->files;
         $adsTxt = $files['supply/sites/'.$site->public_key.'/ads.txt'];
-        $sellers = json_decode($files['supply/sellers.json'], true, 512, JSON_THROW_ON_ERROR);
+        $sellers = json_decode($files['sellers.json'], true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertStringContainsString('OWNERDOMAIN='.$site->primary_domain, $adsTxt);
         $this->assertStringContainsString('MANAGERDOMAIN=', $adsTxt);
         $this->assertSame('publisher-42', $sellers['sellers'][0]['seller_id']);
         $this->assertArrayNotHasKey('identifiers', $sellers);
+        $this->assertSame($files['sellers.json'], $files['supply/sellers.json']);
+        $this->assertStringContainsString("/sellers.json\n", $files['_headers']);
+        $this->assertStringContainsString('Content-Type: application/json; charset=utf-8', $files['_headers']);
         $this->assertArrayHasKey('health/delivery.json', $files);
     }
 

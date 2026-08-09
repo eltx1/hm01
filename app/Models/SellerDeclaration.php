@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\SellerDeclarationStatus;
 use App\Enums\SupplyChainReviewStatus;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Services\SupplyChain\DomainNormalizer;
@@ -20,12 +21,20 @@ class SellerDeclaration extends Model
     {
         static::creating(function (SellerDeclaration $declaration): void {
             $declaration->review_status ??= SupplyChainReviewStatus::ReviewRequired;
+            $declaration->status ??= SellerDeclarationStatus::Disabled;
         });
     }
 
     protected function casts(): array
     {
-        return ['is_confidential' => 'boolean', 'review_status' => SupplyChainReviewStatus::class, 'last_verified_at' => 'datetime', 'reviewed_at' => 'datetime', 'metadata' => 'array'];
+        return [
+            'is_confidential' => 'boolean',
+            'status' => SellerDeclarationStatus::class,
+            'review_status' => SupplyChainReviewStatus::class,
+            'last_verified_at' => 'datetime',
+            'reviewed_at' => 'datetime',
+            'metadata' => 'array',
+        ];
     }
 
     protected function domain(): Attribute

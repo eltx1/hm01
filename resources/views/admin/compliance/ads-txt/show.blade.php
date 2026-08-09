@@ -4,6 +4,11 @@
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $site->publisher->display_name }} · Supply Chain & Compliance</p><h2>{{ $site->primary_domain }}</h2><div class="status-row"><x-status-badge :status="$summary['status']" /><x-status-badge :status="$summary['verification_state']" /></div><p>{{ $summary['action'] }}</p></div><a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.index') }}">All websites</a></section>
 
+<x-control-plane.workspace-tabs :items="[
+    ['label' => 'Ads.txt', 'href' => route('admin.compliance.ads-txt.index')],
+    ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
+]" label="Supply chain compliance sections" />
+
 <section class="metric-grid compliance-metrics" aria-label="Ads.txt summary">
     <article><p class="eyebrow">Required</p><strong class="metric">{{ $summary['required_count'] }}</strong></article>
     <article><p class="eyebrow">Correct</p><strong class="metric">{{ $summary['correct_count'] }}</strong></article>

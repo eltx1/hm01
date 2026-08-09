@@ -10,6 +10,7 @@ final class SupplyChainArtifactBuilder
     public function __construct(
         private readonly CanonicalJson $json,
         private readonly SupplyChainInvariantService $invariants,
+        private readonly SellersJsonValidator $sellersValidator,
     ) {}
 
     /** @return array<string, string> */
@@ -23,21 +24,42 @@ final class SupplyChainArtifactBuilder
             $files['supply/domains/'.$this->safeDomain($site->primary_domain).'/ads.txt'] = $contents;
         }
 
-        $sellers = collect($this->invariants->sellers()['sellers'])->map(
-            fn (array $seller): array => array_filter($seller['payload'], fn ($value) => $value !== null),
-        )->values()->all();
-        $sellerPayload = [
-            'contact_email' => config('supply-chain.contact_email'),
-            'contact_address' => config('supply-chain.contact_address'),
-            'version' => '1.0',
-            'sellers' => $sellers,
-        ];
-        if (filled(config('supply-chain.tag_id'))) {
-            $sellerPayload['identifiers'] = [['name' => 'TAG-ID', 'value' => config('supply-chain.tag_id')]];
-        }
-        $files['supply/sellers.json'] = $this->json->encode($sellerPayload);
+        $sellersJson = $this->sellersJson();
+        $files['sellers.json'] = $sellersJson;
+        $files['supply/sellers.json'] = $sellersJson;
 
         return $files;
+    }
+
+    /** @return array<string, mixed> */
+    public function sellersJsonPayload(): array
+    {
+        $payload = [
+            'version' => '1.0',
+            'sellers' => collect($this->invariants->sellers()['sellers'])->map(
+                fn (array $seller): array => array_filter($seller['payload'], fn ($value) => $value !== null),
+            )->values()->all(),
+        ];
+        $email = trim((string) config('supply-chain.contact_email'));
+        $address = trim((string) config('supply-chain.contact_address'));
+        $tagId = trim((string) config('supply-chain.tag_id'));
+        if ($email !== '') {
+            $payload['contact_email'] = $email;
+        }
+        if ($address !== '') {
+            $payload['contact_address'] = $address;
+        }
+        if ($tagId !== '') {
+            $payload['identifiers'] = [['name' => 'TAG-ID', 'value' => $tagId]];
+        }
+        $this->sellersValidator->assertValid($payload);
+
+        return $payload;
+    }
+
+    public function sellersJson(): string
+    {
+        return $this->json->encode($this->sellersJsonPayload());
     }
 
     /** @param  array{records: array, lines: array, findings: array}|null  $adsTxt */

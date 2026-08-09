@@ -208,8 +208,24 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: application/json; charset=utf-8
   X-Robots-Tag: noindex
 
-/supply/*
+/sellers.json
   Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=3600
+  Content-Type: application/json; charset=utf-8
+  X-Content-Type-Options: nosniff
+
+/supply/sellers.json
+  Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=3600
+  Content-Type: application/json; charset=utf-8
+  X-Content-Type-Options: nosniff
+
+/supply/*/ads.txt
+  Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=3600
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+
+/supply/*/*/ads.txt
+  Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=3600
+  Content-Type: text/plain; charset=utf-8
   X-Content-Type-Options: nosniff
 HEADERS;
     }

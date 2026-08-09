@@ -4,6 +4,8 @@ namespace App\Services\SupplyChain;
 
 use App\Enums\DemandAccountScope;
 use App\Enums\DemandApprovalStatus;
+use App\Enums\SellerDeclarationStatus;
+use App\Enums\SellerType;
 use App\Enums\SupplyChainReviewStatus;
 use App\Models\DemandAccount;
 use App\Models\DemandAdsTxtRecord;
@@ -87,83 +89,100 @@ final class SupplyChainInvariantService
         array $attributes,
         User $actor,
     ): SellerDeclaration {
-        $this->assertPublisherSite($publisher, $site);
-        $sellerId = trim((string) ($attributes['seller_id'] ?? ''));
-        if ($sellerId === '' || strlen($sellerId) > 255 || preg_match('/[\x00-\x1F\x7F,]/', $sellerId)) {
-            throw ValidationException::withMessages(['seller_id' => 'Seller ID must be a non-empty value without commas or control characters.']);
-        }
+        $candidate = $this->normalizedSellerAttributes($publisher, $site, $attributes);
 
-        $sellerType = strtoupper(trim((string) ($attributes['seller_type'] ?? '')));
-        if (! in_array($sellerType, ['PUBLISHER', 'INTERMEDIARY', 'BOTH'], true)) {
-            throw ValidationException::withMessages(['seller_type' => 'Seller type must be PUBLISHER, INTERMEDIARY, or BOTH.']);
-        }
-
-        $name = trim((string) ($attributes['name'] ?? ''));
-        if ($name === '' || mb_strlen($name) > 255) {
-            throw ValidationException::withMessages(['name' => 'An internal seller identity name is required.']);
-        }
-        $domain = $this->validatedDomain($attributes['domain'] ?? null, 'domain');
-        if (! $domain) {
-            throw ValidationException::withMessages(['domain' => 'An internal seller business domain is required.']);
-        }
-        if ($publisher->business_domain && ! $this->domains->same($publisher->business_domain, $domain)) {
-            throw ValidationException::withMessages([
-                'domain' => 'Seller domain must match the publisher business domain. Website domains are represented by the Site instead.',
-            ]);
-        }
-
-        $isConfidential = (bool) ($attributes['is_confidential'] ?? false);
-        $status = strtoupper((string) ($attributes['status'] ?? 'ACTIVE'));
-        if (! in_array($status, ['ACTIVE', 'DISABLED'], true)) {
-            throw ValidationException::withMessages(['status' => 'Seller status must be ACTIVE or DISABLED.']);
-        }
-
-        return DB::transaction(function () use ($publisher, $site, $sellerId, $sellerType, $name, $domain, $isConfidential, $status, $actor): SellerDeclaration {
+        return DB::transaction(function () use ($publisher, $site, $candidate, $actor): SellerDeclaration {
             $declaration = SellerDeclaration::withoutGlobalScope('organization')->firstOrNew([
                 'organization_id' => $publisher->organization_id,
                 'site_id' => $site?->id,
-                'seller_id' => $sellerId,
+                'seller_id' => $candidate['seller_id'],
             ]);
-            $candidate = [
-                'publisher_id' => $publisher->id,
-                'seller_id' => $sellerId,
-                'seller_type' => $sellerType,
-                'name' => $name,
-                'domain' => $domain,
-                'is_confidential' => $isConfidential,
-            ];
-            $this->assertSellerIdAvailable($declaration, $candidate);
 
-            $before = $declaration->exists ? $this->safeSellerValues($declaration) : [];
-            $identityChanged = ! $declaration->exists || collect($candidate)->contains(
-                fn (mixed $value, string $key): bool => $declaration->getAttribute($key) != $value,
-            );
-            $declaration->fill($candidate + [
-                'organization_id' => $publisher->organization_id,
-                'site_id' => $site?->id,
-                'status' => $status,
-            ]);
-            if ($identityChanged) {
-                $declaration->fill([
-                    'review_status' => SupplyChainReviewStatus::ReviewRequired,
-                    'reviewed_at' => null,
-                    'reviewed_by' => null,
-                    'last_verified_at' => null,
-                ]);
-            }
-            $declaration->save();
-
-            $this->audit->record(
-                'supply_chain.seller.updated',
-                $publisher->organization_id,
-                $actor,
-                $declaration,
-                $before,
-                $this->safeSellerValues($declaration),
-            );
-
-            return $declaration->refresh();
+            return $this->persistSellerDeclaration($declaration, $publisher, $site, $candidate, $actor, false);
         });
+    }
+
+    public function createSellerDeclaration(
+        Publisher $publisher,
+        ?Site $site,
+        array $attributes,
+        User $actor,
+    ): SellerDeclaration {
+        $candidate = $this->normalizedSellerAttributes($publisher, $site, array_merge($attributes, [
+            'status' => SellerDeclarationStatus::Disabled->value,
+        ]));
+        $exists = SellerDeclaration::withoutGlobalScope('organization')
+            ->where('organization_id', $publisher->organization_id)
+            ->where('seller_id', $candidate['seller_id'])
+            ->when($site, fn ($query) => $query->where('site_id', $site->id), fn ($query) => $query->whereNull('site_id'))
+            ->exists();
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'seller_id' => 'This seller ID already has a declaration for the selected scope. Review the existing declaration instead.',
+            ]);
+        }
+
+        return $this->saveSellerDeclaration($publisher, $site, $candidate, $actor);
+    }
+
+    public function updateSellerDeclaration(
+        SellerDeclaration $declaration,
+        ?Site $site,
+        array $attributes,
+        User $actor,
+    ): SellerDeclaration {
+        $publisher = Publisher::withoutGlobalScope('organization')->findOrFail($declaration->publisher_id);
+        $candidate = $this->normalizedSellerAttributes($publisher, $site, array_merge($attributes, [
+            'status' => $this->sellerStatus($declaration)->value,
+        ]));
+
+        return DB::transaction(function () use ($declaration, $publisher, $site, $candidate, $actor): SellerDeclaration {
+            $locked = SellerDeclaration::withoutGlobalScope('organization')->lockForUpdate()->findOrFail($declaration->id);
+
+            return $this->persistSellerDeclaration($locked, $publisher, $site, $candidate, $actor, true);
+        });
+    }
+
+    public function changeSellerStatus(
+        SellerDeclaration $declaration,
+        SellerDeclarationStatus $status,
+        User $actor,
+    ): SellerDeclaration {
+        $current = $this->sellerStatus($declaration);
+        if (! $current->canTransitionTo($status)) {
+            throw ValidationException::withMessages(['status' => 'The seller declaration is already '.$status->value.'.']);
+        }
+        if ($status === SellerDeclarationStatus::Active && $declaration->review_status !== SupplyChainReviewStatus::Verified) {
+            throw ValidationException::withMessages([
+                'status' => 'A seller declaration must be verified before it can be activated.',
+            ]);
+        }
+
+        $publisher = Publisher::withoutGlobalScope('organization')->findOrFail($declaration->publisher_id);
+        $site = $declaration->site_id
+            ? Site::withoutGlobalScope('organization')->findOrFail($declaration->site_id)
+            : null;
+        $candidate = $this->normalizedSellerAttributes($publisher, $site, [
+            'seller_id' => $declaration->seller_id,
+            'seller_type' => $declaration->seller_type,
+            'name' => $declaration->name,
+            'domain' => $declaration->domain,
+            'is_confidential' => $declaration->is_confidential,
+            'status' => $status->value,
+        ]);
+        $this->assertSellerIdAvailable($declaration, $candidate);
+        $before = $this->safeSellerValues($declaration);
+        $declaration->update(['status' => $status]);
+        $this->audit->record(
+            $status === SellerDeclarationStatus::Active ? 'supply_chain.seller.activated' : 'supply_chain.seller.deactivated',
+            $declaration->organization_id,
+            $actor,
+            $declaration,
+            $before,
+            $this->safeSellerValues($declaration),
+        );
+
+        return $declaration->refresh();
     }
 
     public function reviewSellerDeclaration(
@@ -171,13 +190,31 @@ final class SupplyChainInvariantService
         SupplyChainReviewStatus $status,
         User $actor,
     ): SellerDeclaration {
+        if ($status === SupplyChainReviewStatus::Verified) {
+            $publisher = Publisher::withoutGlobalScope('organization')->findOrFail($declaration->publisher_id);
+            $site = $declaration->site_id
+                ? Site::withoutGlobalScope('organization')->findOrFail($declaration->site_id)
+                : null;
+            $this->normalizedSellerAttributes($publisher, $site, [
+                'seller_id' => $declaration->seller_id,
+                'seller_type' => $declaration->seller_type,
+                'name' => $declaration->name,
+                'domain' => $declaration->domain,
+                'is_confidential' => $declaration->is_confidential,
+                'status' => $this->sellerStatus($declaration)->value,
+            ]);
+        }
         $before = $this->safeSellerValues($declaration);
-        $declaration->update([
+        $updates = [
             'review_status' => $status,
             'reviewed_at' => $status === SupplyChainReviewStatus::ReviewRequired ? null : now(),
             'reviewed_by' => $status === SupplyChainReviewStatus::ReviewRequired ? null : $actor->id,
             'last_verified_at' => $status === SupplyChainReviewStatus::Verified ? now() : $declaration->last_verified_at,
-        ]);
+        ];
+        if ($status === SupplyChainReviewStatus::Rejected) {
+            $updates['status'] = SellerDeclarationStatus::Disabled;
+        }
+        $declaration->update($updates);
         $this->audit->record(
             'supply_chain.seller.reviewed',
             $declaration->organization_id,
@@ -268,7 +305,7 @@ final class SupplyChainInvariantService
     }
 
     /** @return array{records: array<int, DemandAdsTxtRecord>, lines: array<int, string>, findings: array<int, array<string, string>>} */
-    public function adsTxtForSite(Site $site): array
+    public function adsTxtForSite(Site $site, ?array $network = null): array
     {
         $records = DemandAdsTxtRecord::withoutGlobalScope('organization')
             ->with([
@@ -314,8 +351,37 @@ final class SupplyChainInvariantService
                 return null;
             }
 
-            return ['record' => $record, 'line' => $line, 'key' => $this->adsTxtIdentityKey($record)];
+            return [
+                'record' => $record,
+                'declaration' => null,
+                'source_type' => 'DEMAND_RECORD',
+                'line' => $line,
+                'key' => $this->adsTxtIdentityKey($record),
+                'sort_key' => implode('|', [$record->site_id ? '1' : '2', $record->demand_account_id, $record->id]),
+            ];
         })->filter()->values();
+
+        $siteSeller = $this->sellerForSite($site, $network);
+        $findings = array_merge($findings, $siteSeller['findings']);
+        if ($siteSeller['seller']) {
+            $sellerType = SellerType::from((string) data_get($siteSeller['seller'], 'payload.seller_type'));
+            if ($sellerType->ownsInventory()) {
+                try {
+                    $managerDomain = $this->managerDomain();
+                    $sellerId = (string) data_get($siteSeller['seller'], 'payload.seller_id');
+                    $eligible->push([
+                        'record' => null,
+                        'declaration' => $siteSeller['seller']['declaration'],
+                        'source_type' => 'SELLER_DECLARATION',
+                        'line' => $managerDomain.', '.$sellerId.', DIRECT',
+                        'key' => strtolower($managerDomain)."\0".$sellerId,
+                        'sort_key' => '0|'.$sellerId,
+                    ]);
+                } catch (InvalidArgumentException) {
+                    $findings[] = $this->finding('MANAGER_DOMAIN_INVALID', 'ERROR', 'The configured Horus manager domain is invalid.');
+                }
+            }
+        }
 
         $selected = collect();
         foreach ($eligible->groupBy('key') as $group) {
@@ -327,17 +393,14 @@ final class SupplyChainInvariantService
             if ($group->count() > 1) {
                 $findings[] = $this->finding('DUPLICATE_ADS_TXT_RECORD', 'WARNING', 'Equivalent global or site Ads.txt records were collapsed to one canonical line.');
             }
-            $selected->push($group->sortBy(fn (array $item): string => implode('|', [
-                $item['record']->site_id ? '0' : '1',
-                $item['record']->demand_account_id,
-                $item['record']->id,
-            ]))->first());
+            $selected->push($group->sortBy('sort_key')->first());
         }
 
         $selected = $selected->sortBy('line')->values();
 
         return [
-            'records' => $selected->pluck('record')->all(),
+            'records' => $selected->pluck('record')->filter()->values()->all(),
+            'entries' => $selected->all(),
             'lines' => $selected->pluck('line')->all(),
             'findings' => $this->uniqueFindings($findings),
         ];
@@ -356,7 +419,7 @@ final class SupplyChainInvariantService
             if (! $publisher || ($declaration->site_id && ! $declaration->site)
                 || $publisher->organization_id !== $declaration->organization_id
                 || ($declaration->site && $declaration->site->publisher_id !== $publisher->id)) {
-                $findings[] = $this->finding('SELLER_ENTITY_MISMATCH', 'ERROR', 'A seller declaration is not mapped to its publisher entity.');
+                $findings[] = $this->finding('SELLER_ENTITY_MISMATCH', 'ERROR', 'A seller declaration is not mapped to its publisher entity.', (string) $declaration->seller_id);
 
                 return null;
             }
@@ -364,26 +427,28 @@ final class SupplyChainInvariantService
             try {
                 $domain = (string) $this->domains->normalize($declaration->domain);
             } catch (InvalidArgumentException) {
-                $findings[] = $this->finding('SELLER_DOMAIN_INVALID', 'ERROR', 'A seller declaration contains an invalid business domain.');
+                $findings[] = $this->finding('SELLER_DOMAIN_INVALID', 'ERROR', 'A seller declaration contains an invalid business domain.', (string) $declaration->seller_id);
 
                 return null;
             }
-            $type = strtoupper((string) $declaration->seller_type);
-            if (! in_array($type, ['PUBLISHER', 'INTERMEDIARY', 'BOTH'], true) || blank($declaration->name)) {
-                $findings[] = $this->finding('SELLER_IDENTITY_INCOMPLETE', 'ERROR', 'A seller declaration has an invalid type or incomplete internal identity.');
+            $type = SellerType::tryFrom(strtoupper((string) $declaration->seller_type));
+            $sellerId = trim((string) $declaration->seller_id);
+            if (! $type || $sellerId === '' || strlen($sellerId) > 64
+                || preg_match('/[\s,\x00-\x1F\x7F]/u', $sellerId) || blank($declaration->name)) {
+                $findings[] = $this->finding('SELLER_IDENTITY_INCOMPLETE', 'ERROR', 'A seller declaration has an invalid type or incomplete internal identity.', $sellerId);
 
                 return null;
             }
             if ($publisher->business_domain && ! $this->domains->same($publisher->business_domain, $domain)) {
-                $findings[] = $this->finding('SELLER_DOMAIN_CONFLICT', 'ERROR', 'A seller public domain conflicts with the publisher business domain.');
+                $findings[] = $this->finding('SELLER_DOMAIN_CONFLICT', 'ERROR', 'A seller public domain conflicts with the publisher business domain.', $sellerId);
 
                 return null;
             }
 
             $confidential = (bool) $declaration->is_confidential;
             $payload = [
-                'seller_id' => $declaration->seller_id,
-                'seller_type' => $type,
+                'seller_id' => $sellerId,
+                'seller_type' => $type->value,
                 'name' => $confidential ? null : trim((string) $declaration->name),
                 'domain' => $confidential ? null : $domain,
                 'is_confidential' => $confidential ? 1 : 0,
@@ -393,19 +458,26 @@ final class SupplyChainInvariantService
                 'declaration' => $declaration,
                 'publisher_id' => $publisher->id,
                 'payload' => $payload,
-                'fingerprint' => hash('sha256', json_encode([$publisher->id, $payload], JSON_THROW_ON_ERROR)),
+                'fingerprint' => $this->sellerFingerprint(
+                    $publisher->id,
+                    $type->value,
+                    (string) $declaration->name,
+                    $domain,
+                    $confidential,
+                ),
             ];
         })->filter()->values();
 
         $sellers = collect();
         foreach ($valid->groupBy(fn (array $item): string => (string) $item['payload']['seller_id']) as $group) {
+            $sellerId = (string) data_get($group->first(), 'payload.seller_id');
             if ($group->pluck('fingerprint')->unique()->count() > 1) {
-                $findings[] = $this->finding('SELLER_ID_CONFLICT', 'ERROR', 'A seller ID maps to more than one entity or public identity.');
+                $findings[] = $this->finding('SELLER_ID_CONFLICT', 'ERROR', 'A seller ID maps to more than one entity or public identity.', $sellerId);
 
                 continue;
             }
             if ($group->count() > 1) {
-                $findings[] = $this->finding('DUPLICATE_SELLER_DECLARATION', 'WARNING', 'Equivalent seller declarations were collapsed to one sellers.json entry.');
+                $findings[] = $this->finding('DUPLICATE_SELLER_DECLARATION', 'WARNING', 'Equivalent seller declarations were collapsed to one sellers.json entry.', $sellerId);
             }
             $sellers->push($group->first());
         }
@@ -416,23 +488,39 @@ final class SupplyChainInvariantService
         ];
     }
 
-    /** @return array{complete: int, ver: string, nodes: array<int, array{asi: string, sid: string, hp: int}>, findings: array<int, array<string, string>>} */
-    public function schainForSite(Site $site): array
+    /** @return array{seller: array<string, mixed>|null, declarations: array<int, SellerDeclaration>, findings: array<int, array<string, string>>} */
+    public function sellerForSite(Site $site, ?array $network = null): array
     {
-        $network = $this->sellers();
-        $publishedSellerIds = collect($network['sellers'])->pluck('payload.seller_id')->map(fn ($id): string => (string) $id);
+        $network ??= $this->sellers();
+        $published = collect($network['sellers'])->keyBy(fn (array $seller): string => (string) data_get($seller, 'payload.seller_id'));
         $candidates = SellerDeclaration::withoutGlobalScope('organization')
             ->with(['publisher', 'site.publisher'])
-            ->where('status', 'ACTIVE')
+            ->where('status', SellerDeclarationStatus::Active->value)
             ->where(fn ($query) => $query->whereNull('site_id')->orWhere('site_id', $site->id))
             ->orderBy('seller_id')->orderBy('id')->get()
             ->filter(fn (SellerDeclaration $seller): bool => $this->sellerPublisher($seller)?->id === $site->publisher_id)
-            ->filter(fn (SellerDeclaration $seller): bool => $publishedSellerIds->contains((string) $seller->seller_id));
+            ->filter(fn (SellerDeclaration $seller): bool => $published->has((string) $seller->seller_id))
+            ->values();
         $sellerIds = $candidates->pluck('seller_id')->map(fn ($id): string => (string) $id)->unique()->values();
         $findings = $network['findings'];
         if ($sellerIds->count() > 1) {
-            $findings[] = $this->finding('SITE_SELLER_CONFLICT', 'ERROR', 'The website resolves to multiple active Horus seller IDs; schain cannot be selected safely.');
+            $findings[] = $this->finding('SITE_SELLER_CONFLICT', 'ERROR', 'The website resolves to multiple active Horus seller IDs; no account-specific identity is guessed.');
+        } elseif ($sellerIds->isEmpty()) {
+            $findings[] = $this->finding('SITE_SELLER_MISSING', 'WARNING', 'No unambiguous active seller identity is available for this website.');
         }
+
+        return [
+            'seller' => $sellerIds->count() === 1 ? $published->get($sellerIds->first()) : null,
+            'declarations' => $candidates->all(),
+            'findings' => $this->uniqueFindings($findings),
+        ];
+    }
+
+    /** @return array{complete: int, ver: string, nodes: array<int, array{asi: string, sid: string, hp: int}>, findings: array<int, array<string, string>>} */
+    public function schainForSite(Site $site, ?array $network = null): array
+    {
+        $selection = $this->sellerForSite($site, $network);
+        $findings = $selection['findings'];
 
         $managerDomain = null;
         try {
@@ -441,16 +529,18 @@ final class SupplyChainInvariantService
             $findings[] = $this->finding('MANAGER_DOMAIN_INVALID', 'ERROR', 'The configured Horus manager domain is invalid.');
         }
 
-        if ($sellerIds->count() !== 1 || ! $managerDomain) {
-            if ($sellerIds->isEmpty()) {
-                $findings[] = $this->finding('SITE_SELLER_MISSING', 'WARNING', 'No unambiguous active seller identity is available for this website.');
-            }
-
+        if (! $selection['seller'] || ! $managerDomain) {
             return ['complete' => 0, 'ver' => '1.0', 'nodes' => [], 'findings' => $this->uniqueFindings($findings)];
         }
 
-        $sellerType = strtoupper((string) $candidates->first()->seller_type);
-        $complete = $sellerType === 'INTERMEDIARY' ? 0 : 1;
+        $sellerId = (string) data_get($selection['seller'], 'payload.seller_id');
+        if (strlen($sellerId) > 64) {
+            $findings[] = $this->finding('SCHAIN_SELLER_ID_TOO_LONG', 'ERROR', 'The selected seller ID exceeds the SupplyChain Object 64-character limit.');
+
+            return ['complete' => 0, 'ver' => '1.0', 'nodes' => [], 'findings' => $this->uniqueFindings($findings)];
+        }
+        $sellerType = SellerType::from((string) data_get($selection['seller'], 'payload.seller_type'));
+        $complete = $sellerType->ownsInventory() ? 1 : 0;
         if ($complete === 0) {
             $findings[] = $this->finding(
                 'SCHAIN_UPSTREAM_IDENTITY_REQUIRED',
@@ -462,7 +552,7 @@ final class SupplyChainInvariantService
         return [
             'complete' => $complete,
             'ver' => '1.0',
-            'nodes' => [['asi' => $managerDomain, 'sid' => $sellerIds->first(), 'hp' => 1]],
+            'nodes' => [['asi' => $managerDomain, 'sid' => $sellerId, 'hp' => 1]],
             'findings' => $this->uniqueFindings($findings),
         ];
     }
@@ -500,6 +590,119 @@ final class SupplyChainInvariantService
     private function adsTxtIdentityKey(DemandAdsTxtRecord $record): string
     {
         return strtolower((string) $this->domains->normalize($record->domain))."\0".trim((string) $record->publisher_account_id);
+    }
+
+    /** @return array<string, mixed> */
+    private function normalizedSellerAttributes(Publisher $publisher, ?Site $site, array $attributes): array
+    {
+        $this->assertPublisherSite($publisher, $site);
+        $sellerId = trim((string) ($attributes['seller_id'] ?? ''));
+        if ($sellerId === '' || strlen($sellerId) > 64 || preg_match('/[\s,\x00-\x1F\x7F]/u', $sellerId)) {
+            throw ValidationException::withMessages([
+                'seller_id' => 'Seller ID must be 1–64 characters without whitespace, commas, or control characters.',
+            ]);
+        }
+
+        $sellerType = SellerType::tryFrom(strtoupper(trim((string) ($attributes['seller_type'] ?? ''))));
+        if (! $sellerType) {
+            throw ValidationException::withMessages(['seller_type' => 'Seller type must be PUBLISHER, INTERMEDIARY, or BOTH.']);
+        }
+
+        $name = trim((string) ($attributes['name'] ?? ''));
+        if ($name === '' || mb_strlen($name) > 255 || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $name)) {
+            throw ValidationException::withMessages(['name' => 'An internal seller identity name is required and must be safe text.']);
+        }
+        $domain = $this->validatedDomain($attributes['domain'] ?? null, 'domain');
+        if (! $domain) {
+            throw ValidationException::withMessages(['domain' => 'An internal seller business domain is required.']);
+        }
+        if ($publisher->business_domain && ! $this->domains->same($publisher->business_domain, $domain)) {
+            throw ValidationException::withMessages([
+                'domain' => 'Seller domain must match the publisher business domain. Website domains are represented by the Site instead.',
+            ]);
+        }
+
+        $rawStatus = $attributes['status'] ?? SellerDeclarationStatus::Active;
+        $status = $rawStatus instanceof SellerDeclarationStatus
+            ? $rawStatus
+            : SellerDeclarationStatus::tryFrom(strtoupper(trim((string) $rawStatus)));
+        if (! $status) {
+            throw ValidationException::withMessages(['status' => 'Seller status must be ACTIVE or DISABLED.']);
+        }
+
+        return [
+            'publisher_id' => $publisher->id,
+            'seller_id' => $sellerId,
+            'seller_type' => $sellerType->value,
+            'name' => $name,
+            'domain' => $domain,
+            'is_confidential' => (bool) ($attributes['is_confidential'] ?? false),
+            'status' => $status,
+        ];
+    }
+
+    /** @param array<string, mixed> $candidate */
+    private function persistSellerDeclaration(
+        SellerDeclaration $declaration,
+        Publisher $publisher,
+        ?Site $site,
+        array $candidate,
+        User $actor,
+        bool $disableAfterStructuralChange,
+    ): SellerDeclaration {
+        $duplicateScope = SellerDeclaration::withoutGlobalScope('organization')
+            ->where('organization_id', $publisher->organization_id)
+            ->where('seller_id', $candidate['seller_id'])
+            ->when($site, fn ($query) => $query->where('site_id', $site->id), fn ($query) => $query->whereNull('site_id'))
+            ->when($declaration->exists, fn ($query) => $query->whereKeyNot($declaration->id))
+            ->exists();
+        if ($duplicateScope) {
+            throw ValidationException::withMessages([
+                'seller_id' => 'This seller ID already has a declaration for the selected scope.',
+            ]);
+        }
+
+        $this->assertSellerIdAvailable($declaration, $candidate);
+        $before = $declaration->exists ? $this->safeSellerValues($declaration) : [];
+        $identity = collect($candidate)->except('status');
+        $identityChanged = ! $declaration->exists || $identity->contains(
+            fn (mixed $value, string $key): bool => $declaration->getAttribute($key) != $value,
+        ) || $declaration->site_id !== $site?->id;
+        $status = $candidate['status'];
+        if ($declaration->exists && $identityChanged && $disableAfterStructuralChange) {
+            $status = SellerDeclarationStatus::Disabled;
+        }
+        $declaration->fill($identity->all() + [
+            'organization_id' => $publisher->organization_id,
+            'site_id' => $site?->id,
+            'status' => $status,
+        ]);
+        if ($identityChanged) {
+            $declaration->fill([
+                'review_status' => SupplyChainReviewStatus::ReviewRequired,
+                'reviewed_at' => null,
+                'reviewed_by' => null,
+                'last_verified_at' => null,
+            ]);
+        }
+        $declaration->save();
+        $this->audit->record(
+            'supply_chain.seller.updated',
+            $publisher->organization_id,
+            $actor,
+            $declaration,
+            $before,
+            $this->safeSellerValues($declaration),
+        );
+
+        return $declaration->refresh();
+    }
+
+    private function sellerStatus(SellerDeclaration $declaration): SellerDeclarationStatus
+    {
+        return $declaration->status instanceof SellerDeclarationStatus
+            ? $declaration->status
+            : SellerDeclarationStatus::from((string) $declaration->status);
     }
 
     private function assertPublisherSite(Publisher $publisher, ?Site $site): void
@@ -548,10 +751,12 @@ final class SupplyChainInvariantService
 
     private function sellerFingerprint(string $publisherId, string $type, string $name, string $domain, bool $confidential): string
     {
-        $publicIdentity = $confidential ? [] : [trim($name), $this->validatedDomain($domain, 'domain')];
-
         return hash('sha256', json_encode([
-            $publisherId, strtoupper($type), $confidential, $publicIdentity,
+            $publisherId,
+            strtoupper($type),
+            $confidential,
+            trim($name),
+            $this->validatedDomain($domain, 'domain'),
         ], JSON_THROW_ON_ERROR));
     }
 
@@ -578,8 +783,10 @@ final class SupplyChainInvariantService
             'name' => $declaration->is_confidential ? '[CONFIDENTIAL]' : $declaration->name,
             'domain' => $declaration->is_confidential ? '[CONFIDENTIAL]' : $declaration->domain,
             'is_confidential' => (bool) $declaration->is_confidential,
-            'status' => $declaration->status,
-            'review_status' => $declaration->review_status,
+            'status' => $this->sellerStatus($declaration)->value,
+            'review_status' => $declaration->review_status instanceof SupplyChainReviewStatus
+                ? $declaration->review_status->value
+                : (string) $declaration->review_status,
         ];
     }
 
@@ -592,10 +799,15 @@ final class SupplyChainInvariantService
         }
     }
 
-    /** @return array{code: string, severity: string, message: string} */
-    private function finding(string $code, string $severity, string $message): array
+    /** @return array<string, string> */
+    private function finding(string $code, string $severity, string $message, ?string $sellerId = null): array
     {
-        return compact('code', 'severity', 'message');
+        return array_filter([
+            'code' => $code,
+            'severity' => $severity,
+            'message' => $message,
+            'seller_id' => $sellerId,
+        ], fn (?string $value): bool => $value !== null);
     }
 
     /** @param array<int, array<string, string>> $findings
