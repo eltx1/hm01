@@ -2,10 +2,13 @@
 
 namespace App\Services\Campaigns;
 
+use App\Services\Network\Contracts\DnsResolver;
 use Illuminate\Validation\ValidationException;
 
 final class RemoteUrlSafetyValidator
 {
+    public function __construct(private readonly DnsResolver $dns) {}
+
     public function assertPublicHttpUrl(string $url, string $field): void
     {
         $this->publicAddresses($url, $field);
@@ -16,13 +19,16 @@ final class RemoteUrlSafetyValidator
     {
         $parts = parse_url($url);
         $host = strtolower(rtrim((string) ($parts['host'] ?? ''), '.'));
-        if (! in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $port = isset($parts['port']) ? (int) $parts['port'] : ($scheme === 'https' ? 443 : 80);
+        if (! in_array($scheme, ['http', 'https'], true)
             || $host === '' || isset($parts['user']) || isset($parts['pass'])
+            || ! in_array($port, [80, 443], true)
             || $host === 'localhost' || str_ends_with($host, '.localhost') || str_ends_with($host, '.local')) {
             throw ValidationException::withMessages([$field => 'The remote URL is not safe for server-side validation.']);
         }
 
-        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : $this->addresses($host);
+        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : $this->dns->addresses($host);
         if ($addresses === []) {
             throw ValidationException::withMessages([$field => 'The remote hostname could not be resolved safely.']);
         }
@@ -33,11 +39,5 @@ final class RemoteUrlSafetyValidator
         }
 
         return $addresses;
-    }
-
-    private function addresses(string $host): array
-    {
-        $records = @dns_get_record($host, DNS_A | DNS_AAAA) ?: [];
-        return array_values(array_unique(array_filter(array_map(fn ($record) => $record['ip'] ?? $record['ipv6'] ?? null, $records))));
     }
 }

@@ -63,6 +63,7 @@ class Site extends Model
     public function bidderSiteMappings(): HasMany { return $this->hasMany(BidderSiteMapping::class); }
     public function syntheticProbeResults(): HasMany { return $this->hasMany(SyntheticProbeResult::class); }
     public function sellerDeclarations(): HasMany { return $this->hasMany(SellerDeclaration::class); }
+    public function supplyChainChecks(): HasMany { return $this->hasMany(SupplyChainCheck::class); }
 
     public function installationCode(): string
     {
