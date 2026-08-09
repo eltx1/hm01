@@ -1,5 +1,8 @@
 # Supply-chain identity foundation
 
+Live ads.txt verification, remediation, and managed-record controls are
+documented in [`ADS_TXT_COMPLIANCE.md`](ADS_TXT_COMPLIANCE.md).
+
 ## Status and authority
 
 This document defines the canonical Horus Media supply-chain identity model introduced by Task 2. Database records are the source of truth; generated files are deterministic projections and must never be edited as canonical input.

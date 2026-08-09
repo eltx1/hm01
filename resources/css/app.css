@@ -118,6 +118,22 @@ dd { margin: 0; }
 .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
 .health-grid > div { display: grid; gap: .35rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); padding: 1rem; }
 .section-anchor { color: var(--hm-gold-highlight); font-size: .85rem; }
+.compliance-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+.compliance-actions .button-link { margin-top: 0; }
+.compliance-code { max-height: 420px; overflow: auto; white-space: pre; border: 1px solid var(--hm-line-gold); border-radius: var(--hm-radius-sm); padding: 1rem; background: var(--hm-night); color: var(--hm-gold-soft); font: .82rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.record-line { display: block; margin: .45rem 0; border-left: 3px solid var(--hm-muted-2); padding: .55rem .7rem; overflow-wrap: anywhere; background: rgba(255, 255, 255, .025); }
+.record-correct { border-left-color: #4dd697; }
+.record-missing { border-left-color: var(--hm-danger); }
+.finding { display: grid; gap: .35rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); margin: .6rem 0; padding: .75rem; }
+.finding code { overflow-wrap: anywhere; }
+.finding-danger { border-color: rgba(239, 91, 103, .32); }
+.managed-record { border-top: 1px solid var(--hm-line); padding: 1rem 0; }
+.managed-record summary { cursor: pointer; color: var(--hm-gold-highlight); }
+.selection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); padding: 1rem; }
+.selection-grid legend { color: var(--hm-muted); padding: 0 .4rem; }
+.compliance-diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.compliance-diff-grid > div { border-top: 1px solid var(--hm-line); min-width: 0; }
+.table-note { display: block; margin-top: .35rem; color: var(--hm-muted); white-space: nowrap; }
 
 @media (max-width: 800px) {
     .admin-shell { grid-template-columns: 1fr; }
@@ -130,7 +146,7 @@ dd { margin: 0; }
     .topbar .status { display: none; }
     .topbar h1 { margin-bottom: 1.25rem; }
     .cards { grid-template-columns: 1fr; }
-    .metric-grid, .split-grid, .detail-grid, .action-center-grid, .health-grid { grid-template-columns: 1fr; }
+    .metric-grid, .split-grid, .detail-grid, .action-center-grid, .health-grid, .compliance-diff-grid, .selection-grid { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .full { grid-column: auto; }
     .contact-row { grid-template-columns: 1fr; }

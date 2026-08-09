@@ -29,6 +29,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertOk()
             ->assertSee('Publisher accounts')
             ->assertSee('Reporting &amp; finance', false)
+            ->assertSee('Ads.txt')
             ->assertDontSee('Production operations')
             ->assertDontSee('Access control')
             ->assertSee('data-nav-toggle', false);
@@ -48,7 +49,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('Reports, statements &amp; payments', false)
             ->assertSee('Contracts')
             ->assertDontSee('Invite a team member')
-            ->assertDontSee('Ads.txt &amp; Compliance', false)
+            ->assertSee('Ads.txt &amp; Compliance', false)
             ->assertDontSee('Production operations');
     }
 

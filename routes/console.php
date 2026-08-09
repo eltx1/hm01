@@ -2,11 +2,10 @@
 
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Http;
 use App\Models\Site;
 use App\Models\SyntheticProbeResult;
-use App\Models\SupplyChainCheck;
-use App\Services\Campaigns\RemoteUrlSafetyValidator;
+use App\Services\Compliance\AdsTxtVerifier;
+use Illuminate\Support\Facades\Http;
 
 Artisan::command('adtech:probe {--site=} {--environment=production}', function (): int {
     $environment = strtolower((string) $this->option('environment'));
@@ -38,36 +37,23 @@ Artisan::command('adtech:probe {--site=} {--environment=production}', function (
     return \Symfony\Component\Console\Command\Command::SUCCESS;
 })->purpose('Probe static Horus runtime without publisher impression telemetry.');
 
-Artisan::command('supply-chain:check {--site=}', function (RemoteUrlSafetyValidator $urls): int {
+Artisan::command('supply-chain:check {--site=}', function (AdsTxtVerifier $verifier): int {
     $sites = Site::withoutGlobalScopes()->when($this->option('site'), fn ($query, $id) => $query->whereKey($id))->get();
+    $errors = 0;
     foreach ($sites as $site) {
-        $url = 'https://'.$site->primary_domain.'/ads.txt';
         try {
-            $address = $urls->publicAddresses($url, 'ads_txt_url')[0];
-            $host = (string) parse_url($url, PHP_URL_HOST);
-            $response = Http::timeout(10)
-                ->withOptions(['allow_redirects' => false, 'curl' => [CURLOPT_RESOLVE => [$host.':443:'.$address]]])
-                ->withHeaders(['User-Agent' => 'HorusMedia-SupplyChain-Audit/1.0'])->get($url);
-            $body = $response->successful() ? $response->body() : '';
-            $findings = [
-                'ownerDomain' => preg_match('/^OWNERDOMAIN=/mi', $body) === 1,
-                'managerDomain' => preg_match('/^MANAGERDOMAIN=/mi', $body) === 1,
-                'records' => collect(preg_split('/\r\n|\r|\n/', $body))->filter(fn ($line) => preg_match('/^[^#=]+,[^,]+,(?:DIRECT|RESELLER)/i', trim($line)))->count(),
-            ];
-            $status = $response->successful() && $findings['ownerDomain'] && $findings['managerDomain'] ? 'PASS' : 'WARN';
-            $httpStatus = $response->status();
+            $check = $verifier->verify($site, 'SCHEDULED');
+            $this->line($site->display_name.': '.$check->status);
         } catch (\Throwable $exception) {
-            $body = ''; $findings = ['error' => mb_substr($exception->getMessage(), 0, 500)]; $status = 'FAIL'; $httpStatus = null;
+            $this->error($site->display_name.': verifier error');
+            $errors++;
         }
-        SupplyChainCheck::withoutGlobalScopes()->create([
-            'organization_id' => $site->organization_id, 'site_id' => $site->id, 'check_type' => 'ADS_TXT',
-            'status' => $status, 'url' => $url, 'http_status' => $httpStatus,
-            'checksum' => $body !== '' ? hash('sha256', $body) : null, 'findings' => $findings, 'checked_at' => now(),
-        ]);
-        $this->line($site->display_name.': '.$status);
     }
-    return \Symfony\Component\Console\Command\Command::SUCCESS;
-})->purpose('Audit publisher ads.txt 1.1 delivery and store crawler state.');
+
+    return $errors === 0
+        ? \Symfony\Component\Console\Command\Command::SUCCESS
+        : \Symfony\Component\Console\Command\Command::FAILURE;
+})->purpose('Safely verify publisher ads.txt 1.1 compliance and retain deduplicated history.');
 
 Schedule::command('operations:heartbeat scheduler')->everyMinute()->withoutOverlapping();
 Schedule::command('static-delivery:process')->everyMinute()->withoutOverlapping(10);

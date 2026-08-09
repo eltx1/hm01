@@ -19,3 +19,22 @@ navigation?.querySelectorAll('a').forEach((link) => link.addEventListener('click
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') setNavigation(false);
 });
+
+document.querySelectorAll('[data-copy-target]').forEach((button) => button.addEventListener('click', async () => {
+    const target = document.getElementById(button.dataset.copyTarget);
+    if (!target) return;
+    const content = target.textContent;
+    try {
+        await navigator.clipboard.writeText(content);
+        button.textContent = 'Copied';
+    } catch {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range);
+        document.execCommand('copy');
+        window.getSelection()?.removeAllRanges();
+        button.textContent = 'Copied';
+    }
+    window.setTimeout(() => { button.textContent = button.dataset.copyLabel || 'Copy All'; }, 1800);
+}));

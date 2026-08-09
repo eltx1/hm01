@@ -210,7 +210,7 @@ final class SupplyChainInvariantService
         $publisherAccountId = trim((string) ($record['publisher_account_id'] ?? ''));
         $relationship = strtoupper(trim((string) ($record['relationship'] ?? '')));
         $authority = strtolower(trim((string) ($record['certification_authority_id'] ?? '')));
-        if (! $domain || $publisherAccountId === '' || strlen($publisherAccountId) > 255 || preg_match('/[\x00-\x1F\x7F,]/', $publisherAccountId)) {
+        if (! $domain || $publisherAccountId === '' || strlen($publisherAccountId) > 255 || preg_match('/[\s,\x00-\x1F\x7F]/u', $publisherAccountId)) {
             throw ValidationException::withMessages(['publisher_account_id' => 'Ads.txt publisher account ID is invalid.']);
         }
         if (! in_array($relationship, ['DIRECT', 'RESELLER'], true)) {
@@ -271,7 +271,10 @@ final class SupplyChainInvariantService
     public function adsTxtForSite(Site $site): array
     {
         $records = DemandAdsTxtRecord::withoutGlobalScope('organization')
-            ->with(['account.network'])
+            ->with([
+                'account' => fn ($query) => $query->withoutGlobalScopes(),
+                'account.network',
+            ])
             ->where('status', 'ACTIVE')
             ->where(fn ($query) => $query->where('site_id', $site->id)->orWhereNull('site_id'))
             ->orderBy('domain')->orderBy('publisher_account_id')->orderBy('relationship')->orderBy('id')
@@ -485,7 +488,7 @@ final class SupplyChainInvariantService
         $publisher = trim((string) $record->publisher_account_id);
         $relationship = strtoupper(trim((string) $record->relationship));
         $authority = strtolower(trim((string) $record->certification_authority_id));
-        if (! $domain || $publisher === '' || preg_match('/[\x00-\x1F\x7F,]/', $publisher)
+        if (! $domain || $publisher === '' || preg_match('/[\s,\x00-\x1F\x7F]/u', $publisher)
             || ! in_array($relationship, ['DIRECT', 'RESELLER'], true)
             || ($authority !== '' && preg_match('/^[a-z0-9._-]+$/', $authority) !== 1)) {
             throw new InvalidArgumentException('Invalid Ads.txt record.');

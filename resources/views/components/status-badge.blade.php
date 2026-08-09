@@ -3,9 +3,9 @@
 @php
     $value = $status instanceof \BackedEnum ? $status->value : (string) $status;
     $tone = match (strtoupper($value)) {
-        'ACTIVE', 'APPROVED', 'HEALTHY', 'VERIFIED', 'SUCCEEDED', 'DEPLOYED', 'PAID', 'FINALIZED', 'SIGNED' => 'success',
-        'FAILED', 'REJECTED', 'SUSPENDED', 'CLOSED', 'ARCHIVED', 'EXPIRED', 'TERMINATED', 'CANCELLED' => 'danger',
-        'PENDING', 'PENDING_REVIEW', 'PENDING_VERIFICATION', 'REVIEW_REQUIRED', 'PROCESSING', 'RETRY_SCHEDULED', 'SENT', 'DEGRADED' => 'warning',
+        'ACTIVE', 'APPROVED', 'HEALTHY', 'VERIFIED', 'SUCCEEDED', 'DEPLOYED', 'PAID', 'FINALIZED', 'SIGNED', 'COMPLIANT', 'FRESH' => 'success',
+        'FAILED', 'REJECTED', 'SUSPENDED', 'CLOSED', 'ARCHIVED', 'EXPIRED', 'TERMINATED', 'CANCELLED', 'MISSING', 'INVALID', 'CONFLICT', 'UNREACHABLE' => 'danger',
+        'PENDING', 'PENDING_REVIEW', 'PENDING_VERIFICATION', 'REVIEW_REQUIRED', 'PROCESSING', 'RETRY_SCHEDULED', 'SENT', 'DEGRADED', 'PARTIAL', 'STALE', 'DUE' => 'warning',
         default => 'neutral',
     };
 @endphp

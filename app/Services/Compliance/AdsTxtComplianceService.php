@@ -1,0 +1,123 @@
+<?php
+
+namespace App\Services\Compliance;
+
+use App\Enums\AdsTxtComplianceStatus;
+use App\Models\Site;
+use App\Models\SupplyChainCheck;
+use App\Services\SupplyChain\SupplyChainArtifactBuilder;
+use App\Services\SupplyChain\SupplyChainInvariantService;
+
+final class AdsTxtComplianceService
+{
+    public function __construct(
+        private readonly SupplyChainArtifactBuilder $artifacts,
+        private readonly SupplyChainInvariantService $invariants,
+        private readonly AdsTxtParser $parser,
+        private readonly AdsTxtComparator $comparator,
+    ) {}
+
+    /** @return array<string, mixed> */
+    public function canonical(Site $site): array
+    {
+        $result = $this->invariants->adsTxtForSite($site);
+        $content = $this->artifacts->adsTxtForSite($site, $result);
+        $records = collect($result['records'])->values()->map(function ($record, int $index) use ($result): array {
+            return [
+                'id' => $record->id,
+                'canonical' => $result['lines'][$index] ?? $record->raw_record,
+                'source' => $record->source,
+                'scope' => $record->site_id ? 'WEBSITE' : 'ACCOUNT_GLOBAL',
+                'account_id' => $record->demand_account_id,
+                'account_label' => $record->account?->network?->name ?: 'Managed demand',
+                'status' => $record->status,
+            ];
+        })->all();
+
+        return [
+            'content' => $content,
+            'checksum' => hash('sha256', $content),
+            'records' => $records,
+            'record_count' => count($result['lines']),
+            'findings' => $result['findings'],
+            'parsed' => $this->parser->parse($content),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function summary(Site $site): array
+    {
+        $canonical = $this->canonical($site);
+        $latest = SupplyChainCheck::withoutGlobalScope('organization')
+            ->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
+            ->latest('checked_at')->first();
+        $comparison = $latest
+            ? $this->comparator->compare($canonical['content'], $latest->response_body ?? '', $canonical['findings'])
+            : [];
+        $fetchSucceeded = (bool) data_get($latest?->findings, 'fetch.ok', false);
+        $canonicalChanged = $latest && $latest->required_checksum !== $canonical['checksum'];
+        $currentStatusWins = in_array($comparison['status'] ?? null, [
+            AdsTxtComplianceStatus::Conflict->value,
+            AdsTxtComplianceStatus::Invalid->value,
+            AdsTxtComplianceStatus::NotConfigured->value,
+        ], true);
+        $baseStatus = $latest
+            ? ($fetchSucceeded || $currentStatusWins ? $comparison['status'] : $latest->status)
+            : ($canonical['record_count'] === 0
+            ? AdsTxtComplianceStatus::NotConfigured->value
+            : AdsTxtComplianceStatus::Stale->value);
+        $isStale = $latest && $latest->checked_at->lt(now()->subDays((int) config('ads-txt.fresh_for_days', 7)));
+        $status = ($isStale || $canonicalChanged)
+            && ! in_array($comparison['status'] ?? null, [AdsTxtComplianceStatus::Conflict->value, AdsTxtComplianceStatus::Invalid->value], true)
+            && $baseStatus !== AdsTxtComplianceStatus::NotConfigured->value
+            ? AdsTxtComplianceStatus::Stale->value
+            : $baseStatus;
+        $correct = count((array) ($comparison['correct'] ?? []));
+        $missing = count((array) ($comparison['missing'] ?? [])) + count((array) ($comparison['missing_directives'] ?? []));
+        $invalid = count((array) ($comparison['invalid'] ?? [])) + count((array) ($comparison['conflicts'] ?? []));
+        if (! $latest && $canonical['record_count'] > 0) {
+            $missing = $canonical['record_count'];
+        }
+
+        return [
+            'site' => $site,
+            'status' => $status,
+            'required_count' => $canonical['record_count'],
+            'correct_count' => $correct,
+            'missing_count' => $missing,
+            'invalid_count' => $invalid,
+            'last_checked' => $latest?->checked_at,
+            'first_checked' => $latest?->first_checked_at,
+            'occurrence_count' => $latest?->occurrence_count ?? 0,
+            'verification_state' => ! $latest ? 'NEVER_CHECKED' : ($isStale || $canonicalChanged ? 'DUE' : 'FRESH'),
+            'next_check_at' => $latest?->checked_at?->copy()->addDays((int) config('ads-txt.fresh_for_days', 7)),
+            'action' => $this->action($status, $missing, $invalid),
+            'canonical' => $canonical,
+            'live_content' => $latest?->response_body,
+            'comparison' => $comparison,
+            'fetch' => (array) data_get($latest?->findings, 'fetch', []),
+            'latest_check' => $latest,
+        ];
+    }
+
+    public function history(Site $site)
+    {
+        return SupplyChainCheck::withoutGlobalScope('organization')
+            ->with('initiator')->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
+            ->latest('checked_at')->get();
+    }
+
+    private function action(string $status, int $missing, int $invalid): string
+    {
+        return match ($status) {
+            AdsTxtComplianceStatus::Compliant->value => 'No action required.',
+            AdsTxtComplianceStatus::Partial->value => 'Publish the remaining '.$missing.' required item(s).',
+            AdsTxtComplianceStatus::Missing->value => 'Publish the canonical ads.txt file.',
+            AdsTxtComplianceStatus::Invalid->value => 'Correct '.$invalid.' invalid or duplicate item(s).',
+            AdsTxtComplianceStatus::Conflict->value => 'Resolve conflicting seller declarations.',
+            AdsTxtComplianceStatus::Stale->value => 'Run a fresh verification.',
+            AdsTxtComplianceStatus::Unreachable->value => 'Restore a public text/plain ads.txt endpoint.',
+            default => 'Configure an eligible demand record when monetization requires it.',
+        };
+    }
+}

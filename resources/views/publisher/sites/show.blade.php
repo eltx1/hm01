@@ -90,7 +90,7 @@
 
 <article id="compliance" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Domain evidence</p><h2>Compliance</h2></div></div>
-    <p class="muted">This section currently reflects the implemented ownership-verification workflow. Tasks 2–4 will add supply-chain and ads.txt evidence here.</p>
+    <p class="muted">Domain ownership and supply-chain evidence are managed together. @if(auth()->user()->hasPermission('supply_chain.ads_txt.view'))<a class="section-anchor" href="{{ route('admin.compliance.ads-txt.show', $site) }}">Open the Ads.txt Compliance Center</a>@endif</p>
     @foreach($site->domains as $domain)
         <div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div>
         @if(auth()->user()->hasPermission('sites.review'))<form method="POST" action="{{ route('admin.sites.domains.manual-verify', [$site, $domain]) }}" class="inline-form">@csrf<input class="hm-input" name="reason" aria-label="Manual verification evidence" placeholder="Manual verification evidence/reason" required><button class="hm-button-secondary">Verify manually</button></form>@endif</div>
@@ -139,6 +139,7 @@
 <section class="hero">
     <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
 </section>
+@if(auth()->user()->hasPermission('publisher.ads_txt.view'))<p><a class="hm-button-secondary button-link" href="{{ route('publisher.ads-txt.index') }}">Open Ads.txt &amp; Compliance</a></p>@endif
 <section class="detail-grid">
     <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd><dt>Revenue share</dt><dd>{{ $site->default_revenue_share_percent }}%</dd></dl></article>
     <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>

@@ -49,6 +49,9 @@ final class ControlPlaneNavigation
                 $this->item('Direct campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
                 $this->item('Native demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
             ]),
+            $this->group('Supply Chain & Compliance', [
+                $this->item('Ads.txt', 'admin.compliance.ads-txt.index', 'supply_chain.ads_txt.view', ['admin.compliance.ads-txt.*']),
+            ]),
             $this->group('Reporting', [
                 $this->item('Reporting & finance', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
             ]),
@@ -75,6 +78,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Websites', [
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
+                $this->item('Ads.txt & Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),
             $this->group('Reports & Earnings', [
                 $this->item('Reports, statements & payments', 'publisher.reporting.index', 'reporting.publisher.view', ['publisher.reporting.*']),
