@@ -3,6 +3,7 @@
 namespace App\Services\Demand;
 
 use App\Enums\DemandReportImportStatus;
+use App\Enums\SupplyChainReviewStatus;
 use App\Models\DemandAccount;
 use App\Models\DemandAdsTxtRecord;
 use App\Models\DemandError;
@@ -11,6 +12,7 @@ use App\Models\DemandSite;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Reporting\ReportingBridge;
+use App\Services\SupplyChain\SupplyChainInvariantService;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\UploadedFile;
@@ -24,6 +26,7 @@ final class DemandReportService
         private readonly DemandConnectorManager $connectors,
         private readonly AuditRecorder $audit,
         private readonly ReportingBridge $reportingBridge,
+        private readonly SupplyChainInvariantService $supplyChain,
     ) {
     }
 
@@ -164,7 +167,10 @@ final class DemandReportService
 
     public function syncAdsTxt(DemandAccount $account, ?DemandSite $site, User $actor): int
     {
-        $records = $this->connectors->for($account)->getAdsTxtRecords($site);
+        $records = collect($this->connectors->for($account)->getAdsTxtRecords($site))
+            ->map(fn (array $record): array => $this->supplyChain->normalizeDemandRecord($account, $site?->site, $record))
+            ->unique('record_hash')
+            ->values();
         $hashes = collect($records)->pluck('record_hash')->filter()->values();
         DemandAdsTxtRecord::withoutGlobalScopes()
             ->where('demand_account_id', $account->id)
@@ -173,32 +179,37 @@ final class DemandReportService
             ->update(['status' => 'REMOVED']);
 
         foreach ($records as $record) {
-            DemandAdsTxtRecord::withoutGlobalScopes()->updateOrCreate(
-                [
-                    'demand_account_id' => $account->id,
-                    'site_id' => $site?->site_id,
-                    'record_hash' => $record['record_hash'],
-                ],
-                [
-                    'organization_id' => $account->organization_id,
-                    'domain' => $record['domain'],
-                    'publisher_account_id' => $record['publisher_account_id'],
-                    'relationship' => $record['relationship'],
-                    'certification_authority_id' => $record['certification_authority_id'],
-                    'raw_record' => $record['raw_record'],
-                    'status' => 'ACTIVE',
-                    'source' => 'CONNECTOR',
-                    'last_verified_at' => now(),
-                ],
-            );
+            $stored = DemandAdsTxtRecord::withoutGlobalScope('organization')->firstOrNew([
+                'demand_account_id' => $account->id,
+                'site_id' => $site?->site_id,
+                'record_hash' => $record['record_hash'],
+            ]);
+            $identityChanged = ! $stored->exists || collect([
+                'domain', 'publisher_account_id', 'relationship', 'certification_authority_id',
+            ])->contains(fn (string $field): bool => $stored->getAttribute($field) !== $record[$field]);
+            $stored->fill($record + [
+                'demand_account_id' => $account->id,
+                'site_id' => $site?->site_id,
+                'status' => 'ACTIVE',
+                'source' => 'CONNECTOR',
+                'last_verified_at' => now(),
+            ]);
+            if ($identityChanged) {
+                $stored->fill([
+                    'review_status' => SupplyChainReviewStatus::ReviewRequired,
+                    'reviewed_at' => null,
+                    'reviewed_by' => null,
+                ]);
+            }
+            $stored->save();
         }
 
         $this->audit->record('demand.ads_txt.synchronized', $account->organization_id, $actor, $account, newValues: [
             'site_id' => $site?->site_id,
-            'records' => count($records),
+            'records' => $records->count(),
         ]);
 
-        return count($records);
+        return $records->count();
     }
 
     public function summary(DemandAccount $account): array

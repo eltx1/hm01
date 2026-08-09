@@ -30,11 +30,11 @@
         <label>Seller ID<input class="hm-input" name="seller_id" required></label>
         <label>Seller type<select class="hm-input" name="seller_type"><option>PUBLISHER</option><option>INTERMEDIARY</option><option>BOTH</option></select></label>
         <label>Public name<input class="hm-input" name="name" required></label>
-        <label>Domain<input class="hm-input" name="domain" value="{{ $site->primary_domain }}" required></label>
+        <label>Seller business domain<input class="hm-input" name="domain" value="{{ $site->publisher?->business_domain ?: $site->primary_domain }}" required></label>
         <label><input type="checkbox" name="is_confidential" value="1"> Confidential seller</label>
         <button class="hm-button-secondary">Save and publish supply chain</button>
     </form>
-    @foreach($sellerDeclarations as $seller)<p><strong>{{ $seller->seller_id }}</strong> · {{ $seller->seller_type }} · {{ $seller->domain }}</p>@endforeach
+    @foreach($sellerDeclarations as $seller)<p><strong>{{ $seller->seller_id }}</strong> · {{ $seller->seller_type }} · {{ $seller->domain }} · {{ $seller->review_status->value }}</p>@endforeach
 </article>
 </section>
 

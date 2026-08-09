@@ -12,11 +12,11 @@ use App\Models\Placement;
 use App\Models\Site;
 use App\Models\SiteConfig;
 use App\Models\TagVersion;
-use App\Models\SellerDeclaration;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
 use App\Services\Operations\PlatformControlService;
+use App\Services\SupplyChain\SupplyChainInvariantService;
 
 final class SiteConfigurationBuilder
 {
@@ -25,6 +25,7 @@ final class SiteConfigurationBuilder
         private readonly PrebidConfigurationBuilder $prebid,
         private readonly DemandConfigurationBuilder $demand,
         private readonly PlatformControlService $controls,
+        private readonly SupplyChainInvariantService $supplyChain,
     ) {
     }
 
@@ -55,6 +56,9 @@ final class SiteConfigurationBuilder
             ? $this->prebid->build($site, $connection)
             : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
         $native = $this->demand->build($site);
+        $schain = $this->supplyChain->schainForSite($site);
+        $supplyChainSettings = $config->supply_chain_settings ?? [];
+        unset($supplyChainSettings['schain']);
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -106,8 +110,12 @@ final class SiteConfigurationBuilder
                 'adsTxtUrl' => 'https://'.$site->primary_domain.'/ads.txt',
                 'sellersJsonUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sellers.json',
                 'cdnAdsTxtUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sites/'.$site->public_key.'/ads.txt',
-                'schain' => ['complete' => 1, 'ver' => '1.0', 'nodes' => $this->schainNodes($site)],
-            ], $config->supply_chain_settings ?? []),
+                'schain' => [
+                    'complete' => $schain['complete'],
+                    'ver' => $schain['ver'],
+                    'nodes' => $schain['nodes'],
+                ],
+            ], $supplyChainSettings),
             'observability' => array_replace_recursive([
                 'runtimeTelemetry' => false,
                 'localDiagnostics' => (bool) $config->debug_enabled,
@@ -249,20 +257,5 @@ final class SiteConfigurationBuilder
             ->unique()
             ->values()
             ->all();
-    }
-
-    private function schainNodes(Site $site): array
-    {
-        return SellerDeclaration::withoutGlobalScopes()
-            ->where('organization_id', $site->organization_id)
-            ->where(fn ($query) => $query->whereNull('site_id')->orWhere('site_id', $site->id))
-            ->where('status', 'ACTIVE')
-            ->orderBy('seller_id')
-            ->get()
-            ->map(fn ($seller) => [
-                'asi' => config('supply-chain.manager_domain', 'horusmedia.net'),
-                'sid' => $seller->seller_id,
-                'hp' => 1,
-            ])->values()->all();
     }
 }

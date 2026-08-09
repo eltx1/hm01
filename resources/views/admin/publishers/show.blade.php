@@ -63,8 +63,9 @@
 </article>
 
 <article id="compliance" class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Current verification evidence</p><h2>Compliance</h2></div></div>
-    <p class="muted">Domain ownership is shown from the existing verification workflow. Ads.txt and supply-chain controls will plug into this section in Tasks 2–4.</p>
+    <div class="workspace-heading"><div><p class="eyebrow">Identity and domain evidence</p><h2>Compliance</h2></div></div>
+    <p class="muted">The publisher business identity is canonical for OWNERDOMAIN. Tasks 3–4 add live Ads.txt checks and the complete seller control center.</p>
+    <div class="compact-row"><div><strong>{{ $publisher->business_domain ?: 'Business domain not declared' }}</strong><p>{{ $publisher->business_domain ? 'Publisher business domain · canonical OWNERDOMAIN' : 'Legacy per-site OWNERDOMAIN fallback · Admin review required' }}</p></div><x-status-badge :status="$publisher->supply_chain_review_status" /></div>
     @foreach($publisher->sites as $site)@foreach($site->domains as $domain)<div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $site->display_name }}</p></div><x-status-badge :status="$domain->verification_status" /></div>@endforeach @endforeach
 </article>
 
