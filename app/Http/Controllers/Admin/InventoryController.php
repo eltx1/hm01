@@ -13,10 +13,10 @@ use App\Models\Placement;
 use App\Models\Site;
 use App\Models\SellerDeclaration;
 use App\Models\TagVersion;
-use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\SupplyChain\SupplyChainInvariantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -48,7 +48,7 @@ class InventoryController extends Controller
         ]);
     }
 
-    public function storeSellerDeclaration(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
+    public function storeSellerDeclaration(Request $request, Site $site, SupplyChainInvariantService $identities, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate([
             'seller_id' => ['required', 'string', 'max:255'],
@@ -57,15 +57,8 @@ class InventoryController extends Controller
             'domain' => ['required', 'string', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i'],
             'is_confidential' => ['sometimes', 'boolean'],
         ]);
-        $declaration = SellerDeclaration::withoutGlobalScopes()->updateOrCreate(
-            ['organization_id' => $site->organization_id, 'site_id' => $site->id, 'seller_id' => $data['seller_id']],
-            [
-                'seller_type' => $data['seller_type'], 'name' => $data['name'],
-                'domain' => strtolower($data['domain']), 'is_confidential' => $request->boolean('is_confidential'),
-                'status' => 'ACTIVE', 'last_verified_at' => now(),
-            ],
-        );
-        $audit->record('supply_chain.seller.updated', $site->organization_id, $request->user(), $declaration, newValues: $declaration->toArray());
+        $data['is_confidential'] = $request->boolean('is_confidential');
+        $identities->saveSellerDeclaration($site->publisher, $site, $data, $request->user());
         $publisher->publishActiveProduction($site, $request->user());
 
         return back()->with('status', 'Seller declaration saved and static supply-chain artifacts were queued.');

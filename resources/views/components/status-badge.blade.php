@@ -5,7 +5,7 @@
     $tone = match (strtoupper($value)) {
         'ACTIVE', 'APPROVED', 'HEALTHY', 'VERIFIED', 'SUCCEEDED', 'DEPLOYED', 'PAID', 'FINALIZED', 'SIGNED' => 'success',
         'FAILED', 'REJECTED', 'SUSPENDED', 'CLOSED', 'ARCHIVED', 'EXPIRED', 'TERMINATED', 'CANCELLED' => 'danger',
-        'PENDING', 'PENDING_REVIEW', 'PENDING_VERIFICATION', 'PROCESSING', 'RETRY_SCHEDULED', 'SENT', 'DEGRADED' => 'warning',
+        'PENDING', 'PENDING_REVIEW', 'PENDING_VERIFICATION', 'REVIEW_REQUIRED', 'PROCESSING', 'RETRY_SCHEDULED', 'SENT', 'DEGRADED' => 'warning',
         default => 'neutral',
     };
 @endphp

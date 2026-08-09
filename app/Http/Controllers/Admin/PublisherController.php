@@ -11,6 +11,7 @@ use App\Models\PublisherStatement;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Identity\SessionInvalidator;
 use App\Services\Reporting\UnifiedReportService;
+use App\Services\SupplyChain\SupplyChainInvariantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -65,23 +66,26 @@ class PublisherController extends Controller
         ]);
     }
 
-    public function store(Request $request, AuditRecorder $audit): RedirectResponse
+    public function store(Request $request, AuditRecorder $audit, SupplyChainInvariantService $identities): RedirectResponse
     {
         $data = $this->validated($request);
+        $data = array_merge($data, $identities->publisherIdentityAttributes(null, $data['business_domain'] ?? null));
         $publisher = DB::transaction(function () use ($data): Publisher {
             $organization = Organization::create(['name' => $data['display_name'], 'slug' => $data['organization_slug'], 'type' => OrganizationType::Publisher, 'status' => $data['status'], 'dashboard_title' => $data['dashboard_title'] ?? null, 'primary_color' => $data['primary_color'] ?? null, 'support_email' => $data['billing_email'] ?? null, 'internal_notes' => $data['internal_notes'] ?? null]);
 
             return Publisher::withoutGlobalScopes()->create(array_merge($data, ['organization_id' => $organization->id]));
         });
-        $audit->record('publisher.created', $publisher->organization_id, $request->user(), $publisher, newValues: $publisher->only(['legal_name', 'display_name', 'status']));
+        $audit->record('publisher.created', $publisher->organization_id, $request->user(), $publisher, newValues: $publisher->only(['legal_name', 'display_name', 'business_domain', 'supply_chain_review_status', 'status']));
 
         return redirect()->route('admin.publishers.edit', $publisher)->with('status', 'Publisher created.');
     }
 
-    public function update(Request $request, Publisher $publisher, AuditRecorder $audit): RedirectResponse
+    public function update(Request $request, Publisher $publisher, AuditRecorder $audit, SupplyChainInvariantService $identities): RedirectResponse
     {
         $data = $this->validated($request, $publisher);
-        $before = $publisher->only(['legal_name', 'display_name', 'status', 'billing_email', 'dashboard_title', 'primary_color', 'internal_notes']);
+        $businessDomain = array_key_exists('business_domain', $data) ? $data['business_domain'] : $publisher->business_domain;
+        $data = array_merge($data, $identities->publisherIdentityAttributes($publisher, $businessDomain));
+        $before = $publisher->only(['legal_name', 'display_name', 'business_domain', 'supply_chain_review_status', 'supply_chain_reviewed_at', 'supply_chain_reviewed_by', 'status', 'billing_email', 'dashboard_title', 'primary_color', 'internal_notes']);
         DB::transaction(function () use ($publisher, $data): void {
             $publisher->update($data);
             $publisher->organization->update(['name' => $data['display_name'], 'slug' => $data['organization_slug'], 'status' => $data['status'], 'dashboard_title' => $data['dashboard_title'] ?? null, 'primary_color' => $data['primary_color'] ?? null, 'support_email' => $data['billing_email'] ?? null, 'internal_notes' => $data['internal_notes'] ?? null]);
@@ -124,6 +128,7 @@ class PublisherController extends Controller
     {
         return $request->validate([
             'legal_name' => ['required', 'string', 'max:255'], 'display_name' => ['required', 'string', 'max:255'],
+            'business_domain' => ['nullable', 'string', 'max:253'],
             'organization_slug' => ['required', 'alpha_dash', 'max:100', Rule::unique('organizations', 'slug')->ignore($publisher?->organization_id)],
             'status' => ['required', 'in:PENDING,ACTIVE,SUSPENDED,CLOSED'], 'billing_email' => ['nullable', 'email'],
             'dashboard_title' => ['nullable', 'string', 'max:100'], 'primary_color' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
