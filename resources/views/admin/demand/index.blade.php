@@ -1,12 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Native demand networks')
 @section('heading', 'Native & alternative demand')
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-<a class="active" href="{{ route('admin.demand.index') }}">Native demand</a>
-@endsection
 @section('content')
 <section class="hero">
     <div>

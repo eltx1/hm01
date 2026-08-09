@@ -1,14 +1,71 @@
 @extends('layouts.admin')
-@section('title', 'Administrator dashboard')
-@section('heading', 'Horus Media overview')
-@section('navigation')
-<a class="active" href="{{ route('dashboard') }}">Overview</a>@if(auth()->user()->hasPermission('operations.view'))<a href="{{ route('admin.operations.index') }}">Operations</a>@endif @if(auth()->user()->hasPermission('reporting.admin.view'))<a href="{{ route('admin.reporting.index') }}">Reporting</a>@endif @if(auth()->user()->hasPermission('organizations.manage'))<a href="{{ route('admin.organizations.index') }}">Organizations</a>@endif @if(auth()->user()->hasPermission('publishers.view'))<a href="{{ route('admin.publishers.index') }}">Publishers</a>@endif @if(auth()->user()->hasPermission('sites.view'))<a href="{{ route('admin.sites.index') }}">Websites</a>@endif @if(auth()->user()->hasPermission('advertisers.view'))<a href="{{ route('admin.advertisers.index') }}">Advertisers</a>@endif @if(auth()->user()->hasPermission('campaigns.review'))<a href="{{ route('admin.campaigns.index') }}">Campaigns</a>@endif @if(auth()->user()->hasPermission('demand.view'))<a href="{{ route('admin.demand.index') }}">Native demand</a>@endif @if(auth()->user()->hasPermission('roles.view'))<a href="{{ route('admin.roles.index') }}">Access control</a>@endif
-@endsection
+@section('title', 'Administrator Action Center')
+@section('heading', 'Horus Media Action Center')
 @section('content')
-<section class="metric-grid">
-@foreach ([['Total publishers',$totalPublishers],['Total websites',$totalWebsites],['Total advertisers',$totalAdvertisers],['Active campaigns',$activeCampaigns],['Managed impressions',number_format($reporting['managed_impressions'])],['Gross revenue',number_format($reporting['gross_revenue_minor']/100,2)],['Horus margin',number_format($reporting['horus_margin_minor']/100,2)],['Publisher payable',number_format($reporting['outstanding_publisher_payments_minor']/100,2)]] as [$label,$value])
-<article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ $value }}</strong></article>
-@endforeach
+<section class="hero">
+    <div>
+        <p class="eyebrow">Operational command surface</p>
+        <h2>Control what needs attention now.</h2>
+        <p>Review live workflow conditions across publisher onboarding, websites, integrations, reporting, finance, campaigns, and production delivery.</p>
+    </div>
 </section>
-<section class="split-grid"><article><h2>Unified reporting</h2><p class="muted">Horus GAM and approved optional sources are normalized into one aggregated reporting ledger.</p><p><a class="hm-button-primary button-link" href="{{ route('admin.reporting.index') }}">Open reporting and finance</a></p></article><article><h2>Recent audit events</h2>@forelse($auditEvents as $event)<div class="event"><strong>{{ $event->event }}</strong><span>{{ $event->created_at }}</span></div>@empty<p class="muted">No audit events yet.</p>@endforelse</article></section>
+
+<section class="action-center" aria-labelledby="action-center-heading">
+    <div class="workspace-heading">
+        <div><p class="eyebrow">Prioritized work</p><h2 id="action-center-heading">Action Center</h2></div>
+        <x-status-badge :status="$actionItems === [] ? 'HEALTHY' : 'PENDING'" />
+    </div>
+    @if($actionItems === [])
+        <article><h3>No current action items</h3><p class="muted">The workflows visible to your role have no unresolved conditions.</p></article>
+    @else
+        <div class="action-center-grid">
+            @foreach($actionItems as $item)
+                <a href="{{ route($item['route'], $item['parameters']) }}" class="action-card action-card-{{ $item['severity'] }}">
+                    <span class="action-count">{{ $item['count'] }}</span>
+                    <div><h3>{{ $item['label'] }}</h3><p>{{ $item['description'] }}</p><span class="section-anchor">Open remediation →</span></div>
+                </a>
+            @endforeach
+        </div>
+    @endif
+</section>
+
+@php
+    $metrics = collect([
+        ['Total publishers', $totalPublishers],
+        ['Total websites', $totalWebsites],
+        ['Total advertisers', $totalAdvertisers],
+        ['Active campaigns', $activeCampaigns],
+        ['Managed impressions', $reporting ? number_format($reporting['managed_impressions']) : null],
+        ['Gross revenue', $reporting ? number_format($reporting['gross_revenue_minor'] / 100, 2) : null],
+        ['Horus margin', $reporting && $showInternalMargin ? number_format($reporting['horus_margin_minor'] / 100, 2) : null],
+        ['Publisher payable', $reporting ? number_format($reporting['outstanding_publisher_payments_minor'] / 100, 2) : null],
+    ])->filter(fn ($metric) => $metric[1] !== null);
+@endphp
+@if($metrics->isNotEmpty())
+<section class="metric-grid" aria-label="Platform summary">
+    @foreach($metrics as [$label, $value])
+        <article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ $value }}</strong></article>
+    @endforeach
+</section>
+@endif
+
+<section class="split-grid">
+    @if($reporting)
+    <article>
+        <p class="eyebrow">Aggregated ledger</p><h2>Unified reporting</h2>
+        <p class="muted">Horus GAM and approved optional sources are normalized into one aggregated reporting ledger.</p>
+        <a class="hm-button-primary button-link" href="{{ route('admin.reporting.index') }}">Open reporting and finance</a>
+    </article>
+    @endif
+    @if(auth()->user()->hasPermission('audit.view'))
+    <article>
+        <p class="eyebrow">Governance evidence</p><h2>Recent audit events</h2>
+        @forelse($auditEvents as $event)
+            <div class="event"><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong><span>{{ $event->created_at }}</span></div>
+        @empty
+            <p class="muted">No audit events yet.</p>
+        @endforelse
+    </article>
+    @endif
+</section>
 @endsection

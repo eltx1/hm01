@@ -1,11 +1,6 @@
 @extends('layouts.admin')
 @section('title', $connection->name)
 @section('heading', $connection->name)
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a class="active" href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-@endsection
 @section('content')
 <section class="hero">
     <div><p class="eyebrow">{{ $connection->type->value }}</p><h2>{{ $connection->network_code ?: 'Network code pending' }}</h2><p>{{ $connection->application_name }} · {{ $connection->driver }} · credential reference encrypted</p></div>

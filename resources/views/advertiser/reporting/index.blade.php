@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Advertiser reporting')
 @section('heading', 'Campaign delivery and cost')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a href="{{ route('advertiser.campaigns.index') }}">Campaigns</a><a class="active" href="{{ route('advertiser.reporting.index') }}">Reports</a>@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $advertiser->display_name }}</p><h2>Unified campaign reporting</h2><p>Campaign delivery imported from Horus GAM and any explicitly selected GAM connection.</p></div></section>
 <section class="metric-grid"><article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($summary['impressions']) }}</strong></article><article><p class="eyebrow">Clicks</p><strong class="metric">{{ number_format($summary['clicks']) }}</strong></article><article><p class="eyebrow">CTR</p><strong class="metric">{{ number_format($summary['ctr_bp']/100,2) }}%</strong></article><article><p class="eyebrow">Spend</p><strong class="metric">{{ number_format($summary['spend_minor']/100,2) }}</strong></article><article><p class="eyebrow">Remaining budget</p><strong class="metric">{{ number_format($summary['remaining_budget_minor']/100,2) }}</strong></article></section>

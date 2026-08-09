@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title',$campaign->name)
 @section('heading',$campaign->name)
-@section('navigation')<a href="{{ route('admin.campaigns.index') }}">Campaigns</a><span class="active">{{ $campaign->status->value }}</span><a href="{{ route('admin.gam.connections.index') }}">GAM</a>@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $campaign->public_key }} · {{ $campaign->advertiser->display_name }}</p><h2>{{ $campaign->objective }}</h2><div class="status-row"><span class="pill">{{ $campaign->status->value }}</span><span class="pill">{{ $campaign->pricing_model->value }}</span><span class="pill">{{ $campaign->currency }} {{ number_format($campaign->total_budget_minor/100,2) }}</span><span class="pill">{{ count($preview['plans'] ?? []) }} GAM networks</span></div></div><form method="POST" action="{{ route('admin.advertisers.campaign-review',$campaign->advertiser) }}">@csrf<input type="hidden" name="approved" value="1"><button class="hm-button-secondary">Approve advertiser</button></form></section>
 <section class="metric-grid">@foreach([['Objects planned',$preview['estimatedObjects'] ?? 0],['Objects pending',$preview['pendingObjects'] ?? 0],['Impressions',number_format($report['impressions'])],['Clicks',number_format($report['clicks'])],['Spend',$campaign->currency.' '.number_format($report['spend_minor']/100,2)]] as [$label,$value])<article><p class="eyebrow">{{ $label }}</p><strong class="metric-small">{{ $value }}</strong></article>@endforeach</section>

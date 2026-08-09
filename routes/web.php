@@ -53,7 +53,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::delete('/two-factor', [TwoFactorController::class, 'disable'])->name('two-factor.disable');
 
     Route::middleware(['verified', 'admin.2fa'])->group(function (): void {
-        Route::get('/', DashboardController::class)->name('dashboard');
+        Route::get('/', DashboardController::class)->middleware('dashboard.access')->name('dashboard');
         Route::get('/account/publishers/{publisher}', [AccountController::class, 'publisher'])->name('account.publisher');
         Route::get('/account/advertisers/{advertiser}', [AccountController::class, 'advertiser'])->name('account.advertiser');
 
@@ -89,6 +89,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/admin/publishers', [PublisherController::class, 'index'])->middleware('permission:publishers.view')->name('admin.publishers.index');
         Route::get('/admin/publishers/create', [PublisherController::class, 'create'])->middleware('permission:publishers.manage')->name('admin.publishers.create');
         Route::post('/admin/publishers', [PublisherController::class, 'store'])->middleware('permission:publishers.manage')->name('admin.publishers.store');
+        Route::get('/admin/publishers/{publisher}', [PublisherController::class, 'show'])->middleware(['horus', 'permission:publishers.view'])->name('admin.publishers.show');
         Route::get('/admin/publishers/{publisher}/edit', [PublisherController::class, 'edit'])->middleware('permission:publishers.manage')->name('admin.publishers.edit');
         Route::put('/admin/publishers/{publisher}', [PublisherController::class, 'update'])->middleware('permission:publishers.manage')->name('admin.publishers.update');
         Route::delete('/admin/publishers/{publisher}', [PublisherController::class, 'destroy'])->middleware('permission:publishers.manage')->name('admin.publishers.destroy');
@@ -118,8 +119,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/gam/connections/{gamConnection}/primary', [GamConnectionController::class, 'primary'])->middleware('permission:gam.connections.manage')->name('admin.gam.connections.primary');
         Route::post('/admin/gam/connections/{gamConnection}/assign-site', [GamConnectionController::class, 'assignSite'])->middleware('permission:gam.connections.assign')->name('admin.gam.connections.assign-site');
 
-        Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware('permission:sites.view')->name('admin.sites.index');
-        Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware('permission:sites.view')->name('admin.sites.show');
+        Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.index');
+        Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
         Route::get('/admin/sites/{site}/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view')->name('admin.sites.inventory.index');
         Route::post('/admin/sites/{site}/inventory/ad-units', [InventoryController::class, 'storeAdUnit'])->middleware('permission:inventory.manage')->name('admin.sites.inventory.ad-units.store');
         Route::post('/admin/sites/{site}/inventory/ad-units/{adUnit}/sync', [InventoryController::class, 'syncAdUnit'])->middleware('permission:inventory.sync')->name('admin.sites.inventory.ad-units.sync');

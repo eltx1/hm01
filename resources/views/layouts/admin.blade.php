@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php($brand = auth()->user()?->organization)
+    @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
     <title>@yield('title', 'Dashboard') · {{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body @if($brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
     <div class="admin-shell">
-        <aside class="sidebar" aria-label="Primary navigation">
-            <a class="brand" href="/">@if($brand?->logo_path)<img class="brand-logo" src="{{ Storage::disk('public')->url($brand->logo_path) }}" alt="">@endif{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
+        <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
+            <a class="brand" href="/">@if($brand?->logo_path)<img class="brand-logo" src="{{ Storage::disk('public')->url($brand->logo_path) }}" alt="{{ $brand?->name }} logo">@endif{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
             <p class="eyebrow">Ad Network Control Plane</p>
-            <nav>@yield('navigation')</nav>
+            <x-control-plane.navigation :groups="$navigationGroups" />
+            <div class="sidebar-account">
+                <span>{{ auth()->user()->name }}</span>
+                <small>{{ auth()->user()->email }}</small>
+                <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button">Sign out</button></form>
+            </div>
         </aside>
+        <button class="sidebar-scrim" type="button" data-nav-close aria-label="Close navigation"></button>
         <main>
             <header class="topbar">
-                <div>
+                <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
+                <div class="topbar-title">
                     <p class="eyebrow">app.horusmedia.net</p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>

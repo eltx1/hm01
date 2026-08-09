@@ -1,9 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Campaigns')
 @section('heading', 'Direct campaigns')
-@section('navigation')
-<a class="active" href="{{ route('advertiser.campaigns.index') }}">Campaigns</a><a href="#billing">Billing</a><a href="#invoices">Invoices</a><a href="{{ route('dashboard') }}">Overview</a>
-@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">Advertiser workspace</p><h2>{{ $advertiser->display_name }}</h2><p>Create, submit, monitor, and invoice direct campaigns without Google Ad Manager access.</p></div><a class="hm-button-primary" href="{{ route('advertiser.campaigns.create') }}">Create campaign</a></section>
 <section class="metric-grid" style="margin-top:1rem">

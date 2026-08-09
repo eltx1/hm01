@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $campaign->name)
 @section('heading', $campaign->name)
-@section('navigation')<a href="{{ route('advertiser.campaigns.index') }}">Campaigns</a><span class="active">{{ $campaign->status->value }}</span>@if(in_array($campaign->status->value,['DRAFT','REJECTED','APPROVED']))<a href="{{ route('advertiser.campaigns.edit',$campaign) }}">Edit</a>@endif@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $campaign->public_key }}</p><h2>{{ $campaign->objective }}</h2><div class="status-row"><span class="pill">{{ $campaign->status->value }}</span><span class="pill">{{ $campaign->pricing_model->value }}</span><span class="pill">{{ $campaign->currency }} {{ number_format($campaign->total_budget_minor/100,2) }}</span><span class="pill">{{ $campaign->starts_at }} → {{ $campaign->ends_at }}</span></div></div>@if(in_array($campaign->status->value,['DRAFT','REJECTED']))<form method="POST" action="{{ route('advertiser.campaigns.submit',$campaign) }}">@csrf<button class="hm-button-primary">Submit for approval</button></form>@endif</section>
 <section class="metric-grid">@foreach([['Impressions',number_format($report['impressions'])],['Clicks',number_format($report['clicks'])],['Views',number_format($report['views'])],['Spend',$campaign->currency.' '.number_format($report['spend_minor']/100,2)]] as [$label,$value])<article><p class="eyebrow">{{ $label }}</p><strong class="metric-small">{{ $value }}</strong></article>@endforeach</section>

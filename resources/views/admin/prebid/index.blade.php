@@ -1,13 +1,6 @@
 @extends('layouts.admin')
 @section('title', $site->display_name.' Prebid')
 @section('heading', 'Prebid · '.$site->display_name)
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-<a href="{{ route('admin.sites.inventory.index', $site) }}">Inventory</a>
-<a class="active" href="{{ route('admin.sites.prebid.index', $site) }}">Prebid</a>
-<a href="{{ route('admin.gam.connections.show', $connection) }}">Google Ad Manager</a>
-@endsection
 @section('content')
 <section class="hero">
     <div>

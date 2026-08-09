@@ -72,7 +72,7 @@ final class UnifiedReportService
         [$from, $to] = $this->range($from, $to);
         $rows = $this->daily($from, $to)
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
-            ->with(['dimension.site', 'dimension.placement', 'connection.source'])
+            ->with(['dimension.site', 'dimension.placement'])
             ->get();
         $impressions = (int) $rows->sum('impressions');
         $revenue = (int) $rows->sum('publisher_earnings_minor');

@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Publisher reporting')
 @section('heading', 'Revenue reports and payments')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a href="{{ route('publisher.sites.index') }}">Websites</a><a class="active" href="{{ route('publisher.reporting.index') }}">Revenue reports</a>@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $publisher->display_name }}</p><h2>Unified publisher earnings</h2><p>Finalized earnings from Horus GAM and approved alternative demand sources, without exposing other publishers.</p></div></section>
 <section class="metric-grid"><article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($summary['impressions']) }}</strong></article><article><p class="eyebrow">Revenue</p><strong class="metric">{{ number_format($summary['revenue_minor']/100,2) }}</strong></article><article><p class="eyebrow">eCPM</p><strong class="metric">{{ number_format($summary['ecpm_micros']/1000000,4) }}</strong></article><article><p class="eyebrow">Payment balance</p><strong class="metric">{{ number_format($summary['payment_balance_minor']/100,2) }}</strong></article></section>

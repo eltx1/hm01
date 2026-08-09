@@ -14,6 +14,7 @@ class IdentityAccessSeeder extends Seeder
         'dashboard.admin.view' => ['View administrator dashboard', 'dashboard'],
         'dashboard.publisher.view' => ['View publisher dashboard', 'dashboard'],
         'dashboard.advertiser.view' => ['View advertiser dashboard', 'dashboard'],
+        'dashboard.partner.view' => ['View partner dashboard', 'dashboard'],
         'organizations.view' => ['View organizations', 'organizations'],
         'organizations.manage' => ['Manage organizations', 'organizations'],
         'publishers.view' => ['View publishers', 'publishers'],
@@ -112,8 +113,8 @@ class IdentityAccessSeeder extends Seeder
             RoleName::PublisherViewer => ['dashboard.publisher.view', 'sites.view', 'contracts.view', 'finance.publisher.view', 'demand.view', 'demand.reports', 'reporting.publisher.view'],
             RoleName::AdvertiserAdmin => ['dashboard.advertiser.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'campaigns.view', 'campaigns.manage', 'campaigns.reports', 'creatives.manage', 'billing.advertiser.view', 'billing.advertiser.manage', 'reporting.advertiser.view', 'support.manage'],
             RoleName::AdvertiserViewer => ['dashboard.advertiser.view', 'campaigns.view', 'campaigns.reports', 'billing.advertiser.view', 'reporting.advertiser.view'],
-            RoleName::PartnerAdmin => ['users.view', 'users.manage', 'users.invite', 'branding.manage', 'demand.view', 'demand.reports', 'reporting.admin.view', 'support.manage'],
-            RoleName::PartnerViewer => ['demand.view', 'demand.reports'],
+            RoleName::PartnerAdmin => ['dashboard.partner.view', 'users.view', 'users.manage', 'users.invite', 'branding.manage', 'demand.view', 'demand.reports', 'reporting.admin.view', 'support.manage'],
+            RoleName::PartnerViewer => ['dashboard.partner.view', 'demand.view', 'demand.reports'],
             default => [],
         };
 

@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $account->exists ? 'Edit '.ucfirst($kind) : 'New '.ucfirst($kind))
 @section('heading', $account->exists ? 'Edit '.ucfirst($kind) : 'New '.ucfirst($kind))
-@section('navigation')<a href="{{ route('admin.'.$kind.'s.index') }}">{{ ucfirst($kind) }}s</a><span class="active">Details</span>@endsection
 @section('content')
 <article><form method="POST" action="{{ $account->exists ? route('admin.'.$kind.'s.update', $account) : route('admin.'.$kind.'s.store') }}" class="form-grid">@csrf @if($account->exists)@method('PUT')@endif
 <label>Legal name<input class="hm-input" name="legal_name" value="{{ old('legal_name', $account->legal_name) }}" required></label><label>Display name<input class="hm-input" name="display_name" value="{{ old('display_name', $account->display_name) }}" required></label>

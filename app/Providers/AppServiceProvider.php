@@ -4,6 +4,11 @@ namespace App\Providers;
 
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamOfficialSoapTransport;
+use App\Services\ControlPlane\ActionCenter;
+use App\Services\ControlPlane\Actions\FinanceActions;
+use App\Services\ControlPlane\Actions\IntegrationActions;
+use App\Services\ControlPlane\Actions\ReviewActions;
+use App\Services\ControlPlane\Contracts\ActionCenterProvider;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
@@ -19,6 +24,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->tag([
+            ReviewActions::class,
+            IntegrationActions::class,
+            FinanceActions::class,
+        ], ActionCenterProvider::class);
+        $this->app->singleton(ActionCenter::class, fn ($app): ActionCenter => new ActionCenter($app->tagged(ActionCenterProvider::class)));
+
         $this->app->bind(GamSoapTransportInterface::class, GamOfficialSoapTransport::class);
         $this->app->bind(StaticDeliveryDriverInterface::class, function ($app): StaticDeliveryDriverInterface {
             return match (config('static-delivery.driver')) {

@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $campaign->exists ? 'Edit campaign' : 'Create campaign')
 @section('heading', $campaign->exists ? 'Edit campaign' : 'Create campaign')
-@section('navigation')<a href="{{ route('advertiser.campaigns.index') }}">Campaigns</a><span class="active">{{ $campaign->exists ? 'Edit' : 'Create' }}</span>@endsection
 @section('content')
 <form class="form-stack" method="POST" action="{{ $campaign->exists ? route('advertiser.campaigns.update',$campaign) : route('advertiser.campaigns.store') }}">@csrf @if($campaign->exists)@method('PUT')@endif
 <section class="detail-grid"><article><p class="eyebrow">Campaign</p><h2>Plan</h2>

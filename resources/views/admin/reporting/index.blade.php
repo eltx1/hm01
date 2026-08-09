@@ -1,9 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Reporting and finance')
 @section('heading', 'Unified reporting and finance')
-@section('navigation')
-<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('admin.reporting.index') }}">Reporting</a>@if(auth()->user()->hasPermission('campaigns.review'))<a href="{{ route('admin.campaigns.index') }}">Campaigns</a>@endif @if(auth()->user()->hasPermission('demand.view'))<a href="{{ route('admin.demand.index') }}">Native demand</a>@endif
-@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">Horus Media source of truth</p><h2>Aggregated delivery, revenue, reconciliation and payments</h2><p>Horus GAM remains clearly identified while optional GAM, Prebid and native sources are normalized into the same financial ledger.</p></div></section>
 <form method="get" class="form-grid"><label>From<input type="date" name="from" value="{{ $summary['from']->toDateString() }}"></label><label>To<input type="date" name="to" value="{{ $summary['to']->toDateString() }}"></label><label>Currency<input name="currency" value="{{ request('currency','USD') }}" maxlength="3"></label><button class="hm-button-primary" type="submit">Apply</button></form>

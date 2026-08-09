@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $site->exists ? 'Edit website' : 'Add website')
 @section('heading', $site->exists ? 'Edit website' : 'Add website')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('publisher.sites.index') }}">Websites</a>@endsection
 @section('content')
 <article><p class="muted">Every new website starts with <strong>HORUS_GAM</strong>. This can later be changed by Horus Media without changing your installation code.</p>
 <form method="POST" action="{{ $site->exists ? route('publisher.sites.update', $site) : route('publisher.sites.store') }}" class="form-grid">@csrf @if($site->exists)@method('PUT')@endif

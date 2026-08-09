@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $organization->exists ? 'Edit organization' : 'New organization')
 @section('heading', $organization->exists ? 'Edit organization' : 'New organization')
-@section('navigation')<a href="{{ route('admin.organizations.index') }}">Organizations</a><span class="active">Details</span>@endsection
 @section('content')
 <article><form method="POST" action="{{ $organization->exists ? route('admin.organizations.update', $organization) : route('admin.organizations.store') }}" class="form-grid">@csrf @if($organization->exists)@method('PUT')@endif
 <label>Name<input class="hm-input" name="name" value="{{ old('name', $organization->name) }}" required></label>
