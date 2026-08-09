@@ -1,9 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Production operations')
 @section('heading', 'Production operations')
-@section('navigation')
-<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('admin.operations.index') }}">Operations</a>@if(auth()->user()->hasPermission('reporting.admin.view'))<a href="{{ route('admin.reporting.index') }}">Reporting</a>@endif
-@endsection
 @section('content')
 <section class="metric-grid">
 <article><p class="eyebrow">Scheduler heartbeat</p><strong class="metric">{{ $heartbeatStale ? 'STALE' : 'HEALTHY' }}</strong><p class="muted">{{ $heartbeat?->last_seen_at ?: 'Never recorded' }}</p></article>

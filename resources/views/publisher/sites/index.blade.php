@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Websites')
 @section('heading', 'Publisher websites')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a href="{{ route('publisher.onboarding.show', $publisher->onboarding_step) }}">Onboarding</a><a class="active" href="{{ route('publisher.sites.index') }}">Websites</a><a href="{{ route('publisher.contracts.index') }}">Contracts</a>@endsection
 @section('content')
 @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.create') }}">Add website</a>@endif
 <div class="table-wrap"><table><thead><tr><th>Website</th><th>Domain</th><th>Status</th><th>Serving mode</th><th></th></tr></thead><tbody>

@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'White-label branding')
 @section('heading', 'White-label branding')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><span class="active">Branding</span>@endsection
 @section('content')
 <article><form method="POST" enctype="multipart/form-data" action="{{ auth()->user()->isHorusAdministrator() ? route('admin.organizations.branding.update', $organization) : route('account.branding.update') }}" class="form-grid">@csrf @method('PUT')
 <label>Dashboard title<input class="hm-input" name="dashboard_title" value="{{ old('dashboard_title', $organization->dashboard_title) }}"></label>

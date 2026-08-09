@@ -106,6 +106,10 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function hasPermission(string $permission): bool
     {
+        if ($this->relationLoaded('roles') && $this->roles->every(fn (Role $role): bool => $role->relationLoaded('permissions'))) {
+            return $this->roles->contains(fn (Role $role): bool => $role->permissions->contains('name', $permission));
+        }
+
         return $this->roles()->whereHas('permissions', fn ($query) => $query->where('name', $permission))->exists();
     }
 }

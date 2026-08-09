@@ -1,5 +1,4 @@
 @extends('layouts.admin')
 @section('title', $contract->contract_reference)
 @section('heading', 'Revenue-share agreement')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('publisher.contracts.index') }}">Contracts</a>@endsection
 @section('content')<article><p class="eyebrow">Contract {{ $contract->contract_reference }}</p><h2>{{ $contract->status->value }}</h2><dl><dt>Effective term</dt><dd>{{ $contract->starts_at?->toDateString() ?: 'Not set' }} – {{ $contract->ends_at?->toDateString() ?: 'Open' }}</dd><dt>Auto-renewal</dt><dd>{{ $contract->auto_renews ? 'Yes' : 'No' }}</dd><dt>Revenue share</dt><dd>{{ $contract->revenue_share_percent }}%</dd><dt>Payment threshold</dt><dd>{{ $contract->currency }} {{ number_format((float) $contract->payment_threshold, 2) }}</dd><dt>Payment terms</dt><dd>{{ $contract->payment_terms }}</dd></dl>@if($contract->contract_file_path)<a class="hm-button-primary button-link" href="{{ route('publisher.contracts.download', $contract) }}">Download contract</a>@endif</article>@endsection

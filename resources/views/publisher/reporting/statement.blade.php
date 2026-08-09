@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', $statement->statement_number)
 @section('heading', 'Publisher statement')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('publisher.reporting.index') }}">Revenue reports</a>@endsection
 @section('content')
 <section class="hero"><div><p class="eyebrow">{{ $statement->statement_number }}</p><h2>{{ $statement->period->period_key }}</h2><p>Finalized immutable statement · {{ $statement->currency }}</p></div><a class="hm-button-primary button-link" href="{{ route('publisher.reporting.statements.csv',$statement) }}">Download CSV</a></section>
 <section class="metric-grid">@foreach ([['Gross revenue',$statement->gross_revenue_minor],['Deductions',$statement->deductions_minor],['Net revenue',$statement->net_revenue_minor],['Publisher earnings',$statement->publisher_earnings_minor],['Balance due',$statement->balance_due_minor]] as [$label,$minor])<article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ number_format($minor/100,2) }}</strong></article>@endforeach</section>

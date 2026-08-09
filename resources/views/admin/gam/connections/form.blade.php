@@ -3,11 +3,6 @@
 @php($credential = $connection->credential)
 @section('title', $editing ? 'Edit GAM connection' : 'Add GAM connection')
 @section('heading', $editing ? 'Edit GAM connection' : 'Add GAM connection')
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a class="active" href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-@endsection
 @section('content')
 <article class="wizard-card">
 <form class="form-grid" method="POST" action="{{ $editing ? route('admin.gam.connections.update', $connection) : route('admin.gam.connections.store') }}">

@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Invite user')
 @section('heading', 'Invite user')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><span class="active">Users</span>@endsection
 @section('content')
 <article><form method="POST" action="{{ route('admin.invitations.store') }}" class="form-stack">@csrf
 <label>Organization ID<input class="hm-input" name="organization_id" required></label>

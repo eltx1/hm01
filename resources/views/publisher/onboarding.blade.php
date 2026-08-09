@@ -1,7 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Publisher onboarding')
 @section('heading', 'Publisher onboarding')
-@section('navigation')<a href="{{ route('dashboard') }}">Overview</a><a class="active" href="{{ route('publisher.onboarding.show', $publisher->onboarding_step) }}">Onboarding</a><a href="{{ route('publisher.sites.index') }}">Websites</a><a href="{{ route('publisher.contracts.index') }}">Contracts</a>@endsection
 @section('content')
 <ol class="wizard-steps">@foreach([1=>'Company',2=>'Payment',3=>'Contract',4=>'Website',5=>'Verification',6=>'Placements',7=>'Submit'] as $number=>$label)<li class="{{ $number === $step ? 'active' : ($number < $publisher->onboarding_step ? 'complete' : '') }}"><a href="{{ route('publisher.onboarding.show', $number) }}"><span>{{ $number }}</span>{{ $label }}</a></li>@endforeach</ol>
 <article class="wizard-card"><form method="POST" action="{{ route('publisher.onboarding.update', $step) }}" class="form-grid">@csrf @method('PUT')

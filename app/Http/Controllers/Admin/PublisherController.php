@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\OrganizationType;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Models\AuditLog;
 use App\Models\Publisher;
+use App\Models\PublisherStatement;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Identity\SessionInvalidator;
+use App\Services\Reporting\UnifiedReportService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,9 +20,14 @@ use Illuminate\View\View;
 
 class PublisherController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
-        return view('admin.accounts.index', ['accounts' => Publisher::withoutGlobalScopes()->with('organization')->latest()->paginate(25), 'kind' => 'publisher']);
+        $status = $request->string('status')->upper()->value();
+        $accounts = Publisher::withoutGlobalScopes()->with('organization')
+            ->when(in_array($status, ['PENDING', 'ACTIVE', 'SUSPENDED', 'CLOSED'], true), fn ($query) => $query->where('status', $status))
+            ->latest()->paginate(25)->withQueryString();
+
+        return view('admin.accounts.index', ['accounts' => $accounts, 'kind' => 'publisher', 'activeStatus' => $status]);
     }
 
     public function create(): View
@@ -30,6 +38,31 @@ class PublisherController extends Controller
     public function edit(Publisher $publisher): View
     {
         return view('admin.accounts.form', ['account' => $publisher->load('contacts'), 'kind' => 'publisher']);
+    }
+
+    public function show(Request $request, Publisher $publisher, UnifiedReportService $reports): View
+    {
+        $publisher->load([
+            'organization.users.roles',
+            'contacts',
+            'sites' => fn ($query) => $query->with(['domains', 'gamConnection', 'servingSettings', 'siteConfig'])->latest(),
+            'contracts' => fn ($query) => $query->latest(),
+            'paymentProfile',
+        ]);
+
+        $canViewFinance = $request->user()->hasPermission('finance.publisher.view')
+            || $request->user()->hasPermission('reporting.admin.view');
+
+        return view('admin.publishers.show', [
+            'publisher' => $publisher,
+            'reporting' => $canViewFinance ? $reports->publisherSummary($publisher) : null,
+            'statements' => $canViewFinance
+                ? PublisherStatement::withoutGlobalScopes()->where('publisher_id', $publisher->id)->with('period')->latest()->limit(12)->get()
+                : collect(),
+            'auditEvents' => $request->user()->hasPermission('audit.view')
+                ? AuditLog::query()->where('organization_id', $publisher->organization_id)->latest()->limit(30)->get()
+                : collect(),
+        ]);
     }
 
     public function store(Request $request, AuditRecorder $audit): RedirectResponse

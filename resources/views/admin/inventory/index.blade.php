@@ -1,13 +1,6 @@
 @extends('layouts.admin')
 @section('title', $site->display_name.' Inventory')
 @section('heading', 'Inventory · '.$site->display_name)
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-<a class="active" href="{{ route('admin.sites.inventory.index', $site) }}">Inventory</a>
-@if(auth()->user()->hasPermission('demand.view'))<a href="{{ route('admin.sites.demand.index', $site) }}">Native demand</a>@endif
-<a href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
-@endsection
 @section('content')
 <section class="hero">
     <div><p class="eyebrow">Static browser delivery</p><h2>{{ $site->primary_domain }}</h2><p>{{ $site->serving_mode->value }} · {{ $site->gamConnection?->network_code ?: 'automatic primary connection' }}</p></div>

@@ -7,6 +7,7 @@ use App\Enums\SiteStatus;
 use App\Enums\VerificationMethod;
 use App\Http\Controllers\Controller;
 use App\Models\ServingModeChange;
+use App\Models\AuditLog;
 use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Models\SiteNote;
@@ -22,14 +23,42 @@ use Illuminate\View\View;
 
 class SiteController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
-        return view('admin.sites.index', ['sites' => Site::withoutGlobalScopes()->with('publisher')->latest()->paginate(25)]);
+        $status = $request->string('status')->upper()->value();
+        $sites = Site::withoutGlobalScopes()->with('publisher')
+            ->when(in_array($status, array_column(SiteStatus::cases(), 'value'), true), fn ($query) => $query->where('status', $status))
+            ->latest()->paginate(25)->withQueryString();
+
+        return view('admin.sites.index', ['sites' => $sites, 'activeStatus' => $status]);
     }
 
-    public function show(Site $site): View
+    public function show(Request $request, Site $site): View
     {
-        return view('publisher.sites.show', ['site' => $site->load(['publisher', 'domains.verifications', 'reviews', 'notes', 'statusHistory', 'servingSettings', 'servingModeChanges', 'siteConfig']), 'internal' => true]);
+        $site->load([
+            'publisher.organization',
+            'domains.verifications',
+            'reviews',
+            'notes',
+            'statusHistory',
+            'servingSettings',
+            'servingModeChanges',
+            'gamConnection',
+            'adUnits',
+            'placements',
+            'siteConfig.versions.deliveryItem.batch',
+            'demandSites.account.network',
+            'bidderSiteMappings.account.bidder',
+            'syntheticProbeResults' => fn ($query) => $query->latest('observed_at')->limit(10),
+        ]);
+
+        return view('publisher.sites.show', [
+            'site' => $site,
+            'internal' => true,
+            'auditEvents' => $request->user()->hasPermission('audit.view')
+                ? AuditLog::query()->where('organization_id', $site->organization_id)->where('auditable_id', $site->id)->latest()->limit(30)->get()
+                : collect(),
+        ]);
     }
 
     public function approve(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse

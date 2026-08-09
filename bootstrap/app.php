@@ -3,6 +3,8 @@
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureAdministratorTwoFactor;
+use App\Http\Middleware\EnsureDashboardAccess;
+use App\Http\Middleware\EnsureHorusAdministrator;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\SecureResponseHeaders;
 use Illuminate\Foundation\Application;
@@ -23,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'active' => EnsureActiveUser::class,
             'admin.2fa' => EnsureAdministratorTwoFactor::class,
+            'dashboard.access' => EnsureDashboardAccess::class,
+            'horus' => EnsureHorusAdministrator::class,
             'permission' => EnsurePermission::class,
         ]);
         $middleware->redirectGuestsTo(fn () => route('login'));

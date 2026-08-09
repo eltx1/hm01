@@ -1,12 +1,6 @@
 @extends('layouts.admin')
 @section('title', 'Google Ad Manager')
 @section('heading', 'Google Ad Manager connections')
-@section('navigation')
-<a href="{{ route('dashboard') }}">Dashboard</a>
-<a class="active" href="{{ route('admin.gam.connections.index') }}">Google Ad Manager</a>
-<a href="{{ route('admin.sites.index') }}">Websites</a>
-<a href="{{ route('admin.publishers.index') }}">Publishers</a>
-@endsection
 @section('content')
 <section class="hero">
     <div><p class="eyebrow">GAM control plane</p><h2>One platform, multiple networks.</h2><p>HORUS_GAM remains the default. MCM partner and publisher networks can be selected per website without changing the publisher installation code.</p></div>
