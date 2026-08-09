@@ -17,6 +17,10 @@ The implementation follows the IAB Tech Lab ads.txt 1.1 final specification:
 canonical file generator. `SupplyChainCheck` stores bounded live-verification
 evidence.
 
+Horus's own `PUBLISHER`/`BOTH` authorization is derived from the same active
+seller identity used by sellers.json and schain. The complete cross-artifact
+flow is documented in `SUPPLY_CHAIN_COMPLIANCE.md`.
+
 ## Architecture
 
 1. `SupplyChainInvariantService` selects eligible account/site records and

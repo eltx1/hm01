@@ -16,7 +16,15 @@ foreach ($forbidden as $entry) {
     }
 }
 
-$required = ['hm-loader.js', '_headers', '404.html', 'delivery-manifest.json', 'configs/_global/control.json'];
+$required = [
+    'hm-loader.js',
+    '_headers',
+    '404.html',
+    'delivery-manifest.json',
+    'configs/_global/control.json',
+    'sellers.json',
+    'supply/sellers.json',
+];
 foreach ($required as $path) {
     if (! is_file($root.DIRECTORY_SEPARATOR.$path)) {
         fwrite(STDERR, "Missing static delivery file: {$path}\n");
@@ -59,6 +67,13 @@ foreach ((array) ($manifest['files'] ?? []) as $path => $sha) {
     }
 }
 
+$sellers = json_decode($files['sellers.json'], true, 512, JSON_THROW_ON_ERROR);
+if (($sellers['version'] ?? null) !== '1.0' || ! is_array($sellers['sellers'] ?? null)
+    || ! hash_equals($files['sellers.json'], $files['supply/sellers.json'])) {
+    fwrite(STDERR, "Invalid or divergent sellers.json static artifacts.\n");
+    exit(1);
+}
+
 foreach ($files as $path => $contents) {
     if (! preg_match('#^configs/[^/]+/(?:production|test|preview)(?:\.v[^/]*)?\.json$#', $path)) continue;
     $config = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
@@ -78,6 +93,12 @@ $headers = $files['_headers'];
 foreach (['Access-Control-Allow-Origin: *', 'X-Content-Type-Options: nosniff', 'immutable', 'stale-while-revalidate', 'X-Robots-Tag: noindex'] as $header) {
     if (! str_contains($headers, $header)) {
         fwrite(STDERR, "Required _headers policy missing: {$header}.\n");
+        exit(1);
+    }
+}
+foreach (['/sellers.json', '/supply/sellers.json', 'Content-Type: application/json; charset=utf-8'] as $header) {
+    if (! str_contains($headers, $header)) {
+        fwrite(STDERR, "sellers.json _headers policy missing: {$header}.\n");
         exit(1);
     }
 }

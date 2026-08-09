@@ -25,16 +25,10 @@
 
 <section class="detail-grid">
 <article>
-    <p class="eyebrow">Supply-chain identity</p><h3>Seller declaration</h3>
-    <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.sellers.store', $site) }}">@csrf
-        <label>Seller ID<input class="hm-input" name="seller_id" required></label>
-        <label>Seller type<select class="hm-input" name="seller_type"><option>PUBLISHER</option><option>INTERMEDIARY</option><option>BOTH</option></select></label>
-        <label>Public name<input class="hm-input" name="name" required></label>
-        <label>Seller business domain<input class="hm-input" name="domain" value="{{ $site->publisher?->business_domain ?: $site->primary_domain }}" required></label>
-        <label><input type="checkbox" name="is_confidential" value="1"> Confidential seller</label>
-        <button class="hm-button-secondary">Save and publish supply chain</button>
-    </form>
-    @foreach($sellerDeclarations as $seller)<p><strong>{{ $seller->seller_id }}</strong> · {{ $seller->seller_type }} · {{ $seller->domain }} · {{ $seller->review_status->value }}</p>@endforeach
+    <p class="eyebrow">Unified supply-chain identity</p><h3>Seller declarations</h3>
+    <p class="muted">Seller lifecycle, review, sellers.json preview, Ads.txt relationships, and schain findings are managed together in the Supply Chain Control Center.</p>
+    @foreach($sellerDeclarations as $seller)<p><strong>{{ $seller->seller_id }}</strong> · {{ $seller->seller_type }} · <x-status-badge :status="$seller->status" /> · <x-status-badge :status="$seller->review_status" /></p>@endforeach
+    @if(auth()->user()->hasPermission('supply_chain.sellers.view'))<a class="hm-button-secondary button-link" href="{{ route('admin.compliance.sellers.index') }}">Open Sellers Control Center</a>@endif
 </article>
 </section>
 

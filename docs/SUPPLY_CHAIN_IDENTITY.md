@@ -2,6 +2,8 @@
 
 Live ads.txt verification, remediation, and managed-record controls are
 documented in [`ADS_TXT_COMPLIANCE.md`](ADS_TXT_COMPLIANCE.md).
+The implemented sellers.json, schain, Admin lifecycle, and runtime flow are
+documented in [`SUPPLY_CHAIN_COMPLIANCE.md`](SUPPLY_CHAIN_COMPLIANCE.md).
 
 ## Status and authority
 
@@ -113,7 +115,8 @@ This keeps existing delivery operational while making the fallback queryable by 
 
 - `supply/sites/{siteKey}/ads.txt`;
 - `supply/domains/{siteDomain}/ads.txt`;
-- `supply/sellers.json`.
+- root `sellers.json` (the standards-required advertising-system path);
+- `supply/sellers.json` as a byte-identical compatibility alias.
 
 Ads.txt directives are emitted first, followed by canonical records sorted by normalized line. sellers.json entries are sorted by seller ID. Duplicate equivalents are collapsed, conflicts are not guessed, JSON keys are canonicalized, and no generated timestamp is added to these artifacts. Repeated builds against unchanged database truth are byte-identical.
 
@@ -128,9 +131,9 @@ Ads.txt directives are emitted first, followed by canonical records sorted by no
 - Confidential seller names/domains are replaced with `[CONFIDENTIAL]` in audit values.
 - Global public generation deliberately crosses organizations, but eligibility uses explicit publisher, account, and site relationships. User-facing queries must retain organization scope.
 
-## Consumption by Tasks 3 and 4
+## Control-plane consumption
 
-Future Ads.txt and sellers.json screens must consume this model rather than create parallel tables:
+Ads.txt and sellers.json screens consume this model rather than create parallel tables:
 
 - Admin Ads.txt tables use `adsTxtForSite()` lines and findings as canonical required state.
 - Publisher Ads.txt pages use those exact lines and `ownerIdentity()`; they must not expose demand credentials or internal account metadata.

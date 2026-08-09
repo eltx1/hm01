@@ -1,5 +1,17 @@
 # Prebid Architecture
 
+## SupplyChain Object integration
+
+The permanent loader reads only the validated public
+`supplyChain.schain` value from the static site configuration and applies it to
+Prebid first-party data at `ortb2.source.ext.schain` before the auction. The
+object is derived from the canonical seller identity; publishers do not add or
+change page code when it changes. Missing or ambiguous identity omits the
+object and fails safely. No bid or impression event is routed through Laravel.
+
+The field semantics, lifecycle, and cross-validation rules are documented in
+[`SUPPLY_CHAIN_COMPLIANCE.md`](SUPPLY_CHAIN_COMPLIANCE.md).
+
 ## Fixed ownership model
 
 Prebid.js executes only in the visitor browser. Laravel is a control plane that stores public bidder configuration, builds immutable CDN snapshots, and automates Google Ad Manager setup. Auction, bid, and impression traffic never passes through Laravel.

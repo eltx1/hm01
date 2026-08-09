@@ -17,6 +17,7 @@ use App\Services\Gam\GamConnectionResolver;
 use App\Services\Prebid\PrebidConfigurationBuilder;
 use App\Services\Operations\PlatformControlService;
 use App\Services\SupplyChain\SupplyChainInvariantService;
+use App\Services\SupplyChain\SupplyChainObjectValidator;
 
 final class SiteConfigurationBuilder
 {
@@ -26,6 +27,7 @@ final class SiteConfigurationBuilder
         private readonly DemandConfigurationBuilder $demand,
         private readonly PlatformControlService $controls,
         private readonly SupplyChainInvariantService $supplyChain,
+        private readonly SupplyChainObjectValidator $supplyChainValidator,
     ) {
     }
 
@@ -57,8 +59,14 @@ final class SiteConfigurationBuilder
             : ['enabled' => false, 'build' => null, 'auction' => [], 'delivery' => ['gamFallback' => true], 'adUnits' => []];
         $native = $this->demand->build($site);
         $schain = $this->supplyChain->schainForSite($site);
-        $supplyChainSettings = $config->supply_chain_settings ?? [];
-        unset($supplyChainSettings['schain']);
+        $publicSchain = [
+            'complete' => $schain['complete'],
+            'ver' => $schain['ver'],
+            'nodes' => $schain['nodes'],
+        ];
+        if ($publicSchain['nodes'] !== []) {
+            $this->supplyChainValidator->assertValid($publicSchain);
+        }
 
         $pageTargeting = $this->targeting($site->targeting->whereNull('placement_id'), $environment);
         foreach ($config->page_targeting ?? [] as $key => $values) {
@@ -106,16 +114,7 @@ final class SiteConfigurationBuilder
                 'signals' => ['gpc' => true, 'coppa' => false, 'underAgeOfConsent' => false],
                 'requireConsentBeforeAds' => true,
             ], $config->privacy_settings ?? []),
-            'supplyChain' => array_replace_recursive([
-                'adsTxtUrl' => 'https://'.$site->primary_domain.'/ads.txt',
-                'sellersJsonUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sellers.json',
-                'cdnAdsTxtUrl' => rtrim((string) config('horus.cdn_url'), '/').'/supply/sites/'.$site->public_key.'/ads.txt',
-                'schain' => [
-                    'complete' => $schain['complete'],
-                    'ver' => $schain['ver'],
-                    'nodes' => $schain['nodes'],
-                ],
-            ], $supplyChainSettings),
+            ...($publicSchain['nodes'] === [] ? [] : ['supplyChain' => ['schain' => $publicSchain]]),
             'observability' => array_replace_recursive([
                 'runtimeTelemetry' => false,
                 'localDiagnostics' => (bool) $config->debug_enabled,

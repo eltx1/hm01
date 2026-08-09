@@ -45,7 +45,7 @@ function config(overrides = {}) {
 }
 
 function harness(selectedConfig, { prebid = 'success' } = {}) {
-    const metrics = { gptLoads: 0, prebidLoads: 0, refreshes: 0, addAdUnits: [], targeting: 0, requests: 0 };
+    const metrics = { gptLoads: 0, prebidLoads: 0, refreshes: 0, addAdUnits: [], targeting: 0, requests: 0, prebidConfig: null };
     const element = {
         id: '',
         attributes: { 'data-placement': 'article_top' },
@@ -105,7 +105,7 @@ function harness(selectedConfig, { prebid = 'success' } = {}) {
                     }
                     sandbox.pbjs = {
                         que: immediateQueue,
-                        setConfig() {},
+                        setConfig(value) { metrics.prebidConfig = JSON.parse(JSON.stringify(value)); },
                         onEvent() {},
                         removeAdUnit() {},
                         addAdUnits(units) { metrics.addAdUnits.push(...units); },
@@ -193,5 +193,19 @@ test('disabled Prebid never loads its build and GAM still requests', async () =>
     await sandbox.HorusMediaLoader.boot();
 
     assert.equal(metrics.prebidLoads, 0);
+    assert.equal(metrics.refreshes, 1);
+});
+
+test('canonical schain is attached to Prebid ORTB2 without publisher code changes', async () => {
+    const schain = {
+        complete: 1,
+        ver: '1.0',
+        nodes: [{ asi: 'horusmedia.net', sid: 'publisher-42', hp: 1 }],
+    };
+    const { sandbox, metrics } = harness(config({ supplyChain: { schain } }));
+    await sandbox.HorusMediaLoader.boot();
+
+    assert.deepEqual(metrics.prebidConfig.ortb2.source.ext.schain, schain);
+    assert.equal(metrics.requests, 1);
     assert.equal(metrics.refreshes, 1);
 });

@@ -13,10 +13,9 @@ use App\Models\Placement;
 use App\Models\Site;
 use App\Models\SellerDeclaration;
 use App\Models\TagVersion;
+use App\Services\Compliance\SellerDeclarationManager;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
-use App\Services\Inventory\SiteConfigPublisher;
-use App\Services\SupplyChain\SupplyChainInvariantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -48,7 +47,7 @@ class InventoryController extends Controller
         ]);
     }
 
-    public function storeSellerDeclaration(Request $request, Site $site, SupplyChainInvariantService $identities, SiteConfigPublisher $publisher): RedirectResponse
+    public function storeSellerDeclaration(Request $request, Site $site, SellerDeclarationManager $sellers): RedirectResponse
     {
         $data = $request->validate([
             'seller_id' => ['required', 'string', 'max:255'],
@@ -58,10 +57,13 @@ class InventoryController extends Controller
             'is_confidential' => ['sometimes', 'boolean'],
         ]);
         $data['is_confidential'] = $request->boolean('is_confidential');
-        $identities->saveSellerDeclaration($site->publisher, $site, $data, $request->user());
-        $publisher->publishActiveProduction($site, $request->user());
+        $declaration = $sellers->create($data + [
+            'publisher_id' => $site->publisher_id,
+            'site_id' => $site->id,
+        ], $request->user());
 
-        return back()->with('status', 'Seller declaration saved and static supply-chain artifacts were queued.');
+        return redirect()->route('admin.compliance.sellers.show', $declaration)
+            ->with('status', 'Seller declaration created disabled. Review it, then activate it from the Supply Chain Control Center.');
     }
 
     public function storeAdUnit(Request $request, Site $site, InventoryManager $inventory): RedirectResponse

@@ -51,6 +51,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Supply Chain & Compliance', [
                 $this->item('Ads.txt', 'admin.compliance.ads-txt.index', 'supply_chain.ads_txt.view', ['admin.compliance.ads-txt.*']),
+                $this->item('Sellers', 'admin.compliance.sellers.index', 'supply_chain.sellers.view', ['admin.compliance.sellers.*']),
             ]),
             $this->group('Reporting', [
                 $this->item('Reporting & finance', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
@@ -78,7 +79,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Websites', [
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
-                $this->item('Ads.txt & Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
+                $this->item('Supply Chain Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),
             $this->group('Reports & Earnings', [
                 $this->item('Reports, statements & payments', 'publisher.reporting.index', 'reporting.publisher.view', ['publisher.reporting.*']),
