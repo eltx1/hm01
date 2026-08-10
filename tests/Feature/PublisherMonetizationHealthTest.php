@@ -208,7 +208,7 @@ class PublisherMonetizationHealthTest extends TestCase
         $publisherResponse->assertOk()
             ->assertSee('Monetization health')
             ->assertSee('Native Network')
-            ->assertSee($this->site->installationCode(), false)
+            ->assertSee($this->site->installationCode())
             ->assertDontSee('HORUS_GAM')
             ->assertDontSee('Horus Primary Internal GAM')
             ->assertDontSee('123456789')
@@ -309,7 +309,7 @@ class PublisherMonetizationHealthTest extends TestCase
         $this->assertSame($beforeConfigVersions, $this->site->configVersions()->count());
         $this->assertSame($beforePrebidSettings, PrebidSetting::withoutGlobalScopes()->count());
         Http::assertNothingSent();
-        $this->assertStringContainsString('/loader.js', $this->site->installationCode());
+        $this->assertStringContainsString('/hm-loader.js', $this->site->installationCode());
         $this->assertStringContainsString($this->site->public_key, $this->site->installationCode());
 
         $otherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Other Publisher Org');
