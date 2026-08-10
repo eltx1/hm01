@@ -9,6 +9,7 @@ use App\Providers\NotificationServiceProvider;
 use App\Providers\OperationsServiceProvider;
 use App\Providers\PrebidServiceProvider;
 use App\Providers\ReportingServiceProvider;
+use App\Providers\SettingsServiceProvider;
 use App\Providers\SupportServiceProvider;
 
 return [
@@ -22,4 +23,5 @@ return [
     MonetizationServiceProvider::class,
     NotificationServiceProvider::class,
     SupportServiceProvider::class,
+    SettingsServiceProvider::class,
 ];
