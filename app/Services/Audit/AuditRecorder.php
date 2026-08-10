@@ -40,10 +40,13 @@ final class AuditRecorder
         ]);
     }
 
+    /** @param array<string|int, mixed> $values */
     private function redact(array $values): array
     {
         $sensitive = [
             'password', 'password_confirmation', 'token', 'token_hash', 'secret',
+            'api_key', 'api_token', 'access_token', 'refresh_token', 'client_secret',
+            'authorization', 'credential', 'credentials', 'service_account_json', 'private_key',
             'two_factor_secret', 'two_factor_recovery_codes', 'payment_details',
             'account_reference', 'routing_reference', 'tax_identifier',
             'bank_account', 'bank_account_number', 'iban', 'swift', 'bic',
