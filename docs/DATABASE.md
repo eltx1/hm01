@@ -172,6 +172,19 @@ Ticket events are append-oriented operational evidence. SLA policies store
 integer minute targets, while each ticket persists its due, pause, response,
 resolution, and close timestamps for deterministic scheduler evaluation.
 
+## Notification storage
+
+`horus_notifications` is recipient-owned durable event storage. It uses bounded
+non-secret presentation fields, controlled route names/parameters, related
+entity aliases, read/email timestamps, and a unique SHA-256 deduplication key.
+Indexes cover recipient unread lists, organization/category history, pending
+email delivery, and related-entity lookup. It does not use an unrestricted
+polymorphic class name or store source secrets and private message content.
+
+`notification_preferences` has one unique user/category row with in-app and
+email channel choices. `support_tickets` gains an indexed status/resolution due
+path so scheduled SLA evaluation remains bounded.
+
 ## Migrations and retention
 
 Migrations are forward-only in production and run with `php artisan migrate

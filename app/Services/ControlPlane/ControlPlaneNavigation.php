@@ -36,6 +36,7 @@ final class ControlPlaneNavigation
         return [
             $this->group('Overview', [
                 $this->item('Action Center', 'dashboard', 'dashboard.admin.view', ['dashboard']),
+                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Publishers', [
                 $this->item('Publisher accounts', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
@@ -81,6 +82,7 @@ final class ControlPlaneNavigation
         return [
             $this->group('Overview', [
                 $this->item('Publisher overview', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
+                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
                 $this->item('Onboarding', 'publisher.onboarding.show', 'onboarding.manage', ['publisher.onboarding.*'], ['step' => $step]),
             ]),
             $this->group('Websites', [
@@ -107,6 +109,7 @@ final class ControlPlaneNavigation
         return [
             $this->group('Overview', [
                 $this->item('Advertiser overview', 'dashboard', 'dashboard.advertiser.view', ['dashboard']),
+                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Campaigns', [
                 $this->item('Campaigns', 'advertiser.campaigns.index', 'campaigns.view', ['advertiser.campaigns.*']),
@@ -125,6 +128,7 @@ final class ControlPlaneNavigation
         return [
             $this->group('Overview', [
                 $this->item('Partner overview', 'dashboard', 'dashboard.partner.view', ['dashboard']),
+                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Support', [
                 $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),

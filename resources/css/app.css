@@ -141,6 +141,14 @@ dd { margin: 0; }
 .support-message p { max-width: none; overflow-wrap: anywhere; color: var(--hm-white); white-space: normal; }
 .support-message-horus { border-color: rgba(28, 99, 207, .45); background: rgba(18, 73, 157, .1); }
 .support-message-internal, .support-note-panel { border-color: rgba(241, 183, 51, .38); background: rgba(241, 183, 51, .06); }
+.notification-bell { position: relative; margin-left: auto; }
+.notification-bell summary { cursor: pointer; list-style: none; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-pill); padding: .55rem .8rem; }
+.notification-bell summary span { display: inline-grid; place-items: center; min-width: 1.35rem; height: 1.35rem; border-radius: 50%; background: var(--hm-danger); color: #fff; font-size: .7rem; font-weight: 800; }
+.notification-popover { position: absolute; z-index: 30; top: calc(100% + .6rem); right: 0; display: grid; gap: .55rem; width: min(90vw, 360px); border: 1px solid var(--hm-line-gold); border-radius: var(--hm-radius-md); padding: 1rem; background: var(--hm-night-2); box-shadow: var(--hm-shadow); }
+.notification-popover a { display: grid; gap: .2rem; border-top: 1px solid var(--hm-line); padding-top: .55rem; color: var(--hm-white); }
+.notification-popover small { color: var(--hm-muted); }
+.notification-row { align-items: flex-start; }
+.notification-row.unread { border-left: 3px solid var(--hm-gold); padding-left: 1rem; background: rgba(241, 183, 51, .035); }
 
 @media (max-width: 800px) {
     .admin-shell { grid-template-columns: 1fr; }

@@ -113,8 +113,10 @@ time by exactly the paused duration. Reprioritization is audited and recalculate
 the applicable persisted targets.
 
 Computed presentation states are `ON_TRACK`, `APPROACHING`, `BREACHED`, `MET`,
-`PAUSED`, and `NOT_APPLICABLE`. Task 8 adds idempotent scheduled warning/breach
-notifications without changing this calculation boundary.
+`PAUSED`, and `NOT_APPLICABLE`. The Task 8 scheduler emits idempotent warning
+and breach notifications keyed by ticket, metric, due timestamp, and state,
+without changing this calculation boundary. It also appends one sanitized SLA
+event when a transition is first notified.
 
 ## Abuse, audit, and operational access
 

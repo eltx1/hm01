@@ -21,7 +21,7 @@ class DashboardController extends Controller
     {
         return match ($request->user()->organization->type) {
             OrganizationType::HorusMedia => $this->administrator($request, $reports, $actionCenter),
-            OrganizationType::Publisher => $this->publisher($request, $reports),
+            OrganizationType::Publisher => $this->publisher($request, $reports, $actionCenter),
             OrganizationType::Advertiser => view('dashboards.advertiser', [
                 'campaigns' => Campaign::query()->latest()->limit(8)->get(),
                 'activeCampaigns' => Campaign::query()->whereIn('status', [CampaignStatus::Scheduled->value, CampaignStatus::Active->value])->count(),
@@ -50,7 +50,7 @@ class DashboardController extends Controller
         ]);
     }
 
-    private function publisher(Request $request, UnifiedReportService $reports): View
+    private function publisher(Request $request, UnifiedReportService $reports, ActionCenter $actionCenter): View
     {
         $publisher = $request->user()->organization->publisher()->with([
             'sites' => fn ($query) => $query->latest(),
@@ -61,6 +61,10 @@ class DashboardController extends Controller
             ? $reports->publisherSummary($publisher)
             : ['impressions' => 0, 'revenue_minor' => 0, 'payment_balance_minor' => 0, 'statements' => collect()];
 
-        return view('dashboards.publisher', compact('publisher', 'reporting'));
+        return view('dashboards.publisher', [
+            'publisher' => $publisher,
+            'reporting' => $reporting,
+            'actionItems' => $actionCenter->items($request->user()),
+        ]);
     }
 }

@@ -11,6 +11,7 @@ use App\Models\SupportTicketEvent;
 use App\Models\SupportTicketMessage;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Notifications\DomainNotificationService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +25,7 @@ final class SupportTicketService
         private readonly SupportLinkedResourceResolver $resources,
         private readonly SupportAttachmentService $attachments,
         private readonly AuditRecorder $audit,
+        private readonly DomainNotificationService $notifications,
     ) {}
 
     public function create(User $actor, array $data, ?UploadedFile $attachment = null): SupportTicket
@@ -73,6 +75,7 @@ final class SupportTicketService
                 $this->attachments->store($attachment, $ticket, $message, $actor);
                 $this->event($ticket, $actor, SupportTicketEventType::AttachmentAdded);
             }
+            $this->notifications->supportCreated($ticket);
 
             return $ticket->fresh(['slaPolicy', 'requester']);
         }, 3);
@@ -122,6 +125,10 @@ final class SupportTicketService
                 $this->attachments->store($attachment, $ticket, $message, $actor);
                 $this->event($ticket, $actor, SupportTicketEventType::AttachmentAdded);
             }
+            $this->notifications->supportReply($ticket, $message, $isHorus);
+            if (! $isHorus && $before->terminal()) {
+                $this->notifications->supportStatus($ticket, $before);
+            }
 
             return $message->fresh(['author', 'attachments']);
         }, 3);
@@ -159,6 +166,7 @@ final class SupportTicketService
             $this->event($ticket, $actor, SupportTicketEventType::Assigned, $old, $assignee?->id);
             $this->audit->record('support.ticket.assigned', $ticket->organization_id, $actor, $ticket,
                 ['assigned_to' => $old], ['assigned_to' => $assignee?->id]);
+            $this->notifications->supportAssigned($ticket, $assignee);
 
             return $ticket->fresh('assignee');
         }, 3);
@@ -209,6 +217,7 @@ final class SupportTicketService
             $this->event($ticket, $actor, $event, $from->value, $target->value);
             $this->audit->record('support.ticket.status_changed', $ticket->organization_id, $actor, $ticket,
                 ['status' => $from->value], ['status' => $target->value]);
+            $this->notifications->supportStatus($ticket, $from);
 
             return $ticket;
         }, 3);
@@ -229,6 +238,7 @@ final class SupportTicketService
             $this->event($ticket, $actor, SupportTicketEventType::StatusChanged, $from->value, SupportTicketStatus::Closed->value);
             $this->audit->record('support.ticket.status_changed', $ticket->organization_id, $actor, $ticket,
                 ['status' => $from->value], ['status' => SupportTicketStatus::Closed->value]);
+            $this->notifications->supportStatus($ticket, $from);
 
             return $ticket;
         }, 3);
@@ -249,6 +259,7 @@ final class SupportTicketService
             $this->event($ticket, $actor, SupportTicketEventType::Reopened, $from->value, SupportTicketStatus::PendingHorus->value);
             $this->audit->record('support.ticket.reopened', $ticket->organization_id, $actor, $ticket,
                 ['status' => $from->value], ['status' => SupportTicketStatus::PendingHorus->value]);
+            $this->notifications->supportStatus($ticket, $from);
 
             return $ticket;
         }, 3);

@@ -87,6 +87,8 @@ system:
   verification queues, versioned rules, adjustments, and reconciliation
 - first-party organization-scoped Support with threaded public messages,
   confidential Horus notes, private attachments, controlled lifecycle, and SLA
+- durable role-targeted Notification Center, idempotent SLA/email automation,
+  state-transition alerts, and source-driven Admin/Publisher Action Center
 
 ## Local setup
 
@@ -135,6 +137,7 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 - [Publisher earnings and payments](docs/PUBLISHER_FINANCE.md)
 - [Admin Finance Operations](docs/FINANCE_OPERATIONS.md)
 - [Support Ticket System](docs/SUPPORT_SYSTEM.md)
+- [Notification Center and Action Center](docs/NOTIFICATION_CENTER.md)
 - [Security](docs/SECURITY.md)
 - [Publisher onboarding and websites](docs/PUBLISHER_ONBOARDING.md)
 - [Portable deployment](docs/DEPLOYMENT.md)

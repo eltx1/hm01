@@ -95,6 +95,16 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(SupportTicket::class, 'assigned_to');
     }
 
+    public function horusNotifications(): HasMany
+    {
+        return $this->hasMany(HorusNotification::class, 'recipient_id');
+    }
+
+    public function notificationPreferences(): HasMany
+    {
+        return $this->hasMany(NotificationPreference::class);
+    }
+
     public function isActive(): bool
     {
         return $this->status === UserStatus::Active && $this->organization?->isActive() && ! $this->isLocked();
