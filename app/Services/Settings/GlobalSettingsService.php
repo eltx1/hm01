@@ -78,10 +78,12 @@ final class GlobalSettingsService
 
         $this->invalidate();
         config([$definition->configPath => $value]);
-        $this->audit->record('settings.global.updated', null, $actor, $row,
+        // GlobalSetting uses a controlled string key, while AuditLog auditable IDs are ULIDs.
+        // Keep the setting key in safe structured values/metadata instead of overloading auditable_id.
+        $this->audit->record('settings.global.updated', null, $actor, null,
             ['key' => $key, 'value' => $before],
             ['key' => $key, 'value' => $value],
-            ['group' => $definition->group, 'high_impact' => $definition->highImpact, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
+            ['setting_key' => $key, 'group' => $definition->group, 'high_impact' => $definition->highImpact, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
         );
 
         return $row->refresh();
@@ -97,7 +99,7 @@ final class GlobalSettingsService
         $this->audit->record('settings.global.reset', null, $actor, null,
             ['key' => $key, 'value' => $before],
             ['key' => $key, 'value' => $this->fallbacks[$key]],
-            ['group' => $definition->group, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
+            ['setting_key' => $key, 'group' => $definition->group, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
         );
     }
 
