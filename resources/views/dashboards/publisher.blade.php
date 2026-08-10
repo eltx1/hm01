@@ -41,7 +41,7 @@
     </article>
     <article>
         <p class="eyebrow">Commercial readiness</p><h2>Contract and payment profile</h2>
-        <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->is_verified ? 'VERIFIED' : 'PENDING'" /></div>
+        <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
         <div class="compact-row"><div><strong>Contract</strong><p>{{ $activeContract?->contract_reference ?: 'No active contract' }}</p></div><x-status-badge :status="$activeContract?->status?->value ?: 'PENDING'" /></div>
         @if(auth()->user()->hasPermission('contracts.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.contracts.index') }}">Review contracts</a>@endif
     </article>

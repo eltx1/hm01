@@ -77,6 +77,11 @@ A statement contains opening carry-forward, gross revenue, deductions, net reven
 
 Balances below threshold carry forward. Payable statements may require the publisher to upload a private PDF or image invoice. Finance can create and approve payments, settle a full or partial amount, and store the Horus payment reference. Partial settlement updates the remaining statement balance without deleting payment history.
 
+The Publisher product surface, payment-profile verification lifecycle, private
+invoice ownership rules, Publisher-safe CSV, currency separation, and
+requested-versus-settled payout presentation are documented in
+[`PUBLISHER_FINANCE.md`](PUBLISHER_FINANCE.md).
+
 Publishers can view only their organization-scoped reports and statements, download CSV, print the HTML statement, and upload their invoice. Horus administrators can view gross revenue, net revenue, publisher earnings, Horus margin, optional MCM earnings, and all outstanding payments.
 
 ## Advertiser reporting and invoices
@@ -89,6 +94,10 @@ The existing campaign invoice entity is extended rather than duplicated. It stor
 
 - No production credential or raw source file is public.
 - Uploaded reports and publisher invoices are stored on the private local disk.
+- Publisher invoice downloads require explicit statement ownership and return
+  private, no-store responses.
+- Encrypted payment account, routing, and tax values are masked after save and
+  excluded from HTML, validation old input, and audit metadata.
 - Every manual import, revenue-rule version, adjustment decision, financial close, statement generation, and publisher payment is audited.
 - Organization global scopes protect publisher and advertiser views; Horus administrators retain cross-organization reporting access.
 - External report reads are deterministic and idempotent. No reporting operation changes publisher installation code or the browser delivery path.

@@ -48,6 +48,25 @@ class ReportingServiceProvider extends ServiceProvider
             Route::post('/admin/reporting/payments/{publisherPayment}/paid', [AdminReportingController::class, 'markPaymentPaid'])
                 ->middleware('permission:reporting.payments.manage')->name('admin.reporting.payments.paid');
 
+            Route::get('/publisher/finance', [PublisherReportingController::class, 'overview'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.overview');
+            Route::get('/publisher/finance/statements', [PublisherReportingController::class, 'statements'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.statements.index');
+            Route::get('/publisher/finance/statements/{publisherStatement}', [PublisherReportingController::class, 'statement'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.statements.show');
+            Route::get('/publisher/finance/statements/{publisherStatement}/csv', [PublisherReportingController::class, 'csv'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.statements.csv');
+            Route::post('/publisher/finance/statements/{publisherStatement}/invoice', [PublisherReportingController::class, 'invoice'])
+                ->middleware('permission:finance.publisher.invoice.upload')->name('publisher.finance.statements.invoice');
+            Route::get('/publisher/finance/statements/{publisherStatement}/invoice', [PublisherReportingController::class, 'invoiceDownload'])
+                ->middleware(['permission:finance.publisher.view_own', 'throttle:20,1'])->name('publisher.finance.statements.invoice.download');
+            Route::get('/publisher/finance/payment-method', [PublisherReportingController::class, 'paymentMethod'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.payment-method.edit');
+            Route::put('/publisher/finance/payment-method', [PublisherReportingController::class, 'updatePaymentMethod'])
+                ->middleware('permission:finance.publisher.payment_profile.manage')->name('publisher.finance.payment-method.update');
+            Route::get('/publisher/finance/payouts', [PublisherReportingController::class, 'payouts'])
+                ->middleware('permission:finance.publisher.view_own')->name('publisher.finance.payouts.index');
+
             Route::get('/publisher/reporting', [PublisherReportingController::class, 'index'])
                 ->middleware('permission:reporting.publisher.view')->name('publisher.reporting.index');
             Route::get('/publisher/reporting/statements/{publisherStatement}', [PublisherReportingController::class, 'statement'])

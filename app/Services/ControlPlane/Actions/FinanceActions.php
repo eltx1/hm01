@@ -25,7 +25,7 @@ final class FinanceActions implements ActionCenterProvider
             $items[] = $this->item('payment-profiles', 'Payment profiles not verified', Publisher::withoutGlobalScopes()
                 ->where(function ($query): void {
                     $query->whereDoesntHave('paymentProfile')
-                        ->orWhereHas('paymentProfile', fn ($profile) => $profile->where('is_verified', false));
+                        ->orWhereHas('paymentProfile', fn ($profile) => $profile->where('verification_status', '!=', 'VERIFIED'));
                 })->count(),
                 'Publisher payment details are missing or awaiting verification.', 'admin.publishers.index', 30);
         }

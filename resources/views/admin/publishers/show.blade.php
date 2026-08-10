@@ -76,7 +76,7 @@
 </article>
 <article id="finance" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Payout readiness</p><h2>Finance</h2></div>@if(auth()->user()->hasPermission('publisher_payments.manage'))<a class="section-anchor" href="{{ route('admin.publishers.payment-profile.edit', $publisher) }}">Payment profile</a>@endif</div>
-    <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile?->payment_method ?: 'Not configured' }} · {{ $publisher->paymentProfile?->currency ?: 'No currency' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->is_verified ? 'VERIFIED' : 'PENDING'" /></div>
+    <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile?->payment_method ?: 'Not configured' }} · {{ $publisher->paymentProfile?->currency ?: 'No currency' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
     @forelse($statements as $statement)<a class="compact-row" href="{{ route('admin.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ number_format($statement->balance_due_minor / 100, 2) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>@empty<p class="muted">No finalized statements.</p>@endforelse
 </article>
 @endif

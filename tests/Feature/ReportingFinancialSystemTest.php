@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\FinancialPeriodStatus;
 use App\Enums\OrganizationType;
+use App\Enums\PublisherPaymentProfileStatus;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportImportStatus;
@@ -11,7 +12,6 @@ use App\Enums\ReportSourceCode;
 use App\Enums\RevenueRuleScope;
 use App\Enums\RoleName;
 use App\Models\Advertiser;
-use App\Models\AuditLog;
 use App\Models\Campaign;
 use App\Models\DailyReport;
 use App\Models\FinancialPeriod;
@@ -21,13 +21,13 @@ use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\RevenueRule;
 use App\Services\Reporting\FinancialPeriodService;
+use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\PublisherPaymentService;
 use App\Services\Reporting\PublisherStatementService;
 use App\Services\Reporting\ReportImportService;
 use App\Services\Reporting\RevenueAdjustmentService;
 use App\Services\Reporting\RevenueRuleService;
 use App\Services\Reporting\UnifiedReportService;
-use Carbon\CarbonImmutable;
 use Database\Seeders\InventoryDeliverySeeder;
 use Database\Seeders\ReportingSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -181,11 +181,20 @@ class ReportingFinancialSystemTest extends TestCase
             'PUB-INV-001',
             $admin,
         );
+        $profile = app(PublisherPaymentProfileService::class)->save($publisher, [
+            'beneficiary_name' => 'Publisher LLC', 'payment_method' => 'BANK_TRANSFER',
+            'currency' => 'USD', 'country' => 'US', 'account_reference' => 'ACCOUNT-1234',
+        ], $admin);
+        app(PublisherPaymentProfileService::class)->review(
+            $profile,
+            PublisherPaymentProfileStatus::Verified,
+            $admin,
+        );
         $payments = app(PublisherPaymentService::class);
         $payment = $payments->create($statementTwo->fresh(), 10000, ['payment_method' => 'BANK_TRANSFER'], $admin);
         $payments->approve($payment, $admin);
         $payments->markPaid($payment->fresh(), 'HM-BANK-REF-001', $admin, 5000);
-        $this->assertDatabaseHas('publisher_payments', ['id' => $payment->id, 'status' => 'PARTIALLY_PAID', 'amount_minor' => 5000, 'horus_payment_reference' => 'HM-BANK-REF-001']);
+        $this->assertDatabaseHas('publisher_payments', ['id' => $payment->id, 'status' => 'PARTIALLY_PAID', 'amount_minor' => 10000, 'settled_amount_minor' => 5000, 'horus_payment_reference' => 'HM-BANK-REF-001']);
         $this->assertSame(15300, $statementTwo->fresh()->balance_due_minor);
         $this->assertSame('PARTIALLY_PAID', $statementTwo->fresh()->status->value);
     }
@@ -252,6 +261,7 @@ class ReportingFinancialSystemTest extends TestCase
     private function connection(ReportSourceCode $code, string $organizationId, string $name): ReportSourceConnection
     {
         $source = ReportSource::query()->where('code', $code->value)->firstOrFail();
+
         return ReportSourceConnection::withoutGlobalScopes()->create([
             'organization_id' => $organizationId, 'report_source_id' => $source->id,
             'name' => $name, 'connection_type' => 'TEST', 'connection_id' => strtolower($code->value).'-test',
