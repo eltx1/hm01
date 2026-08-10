@@ -7,10 +7,10 @@ use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Publisher;
 use App\Models\PublisherContract;
-use App\Models\PublisherPaymentProfile;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Sites\SiteLifecycleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -33,14 +33,20 @@ class OnboardingController extends Controller
         ]);
     }
 
-    public function update(Request $request, int $step, SiteLifecycleService $lifecycle, AuditRecorder $audit, SiteConfigPublisher $configPublisher): RedirectResponse
-    {
+    public function update(
+        Request $request,
+        int $step,
+        SiteLifecycleService $lifecycle,
+        AuditRecorder $audit,
+        SiteConfigPublisher $configPublisher,
+        PublisherPaymentProfileService $paymentProfiles,
+    ): RedirectResponse {
         abort_unless($step >= 1 && $step <= 7, 404);
         $publisher = $this->publisher($request);
 
         match ($step) {
             1 => $this->company($request, $publisher),
-            2 => $this->payment($request, $publisher),
+            2 => $this->payment($request, $publisher, $paymentProfiles),
             3 => $this->contract($request, $publisher),
             4 => $this->website($request, $publisher, $lifecycle, $configPublisher),
             5 => null,
@@ -66,7 +72,7 @@ class OnboardingController extends Controller
         });
     }
 
-    private function payment(Request $request, Publisher $publisher): void
+    private function payment(Request $request, Publisher $publisher, PublisherPaymentProfileService $profiles): void
     {
         $profile = $publisher->paymentProfile;
         $data = $request->validate([
@@ -74,19 +80,7 @@ class OnboardingController extends Controller
             'currency' => ['required', 'string', 'size:3'], 'country' => ['required', 'string', 'size:2'], 'billing_address' => ['nullable', 'string', 'max:500'],
             'account_reference' => [Rule::requiredIf(! $profile), 'nullable', 'string', 'max:255'], 'routing_reference' => ['nullable', 'string', 'max:255'], 'tax_identifier' => ['nullable', 'string', 'max:100'],
         ]);
-        $values = [
-            'organization_id' => $publisher->organization_id, 'beneficiary_name' => $data['beneficiary_name'], 'payment_method' => $data['payment_method'],
-            'currency' => strtoupper($data['currency']), 'country' => strtoupper($data['country']), 'billing_address' => $data['billing_address'] ?? null,
-            'is_verified' => false,
-        ];
-        if (! empty($data['account_reference'])) {
-            $values['payment_details'] = ['account_reference' => $data['account_reference'], 'routing_reference' => $data['routing_reference'] ?? null];
-            $values['account_last_four'] = substr(preg_replace('/\s+/', '', $data['account_reference']), -4);
-        }
-        if (! empty($data['tax_identifier'])) {
-            $values['tax_identifier'] = $data['tax_identifier'];
-        }
-        PublisherPaymentProfile::updateOrCreate(['publisher_id' => $publisher->id], $values);
+        $profiles->save($publisher, $data, $request->user());
     }
 
     private function contract(Request $request, Publisher $publisher): void

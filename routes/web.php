@@ -94,8 +94,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::put('/admin/publishers/{publisher}', [PublisherController::class, 'update'])->middleware('permission:publishers.manage')->name('admin.publishers.update');
         Route::delete('/admin/publishers/{publisher}', [PublisherController::class, 'destroy'])->middleware('permission:publishers.manage')->name('admin.publishers.destroy');
         Route::post('/admin/publishers/{publisher}/review', [PublisherController::class, 'review'])->middleware('permission:publishers.manage')->name('admin.publishers.review');
-        Route::get('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'edit'])->middleware('permission:publisher_payments.manage')->name('admin.publishers.payment-profile.edit');
-        Route::put('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'update'])->middleware('permission:publisher_payments.manage')->name('admin.publishers.payment-profile.update');
+        Route::get('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'edit'])->middleware(['horus', 'permission:publisher_payments.manage'])->name('admin.publishers.payment-profile.edit');
+        Route::put('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'update'])->middleware(['horus', 'permission:publisher_payments.manage'])->name('admin.publishers.payment-profile.update');
+        Route::post('/admin/publishers/{publisher}/payment-profile/review', [PublisherPaymentProfileController::class, 'review'])->middleware(['horus', 'permission:finance.payment_profiles.verify'])->name('admin.publishers.payment-profile.review');
         Route::get('/admin/advertisers', [AdvertiserController::class, 'index'])->middleware('permission:advertisers.view')->name('admin.advertisers.index');
         Route::get('/admin/advertisers/create', [AdvertiserController::class, 'create'])->middleware('permission:advertisers.manage')->name('admin.advertisers.create');
         Route::post('/admin/advertisers', [AdvertiserController::class, 'store'])->middleware('permission:advertisers.manage')->name('admin.advertisers.store');

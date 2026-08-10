@@ -46,7 +46,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertOk()
             ->assertSee('Publisher overview')
             ->assertSee('Websites')
-            ->assertSee('Reports, statements &amp; payments', false)
+            ->assertSee('Earnings &amp; Payments', false)
             ->assertSee('Contracts')
             ->assertDontSee('Invite a team member')
             ->assertSee('Supply Chain Compliance')

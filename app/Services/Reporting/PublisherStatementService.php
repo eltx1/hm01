@@ -2,6 +2,7 @@
 
 namespace App\Services\Reporting;
 
+use App\Enums\PublisherInvoiceStatus;
 use App\Enums\PublisherStatementStatus;
 use App\Models\FinancialPeriod;
 use App\Models\MonthlyReport;
@@ -12,17 +13,17 @@ use App\Models\RevenueAdjustment;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Uploads\SecureUploadService;
+use App\Support\Csv;
+use App\Support\Money;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class PublisherStatementService
 {
-    public function __construct(private readonly AuditRecorder $audit, private readonly SecureUploadService $uploads)
-    {
-    }
+    public function __construct(private readonly AuditRecorder $audit, private readonly SecureUploadService $uploads) {}
 
     public function generate(FinancialPeriod $period, Publisher $publisher, ?User $actor): PublisherStatement
     {
@@ -41,8 +42,7 @@ final class PublisherStatementService
         $opening = max(0, (int) ($previous?->carry_forward_minor ?? 0));
 
         $gross = (int) $rows->sum('gross_revenue_minor');
-        $baseDeductions = (int) $rows->sum(fn ($row) =>
-            (int) $row->demand_partner_deductions_minor
+        $baseDeductions = (int) $rows->sum(fn ($row) => (int) $row->demand_partner_deductions_minor
             + (int) $row->invalid_traffic_adjustments_minor
             + (int) $row->other_adjustments_minor
         );
@@ -57,8 +57,7 @@ final class PublisherStatementService
             })
             ->get();
         $adjustmentDeductions = (int) $adjustments->sum('amount_minor');
-        $publisherAdjustmentImpact = (int) $adjustments->sum(fn ($adjustment) =>
-            (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0)
+        $publisherAdjustmentImpact = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0)
         );
         $deductions = $baseDeductions + $adjustmentDeductions;
         $net = max(0, (int) $rows->sum('net_revenue_minor') - $adjustmentDeductions);
@@ -72,14 +71,20 @@ final class PublisherStatementService
             ->where(fn ($query) => $query->whereNull('ends_at')->orWhereDate('ends_at', '>=', $period->starts_on))
             ->latest('starts_at')
             ->first();
-        $threshold = (int) round(((float) ($contract?->payment_threshold ?? 0)) * 100);
+        try {
+            $threshold = Money::decimalToMinor((string) ($contract?->payment_threshold ?? '0'));
+        } catch (InvalidArgumentException) {
+            throw ValidationException::withMessages([
+                'payment_threshold' => 'The active contract payment threshold is not a valid two-decimal money value.',
+            ]);
+        }
 
-        $lineItems = $rows->groupBy(fn ($row) =>
-            ($row->connection?->source?->code?->value ?? $row->connection?->source?->code ?? 'UNKNOWN')
+        $lineItems = $rows->groupBy(fn ($row) => ($row->connection?->source?->code?->value ?? $row->connection?->source?->code ?? 'UNKNOWN')
             .'|'.($row->dimension?->site_id ?? 'all')
         )->map(function ($group, $key): array {
             [$source, $siteId] = array_pad(explode('|', (string) $key, 2), 2, null);
             $first = $group->first();
+
             return [
                 'source' => $source,
                 'site_id' => $siteId !== 'all' ? $siteId : null,
@@ -152,6 +157,9 @@ final class PublisherStatementService
                 'snapshot_hash' => $hash,
                 'finalized_at' => now(),
                 'finalized_by' => $actor?->id,
+                'publisher_invoice_status' => $status === PublisherStatementStatus::PendingInvoice
+                    ? PublisherInvoiceStatus::Required
+                    : PublisherInvoiceStatus::NotRequired,
             ],
         );
 
@@ -168,8 +176,18 @@ final class PublisherStatementService
 
     public function uploadInvoice(PublisherStatement $statement, UploadedFile $file, string $invoiceNumber, User $actor): PublisherStatement
     {
-        if ($statement->publisher_id !== $actor->organization?->publisher?->id && ! $actor->isHorusAdministrator()) {
+        if (! $actor->isHorusAdministrator() && (
+            $statement->publisher_id !== $actor->organization?->publisher?->id
+            || $statement->organization_id !== $actor->organization_id
+        )) {
             abort(403);
+        }
+        $statement = PublisherStatement::withoutGlobalScopes()->findOrFail($statement->id);
+        if ((int) $statement->balance_due_minor < (int) $statement->payment_threshold_minor) {
+            throw ValidationException::withMessages(['invoice' => 'An invoice is not required while this statement remains below threshold.']);
+        }
+        if (in_array($statement->publisher_invoice_status, [PublisherInvoiceStatus::Received, PublisherInvoiceStatus::Accepted], true)) {
+            throw ValidationException::withMessages(['invoice' => 'An invoice has already been received for this statement.']);
         }
         $stored = $this->uploads->store($file, 'publisher-invoices/'.$statement->publisher_id.'/'.$statement->financial_period_id, [
             'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpg',
@@ -181,6 +199,10 @@ final class PublisherStatementService
             'publisher_invoice_path' => $path,
             'publisher_invoice_uploaded_at' => now(),
             'publisher_invoice_uploaded_by' => $actor->id,
+            'publisher_invoice_status' => PublisherInvoiceStatus::Received,
+            'publisher_invoice_reviewed_at' => null,
+            'publisher_invoice_reviewed_by' => null,
+            'publisher_invoice_review_reason' => null,
             'status' => $statement->balance_due_minor >= $statement->payment_threshold_minor
                 ? PublisherStatementStatus::Payable
                 : $statement->status,
@@ -195,15 +217,45 @@ final class PublisherStatementService
         return $statement->refresh();
     }
 
-    public function csv(PublisherStatement $statement): StreamedResponse
+    public function csv(PublisherStatement $statement, bool $publisherSafe = false): StreamedResponse
     {
-        return response()->streamDownload(function () use ($statement): void {
+        return response()->streamDownload(function () use ($statement, $publisherSafe): void {
             $handle = fopen('php://output', 'wb');
+            if ($publisherSafe) {
+                fputcsv($handle, ['Category', 'Description', 'Amount Minor', 'Currency', 'Impressions']);
+                foreach ([
+                    ['Opening balance', $statement->opening_balance_minor],
+                    ['Publisher earnings', $statement->publisher_earnings_minor],
+                    ['Deductions', -((int) $statement->deductions_minor)],
+                    ['Paid', $statement->paid_minor],
+                    ['Balance due', $statement->balance_due_minor],
+                    ['Carry-forward', $statement->carry_forward_minor],
+                    ['Payment threshold', $statement->payment_threshold_minor],
+                ] as [$description, $amount]) {
+                    fputcsv($handle, ['SUMMARY', $description, $amount, $statement->currency, '']);
+                }
+                foreach ($statement->line_items ?? [] as $row) {
+                    $description = ($row['source'] ?? '') === 'ADJUSTMENT'
+                        ? 'Approved adjustment'
+                        : ($row['site'] ?? 'All Publisher inventory');
+                    fputcsv($handle, [
+                        'PUBLISHER_EARNINGS',
+                        Csv::safeCell($description),
+                        $row['publisher_earnings_minor'] ?? 0,
+                        $statement->currency,
+                        $row['impressions'] ?? 0,
+                    ]);
+                }
+                fclose($handle);
+
+                return;
+            }
+
             fputcsv($handle, ['Source', 'Website', 'Impressions', 'Gross Revenue Minor', 'Net Revenue Minor', 'Publisher Earnings Minor']);
             foreach ($statement->line_items ?? [] as $row) {
                 fputcsv($handle, [
-                    $row['source'] ?? '',
-                    $row['site'] ?? '',
+                    Csv::safeCell($row['source'] ?? ''),
+                    Csv::safeCell($row['site'] ?? ''),
                     $row['impressions'] ?? 0,
                     $row['gross_revenue_minor'] ?? 0,
                     $row['net_revenue_minor'] ?? 0,

@@ -127,6 +127,7 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 - [Direct campaigns](docs/DIRECT_CAMPAIGNS.md)
 - [Native networks](docs/NATIVE_NETWORKS.md)
 - [Reporting](docs/REPORTING.md)
+- [Publisher earnings and payments](docs/PUBLISHER_FINANCE.md)
 - [Security](docs/SECURITY.md)
 - [Publisher onboarding and websites](docs/PUBLISHER_ONBOARDING.md)
 - [Portable deployment](docs/DEPLOYMENT.md)

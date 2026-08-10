@@ -82,7 +82,7 @@ final class ControlPlaneNavigation
                 $this->item('Supply Chain Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),
             $this->group('Reports & Earnings', [
-                $this->item('Reports, statements & payments', 'publisher.reporting.index', 'reporting.publisher.view', ['publisher.reporting.*']),
+                $this->item('Earnings & Payments', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
             ]),
             $this->group('Contracts', [
                 $this->item('Contracts', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),

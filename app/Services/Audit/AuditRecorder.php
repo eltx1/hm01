@@ -42,7 +42,14 @@ final class AuditRecorder
 
     private function redact(array $values): array
     {
-        $sensitive = ['password', 'password_confirmation', 'token', 'token_hash', 'secret', 'two_factor_secret', 'two_factor_recovery_codes', 'payment_details', 'account_reference', 'routing_reference', 'tax_identifier', 'contract_file_path'];
+        $sensitive = [
+            'password', 'password_confirmation', 'token', 'token_hash', 'secret',
+            'two_factor_secret', 'two_factor_recovery_codes', 'payment_details',
+            'account_reference', 'routing_reference', 'tax_identifier',
+            'bank_account', 'bank_account_number', 'iban', 'swift', 'bic',
+            'paypal_email', 'wise_account', 'contract_file_path',
+            'publisher_invoice_path',
+        ];
 
         foreach ($values as $key => $value) {
             if (in_array(strtolower((string) $key), $sensitive, true)) {

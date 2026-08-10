@@ -32,6 +32,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => route('login'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->dontFlash([
+            'account_reference',
+            'routing_reference',
+            'tax_identifier',
+            'payment_details',
+        ]);
         $exceptions->report(function (Throwable $exception): void {
             Log::error('unhandled_exception', [
                 'exception' => $exception::class,
