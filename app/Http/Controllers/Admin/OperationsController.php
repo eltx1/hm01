@@ -3,22 +3,26 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\StaticDeliveryPriority;
+use App\Enums\StaticDeliveryStatus;
 use App\Http\Controllers\Controller;
+use App\Models\DemandNetwork;
+use App\Models\DemandSite;
 use App\Models\GamConnection;
 use App\Models\LoaderRelease;
 use App\Models\Placement;
 use App\Models\PlatformControl;
 use App\Models\ReportImportJob;
 use App\Models\Site;
-use App\Models\SystemHeartbeat;
 use App\Models\StaticDeliveryBatch;
 use App\Models\StaticDeliveryItem;
 use App\Models\SyntheticProbeResult;
-use App\Enums\StaticDeliveryStatus;
+use App\Models\SystemHeartbeat;
 use App\Services\Audit\AuditRecorder;
-use App\Services\Operations\LoaderReleaseManager;
-use App\Services\Operations\PlatformControlService;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Operations\ExternalErrorSanitizer;
+use App\Services\Operations\LoaderReleaseManager;
+use App\Services\Operations\OperationsOverviewService;
+use App\Services\Operations\PlatformControlService;
 use App\Services\StaticDelivery\StaticDeliveryManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -31,22 +35,39 @@ use Illuminate\View\View;
 
 class OperationsController extends Controller
 {
-    public function index(): View
+    public function index(OperationsOverviewService $overview, ExternalErrorSanitizer $errors): View
     {
         $heartbeat = SystemHeartbeat::query()->find('scheduler');
         $staleAfter = (int) config('operations.heartbeat_stale_after_seconds', 180);
         $latestProbes = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
+        $failedJobs = DB::table('failed_jobs')->latest('failed_at')->limit(50)->get()->map(function ($job) use ($errors) {
+            $job->safe_exception = $errors->sanitize($job->exception ?? null, 700);
+            return $job;
+        });
+        $failedImports = ReportImportJob::withoutGlobalScopes()
+            ->with('connection:id,name')
+            ->where('status', 'FAILED')
+            ->latest()
+            ->limit(50)
+            ->get()
+            ->each(fn (ReportImportJob $job) => $job->setAttribute('safe_error', $errors->sanitize($job->error_message, 700)));
+        $deliveryBatches = StaticDeliveryBatch::query()->latest()->limit(25)->get()
+            ->each(fn (StaticDeliveryBatch $batch) => $batch->setAttribute('safe_error', $errors->sanitize($batch->error_message, 700)));
+
         return view('admin.operations.index', [
+            'overview' => $overview->snapshot(),
             'heartbeat' => $heartbeat,
             'heartbeatStale' => ! $heartbeat || $heartbeat->last_seen_at->lt(now()->subSeconds($staleAfter)),
-            'failedJobs' => DB::table('failed_jobs')->latest('failed_at')->limit(50)->get(),
-            'failedImports' => ReportImportJob::withoutGlobalScopes()->where('status', 'FAILED')->latest()->limit(50)->get(),
-            'controls' => PlatformControl::query()->with('actor')->orderBy('scope_type')->orderBy('control_key')->get(),
-            'sites' => Site::withoutGlobalScopes()->orderBy('display_name')->get(['id', 'display_name']),
-            'placements' => Placement::withoutGlobalScopes()->orderBy('name')->get(['id', 'name', 'site_id']),
-            'gamConnections' => GamConnection::withoutGlobalScopes()->orderBy('name')->get(['id', 'name', 'type']),
+            'failedJobs' => $failedJobs,
+            'failedImports' => $failedImports,
+            'controls' => PlatformControl::query()->with('actor')->orderByDesc('changed_at')->limit(250)->get(),
+            'allowedControls' => (array) config('operations.controls', []),
+            'sites' => Site::withoutGlobalScopes()->orderBy('display_name')->limit(1000)->get(['id', 'display_name']),
+            'placements' => Placement::withoutGlobalScopes()->orderBy('name')->limit(2000)->get(['id', 'name', 'site_id']),
+            'gamConnections' => GamConnection::withoutGlobalScopes()->orderBy('name')->limit(500)->get(['id', 'name', 'type', 'health_status', 'is_enabled']),
+            'demandNetworks' => DemandNetwork::query()->orderBy('name')->get(['id', 'name', 'code', 'is_enabled']),
             'loaderReleases' => LoaderRelease::query()->latest('published_at')->get(),
-            'deliveryBatches' => StaticDeliveryBatch::query()->latest()->limit(25)->get(),
+            'deliveryBatches' => $deliveryBatches,
             'latestDelivery' => StaticDeliveryBatch::query()->where('status', StaticDeliveryStatus::Deployed->value)->latest('deployed_at')->first(),
             'pendingDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])->count(),
             'failedDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->where('status', StaticDeliveryStatus::Failed->value)->count(),
@@ -67,41 +88,77 @@ class OperationsController extends Controller
     {
         $data = $request->validate([
             'scope_type' => ['required', Rule::in(array_keys((array) config('operations.controls')))],
-            'scope_id' => ['nullable', 'ulid'], 'control_key' => ['required', 'string', 'max:48'],
-            'is_disabled' => ['required', 'boolean'], 'reason' => ['required', 'string', 'min:8', 'max:2000'],
+            'scope_id' => ['nullable', 'ulid'],
+            'control_key' => ['required', 'string', 'max:48'],
+            'is_disabled' => ['required', 'boolean'],
+            'reason' => ['required', 'string', 'min:8', 'max:2000'],
             'current_password' => ['required', 'string'],
+            'impact_confirmation' => ['nullable', 'string', 'max:80'],
         ]);
+
         if (! Hash::check($data['current_password'], $request->user()->password)) {
             throw ValidationException::withMessages(['current_password' => 'The current password is incorrect.']);
         }
-        $controls->set($data['scope_type'], $data['scope_id'] ?? null, $data['control_key'], (bool) $data['is_disabled'], $data['reason'], $request->user());
-        $urgent = (bool) $data['is_disabled'] && $data['control_key'] === 'AD_SERVING';
-        $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request, $urgent);
-        return back()->with('status', 'Operational control updated, audited, and queued for static edge delivery.');
+
+        $isPlatformServingDisable = $data['scope_type'] === 'PLATFORM'
+            && $data['control_key'] === 'AD_SERVING'
+            && (bool) $data['is_disabled'];
+        if ($isPlatformServingDisable && ($data['impact_confirmation'] ?? '') !== 'DISABLE PLATFORM AD SERVING') {
+            throw ValidationException::withMessages([
+                'impact_confirmation' => 'Type DISABLE PLATFORM AD SERVING to confirm the platform-wide serving impact.',
+            ]);
+        }
+
+        $control = $controls->set(
+            $data['scope_type'],
+            $data['scope_id'] ?? null,
+            $data['control_key'],
+            (bool) $data['is_disabled'],
+            $data['reason'],
+            $request->user(),
+        );
+
+        $changed = $control->wasRecentlyCreated || $control->wasChanged('is_disabled');
+        if ($changed) {
+            $urgent = (bool) $data['is_disabled'] && $data['control_key'] === 'AD_SERVING';
+            $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request, $urgent);
+        }
+
+        return back()->with('status', $changed
+            ? 'Operational control updated, audited, and queued for static edge delivery.'
+            : 'No change was required; the control was already in that state.');
     }
 
-    public function retryFailedJob(Request $request, string $uuid): RedirectResponse
+    public function forgetFailedJob(Request $request, string $uuid, AuditRecorder $audit): RedirectResponse
     {
-        $request->validate(['current_password' => ['required', 'current_password']]);
-        abort_unless(DB::table('failed_jobs')->where('uuid', $uuid)->exists(), 404);
-        Artisan::call('queue:retry', ['id' => [$uuid]]);
-        return back()->with('status', 'Failed job queued for retry.');
-    }
+        $data = $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'reason' => ['required', 'string', 'min:8', 'max:1000'],
+        ]);
+        $job = DB::table('failed_jobs')->where('uuid', $uuid)->first();
+        abort_unless($job, 404);
 
-    public function forgetFailedJob(Request $request, string $uuid): RedirectResponse
-    {
-        $request->validate(['current_password' => ['required', 'current_password']]);
         Artisan::call('queue:forget', ['id' => $uuid]);
-        return back()->with('status', 'Failed job removed.');
+        $audit->record('operations.failed_job.forgotten', $request->user()->organization_id, $request->user(), metadata: [
+            'uuid' => $uuid,
+            'queue' => $job->queue,
+            'reason' => $data['reason'],
+        ]);
+
+        return back()->with('status', 'Failed job removed and the action was audited.');
     }
 
     public function retryStaticDelivery(Request $request, StaticDeliveryBatch $staticDeliveryBatch, StaticDeliveryManager $manager, AuditRecorder $audit): RedirectResponse
     {
-        $request->validate(['current_password' => ['required', 'current_password']]);
+        $data = $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'reason' => ['required', 'string', 'min:8', 'max:1000'],
+        ]);
         $manager->retry($staticDeliveryBatch);
         $audit->record('static.delivery.retry.requested', $request->user()->organization_id, $request->user(), $staticDeliveryBatch, newValues: [
             'batch_id' => $staticDeliveryBatch->id,
             'manifest_hash' => $staticDeliveryBatch->manifest_hash,
+            'reason' => $data['reason'],
         ]);
 
         return back()->with('status', 'Static delivery retry scheduled and audited.');
@@ -115,9 +172,13 @@ class OperationsController extends Controller
                 ? Site::withoutGlobalScopes()->whereKey($siteId)->get()
                 : collect(),
             'GAM_CONNECTION' => Site::withoutGlobalScopes()->where('gam_connection_id', $scopeId)->get(),
+            'DEMAND_NETWORK' => Site::withoutGlobalScopes()->whereIn('id', DemandSite::withoutGlobalScopes()
+                ->whereHas('account', fn ($query) => $query->where('demand_network_id', $scopeId))
+                ->select('site_id'))->get(),
             'PLATFORM' => Site::withoutGlobalScopes()->get(),
             default => collect(),
         };
+
         foreach ($sites as $site) {
             $publisher->publishActiveProduction(
                 $site,
@@ -129,8 +190,12 @@ class OperationsController extends Controller
 
     public function rollbackLoader(Request $request, LoaderReleaseManager $manager): RedirectResponse
     {
-        $data = $request->validate(['loader_release_id' => ['required', 'exists:loader_releases,id'], 'current_password' => ['required', 'current_password']]);
+        $data = $request->validate([
+            'loader_release_id' => ['required', 'exists:loader_releases,id'],
+            'current_password' => ['required', 'current_password'],
+        ]);
         $manager->activate(LoaderRelease::query()->findOrFail($data['loader_release_id']), $request->user());
+
         return back()->with('status', 'Loader release activated. Publish website configurations to roll sites to this release.');
     }
 }
