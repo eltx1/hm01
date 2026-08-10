@@ -10,6 +10,7 @@ use App\Models\Site;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -45,7 +46,7 @@ class AuditLogController extends Controller
             'filters' => $filters,
             'actors' => User::query()->orderBy('name')->limit(250)->get(['id', 'name', 'email']),
             'organizations' => Organization::query()->orderBy('name')->limit(250)->get(['id', 'name']),
-            'publishers' => Publisher::withoutGlobalScopes()->with('organization:id,name')->orderBy('name')->limit(250)->get(['id', 'organization_id', 'name']),
+            'publishers' => Publisher::withoutGlobalScopes()->orderBy('display_name')->limit(250)->get(['id', 'organization_id', 'display_name', 'legal_name']),
             'sites' => Site::withoutGlobalScopes()->orderBy('display_name')->limit(500)->get(['id', 'publisher_id', 'display_name', 'primary_domain']),
         ]);
     }
@@ -54,10 +55,10 @@ class AuditLogController extends Controller
     private function applyFilters(Builder $query, array $filters): void
     {
         if ($value = $filters['from'] ?? null) {
-            $query->where('created_at', '>=', now()->parse($value)->startOfDay());
+            $query->where('created_at', '>=', Carbon::parse($value)->startOfDay());
         }
         if ($value = $filters['to'] ?? null) {
-            $query->where('created_at', '<=', now()->parse($value)->endOfDay());
+            $query->where('created_at', '<=', Carbon::parse($value)->endOfDay());
         }
         if ($value = $filters['actor_id'] ?? null) {
             $query->where('actor_id', $value);
