@@ -7,12 +7,12 @@ use App\Models\ReconciliationRun;
 use App\Models\ReportImportJob;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 final class ReconciliationService
 {
-    public function __construct(private readonly AuditRecorder $audit)
-    {
-    }
+    public function __construct(private readonly AuditRecorder $audit) {}
 
     public function forImport(
         ReportImportJob $job,
@@ -75,5 +75,38 @@ final class ReconciliationService
         }
 
         return $run;
+    }
+
+    public function recordRemediation(ReconciliationRun $run, string $note, User $actor): ReconciliationRun
+    {
+        if (! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.reconciliation.manage')) {
+            abort(403);
+        }
+        $note = trim($note);
+        if (mb_strlen($note) < 12) {
+            throw ValidationException::withMessages(['remediation_note' => 'A specific remediation note of at least 12 characters is required.']);
+        }
+
+        return DB::transaction(function () use ($run, $note, $actor): ReconciliationRun {
+            $run = ReconciliationRun::withoutGlobalScopes()->lockForUpdate()->findOrFail($run->id);
+            $before = $run->status;
+            $run->update([
+                'status' => in_array($run->status, [ReconciliationStatus::Warning, ReconciliationStatus::Failed], true)
+                    ? ReconciliationStatus::Resolved
+                    : $run->status,
+                'remediation_note' => $note,
+                'remediated_at' => now(),
+                'remediated_by' => $actor->id,
+            ]);
+            $this->audit->record('finance.reconciliation.remediation_recorded', $run->organization_id ?? $actor->organization_id, $actor, $run, [
+                'status' => $before->value,
+            ], [
+                'status' => $run->status->value,
+                'remediation_note' => $note,
+                'financial_totals_mutated' => false,
+            ]);
+
+            return $run->refresh();
+        });
     }
 }

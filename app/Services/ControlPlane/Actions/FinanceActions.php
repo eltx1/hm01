@@ -21,19 +21,20 @@ final class FinanceActions implements ActionCenterProvider
                 'Aggregated report imports are eligible for investigation or retry.', 'admin.reporting.index', 10, 'danger');
         }
 
-        if ($user->hasPermission('publisher_payments.manage')) {
+        if ($user->hasPermission('finance.payment_profiles.verify')) {
             $items[] = $this->item('payment-profiles', 'Payment profiles not verified', Publisher::withoutGlobalScopes()
                 ->where(function ($query): void {
                     $query->whereDoesntHave('paymentProfile')
                         ->orWhereHas('paymentProfile', fn ($profile) => $profile->where('verification_status', '!=', 'VERIFIED'));
                 })->count(),
-                'Publisher payment details are missing or awaiting verification.', 'admin.publishers.index', 30);
+                'Publisher payment details are missing or awaiting verification.', 'admin.finance.payment-profiles.index', 30);
         }
 
-        if ($user->hasPermission('finance.publisher.view') || $user->hasPermission('reporting.admin.view')) {
+        if ($user->hasPermission('finance.operations.view')) {
             $items[] = $this->item('publisher-balances', 'Outstanding publisher balances', PublisherStatement::withoutGlobalScopes()
+                ->latestPerPublisherCurrency()
                 ->where('balance_due_minor', '>', 0)->count(),
-                'Finalized statements have a remaining publisher balance.', 'admin.reporting.index', 40, 'neutral');
+                'Finalized statements have a remaining publisher balance.', 'admin.finance.overview', 40, 'neutral');
         }
 
         return $items;

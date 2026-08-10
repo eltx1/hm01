@@ -191,12 +191,13 @@ class PublisherFinanceExperienceTest extends TestCase
     public function test_partial_payout_history_uses_settled_amount_and_never_creation_as_payment(): void
     {
         [$finance, $publisher, $publisherAdmin] = $this->context();
+        $approver = $this->makeUser($finance->organization, RoleName::FinanceAdmin);
         $profile = app(PublisherPaymentProfileService::class)->save($publisher, [
             'beneficiary_name' => 'Publisher Beneficiary', 'payment_method' => 'WISE',
             'currency' => 'USD', 'country' => 'US', 'account_reference' => 'WISE-1234',
         ], $publisherAdmin);
         app(PublisherPaymentProfileService::class)->review($profile, PublisherPaymentProfileStatus::Verified, $finance);
-        $statement = $this->statement($publisher, 'HM-PAYOUT-STATEMENT', 20000, 10000, PublisherInvoiceStatus::Received, 'publisher-invoices/own.pdf');
+        $statement = $this->statement($publisher, 'HM-PAYOUT-STATEMENT', 20000, 10000, PublisherInvoiceStatus::Accepted, 'publisher-invoices/own.pdf');
 
         $payment = app(PublisherPaymentService::class)->create($statement, 10000, [
             'payment_method' => 'WISE', 'scheduled_on' => now()->addDay()->toDateString(),
@@ -204,7 +205,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->actingAs($publisherAdmin)->get(route('publisher.finance.payouts.index'))
             ->assertOk()->assertSee('PENDING')->assertSee('USD 0.00')->assertSee('USD 100.00');
 
-        app(PublisherPaymentService::class)->approve($payment, $finance);
+        app(PublisherPaymentService::class)->approve($payment, $approver);
         app(PublisherPaymentService::class)->markPaid($payment->fresh(), 'SAFE-SETTLEMENT-REF', $finance, 4000);
         $page = $this->get(route('publisher.finance.payouts.index'));
         $page->assertOk()->assertSee('PARTIALLY_PAID')->assertSee('Partial settlement')

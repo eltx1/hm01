@@ -18,6 +18,7 @@ class ReconciliationRun extends Model
         'period_start', 'period_end', 'granularity', 'status', 'source_totals',
         'stored_totals', 'differences', 'discrepancy_basis_points', 'warnings',
         'error_message', 'started_at', 'completed_at', 'created_by',
+        'remediation_note', 'remediated_at', 'remediated_by',
     ];
 
     protected function casts(): array
@@ -28,9 +29,22 @@ class ReconciliationRun extends Model
             'source_totals' => 'array', 'stored_totals' => 'array',
             'differences' => 'array', 'warnings' => 'array',
             'started_at' => 'datetime', 'completed_at' => 'datetime',
+            'remediated_at' => 'datetime',
         ];
     }
 
-    public function connection(): BelongsTo { return $this->belongsTo(ReportSourceConnection::class, 'report_source_connection_id'); }
-    public function import(): BelongsTo { return $this->belongsTo(ReportImportJob::class, 'report_import_job_id'); }
+    public function connection(): BelongsTo
+    {
+        return $this->belongsTo(ReportSourceConnection::class, 'report_source_connection_id');
+    }
+
+    public function import(): BelongsTo
+    {
+        return $this->belongsTo(ReportImportJob::class, 'report_import_job_id');
+    }
+
+    public function remediator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'remediated_by');
+    }
 }

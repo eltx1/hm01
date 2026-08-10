@@ -16,9 +16,9 @@
                 <td>{{ $payment->scheduled_on?->toDateString() ?: '—' }}</td>
                 <td>{{ $payment->currency }} {{ \App\Support\Money::formatMinor((int) $payment->amount_minor) }}</td>
                 <td>{{ $payment->currency }} {{ \App\Support\Money::formatMinor((int) $payment->settled_amount_minor) }}</td>
-                <td><span class="pill">{{ $payment->status->value }}</span>@if($payment->status === \App\Enums\PublisherPaymentStatus::PartiallyPaid)<span class="table-note">Partial settlement</span>@endif</td>
+                <td><span class="pill">{{ $payment->status->value }}</span>@if((int) $payment->settled_amount_minor > 0 && (int) $payment->settled_amount_minor < (int) $payment->amount_minor)<span class="table-note">Partial settlement</span>@endif</td>
                 <td>{{ $payment->paid_at?->toDateString() ?: '—' }}</td>
-                <td>{{ $payment->horus_payment_reference ?: 'No settlement reference' }}@if($payment->publisher_message)<span class="table-note">{{ $payment->publisher_message }}</span>@endif</td>
+                <td>@forelse($payment->settlements as $settlement)<span class="table-note">{{ $settlement->settlement_reference }} · {{ $payment->currency }} {{ \App\Support\Money::formatMinor((int) $settlement->amount_minor) }}</span>@empty No settlement reference @endforelse @if($payment->publisher_message)<span class="table-note">{{ $payment->publisher_message }}</span>@endif</td>
             </tr>
         @empty
             <tr><td colspan="9">No payouts have been created.</td></tr>

@@ -2,16 +2,12 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Enums\AdjustmentStatus;
-use App\Enums\FinancialPeriodStatus;
-use App\Enums\PublisherPaymentStatus;
 use App\Enums\ReportConnectionStatus;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\RevenueRuleScope;
 use App\Http\Controllers\Controller;
 use App\Models\FinancialPeriod;
-use App\Models\Publisher;
 use App\Models\PublisherPayment;
 use App\Models\PublisherStatement;
 use App\Models\ReportImportJob;
@@ -44,15 +40,8 @@ class ReportingController extends Controller
             'sources' => ReportSource::query()->withCount('connections')->orderByDesc('is_primary')->orderBy('name')->get(),
             'connections' => ReportSourceConnection::withoutGlobalScopes()->with('source')->latest()->limit(100)->get(),
             'imports' => ReportImportJob::withoutGlobalScopes()->with('connection.source')->latest()->limit(100)->get(),
-            'periods' => FinancialPeriod::query()->latest('starts_on')->limit(24)->get(),
-            'rules' => RevenueRule::withoutGlobalScopes()->with('currentVersion')->orderByDesc('priority')->get(),
-            'adjustments' => RevenueAdjustment::withoutGlobalScopes()->with(['period', 'publisher'])->latest()->limit(100)->get(),
-            'statements' => PublisherStatement::withoutGlobalScopes()->with(['publisher', 'period'])->latest()->limit(100)->get(),
-            'payments' => PublisherPayment::withoutGlobalScopes()->with(['publisher', 'statement'])->latest()->limit(100)->get(),
-            'publishers' => Publisher::withoutGlobalScopes()->orderBy('display_name')->get(),
             'granularities' => ReportGranularity::cases(),
             'finalities' => ReportFinality::cases(),
-            'ruleScopes' => RevenueRuleScope::cases(),
         ]);
     }
 
@@ -155,6 +144,7 @@ class ReportingController extends Controller
     public function retry(Request $request, ReportImportJob $reportImportJob, ReportImportService $imports): RedirectResponse
     {
         $job = $imports->retry($reportImportJob, $request->user());
+
         return back()->with($job->status->value === 'COMPLETED' ? 'status' : 'error', "Retry {$job->status->value}.");
     }
 
@@ -162,6 +152,7 @@ class ReportingController extends Controller
     {
         $data = $this->ruleData($request);
         $rules->createRule($data, $request->user());
+
         return back()->with('status', 'Revenue-share rule created with version 1.');
     }
 
@@ -169,6 +160,7 @@ class ReportingController extends Controller
     {
         $data = $this->ruleData($request, false);
         $rules->changeRule($revenueRule, $data, $request->user());
+
         return back()->with('status', 'A new immutable revenue-share version was created.');
     }
 
@@ -187,18 +179,22 @@ class ReportingController extends Controller
             'reason' => ['required', 'string', 'max:10000'],
         ]);
         $adjustments->create($data, $request->user());
+
         return back()->with('status', 'Adjustment created and awaits separate approval.');
     }
 
     public function approveAdjustment(Request $request, RevenueAdjustment $revenueAdjustment, RevenueAdjustmentService $adjustments): RedirectResponse
     {
         $adjustments->approve($revenueAdjustment, $request->user());
+
         return back()->with('status', 'Adjustment approved and audited.');
     }
 
     public function rejectAdjustment(Request $request, RevenueAdjustment $revenueAdjustment, RevenueAdjustmentService $adjustments): RedirectResponse
     {
-        $adjustments->reject($revenueAdjustment, $request->user());
+        $data = $request->validate(['decision_reason' => ['required', 'string', 'max:2000']]);
+        $adjustments->reject($revenueAdjustment, $request->user(), $data['decision_reason']);
+
         return back()->with('status', 'Adjustment rejected.');
     }
 
@@ -206,12 +202,13 @@ class ReportingController extends Controller
     {
         $request->validate(['confirm_close' => ['required', 'accepted']]);
         $periods->close($financialPeriod, $request->user());
+
         return back()->with('status', "Financial period {$financialPeriod->period_key} closed.");
     }
 
     public function statement(PublisherStatement $publisherStatement): View
     {
-        return view('admin.reporting.statement', ['statement' => $publisherStatement->load(['publisher', 'period', 'payments'])]);
+        return view('admin.reporting.statement', ['statement' => $publisherStatement->load(['publisher', 'period', 'payments.settlements'])]);
     }
 
     public function statementCsv(PublisherStatement $publisherStatement, PublisherStatementService $statements)
@@ -226,14 +223,17 @@ class ReportingController extends Controller
             'payment_method' => ['nullable', 'string', 'max:48'],
             'scheduled_on' => ['nullable', 'date'],
             'notes' => ['nullable', 'string', 'max:10000'],
+            'idempotency_key' => ['required', 'string', 'max:64'],
         ]);
         $payments->create($publisherStatement, (int) $data['amount_minor'], $data, $request->user());
+
         return back()->with('status', 'Publisher payment created.');
     }
 
     public function approvePayment(Request $request, PublisherPayment $publisherPayment, PublisherPaymentService $payments): RedirectResponse
     {
         $payments->approve($publisherPayment, $request->user());
+
         return back()->with('status', 'Publisher payment approved.');
     }
 
@@ -249,6 +249,7 @@ class ReportingController extends Controller
             $request->user(),
             isset($data['settled_amount_minor']) ? (int) $data['settled_amount_minor'] : null,
         );
+
         return back()->with('status', 'Payment settlement recorded.');
     }
 
@@ -267,6 +268,7 @@ class ReportingController extends Controller
             'currency' => ['nullable', 'string', 'size:3'],
             'reason' => ['nullable', 'string', 'max:10000'],
         ];
+
         return $request->validate($rules);
     }
 }

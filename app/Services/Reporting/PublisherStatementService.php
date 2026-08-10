@@ -16,6 +16,7 @@ use App\Services\Uploads\SecureUploadService;
 use App\Support\Csv;
 use App\Support\Money;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -203,9 +204,7 @@ final class PublisherStatementService
             'publisher_invoice_reviewed_at' => null,
             'publisher_invoice_reviewed_by' => null,
             'publisher_invoice_review_reason' => null,
-            'status' => $statement->balance_due_minor >= $statement->payment_threshold_minor
-                ? PublisherStatementStatus::Payable
-                : $statement->status,
+            'status' => PublisherStatementStatus::PendingInvoice,
         ]);
 
         $this->audit->record('reporting.publisher_invoice.uploaded', $statement->organization_id, $actor, $statement, newValues: [
@@ -215,6 +214,56 @@ final class PublisherStatementService
         ]);
 
         return $statement->refresh();
+    }
+
+    public function reviewInvoice(
+        PublisherStatement $statement,
+        PublisherInvoiceStatus $status,
+        User $actor,
+        ?string $reason = null,
+    ): PublisherStatement {
+        if (! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.statements.review')) {
+            abort(403);
+        }
+        if (! in_array($status, [PublisherInvoiceStatus::Accepted, PublisherInvoiceStatus::Rejected], true)) {
+            throw ValidationException::withMessages(['publisher_invoice_status' => 'Only acceptance or rejection can be recorded.']);
+        }
+        if ($status === PublisherInvoiceStatus::Rejected && blank($reason)) {
+            throw ValidationException::withMessages(['review_reason' => 'A safe Publisher-visible rejection reason is required.']);
+        }
+
+        return DB::transaction(function () use ($statement, $status, $actor, $reason): PublisherStatement {
+            $statement = PublisherStatement::withoutGlobalScopes()->lockForUpdate()->findOrFail($statement->id);
+            if ($statement->publisher_invoice_status === $status) {
+                return $statement;
+            }
+            if ($statement->publisher_invoice_status !== PublisherInvoiceStatus::Received) {
+                throw ValidationException::withMessages(['publisher_invoice_status' => 'Only a received invoice can be reviewed.']);
+            }
+            if (! $statement->publisher_invoice_path || ! $statement->publisher_invoice_number) {
+                throw ValidationException::withMessages(['publisher_invoice_status' => 'The invoice file and number must exist before review.']);
+            }
+
+            $before = $statement->publisher_invoice_status;
+            $statement->update([
+                'publisher_invoice_status' => $status,
+                'publisher_invoice_reviewed_at' => now(),
+                'publisher_invoice_reviewed_by' => $actor->id,
+                'publisher_invoice_review_reason' => filled($reason) ? trim((string) $reason) : null,
+                'status' => $status === PublisherInvoiceStatus::Accepted
+                    ? PublisherStatementStatus::Payable
+                    : PublisherStatementStatus::PendingInvoice,
+            ]);
+            $this->audit->record('finance.publisher_invoice.reviewed', $statement->organization_id, $actor, $statement, [
+                'publisher_invoice_status' => $before->value,
+            ], [
+                'publisher_invoice_status' => $status->value,
+                'review_reason' => filled($reason) ? trim((string) $reason) : null,
+                'statement_status' => $statement->status->value,
+            ]);
+
+            return $statement->refresh();
+        });
     }
 
     public function csv(PublisherStatement $statement, bool $publisherSafe = false): StreamedResponse

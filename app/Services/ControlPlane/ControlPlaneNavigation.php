@@ -54,7 +54,10 @@ final class ControlPlaneNavigation
                 $this->item('Sellers', 'admin.compliance.sellers.index', 'supply_chain.sellers.view', ['admin.compliance.sellers.*']),
             ]),
             $this->group('Reporting', [
-                $this->item('Reporting & finance', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
+                $this->item('Reporting sources', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
+            ]),
+            $this->group('Finance', [
+                $this->item('Finance Operations', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
             ]),
             $this->group('Advertisers', [
                 $this->item('Advertiser accounts', 'admin.advertisers.index', 'advertisers.view', ['admin.advertisers.*']),

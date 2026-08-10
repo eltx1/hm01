@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\PublisherInvoiceStatus;
 use App\Enums\PublisherStatementStatus;
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -56,5 +57,21 @@ class PublisherStatement extends Model
     public function invoiceRequired(): bool
     {
         return $this->publisher_invoice_status !== PublisherInvoiceStatus::NotRequired;
+    }
+
+    public function scopeLatestPerPublisherCurrency(Builder $query): Builder
+    {
+        return $query->whereRaw(<<<'SQL'
+            publisher_statements.financial_period_id = (
+                SELECT latest_statements.financial_period_id
+                FROM publisher_statements AS latest_statements
+                INNER JOIN financial_periods AS latest_periods
+                    ON latest_periods.id = latest_statements.financial_period_id
+                WHERE latest_statements.publisher_id = publisher_statements.publisher_id
+                    AND latest_statements.currency = publisher_statements.currency
+                ORDER BY latest_periods.ends_on DESC, latest_statements.created_at DESC, latest_statements.id DESC
+                LIMIT 1
+            )
+            SQL);
     }
 }

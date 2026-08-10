@@ -99,7 +99,7 @@ final class PublisherPaymentProfileService
         User $actor,
         ?string $reason = null,
     ): PublisherPaymentProfile {
-        if (! $actor->isHorusAdministrator()) {
+        if (! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.payment_profiles.verify')) {
             abort(403);
         }
         if (! in_array($status, [

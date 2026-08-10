@@ -36,9 +36,9 @@
         ['Total advertisers', $totalAdvertisers],
         ['Active campaigns', $activeCampaigns],
         ['Managed impressions', $reporting ? number_format($reporting['managed_impressions']) : null],
-        ['Gross revenue', $reporting ? number_format($reporting['gross_revenue_minor'] / 100, 2) : null],
-        ['Horus margin', $reporting && $showInternalMargin ? number_format($reporting['horus_margin_minor'] / 100, 2) : null],
-        ['Publisher payable', $reporting ? number_format($reporting['outstanding_publisher_payments_minor'] / 100, 2) : null],
+        ['Gross revenue', $reporting ? \App\Support\Money::formatMinor((int) $reporting['gross_revenue_minor']).' '.$reporting['currency'] : null],
+        ['Horus margin', $reporting && $showInternalMargin ? \App\Support\Money::formatMinor((int) $reporting['horus_margin_minor']).' '.$reporting['currency'] : null],
+        ['Publisher payable', $reporting ? \App\Support\Money::formatMinor((int) $reporting['outstanding_publisher_payments_minor']).' '.$reporting['currency'] : null],
     ])->filter(fn ($metric) => $metric[1] !== null);
 @endphp
 @if($metrics->isNotEmpty())
@@ -54,7 +54,7 @@
     <article>
         <p class="eyebrow">Aggregated ledger</p><h2>Unified reporting</h2>
         <p class="muted">Horus GAM and approved optional sources are normalized into one aggregated reporting ledger.</p>
-        <a class="hm-button-primary button-link" href="{{ route('admin.reporting.index') }}">Open reporting and finance</a>
+        <a class="hm-button-primary button-link" href="{{ route('admin.reporting.index') }}">Open reporting sources</a>
     </article>
     @endif
     @if(auth()->user()->hasPermission('audit.view'))
