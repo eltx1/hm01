@@ -46,7 +46,7 @@ class OperationsControlCenterTest extends TestCase
             'dry_run_default' => true,
         ]);
         $demand = DemandNetwork::create([
-            'code' => 'CUSTOM',
+            'code' => 'CUSTOM_NATIVE',
             'name' => 'Test Demand',
             'default_integration_mode' => 'DIRECT_JS',
         ]);
