@@ -85,6 +85,8 @@ system:
 - Publisher earnings/payment self-service and Admin Finance Operations with
   readiness-gated close, maker-checker payouts, immutable settlements, masked
   verification queues, versioned rules, adjustments, and reconciliation
+- first-party organization-scoped Support with threaded public messages,
+  confidential Horus notes, private attachments, controlled lifecycle, and SLA
 
 ## Local setup
 
@@ -132,6 +134,7 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 - [Reporting](docs/REPORTING.md)
 - [Publisher earnings and payments](docs/PUBLISHER_FINANCE.md)
 - [Admin Finance Operations](docs/FINANCE_OPERATIONS.md)
+- [Support Ticket System](docs/SUPPORT_SYSTEM.md)
 - [Security](docs/SECURITY.md)
 - [Publisher onboarding and websites](docs/PUBLISHER_ONBOARDING.md)
 - [Portable deployment](docs/DEPLOYMENT.md)
