@@ -87,6 +87,7 @@ final class ControlPlaneNavigation
                 $this->item('Onboarding', 'publisher.onboarding.show', 'onboarding.manage', ['publisher.onboarding.*'], ['step' => $step]),
             ]),
             $this->group('Websites', [
+                $this->item('Monetization Center', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
                 $this->item('Supply Chain Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),

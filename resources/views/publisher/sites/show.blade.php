@@ -6,6 +6,7 @@
 @php
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
+        ['label' => 'Monetization', 'href' => '#monetization-health'],
         ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
         ['label' => 'Serving', 'href' => '#serving'],
         ['label' => 'GAM', 'href' => '#gam'],
@@ -18,6 +19,7 @@
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();
     $latestProbe = $site->syntheticProbeResults->sortByDesc('observed_at')->first();
+    $moduleHealth = collect($monetization['modules'])->keyBy('key');
 @endphp
 <x-control-plane.workspace-tabs :items="$tabs" label="Site 360 sections" />
 
@@ -25,7 +27,7 @@
     <div>
         <p class="eyebrow">{{ $site->publisher->display_name }} · Website</p><h2>{{ $site->display_name }}</h2>
         <p>{{ $site->primary_domain }} · {{ $site->language }}/{{ $site->country }} · {{ $site->content_category }}</p>
-        <div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /></div>
+        <div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /><x-status-badge :status="$monetization['overall']['status']" /></div>
         <a class="hm-button-secondary button-link" href="{{ route('admin.publishers.show', $site->publisher) }}">Open Publisher 360</a>
     </div>
 </section>
@@ -37,6 +39,8 @@
     <article><p class="eyebrow">Prebid mappings</p><strong class="metric">{{ $site->bidderSiteMappings->count() }}</strong></article>
     <article><p class="eyebrow">Native mappings</p><strong class="metric">{{ $site->demandSites->count() }}</strong></article>
 </section>
+
+@include('publisher.monetization.site-health')
 
 @if(auth()->user()->hasPermission('inventory.view'))
 <article id="inventory" class="workspace-section">
@@ -67,20 +71,20 @@
     @if($site->gamConnection)
         <div class="compact-row"><div><strong>{{ $site->gamConnection->name }}</strong><p>Network {{ $site->gamConnection->network_code }} · {{ $site->gamConnection->driver }}</p></div><x-status-badge :status="$site->gamConnection->health_status" /></div>
     @else
-        <p class="muted">The configured resolver will use the eligible primary Horus GAM connection when this site is activated.</p>
+        <p class="muted">The resolver will use the eligible primary Horus GAM connection when this site is activated. Resolved connection truth is shown in Monetization diagnostics above.</p>
     @endif
 </article>
 
 <article id="prebid" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Header bidding</p><h2>Prebid</h2></div>@if(auth()->user()->hasPermission('inventory.view'))<a class="section-anchor" href="{{ route('admin.sites.prebid.index', $site) }}">Manage Prebid</a>@endif</div>
-    <div class="compact-row"><div><strong>{{ $site->prebid_enabled ? 'Enabled for this website' : 'Disabled for this website' }}</strong><p>{{ $site->bidderSiteMappings->where('enabled', true)->count() }} enabled bidder mappings; line-item setup remains centrally managed.</p></div><x-status-badge :status="$site->prebid_enabled ? 'ACTIVE' : 'DISABLED'" /></div>
+    <div class="compact-row"><div><strong>{{ $site->prebid_enabled ? 'Enabled for this website' : 'Disabled for this website' }}</strong><p>{{ $site->bidderSiteMappings->where('enabled', true)->count() }} enabled bidder mappings; line-item setup remains centrally managed.</p></div><x-status-badge :status="$moduleHealth['prebid']['status']" /></div>
     @foreach($site->bidderSiteMappings as $mapping)<div class="compact-row"><div><strong>{{ $mapping->account->bidder->display_name ?? $mapping->account->name }}</strong><p>{{ $mapping->account->name }} · sequence {{ $mapping->sequence }}</p></div><x-status-badge :status="$mapping->enabled ? 'ACTIVE' : 'DISABLED'" /></div>@endforeach
 </article>
 
 <article id="native-demand" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Optional demand</p><h2>Native demand</h2></div>@if(auth()->user()->hasPermission('demand.view'))<a class="section-anchor" href="{{ route('admin.sites.demand.index', $site) }}">Manage native demand</a>@endif</div>
-    <div class="compact-row"><div><strong>{{ $site->native_demand_enabled ? 'Enabled for this website' : 'Disabled for this website' }}</strong><p>{{ $site->demandSites->where('is_enabled', true)->count() }} active mappings.</p></div><x-status-badge :status="$site->native_demand_enabled ? 'ACTIVE' : 'DISABLED'" /></div>
-    @foreach($site->demandSites as $mapping)<div class="compact-row"><div><strong>{{ $mapping->account->network->display_name ?? $mapping->account->name }}</strong><p>{{ $mapping->integration_mode->value }} · sync {{ $mapping->sync_status->value }}</p></div><x-status-badge :status="$mapping->approval_status" /></div>@endforeach
+    <div class="compact-row"><div><strong>{{ $site->native_demand_enabled ? 'Enabled for this website' : 'Disabled for this website' }}</strong><p>{{ $site->demandSites->where('is_enabled', true)->count() }} active mappings.</p></div><x-status-badge :status="$moduleHealth['native']['status']" /></div>
+    @foreach($site->demandSites as $mapping)<div class="compact-row"><div><strong>{{ $mapping->account->network->name ?? $mapping->account->name }}</strong><p>{{ $mapping->account->name }} · {{ $mapping->integration_mode->value }} · sync {{ $mapping->sync_status->value }}</p></div><x-status-badge :status="$mapping->approval_status" /></div>@endforeach
 </article>
 
 <article id="configuration" class="workspace-section">
@@ -99,7 +103,7 @@
 
 <article id="health" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Production evidence</p><h2>Health</h2></div>@if(auth()->user()->hasPermission('operations.view'))<a class="section-anchor" href="{{ route('admin.operations.index') }}">Operations</a>@endif</div>
-    <div class="health-grid"><div><span class="muted">Latest synthetic probe</span><x-status-badge :status="$latestProbe?->status ?: 'UNKNOWN'" /><small>{{ $latestProbe?->observed_at ?: 'No probe recorded' }}</small></div><div><span class="muted">GAM connection</span><x-status-badge :status="$site->gamConnection?->health_status?->value ?: 'UNKNOWN'" /><small>{{ $site->gamConnection?->last_health_check_at ?: 'No health check' }}</small></div><div><span class="muted">Static delivery</span><x-status-badge :status="$productionVersion?->deliveryItem?->status?->value ?: 'PENDING'" /><small>Production v{{ $productionVersion?->version ?: '—' }}</small></div></div>
+    <div class="health-grid"><div><span class="muted">Latest synthetic probe</span><x-status-badge :status="$latestProbe?->status ?: 'UNKNOWN'" /><small>{{ $latestProbe?->observed_at ?: 'No probe recorded' }}</small></div><div><span class="muted">GAM connection</span><x-status-badge :status="$monetization['diagnostics']['gam_health'] ?: 'UNKNOWN'" /><small>Persisted health only</small></div><div><span class="muted">Static delivery</span><x-status-badge :status="$monetization['diagnostics']['static_delivery_status'] ?: 'PENDING'" /><small>Production v{{ $monetization['diagnostics']['production_config_version'] ?: '—' }}</small></div></div>
 </article>
 
 <section id="history" class="detail-grid workspace-section">
@@ -137,11 +141,14 @@
 
 @else
 <section class="hero">
-    <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
+    <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
 </section>
+
+@include('publisher.monetization.site-health')
+
 @if(auth()->user()->hasPermission('publisher.ads_txt.view'))<p><a class="hm-button-secondary button-link" href="{{ route('publisher.ads-txt.index') }}">Open Ads.txt &amp; Compliance</a></p>@endif
 <section class="detail-grid">
-    <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd><dt>Revenue share</dt><dd>{{ $site->default_revenue_share_percent }}%</dd></dl></article>
+    <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd></dl></article>
     <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>
 </section>
 <article><div class="section-heading"><div><p class="eyebrow">Authorized domains</p><h2>Ownership verification</h2></div></div>
