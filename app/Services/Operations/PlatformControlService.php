@@ -2,7 +2,11 @@
 
 namespace App\Services\Operations;
 
+use App\Models\DemandNetwork;
+use App\Models\GamConnection;
+use App\Models\Placement;
 use App\Models\PlatformControl;
+use App\Models\Site;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use Illuminate\Support\Facades\Cache;
@@ -16,9 +20,12 @@ final class PlatformControlService
     {
         $scopeId = $scopeType === 'PLATFORM' ? 'GLOBAL' : $scopeId;
         $key = $this->cacheKey($scopeType, $scopeId, $control);
+
         return Cache::remember($key, now()->addSeconds(30), fn () => (bool) PlatformControl::query()
-            ->where('scope_type', $scopeType)->where('scope_id', $scopeId)
-            ->where('control_key', $control)->value('is_disabled'));
+            ->where('scope_type', $scopeType)
+            ->where('scope_id', $scopeId)
+            ->where('control_key', $control)
+            ->value('is_disabled'));
     }
 
     public function disabledForSite(string $control, string $siteId, ?string $connectionId = null): bool
@@ -30,30 +37,86 @@ final class PlatformControlService
 
     public function set(string $scopeType, ?string $scopeId, string $control, bool $disabled, string $reason, User $actor): PlatformControl
     {
+        $scopeType = strtoupper($scopeType);
+        $control = strtoupper($control);
         $allowed = (array) config('operations.controls.'.$scopeType, []);
         if (! in_array($control, $allowed, true)) {
             throw ValidationException::withMessages(['control_key' => 'The requested operational control is not supported for this scope.']);
         }
-        if ($scopeType === 'PLATFORM') $scopeId = 'GLOBAL';
-        if ($scopeType !== 'PLATFORM' && ! $scopeId) {
+
+        if ($scopeType === 'PLATFORM') {
+            $scopeId = 'GLOBAL';
+        } elseif (! $scopeId) {
             throw ValidationException::withMessages(['scope_id' => 'A scope identifier is required.']);
+        } else {
+            $this->assertTargetExists($scopeType, $scopeId);
         }
 
-        $record = PlatformControl::query()->updateOrCreate(
-            ['scope_type' => $scopeType, 'scope_id' => $scopeId, 'control_key' => $control],
-            ['is_disabled' => $disabled, 'reason' => $reason, 'changed_by' => $actor->id, 'changed_at' => now()],
-        );
-        Cache::forget($this->cacheKey($scopeType, $scopeId, $control));
-        $this->audit->record('operations.control.changed', $actor->organization_id, $actor, $record, newValues: [
-            'scope_type' => $scopeType, 'scope_id' => $scopeId, 'control_key' => $control,
-            'is_disabled' => $disabled, 'reason' => $reason,
+        $record = PlatformControl::query()->firstOrNew([
+            'scope_type' => $scopeType,
+            'scope_id' => $scopeId,
+            'control_key' => $control,
         ]);
-        return $record->refresh();
+
+        // Replay-safe: a repeated request for the current state performs no write,
+        // no cache invalidation and no duplicate static publication.
+        if ($record->exists && (bool) $record->is_disabled === $disabled) {
+            return $record;
+        }
+
+        $oldValues = $record->exists ? [
+            'is_disabled' => (bool) $record->is_disabled,
+            'reason' => $record->reason,
+            'changed_by' => $record->changed_by,
+            'changed_at' => $record->changed_at?->toIso8601String(),
+        ] : [];
+
+        $record->fill([
+            'is_disabled' => $disabled,
+            'reason' => $reason,
+            'changed_by' => $actor->id,
+            'changed_at' => now(),
+        ]);
+        $record->save();
+
+        Cache::forget($this->cacheKey($scopeType, $scopeId, $control));
+        $this->audit->record(
+            'operations.control.changed',
+            $actor->organization_id,
+            $actor,
+            $record,
+            oldValues: $oldValues,
+            newValues: [
+                'scope_type' => $scopeType,
+                'scope_id' => $scopeId,
+                'control_key' => $control,
+                'is_disabled' => $disabled,
+                'reason' => $reason,
+            ],
+        );
+
+        return $record;
     }
 
     public function placementDisabled(string $placementId): bool
     {
-        return $this->disabled('PLATFORM', null, 'AD_SERVING') || $this->disabled('PLACEMENT', $placementId, 'AD_SERVING');
+        return $this->disabled('PLATFORM', null, 'AD_SERVING')
+            || $this->disabled('PLACEMENT', $placementId, 'AD_SERVING');
+    }
+
+    private function assertTargetExists(string $scopeType, string $scopeId): void
+    {
+        $exists = match ($scopeType) {
+            'SITE' => Site::withoutGlobalScopes()->whereKey($scopeId)->exists(),
+            'PLACEMENT' => Placement::withoutGlobalScopes()->whereKey($scopeId)->exists(),
+            'GAM_CONNECTION' => GamConnection::withoutGlobalScopes()->whereKey($scopeId)->exists(),
+            'DEMAND_NETWORK' => DemandNetwork::withoutGlobalScopes()->whereKey($scopeId)->exists(),
+            default => false,
+        };
+
+        if (! $exists) {
+            throw ValidationException::withMessages(['scope_id' => 'The selected operational-control target does not exist.']);
+        }
     }
 
     private function cacheKey(string $scopeType, ?string $scopeId, string $control): string
