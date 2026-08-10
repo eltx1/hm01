@@ -14,7 +14,7 @@ class OperationsServiceProvider extends ServiceProvider
     {
         Route::model('staticDeliveryBatch', StaticDeliveryBatch::class);
 
-        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa'])->group(function (): void {
+        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa', 'horus'])->group(function (): void {
             Route::get('/admin/operations', [OperationsController::class, 'index'])
                 ->middleware('permission:operations.view')
                 ->name('admin.operations.index');

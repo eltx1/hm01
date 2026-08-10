@@ -28,4 +28,33 @@ class AuditRecorderTest extends TestCase
         ]);
         $this->assertSame('[REDACTED]', AuditLog::firstOrFail()->new_values['token']);
     }
+
+    public function test_nested_camel_case_and_alternate_secret_keys_are_redacted(): void
+    {
+        app(AuditRecorder::class)->record(
+            event: 'security.adversarial-redaction',
+            newValues: [
+                'provider' => [
+                    'clientSecret' => 'client-secret-value',
+                    'access-token' => 'access-token-value',
+                    'serviceAccountJson' => '{"private_key":"hidden"}',
+                    'nested' => [
+                        'bankAccountNumber' => '1234567890',
+                        'taxIdentifier' => 'TAX-SECRET',
+                    ],
+                ],
+                'safe_label' => 'keep-me',
+            ],
+        );
+
+        $values = AuditLog::where('event', 'security.adversarial-redaction')->firstOrFail()->new_values;
+        $this->assertSame('[REDACTED]', data_get($values, 'provider.clientSecret'));
+        $this->assertSame('[REDACTED]', data_get($values, 'provider.access-token'));
+        $this->assertSame('[REDACTED]', data_get($values, 'provider.serviceAccountJson'));
+        $this->assertSame('[REDACTED]', data_get($values, 'provider.nested.bankAccountNumber'));
+        $this->assertSame('[REDACTED]', data_get($values, 'provider.nested.taxIdentifier'));
+        $this->assertSame('keep-me', $values['safe_label']);
+        $this->assertStringNotContainsString('client-secret-value', json_encode($values));
+        $this->assertStringNotContainsString('1234567890', json_encode($values));
+    }
 }

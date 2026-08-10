@@ -5,6 +5,7 @@ namespace App\Services\Audit;
 use App\Models\AuditLog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 final class AuditRecorder
 {
@@ -55,7 +56,8 @@ final class AuditRecorder
         ];
 
         foreach ($values as $key => $value) {
-            if (in_array(strtolower((string) $key), $sensitive, true)) {
+            $normalizedKey = strtolower(str_replace(['-', ' ', '.'], '_', Str::snake((string) $key)));
+            if (in_array($normalizedKey, $sensitive, true)) {
                 $values[$key] = '[REDACTED]';
             } elseif (is_array($value)) {
                 $values[$key] = $this->redact($value);
