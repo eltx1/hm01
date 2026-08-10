@@ -58,5 +58,14 @@ class AppServiceProvider extends ServiceProvider
             Limit::perMinute(2)->by(($request->user()?->id ?: 'guest').'|'.(is_object($request->route('site')) ? $request->route('site')->getKey() : (string) $request->route('site')).'|'.$request->ip()),
             Limit::perHour(20)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),
         ]);
+        RateLimiter::for('support-create', fn (Request $request) => [
+            Limit::perHour(10)->by(($request->user()?->organization_id ?: 'guest').'|'.($request->user()?->id ?: $request->ip())),
+        ]);
+        RateLimiter::for('support-reply', fn (Request $request) => [
+            Limit::perMinute(6)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),
+            Limit::perHour(60)->by(($request->user()?->organization_id ?: 'guest').'|'.($request->user()?->id ?: $request->ip())),
+        ]);
+        RateLimiter::for('support-status', fn (Request $request) => Limit::perMinute(20)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()));
+        RateLimiter::for('support-attachment', fn (Request $request) => Limit::perMinute(30)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()));
     }
 }

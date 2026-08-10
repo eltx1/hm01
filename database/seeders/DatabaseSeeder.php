@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
             PrebidSeeder::class,
             DemandNetworkSeeder::class,
             ReportingSeeder::class,
+            SupportSlaPolicySeeder::class,
         ]);
     }
 }

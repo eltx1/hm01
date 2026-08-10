@@ -158,6 +158,20 @@ reconcile the denormalized paid and balance fields under row locks. Creation,
 approval, scheduling, or external-processing state alone never reduces
 Publisher liability.
 
+## Support storage
+
+The Support domain adds `support_tickets`, `support_ticket_messages`,
+`support_ticket_attachments`, `support_ticket_events`, and
+`support_sla_policies`. Tickets are organization-owned and use ULIDs plus a
+unique non-sequential `HM-TKT-...` display number. Message visibility is typed
+as public or internal. Customer controllers query public messages only.
+
+Attachment rows reference randomized private-disk paths and both the parent
+ticket and message; every download revalidates that complete relationship.
+Ticket events are append-oriented operational evidence. SLA policies store
+integer minute targets, while each ticket persists its due, pause, response,
+resolution, and close timestamps for deterministic scheduler evaluation.
+
 ## Migrations and retention
 
 Migrations are forward-only in production and run with `php artisan migrate

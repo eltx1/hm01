@@ -134,6 +134,13 @@ dd { margin: 0; }
 .compliance-diff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .compliance-diff-grid > div { border-top: 1px solid var(--hm-line); min-width: 0; }
 .table-note { display: block; margin-top: .35rem; color: var(--hm-muted); white-space: nowrap; }
+.support-thread { display: grid; gap: 1rem; }
+.support-message { border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); padding: 1rem; background: rgba(255, 255, 255, .025); }
+.support-message header { display: flex; justify-content: space-between; gap: 1rem; color: var(--hm-gold-soft); }
+.support-message header span { color: var(--hm-muted); font-size: .8rem; }
+.support-message p { max-width: none; overflow-wrap: anywhere; color: var(--hm-white); white-space: normal; }
+.support-message-horus { border-color: rgba(28, 99, 207, .45); background: rgba(18, 73, 157, .1); }
+.support-message-internal, .support-note-panel { border-color: rgba(241, 183, 51, .38); background: rgba(241, 183, 51, .06); }
 
 @media (max-width: 800px) {
     .admin-shell { grid-template-columns: 1fr; }

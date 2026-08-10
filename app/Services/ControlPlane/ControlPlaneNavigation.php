@@ -59,6 +59,9 @@ final class ControlPlaneNavigation
             $this->group('Finance', [
                 $this->item('Finance Operations', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
             ]),
+            $this->group('Support', [
+                $this->item('Support Tickets', 'admin.support.tickets.index', 'support.admin.view', ['admin.support.*']),
+            ]),
             $this->group('Advertisers', [
                 $this->item('Advertiser accounts', 'admin.advertisers.index', 'advertisers.view', ['admin.advertisers.*']),
             ]),
@@ -90,6 +93,9 @@ final class ControlPlaneNavigation
             $this->group('Contracts', [
                 $this->item('Contracts', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
             ]),
+            $this->group('Support', [
+                $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
+            ]),
             $this->group('Team', [
                 $this->item('Invite a team member', 'admin.invitations.create', 'users.invite', ['admin.invitations.*']),
             ]),
@@ -108,6 +114,9 @@ final class ControlPlaneNavigation
             $this->group('Reporting', [
                 $this->item('Performance reports', 'advertiser.reporting.index', 'reporting.advertiser.view', ['advertiser.reporting.*']),
             ]),
+            $this->group('Support', [
+                $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
+            ]),
         ];
     }
 
@@ -116,6 +125,9 @@ final class ControlPlaneNavigation
         return [
             $this->group('Overview', [
                 $this->item('Partner overview', 'dashboard', 'dashboard.partner.view', ['dashboard']),
+            ]),
+            $this->group('Support', [
+                $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
             ]),
         ];
     }

@@ -38,6 +38,11 @@ class Organization extends Model
         return $this->hasOne(Advertiser::class);
     }
 
+    public function supportTickets(): HasMany
+    {
+        return $this->hasMany(SupportTicket::class);
+    }
+
     public function isActive(): bool
     {
         return $this->status === AccountStatus::Active;
