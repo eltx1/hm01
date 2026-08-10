@@ -20,7 +20,7 @@ final class SettingsServiceProvider extends ServiceProvider
     {
         $this->app->make(GlobalSettingsService::class)->applyRuntimeOverrides();
 
-        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa'])->prefix('admin/settings')->group(function (): void {
+        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix('admin/settings')->group(function (): void {
             Route::get('/', [SettingsController::class, 'index'])
                 ->middleware('permission:settings.view')
                 ->name('admin.settings.index');
