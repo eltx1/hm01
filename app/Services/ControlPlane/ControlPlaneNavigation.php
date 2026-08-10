@@ -69,6 +69,9 @@ final class ControlPlaneNavigation
             $this->group('Operations', [
                 $this->item('Production operations', 'admin.operations.index', 'operations.view', ['admin.operations.*']),
             ]),
+            $this->group('Settings', [
+                $this->item('Global settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
+            ]),
             $this->group('Security & Audit', [
                 $this->item('Audit Log', 'admin.audit.index', 'audit.view', ['admin.audit.*']),
                 $this->item('Access control', 'admin.roles.index', 'roles.view', ['admin.roles.*']),
