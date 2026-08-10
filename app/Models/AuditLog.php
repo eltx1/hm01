@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class AuditLog extends Model
 {
@@ -33,5 +35,20 @@ class AuditLog extends Model
             'new_values' => 'array',
             'metadata' => 'array',
         ];
+    }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
+    }
+
+    public function actor(): MorphTo
+    {
+        return $this->morphTo(__FUNCTION__, 'actor_type', 'actor_id');
+    }
+
+    public function auditable(): MorphTo
+    {
+        return $this->morphTo();
     }
 }
