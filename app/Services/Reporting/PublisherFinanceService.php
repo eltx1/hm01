@@ -12,6 +12,7 @@ use App\Models\FinancialPeriod;
 use App\Models\Publisher;
 use App\Models\PublisherContract;
 use App\Models\PublisherPayment;
+use App\Models\PublisherPaymentProfile;
 use App\Models\PublisherStatement;
 use App\Support\Money;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,13 +42,16 @@ final class PublisherFinanceService
             $pendingStatuses = [
                 PublisherPaymentStatus::Pending,
                 PublisherPaymentStatus::Approved,
+                PublisherPaymentStatus::Scheduled,
                 PublisherPaymentStatus::Processing,
+                PublisherPaymentStatus::PartiallyPaid,
+                PublisherPaymentStatus::Held,
             ];
             $pending = $currencyPayments->whereIn('status', $pendingStatuses);
             $threshold = $latest
                 ? (int) $latest->payment_threshold_minor
                 : $this->contractThreshold($contract, $currency);
-            $readiness = $this->readiness($profile?->verification_status, $latest, $pending->isNotEmpty());
+            $readiness = $this->readiness($profile, $currency, $latest, $pending->isNotEmpty());
 
             return [
                 'currency' => $currency,
@@ -66,11 +70,11 @@ final class PublisherFinanceService
                 ], true) ? (int) $latest->balance_due_minor : 0,
                 'opening_carry_forward_minor' => (int) ($latest?->opening_balance_minor ?? 0),
                 'carry_forward_minor' => (int) ($latest?->carry_forward_minor ?? 0),
-                'pending_payout_minor' => (int) $pending->sum('amount_minor'),
-                'scheduled_payout_minor' => (int) $pending->whereNotNull('scheduled_on')->sum('amount_minor'),
-                'paid_minor' => (int) $currencyPayments
-                    ->whereIn('status', [PublisherPaymentStatus::Paid, PublisherPaymentStatus::PartiallyPaid])
-                    ->sum('settled_amount_minor'),
+                'pending_payout_minor' => (int) $pending->sum(fn (PublisherPayment $payment): int => $payment->remainingAmountMinor()),
+                'scheduled_payout_minor' => (int) $pending
+                    ->where('status', PublisherPaymentStatus::Scheduled)
+                    ->sum(fn (PublisherPayment $payment): int => $payment->remainingAmountMinor()),
+                'paid_minor' => (int) $currencyPayments->sum('settled_amount_minor'),
                 'payment_threshold_minor' => $threshold,
                 'current_period' => now()->format('Y-m'),
                 'current_period_status' => FinancialPeriod::query()
@@ -98,7 +102,7 @@ final class PublisherFinanceService
         return PublisherStatement::withoutGlobalScopes()
             ->where('publisher_id', $publisher->id)
             ->where('organization_id', $publisher->organization_id)
-            ->with(['period', 'payments'])
+            ->with(['period', 'payments.settlements'])
             ->orderByDesc(FinancialPeriod::select('ends_on')
                 ->whereColumn('financial_periods.id', 'publisher_statements.financial_period_id'))
             ->orderByDesc('created_at')
@@ -110,7 +114,7 @@ final class PublisherFinanceService
         return PublisherPayment::withoutGlobalScopes()
             ->where('publisher_id', $publisher->id)
             ->where('organization_id', $publisher->organization_id)
-            ->with(['statement.period'])
+            ->with(['statement.period', 'settlements'])
             ->latest()
             ->get();
     }
@@ -160,12 +164,16 @@ final class PublisherFinanceService
     }
 
     private function readiness(
-        ?PublisherPaymentProfileStatus $profileStatus,
+        ?PublisherPaymentProfile $profile,
+        string $currency,
         ?PublisherStatement $statement,
         bool $hasPendingPayment,
     ): array {
-        if ($profileStatus !== PublisherPaymentProfileStatus::Verified) {
+        if ($profile?->verification_status !== PublisherPaymentProfileStatus::Verified) {
             return ['ready' => false, 'code' => 'PAYMENT_PROFILE_REVIEW', 'label' => 'Payment profile verification required'];
+        }
+        if (strtoupper((string) $profile->currency) !== $currency) {
+            return ['ready' => false, 'code' => 'PAYMENT_PROFILE_CURRENCY', 'label' => 'Verified payment profile currency does not match this balance'];
         }
         if (! $statement) {
             return ['ready' => false, 'code' => 'NO_FINALIZED_STATEMENT', 'label' => 'Awaiting a finalized statement'];
@@ -178,6 +186,9 @@ final class PublisherFinanceService
             PublisherInvoiceStatus::Rejected,
         ], true)) {
             return ['ready' => false, 'code' => 'INVOICE_ACTION_REQUIRED', 'label' => 'Publisher invoice action required'];
+        }
+        if ($statement->publisher_invoice_status === PublisherInvoiceStatus::Received) {
+            return ['ready' => false, 'code' => 'INVOICE_UNDER_REVIEW', 'label' => 'Publisher invoice is awaiting Finance validation'];
         }
         if ($hasPendingPayment) {
             return ['ready' => false, 'code' => 'PAYOUT_IN_PROGRESS', 'label' => 'A payout is already pending or scheduled'];
@@ -218,6 +229,9 @@ final class PublisherFinanceService
         }
         if ($payments->contains(fn (PublisherPayment $payment) => $payment->status === PublisherPaymentStatus::Failed)) {
             $actions[] = ['code' => 'PAYOUT_FAILED', 'label' => 'Review the Publisher-visible payout failure message and update your payment method if requested.'];
+        }
+        if ($payments->contains(fn (PublisherPayment $payment) => $payment->status === PublisherPaymentStatus::Held)) {
+            $actions[] = ['code' => 'PAYOUT_HELD', 'label' => 'A payout is on hold. Review its explanation; no earnings were removed by the hold.'];
         }
 
         return $actions === []

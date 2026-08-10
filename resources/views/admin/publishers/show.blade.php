@@ -34,7 +34,7 @@
     <article><p class="eyebrow">Verified domains</p><strong class="metric">{{ $verifiedDomains }}</strong><span class="muted">{{ $publisher->sites->flatMap->domains->count() }} authorized</span></article>
     <article><p class="eyebrow">Users</p><strong class="metric">{{ $publisher->organization->users->count() }}</strong><span class="muted">Organization members</span></article>
     <article><p class="eyebrow">Contracts</p><strong class="metric">{{ $publisher->contracts->count() }}</strong><span class="muted">{{ $publisher->contracts->where('status', \App\Enums\ContractStatus::Active)->count() }} active</span></article>
-    @if($reporting)<article><p class="eyebrow">Balance due</p><strong class="metric">{{ number_format($reporting['payment_balance_minor'] / 100, 2) }}</strong><span class="muted">Finalized statements</span></article>@endif
+    @if($reporting)<article><p class="eyebrow">Balance due</p><strong class="metric">{{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }} {{ $reporting['currency'] }}</strong><span class="muted">Latest finalized {{ $reporting['currency'] }} statement</span></article>@endif
 </section>
 
 <article id="websites" class="workspace-section">
@@ -72,12 +72,12 @@
 @if($reporting)
 <article id="reporting" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Aggregated reporting</p><h2>Publisher performance</h2></div><a class="section-anchor" href="{{ route('admin.reporting.index') }}">Reporting control</a></div>
-    <div class="health-grid"><div><span class="muted">Impressions</span><strong class="metric-small">{{ number_format($reporting['impressions']) }}</strong></div><div><span class="muted">Publisher earnings</span><strong class="metric-small">{{ number_format($reporting['revenue_minor'] / 100, 2) }}</strong></div><div><span class="muted">Balance due</span><strong class="metric-small">{{ number_format($reporting['payment_balance_minor'] / 100, 2) }}</strong></div></div>
+    <div class="health-grid"><div><span class="muted">Impressions</span><strong class="metric-small">{{ number_format($reporting['impressions']) }}</strong></div><div><span class="muted">Publisher earnings</span><strong class="metric-small">{{ \App\Support\Money::formatMinor((int) $reporting['revenue_minor']) }} {{ $reporting['currency'] }}</strong></div><div><span class="muted">Balance due</span><strong class="metric-small">{{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }} {{ $reporting['currency'] }}</strong></div></div>
 </article>
 <article id="finance" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Payout readiness</p><h2>Finance</h2></div>@if(auth()->user()->hasPermission('publisher_payments.manage'))<a class="section-anchor" href="{{ route('admin.publishers.payment-profile.edit', $publisher) }}">Payment profile</a>@endif</div>
     <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile?->payment_method ?: 'Not configured' }} · {{ $publisher->paymentProfile?->currency ?: 'No currency' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
-    @forelse($statements as $statement)<a class="compact-row" href="{{ route('admin.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ number_format($statement->balance_due_minor / 100, 2) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>@empty<p class="muted">No finalized statements.</p>@endforelse
+    @forelse($statements as $statement)<a class="compact-row" href="{{ route('admin.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>@empty<p class="muted">No finalized statements.</p>@endforelse
 </article>
 @endif
 

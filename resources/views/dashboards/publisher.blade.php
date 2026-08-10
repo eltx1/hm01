@@ -15,6 +15,7 @@
         <div class="status-row">
             <x-status-badge :status="$publisher->status" />
             @if(auth()->user()->hasPermission('sites.view'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.index') }}">Manage websites</a>@endif
+            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-secondary button-link" href="{{ route('publisher.finance.overview') }}">Earnings &amp; Payments</a>@endif
             @if(auth()->user()->hasPermission('reporting.publisher.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.reporting.index') }}">Open reports</a>@endif
         </div>
     </div>
@@ -23,8 +24,8 @@
 <section class="metric-grid" aria-label="Publisher summary">
     <article><p class="eyebrow">Websites</p><strong class="metric">{{ $publisher->sites->count() }}</strong><span class="muted">{{ $activeSites }} serving · {{ $pendingSites }} pending</span></article>
     <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Finalized aggregated data</span></article>
-    <article><p class="eyebrow">Publisher earnings</p><strong class="metric">{{ number_format($reporting['revenue_minor'] / 100, 2) }}</strong><span class="muted">Your contractual share</span></article>
-    <article><p class="eyebrow">Payment balance</p><strong class="metric">{{ number_format($reporting['payment_balance_minor'] / 100, 2) }}</strong><span class="muted">Across finalized statements</span></article>
+    <article><p class="eyebrow">Publisher earnings</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['revenue_minor']) }}</strong><span class="muted">Finalized contractual share in {{ $reporting['currency'] }}</span></article>
+    <article><p class="eyebrow">Payment balance</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }}</strong><span class="muted">Latest finalized {{ $reporting['currency'] }} statement</span></article>
     <article><p class="eyebrow">Onboarding</p><strong class="metric">{{ $publisher->onboarding_step }}/7</strong><span class="muted">{{ $publisher->onboarding_submitted_at ? 'Submitted' : 'In progress' }}</span></article>
 </section>
 
@@ -52,7 +53,7 @@
     <div class="workspace-heading"><div><p class="eyebrow">Finalized finance</p><h2>Latest statements</h2></div><a class="section-anchor" href="{{ route('publisher.reporting.index') }}">All reports</a></div>
     <div class="compact-list">
         @forelse($reporting['statements']->take(6) as $statement)
-            <a class="compact-row" href="{{ route('publisher.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ number_format($statement->balance_due_minor / 100, 2) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>
+            <a class="compact-row" href="{{ route('publisher.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>
         @empty
             <p class="muted">Statements appear after a financial period is finalized.</p>
         @endforelse

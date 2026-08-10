@@ -2,6 +2,7 @@
 
 namespace App\Services\Reporting;
 
+use App\Enums\PublisherPaymentStatus;
 use App\Enums\ReportFinality;
 use App\Enums\ReportSourceCode;
 use App\Models\Advertiser;
@@ -26,17 +27,17 @@ final class UnifiedReportService
         ?string $currency = null,
     ): array {
         [$from, $to] = $this->range($from, $to);
+        $currency = $this->currency($currency);
         $query = $this->daily($from, $to, $currency);
         $rows = $query->with(['dimension.publisher', 'dimension.site', 'dimension.campaign', 'connection.source'])->get();
 
-        $horusGam = $rows->filter(fn ($row) =>
-            ($row->connection?->source?->code?->value ?? null) === ReportSourceCode::HorusGam->value
+        $horusGam = $rows->filter(fn ($row) => ($row->connection?->source?->code?->value ?? null) === ReportSourceCode::HorusGam->value
         );
         $adjustments = RevenueAdjustment::withoutGlobalScopes()
             ->where('status', 'APPROVED')
             ->whereDate('effective_on', '>=', $from->toDateString())
             ->whereDate('effective_on', '<=', $to->toDateString())
-            ->when($currency, fn (Builder $query) => $query->where('currency', strtoupper($currency)))
+            ->where('currency', $currency)
             ->get();
         $adjustmentTotal = (int) $adjustments->sum('amount_minor');
         $publisherAdjustment = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0));
@@ -44,7 +45,7 @@ final class UnifiedReportService
         $mcmAdjustment = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'mcm_partner_impact_minor', 0));
 
         return [
-            'from' => $from, 'to' => $to,
+            'from' => $from, 'to' => $to, 'currency' => $currency,
             'managed_impressions' => (int) $rows->sum('impressions'),
             'horus_gam_impressions' => (int) $horusGam->sum('impressions'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
@@ -57,10 +58,15 @@ final class UnifiedReportService
             'revenue_by_website' => $this->group($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'revenue_by_source' => $this->group($rows, fn ($row) => $row->connection?->source?->name ?? 'Unknown'),
             'revenue_by_campaign' => $this->group($rows, fn ($row) => $row->dimension?->campaign?->name ?? 'Non-campaign'),
-            'outstanding_publisher_payments_minor' => (int) PublisherStatement::withoutGlobalScopes()->sum('balance_due_minor'),
-            'advertiser_balances_minor' => (int) AdvertiserInvoice::withoutGlobalScopes()->sum('balance_due_minor'),
+            'outstanding_publisher_payments_minor' => (int) $this->latestPublisherStatements($currency)->sum('balance_due_minor'),
+            'advertiser_balances_minor' => (int) AdvertiserInvoice::withoutGlobalScopes()
+                ->where('currency', $currency)->sum('balance_due_minor'),
             'unpaid_publisher_payments' => PublisherPayment::withoutGlobalScopes()
-                ->whereNotIn('status', ['PAID', 'CANCELLED'])->count(),
+                ->where('currency', $currency)
+                ->whereIn('status', collect(PublisherPaymentStatus::cases())
+                    ->filter(fn (PublisherPaymentStatus $status): bool => $status->reservesBalance())
+                    ->map->value->all())
+                ->count(),
         ];
     }
 
@@ -68,9 +74,11 @@ final class UnifiedReportService
         Publisher $publisher,
         CarbonInterface|string|null $from = null,
         CarbonInterface|string|null $to = null,
+        ?string $currency = null,
     ): array {
         [$from, $to] = $this->range($from, $to);
-        $rows = $this->daily($from, $to)
+        $currency = $this->currency($currency);
+        $rows = $this->daily($from, $to, $currency)
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
             ->with(['dimension.site', 'dimension.placement'])
             ->get();
@@ -78,14 +86,14 @@ final class UnifiedReportService
         $revenue = (int) $rows->sum('publisher_earnings_minor');
 
         return [
-            'from' => $from, 'to' => $to,
+            'from' => $from, 'to' => $to, 'currency' => $currency,
             'impressions' => $impressions,
             'revenue_minor' => $revenue,
             'ecpm_micros' => $impressions > 0 ? (int) round($revenue * 10000 / $impressions) : 0,
             'websites' => $this->group($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'placements' => $this->group($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
-            'payment_balance_minor' => (int) PublisherStatement::withoutGlobalScopes()
-                ->where('publisher_id', $publisher->id)->sum('balance_due_minor'),
+            'payment_balance_minor' => (int) ($this->latestPublisherStatements($currency, $publisher->id)
+                ->first()?->balance_due_minor ?? 0),
             'statements' => PublisherStatement::withoutGlobalScopes()
                 ->where('publisher_id', $publisher->id)->with('period')->latest()->limit(24)->get(),
         ];
@@ -118,6 +126,7 @@ final class UnifiedReportService
                 $campaign = $group->first()->campaign;
                 $impressions = (int) $group->sum('impressions');
                 $clicks = (int) $group->sum('clicks');
+
                 return [
                     'campaign_id' => $campaign?->id,
                     'campaign' => $campaign?->name ?? 'Unknown',
@@ -163,6 +172,23 @@ final class UnifiedReportService
             ->whereDate('report_date', '>=', $from->toDateString())
             ->whereDate('report_date', '<=', $to->toDateString())
             ->when($currency, fn (Builder $query) => $query->where('currency', strtoupper($currency)));
+    }
+
+    private function latestPublisherStatements(string $currency, ?string $publisherId = null): Collection
+    {
+        return PublisherStatement::withoutGlobalScopes()
+            ->latestPerPublisherCurrency()
+            ->where('currency', $currency)
+            ->when($publisherId, fn (Builder $query) => $query->where('publisher_id', $publisherId))
+            ->with('period')
+            ->get();
+    }
+
+    private function currency(?string $currency): string
+    {
+        $currency = strtoupper(trim((string) ($currency ?: config('reporting.default_currency', 'USD'))));
+
+        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
     }
 
     private function group(Collection $rows, callable $key): Collection

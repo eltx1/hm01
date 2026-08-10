@@ -91,10 +91,11 @@ the smaller settled amount, and updates the statement balance using only the
 settled amount. Publisher pages never render internal payment notes; only the
 explicit safe `publisher_message` may explain a failure or required action.
 
-Creating a payout requires a verified payment profile, a valid invoice when
-required, and an unreserved statement balance. The Admin payout state machine,
-separation of duties, settlement controls, holds/failures, and reconciliation
-workbench are completed by the Admin Finance Operations task.
+Creating a payout requires a verified payment profile, an Admin-accepted
+invoice when required, matching currency, and an unreserved statement balance.
+The Admin payout state machine, separation of duties, immutable partial/full
+settlement controls, holds/failures, and reconciliation workbench are documented
+in [`FINANCE_OPERATIONS.md`](FINANCE_OPERATIONS.md).
 
 ## Permissions
 

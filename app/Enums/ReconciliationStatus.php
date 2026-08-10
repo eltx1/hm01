@@ -7,6 +7,7 @@ enum ReconciliationStatus: string
     case Pending = 'PENDING';
     case Running = 'RUNNING';
     case Matched = 'MATCHED';
+    case Resolved = 'RESOLVED';
     case Warning = 'WARNING';
     case Failed = 'FAILED';
 }

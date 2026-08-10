@@ -4,9 +4,14 @@ namespace App\Services\Reporting;
 
 use App\Enums\FinancialPeriodStatus;
 use App\Enums\RevenueRuleScope;
+use App\Models\Campaign;
+use App\Models\DemandNetwork;
 use App\Models\FinancialPeriod;
+use App\Models\Publisher;
+use App\Models\ReportSource;
 use App\Models\RevenueRule;
 use App\Models\RevenueRuleVersion;
+use App\Models\Site;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use Carbon\CarbonInterface;
@@ -15,21 +20,25 @@ use Illuminate\Validation\ValidationException;
 
 final class RevenueRuleService
 {
-    public function __construct(private readonly AuditRecorder $audit)
-    {
-    }
+    public function __construct(private readonly AuditRecorder $audit) {}
 
     public function createRule(array $attributes, ?User $actor): RevenueRule
     {
+        if ($actor) {
+            $this->authorize($actor);
+        }
+
         return DB::transaction(function () use ($attributes, $actor): RevenueRule {
             $scope = $attributes['scope_type'] instanceof RevenueRuleScope
                 ? $attributes['scope_type']
                 : RevenueRuleScope::from((string) $attributes['scope_type']);
             $this->validateShares($attributes);
             $this->assertEffectiveDateOpen($attributes['effective_from']);
+            $organizationId = $this->scopeOrganization($scope, $attributes['scope_id'] ?? null)
+                ?? ($attributes['organization_id'] ?? $actor?->organization_id);
 
             $rule = RevenueRule::withoutGlobalScopes()->create([
-                'organization_id' => $attributes['organization_id'] ?? $actor?->organization_id,
+                'organization_id' => $organizationId,
                 'name' => $attributes['name'],
                 'scope_type' => $scope,
                 'scope_id' => $scope === RevenueRuleScope::Global ? null : ($attributes['scope_id'] ?? null),
@@ -61,7 +70,10 @@ final class RevenueRuleService
 
     public function changeRule(RevenueRule $rule, array $attributes, User $actor): RevenueRuleVersion
     {
+        $this->authorize($actor);
+
         return DB::transaction(function () use ($rule, $attributes, $actor): RevenueRuleVersion {
+            $rule = RevenueRule::withoutGlobalScopes()->with(['versions', 'currentVersion'])->lockForUpdate()->findOrFail($rule->id);
             $merged = [
                 'publisher_share_bp' => $attributes['publisher_share_bp'],
                 'horus_share_bp' => $attributes['horus_share_bp'],
@@ -69,6 +81,12 @@ final class RevenueRuleService
             ];
             $this->validateShares($merged);
             $this->assertEffectiveDateOpen($attributes['effective_from']);
+            if (blank($attributes['reason'] ?? null)) {
+                throw ValidationException::withMessages(['reason' => 'A reason is required for every revenue-rule version.']);
+            }
+            if ($rule->currentVersion && (string) $attributes['effective_from'] < $rule->currentVersion->effective_from->toDateString()) {
+                throw ValidationException::withMessages(['effective_from' => 'A new version cannot begin before the current version.']);
+            }
 
             $before = $rule->currentVersion?->only([
                 'version', 'publisher_share_bp', 'horus_share_bp', 'mcm_partner_share_bp',
@@ -110,8 +128,7 @@ final class RevenueRuleService
 
         foreach ($rules as $rule) {
             $version = $rule->versions
-                ->filter(fn (RevenueRuleVersion $version) =>
-                    $version->effective_from->toDateString() <= $date
+                ->filter(fn (RevenueRuleVersion $version) => $version->effective_from->toDateString() <= $date
                     && (! $version->effective_to || $version->effective_to->toDateString() >= $date)
                     && (! $version->currency || ! $currency || $version->currency === $currency)
                 )
@@ -143,7 +160,7 @@ final class RevenueRuleService
             'mcm_partner_share_bp' => (int) ($attributes['mcm_partner_share_bp'] ?? 0),
             'effective_from' => $attributes['effective_from'],
             'effective_to' => $attributes['effective_to'] ?? null,
-            'currency' => $attributes['currency'] ?? null,
+            'currency' => filled($attributes['currency'] ?? null) ? strtoupper((string) $attributes['currency']) : null,
             'reason' => $attributes['reason'] ?? null,
             'created_by' => $actor?->id,
             'created_at' => now(),
@@ -188,6 +205,34 @@ final class RevenueRuleService
             throw ValidationException::withMessages([
                 'effective_from' => 'A revenue-share version cannot start inside a closed financial period.',
             ]);
+        }
+    }
+
+    private function scopeOrganization(RevenueRuleScope $scope, ?string $scopeId): ?string
+    {
+        if ($scope === RevenueRuleScope::Global) {
+            return null;
+        }
+        if (blank($scopeId)) {
+            throw ValidationException::withMessages(['scope_id' => 'The selected rule scope requires a target.']);
+        }
+
+        return match ($scope) {
+            RevenueRuleScope::Publisher => Publisher::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
+            RevenueRuleScope::Website => Site::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
+            RevenueRuleScope::Campaign => Campaign::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
+            RevenueRuleScope::DemandSource => ReportSource::query()->whereKey($scopeId)->exists()
+                || DemandNetwork::query()->whereKey($scopeId)->exists()
+                    ? null
+                    : throw ValidationException::withMessages(['scope_id' => 'The demand-source target does not exist.']),
+            RevenueRuleScope::Global => null,
+        };
+    }
+
+    private function authorize(User $actor): void
+    {
+        if (! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.revenue_rules.manage')) {
+            abort(403);
         }
     }
 }

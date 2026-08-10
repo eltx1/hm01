@@ -27,4 +27,9 @@ class RevenueRuleVersion extends Model
     {
         return $this->belongsTo(RevenueRule::class, 'revenue_rule_id');
     }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 }

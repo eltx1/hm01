@@ -28,7 +28,8 @@ class ControlPlaneFoundationTest extends TestCase
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get(route('dashboard'))
             ->assertOk()
             ->assertSee('Publisher accounts')
-            ->assertSee('Reporting &amp; finance', false)
+            ->assertSee('Reporting sources')
+            ->assertSee('Finance Operations')
             ->assertSee('Ads.txt')
             ->assertDontSee('Production operations')
             ->assertDontSee('Access control')
@@ -125,7 +126,9 @@ class ControlPlaneFoundationTest extends TestCase
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
 
         $queries = 0;
-        DB::listen(function () use (&$queries): void { $queries++; });
+        DB::listen(function () use (&$queries): void {
+            $queries++;
+        });
         $items = app(ActionCenter::class)->items($admin);
 
         $this->assertSame(1, collect($items)->firstWhere('key', 'publisher-reviews')['count']);

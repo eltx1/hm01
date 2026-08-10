@@ -139,12 +139,24 @@ Laravel. Database versions remain the audit source while the current JSON alias
 is the browser delivery source. No impression, bid, visitor, or slot-render
 event is stored by this layer.
 
-## Reporting storage
+## Reporting and finance storage
 
-Later reporting migrations will store imported, aggregated dimensions and
-metrics only. No raw ad requests, bidstream, or visitor event logs belong in
-the Laravel database. Imports should use source, report date, dimension key, and
-import version for idempotent upserts.
+Reporting migrations store aggregate dimensions and hourly/daily/monthly
+metrics only. No raw ad request, bidstream, impression event, visitor, or
+browser event log belongs in Laravel. Imports use source, report date,
+dimension hash, checksum, source-row hash, and revision for idempotent upserts.
+
+Financial periods freeze monthly snapshots and Publisher statements. Revenue
+rules retain immutable effective versions; adjustments retain separate creator
+and decision evidence; reconciliation retains source/stored differences.
+
+`publisher_payments` is the requested payout and lifecycle record.
+`publisher_payment_settlements` is append-only evidence of actual settlement.
+Its immutable reference is globally unique so one external settlement cannot
+be applied to two payouts, and its amount/currency
+reconcile the denormalized paid and balance fields under row locks. Creation,
+approval, scheduling, or external-processing state alone never reduces
+Publisher liability.
 
 ## Migrations and retention
 

@@ -77,6 +77,16 @@ A statement contains opening carry-forward, gross revenue, deductions, net reven
 
 Balances below threshold carry forward. Payable statements may require the publisher to upload a private PDF or image invoice. Finance can create and approve payments, settle a full or partial amount, and store the Horus payment reference. Partial settlement updates the remaining statement balance without deleting payment history.
 
+Finance operations use an append-only settlement ledger. Creation, independent
+approval, scheduling, and external-processing state do not reduce a statement
+balance. Only an immutable settlement reference and positive minor-unit amount
+do. A settlement reference is globally unique and cannot be reused for another
+payout. General dashboard summaries show one explicit currency and the latest
+statement balance per Publisher/currency; the Finance dashboard shows all
+currencies separately. The Admin dashboard, readiness-gated close, payout workbench, verification
+queue, adjustment lifecycle, and reconciliation remediation are documented in
+[`FINANCE_OPERATIONS.md`](FINANCE_OPERATIONS.md).
+
 The Publisher product surface, payment-profile verification lifecycle, private
 invoice ownership rules, Publisher-safe CSV, currency separation, and
 requested-versus-settled payout presentation are documented in
@@ -99,6 +109,8 @@ The existing campaign invoice entity is extended rather than duplicated. It stor
 - Encrypted payment account, routing, and tax values are masked after save and
   excluded from HTML, validation old input, and audit metadata.
 - Every manual import, revenue-rule version, adjustment decision, financial close, statement generation, and publisher payment is audited.
+- Financial close locks the period and rejects unfinished periods unless a
+  separately permitted, reasoned, audited override is used.
 - Organization global scopes protect publisher and advertiser views; Horus administrators retain cross-organization reporting access.
 - External report reads are deterministic and idempotent. No reporting operation changes publisher installation code or the browser delivery path.
 
