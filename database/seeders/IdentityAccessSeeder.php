@@ -128,6 +128,11 @@ class IdentityAccessSeeder extends Seeder
             );
             $role->permissions()->sync($this->permissionsFor($roleName, $permissions));
         }
+
+        // Settings permissions are maintained by their dedicated Task 11 seeder.
+        // Reapply them after the canonical role sync so an identity-only reseed cannot
+        // silently strip global Settings access from the intended high-trust roles.
+        $this->call(SettingsAccessSeeder::class);
     }
 
     private function permissionsFor(RoleName $role, Collection $permissions): array
