@@ -11,6 +11,7 @@ use App\Models\GamConnection;
 use App\Models\Placement;
 use App\Models\PlatformControl;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Demand\ConfiguredDemandConnector;
 use App\Services\Operations\ExternalErrorSanitizer;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -48,6 +49,7 @@ class OperationsControlCenterTest extends TestCase
         $demand = DemandNetwork::create([
             'code' => 'CUSTOM_NATIVE',
             'name' => 'Test Demand',
+            'connector_class' => ConfiguredDemandConnector::class,
             'default_integration_mode' => 'DIRECT_JS',
         ]);
 
