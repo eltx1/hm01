@@ -1,0 +1,68 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Services\Settings\GlobalSettingsService;
+use App\Services\Settings\TypedSettingsRegistry;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+use Illuminate\View\View;
+
+final class SettingsController extends Controller
+{
+    public function __construct(
+        private readonly GlobalSettingsService $settings,
+        private readonly TypedSettingsRegistry $registry,
+    ) {}
+
+    public function index(): View
+    {
+        return view('admin.settings.index', ['settings' => $this->settings->describe()]);
+    }
+
+    public function update(Request $request, string $key): RedirectResponse
+    {
+        $definition = $this->registry->get($key);
+        $data = $request->validate([
+            'value' => ['nullable'],
+            'reason' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:500'],
+            'current_password' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:255'],
+            'impact_confirmation' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:128'],
+        ]);
+        $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
+        $this->settings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
+
+        return back()->with('status', 'Setting updated.');
+    }
+
+    public function reset(Request $request, string $key): RedirectResponse
+    {
+        $definition = $this->registry->get($key);
+        $data = $request->validate([
+            'reason' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:500'],
+            'current_password' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:255'],
+            'impact_confirmation' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:128'],
+        ]);
+        $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
+        $this->settings->reset($request->user(), $key, $data['reason'] ?? null);
+
+        return back()->with('status', 'Setting reset to its configured fallback.');
+    }
+
+    private function authorizeImpact(Request $request, bool $highImpact, string $key, array $data): void
+    {
+        if (! $highImpact) {
+            return;
+        }
+        if (! Hash::check((string) ($data['current_password'] ?? ''), (string) $request->user()->password)) {
+            throw ValidationException::withMessages(['current_password' => 'The current password is incorrect.']);
+        }
+        $expected = 'CHANGE '.strtoupper(str_replace(['.', '_'], ' ', $key));
+        if (! hash_equals($expected, trim((string) ($data['impact_confirmation'] ?? '')))) {
+            throw ValidationException::withMessages(['impact_confirmation' => 'Type '.$expected.' to confirm this high-impact change.']);
+        }
+    }
+}
