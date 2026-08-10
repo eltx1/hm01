@@ -1,11 +1,12 @@
 <?php
 
-use Illuminate\Support\Facades\Schedule;
-use Illuminate\Support\Facades\Artisan;
 use App\Models\Site;
 use App\Models\SyntheticProbeResult;
 use App\Services\Compliance\AdsTxtVerifier;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schedule;
+use Symfony\Component\Console\Command\Command;
 
 Artisan::command('adtech:probe {--site=} {--environment=production}', function (): int {
     $environment = strtolower((string) $this->option('environment'));
@@ -22,7 +23,7 @@ Artisan::command('adtech:probe {--site=} {--environment=production}', function (
                 'environment' => is_array($entry), 'checksum' => preg_match('/^[a-f0-9]{64}$/', (string) data_get($entry, 'sha256')) === 1,
             ];
             $status = ! in_array(false, $checks, true) ? 'PASS' : 'FAIL';
-        } catch (\Throwable $exception) {
+        } catch (Throwable $exception) {
             $checks = ['http' => false, 'error' => mb_substr($exception->getMessage(), 0, 500)];
             $status = 'FAIL';
         }
@@ -34,7 +35,8 @@ Artisan::command('adtech:probe {--site=} {--environment=production}', function (
         ]);
         $this->line($site->display_name.': '.$status);
     }
-    return \Symfony\Component\Console\Command\Command::SUCCESS;
+
+    return Command::SUCCESS;
 })->purpose('Probe static Horus runtime without publisher impression telemetry.');
 
 Artisan::command('supply-chain:check {--site=}', function (AdsTxtVerifier $verifier): int {
@@ -44,21 +46,23 @@ Artisan::command('supply-chain:check {--site=}', function (AdsTxtVerifier $verif
         try {
             $check = $verifier->verify($site, 'SCHEDULED');
             $this->line($site->display_name.': '.$check->status);
-        } catch (\Throwable $exception) {
+        } catch (Throwable $exception) {
             $this->error($site->display_name.': verifier error');
             $errors++;
         }
     }
 
     return $errors === 0
-        ? \Symfony\Component\Console\Command\Command::SUCCESS
-        : \Symfony\Component\Console\Command\Command::FAILURE;
+        ? Command::SUCCESS
+        : Command::FAILURE;
 })->purpose('Safely verify publisher ads.txt 1.1 compliance and retain deduplicated history.');
 
 Schedule::command('operations:heartbeat scheduler')->everyMinute()->withoutOverlapping();
 Schedule::command('static-delivery:process')->everyMinute()->withoutOverlapping(10);
 Schedule::command('adtech:probe')->everyFifteenMinutes()->withoutOverlapping(10);
 Schedule::command('supply-chain:check')->dailyAt('03:20')->withoutOverlapping(30);
+Schedule::command('support:sla-monitor')->everyFiveMinutes()->withoutOverlapping(10);
+Schedule::command('notifications:deliver-email')->everyFiveMinutes()->withoutOverlapping(10);
 Schedule::command('queue:work database --stop-when-empty --max-time='.(int) config('operations.queue_max_time', 50).' --tries='.(int) config('operations.queue_tries', 3))
     ->everyMinute()->withoutOverlapping();
 Schedule::command('campaigns:monitor --reconcile')->everyFiveMinutes()->withoutOverlapping();

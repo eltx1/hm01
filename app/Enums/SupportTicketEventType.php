@@ -12,4 +12,6 @@ enum SupportTicketEventType: string
     case PriorityChanged = 'PRIORITY_CHANGED';
     case StatusChanged = 'STATUS_CHANGED';
     case Reopened = 'REOPENED';
+    case SlaWarning = 'SLA_WARNING';
+    case SlaBreached = 'SLA_BREACHED';
 }

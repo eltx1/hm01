@@ -6,6 +6,8 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php($brand = auth()->user()?->organization)
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
+    @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
+    @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
     <title>@yield('title', 'Dashboard') · {{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
@@ -29,6 +31,9 @@
                     <p class="eyebrow">app.horusmedia.net</p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
+                @if(auth()->user()->hasPermission('notifications.view_own'))
+                <details class="notification-bell"><summary aria-label="Notifications">🔔 @if($unreadNotifications)<span>{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary><div class="notification-popover"><strong>Latest notifications</strong>@forelse($notificationPreview as $item)<a href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted">No notifications yet.</p>@endforelse<a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center</a></div></details>
+                @endif
                 <span class="status">Control Plane</span>
             </header>
             @if(session()->has('impersonator_id'))

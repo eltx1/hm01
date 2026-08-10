@@ -2,10 +2,24 @@
 
 namespace App\Providers;
 
+use App\Models\GamApiOperation;
+use App\Models\PublisherPayment;
+use App\Models\PublisherPaymentProfile;
+use App\Models\PublisherStatement;
+use App\Models\ReconciliationRun;
+use App\Models\ReportImportJob;
+use App\Models\StaticDeliveryBatch;
+use App\Observers\OperationalFailureObserver;
+use App\Observers\PublisherPaymentObserver;
+use App\Observers\PublisherPaymentProfileObserver;
+use App\Observers\PublisherStatementObserver;
+use App\Observers\ReconciliationRunObserver;
 use App\Services\ControlPlane\ActionCenter;
 use App\Services\ControlPlane\Actions\FinanceActions;
 use App\Services\ControlPlane\Actions\IntegrationActions;
+use App\Services\ControlPlane\Actions\PublisherActions;
 use App\Services\ControlPlane\Actions\ReviewActions;
+use App\Services\ControlPlane\Actions\SupportActions;
 use App\Services\ControlPlane\Contracts\ActionCenterProvider;
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamOfficialSoapTransport;
@@ -30,6 +44,8 @@ class AppServiceProvider extends ServiceProvider
             ReviewActions::class,
             IntegrationActions::class,
             FinanceActions::class,
+            SupportActions::class,
+            PublisherActions::class,
         ], ActionCenterProvider::class);
         $this->app->singleton(ActionCenter::class, fn ($app): ActionCenter => new ActionCenter($app->tagged(ActionCenterProvider::class)));
 
@@ -49,6 +65,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        PublisherPayment::observe(PublisherPaymentObserver::class);
+        PublisherPaymentProfile::observe(PublisherPaymentProfileObserver::class);
+        PublisherStatement::observe(PublisherStatementObserver::class);
+        ReconciliationRun::observe(ReconciliationRunObserver::class);
+        ReportImportJob::observe(OperationalFailureObserver::class);
+        StaticDeliveryBatch::observe(OperationalFailureObserver::class);
+        GamApiOperation::observe(OperationalFailureObserver::class);
+
         RateLimiter::for('login', fn (Request $request) => [
             Limit::perMinute(5)->by(str($request->input('email'))->lower().'|'.$request->ip()),
             Limit::perHour(30)->by($request->ip()),

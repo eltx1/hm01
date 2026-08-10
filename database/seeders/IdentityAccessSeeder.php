@@ -15,6 +15,7 @@ class IdentityAccessSeeder extends Seeder
         'dashboard.publisher.view' => ['View publisher dashboard', 'dashboard'],
         'dashboard.advertiser.view' => ['View advertiser dashboard', 'dashboard'],
         'dashboard.partner.view' => ['View partner dashboard', 'dashboard'],
+        'notifications.view_own' => ['View and manage own notifications', 'notifications'],
         'organizations.view' => ['View organizations', 'organizations'],
         'organizations.manage' => ['Manage organizations', 'organizations'],
         'publishers.view' => ['View publishers', 'publishers'],
@@ -156,6 +157,8 @@ class IdentityAccessSeeder extends Seeder
             default => [],
         };
 
-        return $permissions->only($names)->values()->all();
+        $names[] = 'notifications.view_own';
+
+        return $permissions->only(array_unique($names))->values()->all();
     }
 }

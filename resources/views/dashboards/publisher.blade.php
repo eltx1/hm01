@@ -21,6 +21,11 @@
     </div>
 </section>
 
+<section class="action-center" aria-labelledby="publisher-action-center-heading">
+    <div class="workspace-heading"><div><p class="eyebrow">Next actions</p><h2 id="publisher-action-center-heading">Action Center</h2></div><x-status-badge :status="$actionItems === [] ? 'HEALTHY' : 'PENDING'" /></div>
+    @if($actionItems === [])<article><h3>No current action items</h3><p class="muted">Your unresolved Publisher workflows require no action.</p></article>@else<div class="action-center-grid">@foreach($actionItems as $item)<a href="{{ route($item['route'], $item['parameters']) }}" class="action-card action-card-{{ $item['severity'] }}"><span class="action-count">{{ $item['count'] }}</span><div><h3>{{ $item['label'] }}</h3><p>{{ $item['description'] }}</p><span class="section-anchor">Open remediation →</span></div></a>@endforeach</div>@endif
+</section>
+
 <section class="metric-grid" aria-label="Publisher summary">
     <article><p class="eyebrow">Websites</p><strong class="metric">{{ $publisher->sites->count() }}</strong><span class="muted">{{ $activeSites }} serving · {{ $pendingSites }} pending</span></article>
     <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Finalized aggregated data</span></article>

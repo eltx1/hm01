@@ -16,6 +16,7 @@ use App\Models\TagVersion;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Notifications\DomainNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +26,7 @@ class SiteLifecycleService
     public function __construct(
         private readonly AuditRecorder $audit,
         private readonly SiteConfigPublisher $publisher,
+        private readonly DomainNotificationService $notifications,
     ) {}
 
     public function create(array $data, User $actor): Site
@@ -106,6 +108,8 @@ class SiteLifecycleService
             }
         });
 
+        $this->notifications->siteStatusChanged($site->refresh(), $oldStatus);
+
         return $site->refresh();
     }
 
@@ -128,6 +132,8 @@ class SiteLifecycleService
             ]);
             $this->audit->record('site.serving_mode.changed', $site->organization_id, $administrator, $site, ['serving_mode' => $previous->value], ['serving_mode' => $mode->value], ['reason' => $reason, 'rollback_reference_id' => $rollbackReference?->id]);
         });
+
+        $this->notifications->siteServingChanged($site->refresh(), $previous->value, $mode->value);
 
         return $site->refresh();
     }

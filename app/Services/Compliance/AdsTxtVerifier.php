@@ -7,6 +7,7 @@ use App\Models\Site;
 use App\Models\SupplyChainCheck;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Notifications\DomainNotificationService;
 use Illuminate\Support\Facades\DB;
 
 final class AdsTxtVerifier
@@ -16,6 +17,7 @@ final class AdsTxtVerifier
         private readonly AdsTxtComparator $comparator,
         private readonly AdsTxtComplianceService $compliance,
         private readonly AuditRecorder $audit,
+        private readonly DomainNotificationService $notifications,
     ) {}
 
     public function verify(Site $site, string $trigger = 'SCHEDULED', ?User $actor = null): SupplyChainCheck
@@ -25,6 +27,9 @@ final class AdsTxtVerifier
             throw new \InvalidArgumentException('Unknown ads.txt verification trigger.');
         }
 
+        $previousStatus = SupplyChainCheck::withoutGlobalScope('organization')
+            ->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
+            ->latest('checked_at')->value('status');
         $canonical = $this->compliance->canonical($site);
         $fetch = $this->fetcher->fetch($site);
         $comparison = $this->comparator->compare($canonical['content'], $fetch['ok'] ? $fetch['body'] : '', $canonical['findings']);
@@ -108,6 +113,8 @@ final class AdsTxtVerifier
 
             return $check;
         });
+
+        $this->notifications->adsTxtChanged($site, $check, $previousStatus);
 
         return $check;
     }
