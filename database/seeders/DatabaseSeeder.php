@@ -13,6 +13,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             IdentityAccessSeeder::class,
+            SettingsAccessSeeder::class,
             InventoryDeliverySeeder::class,
             AdFormatSeeder::class,
             PrebidSeeder::class,
