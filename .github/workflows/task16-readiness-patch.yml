@@ -1,0 +1,124 @@
+name: Task 16 Readiness Patch
+
+on:
+  push:
+    branches: [task-16-prebid-admin-control-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-16-prebid-admin-control-hardening
+          fetch-depth: 0
+      - name: Patch readiness
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/Services/Monetization/SiteMonetizationReadinessService.php')
+          s = p.read_text()
+          start = s.index('    private function prebid(Site $site, ResolvedSiteEngineState $engineState): array\n')
+          end = s.index('    private function native(Site $site, ResolvedSiteEngineState $engineState): array\n', start)
+          method = r'''    private function prebid(Site $site, ResolvedSiteEngineState $engineState): array
+    {
+        $dependency = $site->serving_mode === ServingMode::HorusDirect && $site->prebid_enabled
+            ? MonetizationDependency::Critical
+            : MonetizationDependency::Optional;
+        $baseDiagnostics = [
+            'configured_mode' => $engineState->prebidConfiguredMode->value,
+            'resolved_mode' => $engineState->prebidDeliveryMode->value,
+            'engine_reason' => $engineState->prebidReason,
+        ];
+        if (! $site->prebid_enabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::NotConfigured, $dependency,
+                'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at,
+                diagnostics: $baseDiagnostics);
+        }
+        if (! $engineState->masterServingEnabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
+                'Header bidding is paused by the master ad-serving control.', lastUpdate: $site->updated_at,
+                diagnostics: $baseDiagnostics);
+        }
+        if ($this->controls->disabledForSite('PREBID', $site->id)) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
+                'Header bidding is temporarily paused by an operational control.', lastUpdate: $site->updated_at,
+                diagnostics: $baseDiagnostics);
+        }
+
+        $mappingCount = BidderSiteMapping::withoutGlobalScopes()
+            ->where('site_id', $site->id)->where('enabled', true)
+            ->whereHas('account', fn ($query) => $query->where('enabled', true))
+            ->whereHas('placementMappings', fn ($query) => $query->where('enabled', true))
+            ->count();
+        $baseDiagnostics['enabled_site_mappings'] = $mappingCount;
+
+        if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
+            $settings = PrebidSetting::withoutGlobalScopes()->with('build')
+                ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
+                ->where('site_id', $site->id)
+                ->first();
+            $diagnostics = $baseDiagnostics + [
+                'settings_enabled' => (bool) $settings?->enabled,
+                'build' => $settings?->build?->version,
+                'gam_connection_id' => null,
+            ];
+            if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0 || ! $engineState->prebidEnabled) {
+                return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                    'Standalone header bidding requires an enabled site profile, pinned browser build, and active bidder placement mappings.',
+                    'Horus Media must complete the standalone Prebid profile and mappings.', null, $settings?->updated_at ?? $site->updated_at,
+                    $diagnostics);
+            }
+
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
+                'Header bidding is active in standalone mode without GAM.', lastUpdate: $settings->updated_at,
+                diagnostics: $diagnostics);
+        }
+
+        $connection = $engineState->gamConnection;
+        if ($connection === null || ! $engineState->prebidEnabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                'Header bidding is configured for the GAM bridge, but an eligible GAM connection is unavailable.',
+                'Restore GAM or choose STANDALONE/AUTO intentionally. Explicit GAM_BRIDGE never falls back silently.', null, $site->updated_at,
+                $baseDiagnostics + ['gam_connection_id' => $connection?->id]);
+        }
+
+        $settings = PrebidSetting::withoutGlobalScopes()->with('build')
+            ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
+            ->where('gam_connection_id', $connection->id)->first();
+        $diagnostics = $baseDiagnostics + [
+            'settings_enabled' => (bool) $settings?->enabled,
+            'build' => $settings?->build?->version,
+            'gam_connection_id' => $connection->id,
+        ];
+        if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                'Header bidding is enabled for this website but its managed GAM bridge setup is incomplete.',
+                'Horus Media must complete the managed header-bidding setup.', null, $settings?->updated_at,
+                $diagnostics);
+        }
+
+        return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
+            'Header bidding is active and centrally managed through the GAM bridge.', lastUpdate: $settings->updated_at,
+            diagnostics: $diagnostics);
+    }
+
+'''
+          s = s[:start] + method + s[end:]
+          old = """                'engines' => $engineState->publicEngineState($connection?->network_code ?: ($engineState->gamRequired ? $site->current_gam_network_code : null)),\n"""
+          new = old + """                'prebid_control' => [\n                    'configured_mode' => $engineState->prebidConfiguredMode->value,\n                    'resolved_mode' => $engineState->prebidDeliveryMode->value,\n                    'reason' => $engineState->prebidReason,\n                ],\n"""
+          if old not in s: raise SystemExit('diagnostics marker missing')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          php -l app/Services/Monetization/SiteMonetizationReadinessService.php
+          rm .github/workflows/task16-readiness-patch.yml
+      - name: Commit
+        run: |
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 16: harden Prebid readiness by resolved mode"
+          git push origin HEAD:task-16-prebid-admin-control-hardening
