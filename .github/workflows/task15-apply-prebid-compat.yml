@@ -1,0 +1,36 @@
+name: Task 15 Prebid Compatibility Patch
+
+on:
+  push:
+    branches:
+      - task-15-standalone-prebid-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  apply-prebid-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-15-standalone-prebid-runtime
+          fetch-depth: 0
+      - name: Apply compatibility patch
+        run: |
+          set -euo pipefail
+          test -f scripts/task15-prebid-compat.patch
+          git apply --check scripts/task15-prebid-compat.patch
+          git apply scripts/task15-prebid-compat.patch
+          php -l app/Services/Prebid/PrebidManager.php
+          php -l app/Services/Prebid/PrebidConfigurationBuilder.php
+          rm scripts/task15-prebid-compat.patch
+          rm .github/workflows/task15-apply-prebid-compat.yml
+      - name: Commit materialized compatibility fix
+        run: |
+          set -euo pipefail
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 15: preserve Horus-managed bidder account compatibility"
+          git push origin HEAD:task-15-standalone-prebid-runtime
