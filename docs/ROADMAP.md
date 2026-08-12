@@ -1,8 +1,9 @@
 # Roadmap
 
 The implementation roadmap is complete through the application and control-plane
-layers. The remaining work is production evidence and disciplined commercial
-operation.
+layers. Approved multi-engine serving evolution is now being delivered
+incrementally without replacing the established GAM implementation. Production
+evidence and disciplined commercial operation remain required for go-live.
 
 ## Phase 0 — Foundation
 
@@ -30,9 +31,9 @@ Status: complete.
 Publisher contracts, encrypted payment profiles, seven-step onboarding,
 websites, stable public site keys, authorized domains, four verification
 methods, review/status workflows, placement planning, revenue-share controls,
-notes, and complete serving/status histories are implemented. HORUS_GAM is the
-database and application default with no activation blocker. MCM and Publisher
-GAM remain optional.
+notes, and complete serving/status histories are implemented. HORUS_GAM remains
+the database and application default GAM mode with no activation blocker. MCM
+and Publisher GAM remain optional.
 
 ## Phase 3 — Loader and configuration delivery
 
@@ -50,11 +51,11 @@ Status: complete in code; live activation pending.
 Credential reference validation, HORUS_GAM setup, dry-run plans, idempotent GAM
 writes, reconciliation, ad-unit mapping, audit trails, and optional MCM and
 Publisher GAM adapters are implemented. A real network, credential, permission,
-and root-ad-unit smoke test remains an external gate.
+and root-ad-unit smoke test remains an external gate for GAM-enabled pilots.
 
 ## Phase 5 — Prebid and optional demand
 
-Status: complete in code; controlled rollout pending.
+Status: complete for the GAM-bridge/runtime implemented to date; controlled rollout pending.
 
 Pinned Prebid builds, bidder configuration, consent settings, timeouts, targeting,
 native connector contracts, direct-JS/GAM fallback, ads.txt, and aggregated
@@ -91,10 +92,35 @@ SECURITY_OPERATIONS.md and GO_LIVE_CHECKLIST.md.
 
 ## Phase 9 — Controlled pilot and scale
 
-Status: next execution phase.
+Status: next commercial execution phase.
 
 Run one publisher and one capped advertiser campaign using PILOT_RUNBOOK.md.
 Exit after seven stable days, reconciled reporting, no high-severity findings,
 reproducible statements/invoices, current backup/restore evidence, and written
 publisher/advertiser/finance sign-off. Only then expand demand, publishers,
 provider connections, and payment volume.
+
+## Phase 10 — Multi-engine serving evolution
+
+Status: approved architecture evolution; incremental implementation.
+
+Horus Media supports three independent serving-engine capabilities: GAM, Prebid,
+and Direct JS. `HORUS_GAM` remains the established/default GAM mode and its
+existing GPT/GAM behavior must remain backward compatible. `HORUS_DIRECT`
+represents a Horus-managed website with no required GAM connection.
+
+The implementation sequence is deliberately staged:
+
+1. establish the multi-engine architecture contract and no-GAM serving-mode
+   representation;
+2. make core engine eligibility and static configuration GAM-optional while
+   preserving schema-v2 compatibility;
+3. implement standalone Prebid winner rendering as dedicated browser-runtime
+   work;
+4. evolve Direct JS placement/runtime controls without converting providers into
+   fake Prebid bidders;
+5. validate mixed-engine pages where independent placements use different
+   renderers without double-rendering a physical DOM surface.
+
+See `MULTI_ENGINE_SERVING.md` for the authoritative invariants. This phase does
+not deprecate GAM, MCM, Publisher GAM, or the existing direct-campaign GAM path.
