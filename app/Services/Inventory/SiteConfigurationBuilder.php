@@ -74,8 +74,8 @@ final class SiteConfigurationBuilder
         $native = $this->demand->build($site);
         $publicNative = $this->filterNativeDemand($native, $legacyNativeDisabled, $directJsOnlyDisabled);
 
-        // Legacy Prebid flags remain bridge-only so the existing Loader never
-        // attempts to treat a standalone configuration as GPT/GAM delivery.
+        // Legacy Prebid flags remain bridge-only so existing schema-v2 consumers
+        // never interpret standalone delivery as GAM header bidding.
         $legacyPrebidEnabled = $engineState->prebidDeliveryMode === PrebidDeliveryMode::GamBridge
             && $engineState->prebidEnabled
             && ! $prebidDisabled
@@ -139,7 +139,10 @@ final class SiteConfigurationBuilder
                 'nativeDemandDisabled' => $legacyNativeDisabled,
             ],
             'prebidEnabled' => $legacyPrebidEnabled,
-            'prebid' => array_replace($prebid, ['enabled' => $legacyPrebidEnabled]),
+            // The legacy top-level prebidEnabled flag remains GAM-bridge only,
+            // while schema-v3's prebid.enabled now reflects the resolved engine
+            // so the permanent Loader can execute true standalone auctions.
+            'prebid' => array_replace($prebid, ['enabled' => $effectivePrebidEnabled]),
             'nativeDemandEnabled' => $legacyNativeEnabled,
             'nativeDemand' => array_replace($publicNative, ['enabled' => $legacyNativeEnabled]),
             'debug' => (bool) $config->debug_enabled,
