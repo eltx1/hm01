@@ -112,7 +112,7 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame('NOT_REQUIRED_BY_SERVING_MODE', $payload['engines']['gam']['reason']);
         $this->assertTrue($payload['engines']['prebid']['enabled']);
         $this->assertSame(PrebidDeliveryMode::Standalone->value, $payload['engines']['prebid']['deliveryMode']);
-        $this->assertFalse($payload['prebidEnabled'], 'Legacy bridge flag must stay false until standalone rendering is implemented.');
+        $this->assertFalse($payload['prebidEnabled'], 'Legacy bridge flag remains false for standalone delivery.');
         $this->assertSame(PrebidDeliveryMode::Standalone->value, $payload['prebid']['deliveryMode']);
         $this->assertSame('PREBID_STANDALONE', data_get($payload, 'placements.0.renderer'));
         $this->assertTrue(data_get($payload, 'placements.0.enabled'));
@@ -132,8 +132,8 @@ class GamOptionalServingModelTest extends TestCase
         $prebid = collect($readiness['modules'])->firstWhere('key', 'prebid');
         $this->assertSame(MonetizationStatus::NotConfigured->value, $display['status']);
         $this->assertSame('OPTIONAL', $display['dependency']);
-        $this->assertSame(MonetizationStatus::Ready->value, $prebid['status']);
-        $this->assertSame(PrebidDeliveryMode::Standalone->value, data_get($prebid, 'diagnostics.delivery_mode'));
+        $this->assertSame(MonetizationStatus::Active->value, $prebid['status']);
+        $this->assertSame(PrebidDeliveryMode::Standalone->value, data_get($prebid, 'diagnostics.resolved_mode'));
     }
 
     public function test_horus_direct_direct_js_and_standalone_prebid_can_use_independent_placements(): void
