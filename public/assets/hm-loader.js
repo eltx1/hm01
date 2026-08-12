@@ -10,7 +10,6 @@
         servicesEnabled: false,
         initialLoadDisabled: false,
         slots: {},
-        elementSequence: 0,
         refreshTimers: {},
         observer: null,
         navigationPatched: false,
@@ -21,6 +20,9 @@
         gamFallbackInstalled: false,
         nativeAttempts: {},
         nativeRendered: {},
+        directScripts: {},
+        directTaboolaFlushScheduled: false,
+        elementSequence: 0,
         standaloneEntries: {},
         standaloneAuctions: {},
         standaloneObservers: {},
@@ -706,19 +708,19 @@
     }
 
     function ensureElementId(element, config, placement) {
-        if (element.id) return element.id;
-        var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
-        var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
-        var sequence = Number(state.elementSequence);
-        if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
-        state.elementSequence = sequence + 1;
-        element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
-        return element.id;
-    }
+    if (element.id) return element.id;
+    var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
+    var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
+    var sequence = Number(state.elementSequence);
+    if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
+    state.elementSequence = sequence + 1;
+    element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
+    return element.id;
+}
 
-    function nativeDefinition(config, code) {
-        var native = config.nativeDemand || {};
-        return native.enabled && native.placements ? native.placements[code] || null : null;
+function nativeDefinition(config, code) {
+        var direct = config.directDemand || config.nativeDemand || {};
+        return direct.enabled && direct.placements ? direct.placements[code] || null : null;
     }
 
     function nodeList(selector) {
@@ -1106,8 +1108,12 @@
         });
     }
 
+    function directDemandConfig(config) {
+        return config.directDemand || config.nativeDemand || {};
+    }
+
     function candidateRank(config, candidate) {
-        var fallback = config.nativeDemand && config.nativeDemand.fallbackOrder || [];
+        var fallback = directDemandConfig(config).fallbackOrder || [];
         var index = fallback.indexOf(candidate.network);
         return Number(candidate.priority || 1000) * 100 + (index === -1 ? 99 : index);
     }
@@ -1115,54 +1121,193 @@
     function directCandidates(config, entry) {
         var candidates = entry.native && Array.isArray(entry.native.candidates) ? entry.native.candidates.slice() : [];
         return candidates.filter(function (candidate) {
-            return candidate && !candidate.gamManaged && candidate.tag && candidate.tag.scriptUrl;
+            if (!candidate || candidate.gamManaged || !candidate.tag) return false;
+            var tag = candidate.tag;
+            if (String(tag.executionMode || 'STRUCTURED') === 'ISOLATED_IFRAME') return Boolean(tag.isolation && tag.isolation.html && tag.isolation.csp);
+            return Boolean((Array.isArray(tag.scripts) && tag.scripts.length) || tag.scriptUrl);
         }).sort(function (left, right) {
             return candidateRank(config, left) - candidateRank(config, right);
         });
     }
 
-    function setCandidateAttributes(script, attributes) {
-        if (!attributes) return;
+    function setCandidateAttributes(target, attributes) {
+        if (!attributes || !target || !target.setAttribute) return;
         Object.keys(attributes).forEach(function (key) {
-            if (/^[A-Za-z_:][-A-Za-z0-9_:.]*$/.test(key)) script.setAttribute(key, String(attributes[key]));
+            if (/^(?:data|aria)-[A-Za-z0-9_.:-]+$/.test(key)) target.setAttribute(key, String(attributes[key]));
         });
     }
 
-    function nativeContainer(entry, candidate) {
+    function directContainer(entry, candidate) {
         var tag = candidate.tag || {};
-        var container = document.createElement('div');
-        container.id = String(tag.containerId || (entry.element.id + '-native')).replace(/[^A-Za-z0-9_:-]/g, '-');
-        container.className = String(tag.containerClass || 'hm-native-container');
+        var recipe = tag.container || {};
+        var elementName = String(recipe.element || 'div').toLowerCase();
+        if (['div', 'span', 'aside', 'section'].indexOf(elementName) === -1) elementName = 'div';
+        var container = document.createElement(elementName);
+        container.id = String(recipe.id || tag.containerId || (entry.element.id + '-direct')).replace(/[^A-Za-z0-9_:-]/g, '-');
+        container.className = String(recipe.class || tag.containerClass || 'hm-direct-demand-container');
+        container.setAttribute('data-hm-direct-network', String(candidate.network || 'CUSTOM'));
         container.setAttribute('data-hm-native-network', String(candidate.network || 'CUSTOM'));
+        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});
         if (entry.element.appendChild) entry.element.appendChild(container);
         return container;
     }
 
+    function nativeContainer(entry, candidate) { return directContainer(entry, candidate); }
+
+    function directRenderPolicy(tag) {
+        var render = tag && tag.render || {};
+        return {
+            timeoutMs: Math.max(0, Math.min(10000, Number(render.timeoutMs || tag.renderTimeoutMs || 2500))),
+            successSelector: render.successSelector || tag.successSelector || null,
+            assumeLoadedIsSuccess: Boolean(render.assumeLoadedIsSuccess || tag.assumeLoadedIsSuccess)
+        };
+    }
+
     function nativeRendered(container, tag) {
-        if (tag.successSelector && document.querySelector) {
+        var policy = directRenderPolicy(tag || {});
+        if (policy.successSelector && document.querySelector) {
             try {
-                if (document.querySelector(tag.successSelector)) return true;
+                if (document.querySelector(policy.successSelector)) return true;
             } catch (error) {
                 return false;
             }
         }
-        if (tag.assumeLoadedIsSuccess) return true;
+        if (policy.assumeLoadedIsSuccess) return true;
         if (container && container.childNodes && container.childNodes.length) return true;
         return Boolean(container && typeof container.innerHTML === 'string' && container.innerHTML.replace(/\s/g, '') !== '');
+    }
+
+    function directScriptSpecs(tag) {
+        if (Array.isArray(tag.scripts) && tag.scripts.length) return tag.scripts.slice();
+        return tag.scriptUrl ? [{ url: tag.scriptUrl, async: true, defer: false, attributes: tag.attributes || {} }] : [];
+    }
+
+    function loadDirectScript(config, candidate, spec) {
+        spec = spec || {};
+        var url = String(spec.url || '');
+        if (!url) return Promise.reject(new Error('missing-script-url'));
+        try {
+            var parsed = new URL(url, window.location.href);
+            if (parsed.protocol !== 'https:' || parsed.hostname === 'app.horusmedia.net') return Promise.reject(new Error('unsafe-script-url'));
+        } catch (error) { return Promise.reject(new Error('invalid-script-url')); }
+        var key = String(spec.dedupeKey || url);
+        if (state.directScripts[key]) return state.directScripts[key];
+
+        state.directScripts[key] = new Promise(function (resolve, reject) {
+            var script = document.createElement('script');
+            script.async = spec.async !== false;
+            script.defer = Boolean(spec.defer);
+            script.src = url;
+            script.setAttribute('data-hm-direct-script', String(candidate.network || 'CUSTOM'));
+            script.setAttribute('data-hm-native-script', String(candidate.network || 'CUSTOM'));
+            setCandidateAttributes(script, spec.attributes || {});
+            var settled = false;
+            var timer = window.setTimeout(function () {
+                if (settled) return;
+                settled = true;
+                reject(new Error('script-timeout'));
+            }, Math.max(100, Math.min(10000, Number((candidate.tag && directRenderPolicy(candidate.tag).timeoutMs) || 2500))));
+            script.onload = function () {
+                if (settled) return;
+                settled = true; window.clearTimeout(timer); resolve(script);
+            };
+            script.onerror = function () {
+                if (settled) return;
+                settled = true; window.clearTimeout(timer); reject(new Error('script-error'));
+            };
+            try { (document.head || document.documentElement).appendChild(script); }
+            catch (error) { window.clearTimeout(timer); settled = true; reject(error); }
+        }).catch(function (error) {
+            delete state.directScripts[key];
+            throw error;
+        });
+        return state.directScripts[key];
+    }
+
+    function loadDirectScripts(config, candidate) {
+        return directScriptSpecs(candidate.tag || {}).reduce(function (promise, spec) {
+            return promise.then(function () {
+                if (!canRequestAds(config)) throw new Error('blocked');
+                return loadDirectScript(config, candidate, spec);
+            });
+        }, Promise.resolve());
+    }
+
+    function runDirectInitialization(config, candidate, container) {
+        var init = candidate.tag && candidate.tag.initialization || { type: 'NONE', parameters: {} };
+        var type = String(init.type || 'NONE').toUpperCase();
+        var parameters = init.parameters || {};
+        if (type === 'NONE') return true;
+        if (type === 'MGID_QUEUE_LOAD') {
+            window._mgq = window._mgq || [];
+            window._mgq.push(['_mgc.load']);
+            return true;
+        }
+        if (type === 'OUTBRAIN_RESEARCH') {
+            if (!window.OBR || !window.OBR.extern || typeof window.OBR.extern.researchWidget !== 'function') return false;
+            window.OBR.extern.researchWidget();
+            return true;
+        }
+        if (type === 'TABOOLA_QUEUE') {
+            var containerId = String(parameters.container || container && container.id || '');
+            if (!containerId || !parameters.mode || !parameters.placement || !parameters.target_type) return false;
+            window._taboola = window._taboola || [];
+            window._taboola.push({
+                mode: String(parameters.mode), container: containerId,
+                placement: String(parameters.placement), target_type: String(parameters.target_type)
+            });
+            if (!state.directTaboolaFlushScheduled) {
+                state.directTaboolaFlushScheduled = true;
+                Promise.resolve().then(function () {
+                    if (window._taboola && window._taboola.push) window._taboola.push({ flush: true });
+                    state.directTaboolaFlushScheduled = false;
+                });
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function renderIsolatedDirect(config, entry, candidate) {
+        var tag = candidate.tag || {};
+        var isolation = tag.isolation || {};
+        if (!canRequestAds(config) || String(tag.executionMode || '') !== 'ISOLATED_IFRAME') return Promise.resolve(false);
+        if (!isolation.html || !isolation.csp || !Array.isArray(isolation.sandbox) || isolation.sandbox.length !== 1 || isolation.sandbox[0] !== 'allow-scripts') return Promise.resolve(false);
+        var iframe = document.createElement('iframe');
+        iframe.title = 'Advertisement';
+        iframe.setAttribute('aria-label', 'Advertisement');
+        iframe.setAttribute('data-hm-direct-frame', '1');
+        if (iframe.sandbox && iframe.sandbox.add) iframe.sandbox.add('allow-scripts');
+        else iframe.setAttribute('sandbox', 'allow-scripts');
+        var safeCsp = String(isolation.csp).replace(/["<>]/g, '');
+        iframe.srcdoc = '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="' + safeCsp + '"></head><body>' + String(isolation.html) + '</body></html>';
+        return new Promise(function (resolve) {
+            var settled = false;
+            var timeout = directRenderPolicy(tag).timeoutMs;
+            var timer = window.setTimeout(function () { if (!settled) { settled = true; resolve(false); } }, timeout);
+            iframe.onload = function () {
+                if (settled || !canRequestAds(config)) return;
+                settled = true; window.clearTimeout(timer); resolve(true);
+            };
+            iframe.onerror = function () { if (!settled) { settled = true; window.clearTimeout(timer); resolve(false); } };
+            if (entry.element.appendChild) entry.element.appendChild(iframe);
+        });
     }
 
     function renderHouse(config, entry) {
         var house = entry.native && entry.native.house;
         if (!house || !house.html) {
             entry.element.setAttribute('data-hm-native', 'exhausted');
+            entry.element.setAttribute('data-hm-direct', 'exhausted');
             entry.element.setAttribute('data-hm-status', 'empty');
             return false;
         }
         if (typeof entry.element.innerHTML === 'string') entry.element.innerHTML = house.html;
         entry.element.setAttribute('data-hm-native', 'HOUSE');
+        entry.element.setAttribute('data-hm-direct', 'HOUSE');
         entry.element.setAttribute('data-hm-status', 'rendered');
         state.nativeRendered[entry.element.id] = 'HOUSE';
-        log(config, 'Native fallback rendered house content', entry.placement.code);
+        log(config, 'Direct Demand fallback rendered house content', entry.placement.code);
         return true;
     }
 
@@ -1176,58 +1321,55 @@
         state.nativeAttempts[key] = new Promise(function (resolve) {
             function tryCandidate(index) {
                 if (!canRequestAds(config)) { resolve(false); return; }
-                if (index >= candidates.length) {
-                    resolve(renderHouse(config, entry));
-                    return;
-                }
+                if (index >= candidates.length) { resolve(renderHouse(config, entry)); return; }
 
                 var candidate = candidates[index];
                 var tag = candidate.tag || {};
-                var container = nativeContainer(entry, candidate);
-                var script = document.createElement('script');
-                script.async = true;
-                script.src = tag.scriptUrl;
-                script.setAttribute('data-hm-native-script', String(candidate.network || 'CUSTOM'));
-                setCandidateAttributes(script, tag.attributes || {});
                 var settled = false;
+                var container = null;
 
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
                     entry.element.setAttribute('data-hm-native-last-error', String(reason || 'no-fill'));
-                    log(config, 'Native candidate failed', candidate.network, reason);
+                    entry.element.setAttribute('data-hm-direct-last-error', String(reason || 'no-fill'));
+                    log(config, 'Direct Demand candidate failed', candidate.network, reason);
                     tryCandidate(index + 1);
                 }
 
-                script.onerror = function () { failed('script-error'); };
-                script.onload = function () {
-                    var timeout = Math.max(0, Number(tag.renderTimeoutMs || 1500));
+                function rendered() {
+                    if (settled || !canRequestAds(config)) return;
+                    settled = true;
+                    state.nativeRendered[key] = candidate.network;
+                    entry.element.setAttribute('data-hm-native', String(candidate.network));
+                    entry.element.setAttribute('data-hm-direct', String(candidate.network));
+                    entry.element.setAttribute('data-hm-status', 'rendered');
+                    log(config, 'Direct Demand candidate rendered', candidate.network, entry.placement.code);
+                    discoverClickGuardIframes(config);
+                    resolve(true);
+                }
+
+                if (String(tag.executionMode || 'STRUCTURED') === 'ISOLATED_IFRAME') {
+                    renderIsolatedDirect(config, entry, candidate).then(function (ok) { if (ok) rendered(); else failed('isolated-no-render'); }).catch(function () { failed('isolated-error'); });
+                    return;
+                }
+
+                container = directContainer(entry, candidate);
+                loadDirectScripts(config, candidate).then(function () {
+                    if (!canRequestAds(config)) { failed('blocked'); return; }
+                    if (!runDirectInitialization(config, candidate, container)) { failed('initialization-failed'); return; }
+                    var timeout = directRenderPolicy(tag).timeoutMs;
                     window.setTimeout(function () {
                         if (settled) return;
-                        if (!nativeRendered(container, tag)) {
-                            failed('no-render');
-                            return;
-                        }
-                        settled = true;
-                        state.nativeRendered[key] = candidate.network;
-                        entry.element.setAttribute('data-hm-native', String(candidate.network));
-                        entry.element.setAttribute('data-hm-status', 'rendered');
-                        log(config, 'Native candidate rendered', candidate.network, entry.placement.code);
-                        resolve(true);
+                        if (!nativeRendered(container, tag)) { failed('no-render'); return; }
+                        rendered();
                     }, timeout);
-                };
-
-                try {
-                    (document.head || document.documentElement).appendChild(script);
-                } catch (error) {
-                    failed(error && error.message || 'injection-error');
-                }
+                }).catch(function (error) {
+                    failed(error && error.message || 'script-error');
+                });
             }
-
             tryCandidate(0);
-        }).finally(function () {
-            delete state.nativeAttempts[key];
-        });
+        }).finally(function () { delete state.nativeAttempts[key]; });
 
         return state.nativeAttempts[key];
     }
@@ -1267,7 +1409,7 @@
         nativeOnly.forEach(function (item) {
             ensureElementId(item.element, config, item.placement);
             item.element.setAttribute('data-hm-defined', '1');
-            item.element.setAttribute('data-hm-status', 'fallback');
+            item.element.setAttribute('data-hm-status', 'direct-demand');
         });
         var nativePromise = Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }));
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
@@ -1584,7 +1726,6 @@
             state.servicesEnabled = false;
             state.initialLoadDisabled = false;
             state.slots = {};
-            state.elementSequence = 0;
             state.refreshTimers = {};
             state.booting = null;
             state.script = null;
@@ -1592,6 +1733,9 @@
             state.gamFallbackInstalled = false;
             state.nativeAttempts = {};
             state.nativeRendered = {};
+            state.directScripts = {};
+            state.directTaboolaFlushScheduled = false;
+            state.elementSequence = 0;
             Object.keys(state.standaloneObservers || {}).forEach(function (key) {
                 if (state.standaloneObservers[key] && state.standaloneObservers[key].disconnect) state.standaloneObservers[key].disconnect();
             });

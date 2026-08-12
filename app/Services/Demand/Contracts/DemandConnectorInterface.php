@@ -14,15 +14,23 @@ interface DemandConnectorInterface
 
     public function testConnection(array $options = []): DemandResult;
 
-    /**
-     * Return a list of configuration errors. An empty list is valid.
-     */
+    /** Return a list of configuration errors. An empty list is valid. */
     public function validateConfiguration(array $configuration = []): array;
 
     public function createSite(DemandSite $site, array $options = []): DemandResult;
     public function getSiteStatus(DemandSite $site, array $options = []): DemandResult;
     public function createPlacement(DemandPlacement $placement, array $options = []): DemandResult;
     public function getPlacementCode(DemandPlacement $placement, array $options = []): DemandResult;
+
+    /**
+     * Parse a provider-issued public tag into a reviewable structured recipe.
+     * The supplied markup is never executed.
+     *
+     * @return array<string, mixed>
+     */
+    public function parseDirectTag(string $tag): array;
+
+    /** @return array<string, mixed> */
     public function generateDirectTag(DemandPlacement $placement): array;
     public function generateGamCreative(DemandPlacement $placement): array;
     public function getAdsTxtRecords(?DemandSite $site = null): array;

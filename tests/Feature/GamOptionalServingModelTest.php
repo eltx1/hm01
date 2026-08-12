@@ -68,7 +68,7 @@ class GamOptionalServingModelTest extends TestCase
         $placement = $this->placement($site, 'gam_top');
 
         $withoutPrebid = $this->config($site, 1);
-        $this->assertSame(3, $withoutPrebid['schemaVersion']);
+        $this->assertSame(4, $withoutPrebid['schemaVersion']);
         $this->assertSame('HORUS_GAM', $withoutPrebid['servingMode']);
         $this->assertSame('123456789', $withoutPrebid['gamNetworkCode']);
         $this->assertTrue($withoutPrebid['engines']['gam']['enabled']);
@@ -239,7 +239,7 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame([], data_get($directOff, 'nativeDemand.placements.direct_off.candidates', []));
     }
 
-    public function test_schema_v3_is_deterministic_additive_and_never_exposes_credentials(): void
+    public function test_schema_v4_is_deterministic_additive_and_never_exposes_credentials(): void
     {
         $site = $this->site(ServingMode::HorusDirect, directJs: true);
         $placement = $this->placement($site, 'secret_safe');
@@ -256,7 +256,7 @@ class GamOptionalServingModelTest extends TestCase
         $encoded = json_encode($first, JSON_THROW_ON_ERROR);
 
         $this->assertSame($first, $second);
-        $this->assertSame(3, $first['schemaVersion']);
+        $this->assertSame(4, $first['schemaVersion']);
         $this->assertArrayHasKey('engines', $first);
         $this->assertArrayHasKey('gamNetworkCode', $first);
         $this->assertArrayHasKey('prebidEnabled', $first);

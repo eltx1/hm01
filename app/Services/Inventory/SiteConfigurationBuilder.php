@@ -120,9 +120,9 @@ final class SiteConfigurationBuilder
         }
 
         return [
-            // v3 is additive. All schema-v2 fields below remain present so old
-            // deployed Loaders and immutable rollback targets continue to work.
-            'schemaVersion' => 3,
+            // v4 adds Direct Demand terminology/recipe metadata without removing
+            // schema-v3 or legacy nativeDemand fields used by deployed Loaders.
+            'schemaVersion' => 4,
             'siteKey' => $site->public_key,
             'servingMode' => $site->serving_mode->value,
             'gamNetworkCode' => $networkCode,
@@ -136,6 +136,7 @@ final class SiteConfigurationBuilder
                 'gamDisabled' => $gamDisabled,
                 'prebidDisabled' => $prebidDisabled,
                 'directJsDisabled' => $directJsDisabled,
+                'directDemandDisabled' => $directJsDisabled,
                 'nativeDemandDisabled' => $legacyNativeDisabled,
             ],
             'prebidEnabled' => $legacyPrebidEnabled,
@@ -143,6 +144,10 @@ final class SiteConfigurationBuilder
             // while schema-v3's prebid.enabled now reflects the resolved engine
             // so the permanent Loader can execute true standalone auctions.
             'prebid' => array_replace($prebid, ['enabled' => $effectivePrebidEnabled]),
+            'directDemandEnabled' => $legacyNativeEnabled,
+            'directDemand' => array_replace($publicNative, ['enabled' => $legacyNativeEnabled]),
+            // Rollout compatibility aliases; do not remove until old Loader/config
+            // rollback targets have aged out.
             'nativeDemandEnabled' => $legacyNativeEnabled,
             'nativeDemand' => array_replace($publicNative, ['enabled' => $legacyNativeEnabled]),
             'debug' => (bool) $config->debug_enabled,

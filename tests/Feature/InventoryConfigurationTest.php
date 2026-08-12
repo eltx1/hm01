@@ -74,7 +74,7 @@ class InventoryConfigurationTest extends TestCase
 
         $this->assertSame(ServingMode::HorusGam, $site->serving_mode);
         $this->assertSame($connection->network_code, $config['gamNetworkCode']);
-        $this->assertSame(3, $config['schemaVersion']);
+        $this->assertSame(4, $config['schemaVersion']);
         $this->assertSame('HORUS_GAM', $config['servingMode']);
         $this->assertTrue($config['engines']['gam']['enabled']);
         $this->assertSame($connection->network_code, $config['engines']['gam']['networkCode']);
@@ -133,7 +133,7 @@ class InventoryConfigurationTest extends TestCase
         $this->assertSame(3, $rollback->version);
         $this->assertSame($versionOne->id, $rollback->source_version_id);
         $this->assertSame('active', $rollback->payload['placements'][0]['status']);
-        $this->assertSame(3, $rollback->payload['schemaVersion']);
+        $this->assertSame(4, $rollback->payload['schemaVersion']);
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v1.*.json'));
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v3.*.json'));
         $this->assertFileExists($this->staticRoot.'/configs/'.$site->public_key.'/production.json');
