@@ -110,21 +110,27 @@ class PrebidController extends Controller
         $configuredMode = PrebidConfiguredMode::from($data['prebid_configured_mode']);
         unset($data['prebid_configured_mode']);
 
-        $beforeState = $engines->resolve($site->loadMissing('servingSettings'));
+        $site->loadMissing('servingSettings');
+        $currentConfiguredMode = $site->servingSettings?->prebid_configured_mode ?? PrebidConfiguredMode::Auto;
+        $beforeState = $engines->resolve($site);
         $connection = $beforeState->gamConnection;
         $bridgeAvailableForConfiguration = $beforeState->gamRequired
             && $connection !== null
             && $connection->is_enabled
             && ! $controls->disabledForSite('GAM', $site->id, $connection->id);
-        if ($configuredMode === PrebidConfiguredMode::GamBridge && ! $bridgeAvailableForConfiguration) {
+        $existingBridgeProfileCanBeManaged = $currentConfiguredMode === PrebidConfiguredMode::GamBridge
+            && ($connection !== null || ! $data['enabled']);
+        if ($configuredMode === PrebidConfiguredMode::GamBridge
+            && ! $bridgeAvailableForConfiguration
+            && ! $existingBridgeProfileCanBeManaged) {
             throw ValidationException::withMessages([
-                'prebid_configured_mode' => 'GAM_BRIDGE requires an eligible enabled GAM connection. No Prebid mode or runtime settings were changed.',
+                'prebid_configured_mode' => 'GAM_BRIDGE requires an eligible enabled GAM connection when selecting a new bridge. No Prebid mode or runtime settings were changed.',
             ]);
         }
 
         $before = [
             'prebid_enabled' => (bool) $site->prebid_enabled,
-            'prebid_configured_mode' => ($site->servingSettings?->prebid_configured_mode ?? PrebidConfiguredMode::Auto)->value,
+            'prebid_configured_mode' => $currentConfiguredMode->value,
         ];
 
         $site->update(['prebid_enabled' => $data['enabled']]);
@@ -155,22 +161,29 @@ class PrebidController extends Controller
 
         $site = $site->refresh()->load('servingSettings');
         $engineState = $engines->resolve($site);
+        $profileUpdated = false;
         if ($configuredMode === PrebidConfiguredMode::Auto
             && $engineState->prebidDeliveryMode === PrebidDeliveryMode::GamBridge
             && $engineState->prebidReason === 'GAM_BRIDGE_CONNECTION_REQUIRED') {
             // AUTO with unavailable/disabled GAM uses the submitted values to
             // establish the standalone profile, then resolves again.
             $manager->updateStandaloneSettings($site, $data, $request->user());
+            $profileUpdated = true;
             $engineState = $engines->resolve($site->refresh()->load('servingSettings'));
         } elseif ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
             $manager->updateStandaloneSettings($site, $data, $request->user());
+            $profileUpdated = true;
             $engineState = $engines->resolve($site->refresh()->load('servingSettings'));
         } elseif ($engineState->gamConnection !== null) {
             $manager->updateSettings($engineState->gamConnection, $data, $request->user());
+            $profileUpdated = true;
         }
 
         $version = $publisher->publishActiveProduction($site->refresh(), $request->user());
-        $message = 'Prebid settings saved. Configured '.$configuredMode->value.'; resolved '.$engineState->prebidDeliveryMode->value.'. ';
+        $message = 'Prebid website configuration saved. Configured '.$configuredMode->value.'; resolved '.$engineState->prebidDeliveryMode->value.'. ';
+        $message .= $profileUpdated
+            ? 'Runtime profile updated. '
+            : 'No runtime profile was changed because no current profile owner is available. ';
         $message .= $version
             ? 'Production configuration v'.$version->version.' was queued automatically.'
             : 'The production configuration will publish automatically when the website is activated.';
