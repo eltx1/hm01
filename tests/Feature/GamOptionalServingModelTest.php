@@ -117,7 +117,15 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame('PREBID_STANDALONE', data_get($payload, 'placements.0.renderer'));
         $this->assertTrue(data_get($payload, 'placements.0.enabled'));
         $this->assertNull(data_get($payload, 'placements.0.adUnitPath'));
-        $this->assertSame(0, PrebidSetting::withoutGlobalScopes()->count(), 'Standalone Prebid must not create GAM-scoped settings.');
+        $this->assertSame(1, PrebidSetting::withoutGlobalScopes()
+            ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
+            ->where('site_id', $site->id)
+            ->whereNull('gam_connection_id')
+            ->count(), 'Standalone Prebid owns one site-scoped runtime profile.');
+        $this->assertSame(0, PrebidSetting::withoutGlobalScopes()
+            ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
+            ->whereNotNull('gam_connection_id')
+            ->count(), 'Standalone Prebid must not create a GAM-scoped profile.');
 
         $readiness = app(SiteMonetizationReadinessService::class)->admin($site->refresh());
         $display = collect($readiness['modules'])->firstWhere('key', 'display');
@@ -316,6 +324,17 @@ class GamOptionalServingModelTest extends TestCase
             'placement_id_value' => 'placement-'.$placement->code,
             'enabled' => true,
         ], $this->admin);
+
+        if ($site->serving_mode === ServingMode::HorusDirect) {
+            $manager->updateStandaloneSettings($site, [
+                'enabled' => true,
+                'auction_timeout_ms' => 1200,
+                'price_granularity' => 'medium',
+                'currency' => 'USD',
+                'bidder_sequence' => 'fixed',
+                'gam_fallback' => false,
+            ], $this->admin);
+        }
     }
 
     private function mapDirectJs(Site $site, $placement)
