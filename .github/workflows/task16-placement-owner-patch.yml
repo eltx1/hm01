@@ -1,0 +1,48 @@
+name: Task 16 Placement Ownership Patch
+
+on:
+  push:
+    branches:
+      - task-16-prebid-admin-control-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-16-prebid-admin-control-hardening
+          fetch-depth: 0
+      - name: Apply placement ownership fix
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/Services/Inventory/SiteConfigurationBuilder.php')
+          s = p.read_text()
+          old = """        $placementDisabled = $this->controls->placementDisabled($placement->id);\n        $gamEnabled = $siteServingActive && ! $placementDisabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;\n        $directJsPlacementDisabled = $this->controls->placementEngineDisabled($placement->id, 'DIRECT_JS');\n"""
+          new = """        $placementDisabled = $this->controls->placementDisabled($placement->id);\n        $gamEligible = $siteServingActive && ! $placementDisabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;\n        $directJsPlacementDisabled = $this->controls->placementEngineDisabled($placement->id, 'DIRECT_JS');\n"""
+          if old not in s: raise SystemExit('gam eligibility block missing')
+          s = s.replace(old, new, 1)
+          old = """        $standalonePrebidEnabled = $siteServingActive && $standalonePrebidEnabled && ! $prebidPlacementDisabled;\n        $rendererConflict = ! $gamEnabled && $standalonePrebidEnabled && $directJsEnabled;\n\n        $renderer = match (true) {\n            $rendererConflict => 'CONFLICT',\n            $gamEnabled => 'GAM',\n            $standalonePrebidEnabled => 'PREBID_STANDALONE',\n            $directJsEnabled => 'DIRECT_JS',\n"""
+          new = """        $standalonePrebidEnabled = $siteServingActive && $standalonePrebidEnabled && ! $prebidPlacementDisabled;\n        $rendererConflict = $standalonePrebidEnabled && $directJsEnabled;\n\n        $renderer = match (true) {\n            $rendererConflict => 'CONFLICT',\n            $standalonePrebidEnabled => 'PREBID_STANDALONE',\n            $gamEligible => 'GAM',\n            $directJsEnabled => 'DIRECT_JS',\n"""
+          if old not in s: raise SystemExit('renderer block missing')
+          s = s.replace(old, new, 1)
+          old = """        $eligible = ! $rendererConflict && in_array($renderer, ['GAM', 'PREBID_STANDALONE', 'DIRECT_JS', 'HOUSE'], true);\n\n        return [\n"""
+          new = """        $eligible = ! $rendererConflict && in_array($renderer, ['GAM', 'PREBID_STANDALONE', 'DIRECT_JS', 'HOUSE'], true);\n        $gamEnabled = $renderer === 'GAM';\n\n        return [\n"""
+          if old not in s: raise SystemExit('eligible block missing')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          php -l app/Services/Inventory/SiteConfigurationBuilder.php
+          rm .github/workflows/task16-placement-owner-patch.yml
+      - name: Commit materialized ownership fix
+        run: |
+          set -euo pipefail
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 16: honor explicit standalone placement ownership"
+          git push origin HEAD:task-16-prebid-admin-control-hardening
