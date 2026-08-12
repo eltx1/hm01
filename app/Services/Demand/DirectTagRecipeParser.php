@@ -49,6 +49,11 @@ final class DirectTagRecipeParser
             unset($attributes['src']);
 
             if ($src !== '') {
+                // Some official publisher tags still publish protocol-relative
+                // script URLs. Normalize those to HTTPS; never accept plain HTTP.
+                if (str_starts_with($src, '//')) {
+                    $src = 'https:'.$src;
+                }
                 if (! $this->httpsUrl($src)) {
                     $warnings[] = 'Every external script must use an absolute HTTPS URL.';
                 }
@@ -67,7 +72,7 @@ final class DirectTagRecipeParser
         preg_match_all('/<([a-z][a-z0-9:-]*)\b([^>]*)>/i', $markup, $elementMatches, PREG_SET_ORDER);
         foreach ($elementMatches as $match) {
             $element = strtolower((string) ($match[1] ?? ''));
-            if (in_array($element, ['script', 'html', 'head', 'body', 'aside'], true)) {
+            if (in_array($element, ['script', 'html', 'head', 'body'], true)) {
                 continue;
             }
             $attributes = $this->attributes($match[2] ?? '');
