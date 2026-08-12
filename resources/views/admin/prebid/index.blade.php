@@ -6,7 +6,8 @@
     <div>
         <p class="eyebrow">Browser-side header bidding</p>
         <h2>{{ $site->primary_domain }}</h2>
-        <p>{{ $connection->type->value }} · network {{ $connection->network_code }} · publishers never create Prebid line items manually.</p>
+        <p>Configured {{ $engineState->prebidConfiguredMode->value }} · resolved {{ $engineState->prebidDeliveryMode->value }} · {{ $engineState->prebidReason }}.</p>
+        @if($engineState->prebidConfiguredMode->value === 'GAM_BRIDGE' && $engineState->prebidReason === 'GAM_BRIDGE_CONNECTION_REQUIRED')<p class="error"><strong>ACTION REQUIRED:</strong> explicit GAM_BRIDGE is unavailable. Horus will not silently switch this website to standalone.</p>@endif
     </div>
     <div class="status-row">
         <span class="pill">{{ $settings->enabled && $site->prebid_enabled ? 'ENABLED' : 'DISABLED' }}</span>
@@ -19,6 +20,12 @@
     <p class="eyebrow">Selected GAM network</p>
     <h3>Browser auction settings</h3>
     <form class="form-stack" method="POST" action="{{ route('admin.sites.prebid.settings', $site) }}">@csrf @method('PUT')
+        <label>Delivery mode
+            <select class="hm-input" name="prebid_configured_mode" required>
+                @foreach(['AUTO','GAM_BRIDGE','STANDALONE'] as $mode)<option value="{{ $mode }}" @selected($engineState->prebidConfiguredMode->value === $mode)>{{ $mode }}</option>@endforeach
+            </select>
+        </label>
+        <p class="muted">AUTO prefers an eligible GAM bridge; if GAM is unavailable or operationally disabled and standalone is configured, it resolves to STANDALONE. Explicit GAM_BRIDGE never silently falls back.</p>
         <label>Prebid build
             <select class="hm-input" name="prebid_build_id">
                 @foreach($builds as $build)<option value="{{ $build->id }}" @selected($settings->prebid_build_id === $build->id)>{{ $build->name }} · {{ $build->version }}</option>@endforeach
@@ -34,11 +41,11 @@
         </label>
         <label>Consent behavior JSON<textarea class="hm-input" rows="5" name="consent_json">{{ json_encode($settings->consent_behavior ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
         <label>Minimum refresh seconds<input class="hm-input" type="number" min="30" max="3600" name="refresh_minimum_seconds" value="{{ data_get($settings->refresh_behavior, 'minimumIntervalSeconds', 30) }}" required></label>
-        <label><input type="hidden" name="enabled" value="0"><input type="checkbox" name="enabled" value="1" @checked($settings->enabled && $site->prebid_enabled)> Enable Prebid for this selected network and website</label>
+        <label><input type="hidden" name="enabled" value="0"><input type="checkbox" name="enabled" value="1" @checked($settings->enabled && $site->prebid_enabled)> Enable Prebid for this website</label>
         <label><input type="hidden" name="lazy_loading" value="0"><input type="checkbox" name="lazy_loading" value="1" @checked(data_get($settings->lazy_loading, 'enabled', true))> Enable lazy loading</label>
         <label><input type="hidden" name="refresh_enabled" value="0"><input type="checkbox" name="refresh_enabled" value="1" @checked(data_get($settings->refresh_behavior, 'enabled', true))> Enable refresh auctions</label>
         <label><input type="hidden" name="bidder_timeout_reporting" value="0"><input type="checkbox" name="bidder_timeout_reporting" value="1" @checked($settings->bidder_timeout_reporting)> Local bidder-timeout diagnostics</label>
-        <label><input type="hidden" name="gam_fallback" value="0"><input type="checkbox" name="gam_fallback" value="1" @checked($settings->gam_fallback)> Always fall back to GAM</label>
+        <label><input type="hidden" name="gam_fallback" value="0"><input type="checkbox" name="gam_fallback" value="1" @checked($settings->gam_fallback)> GAM fallback behavior (bridge mode only)</label>
         <button class="hm-button-primary">Save and publish</button>
     </form>
 </article>
@@ -103,6 +110,7 @@
     @empty<p class="muted">No bidder is assigned to this website.</p>@endforelse
 </article>
 
+@if($connection && $engineState->prebidDeliveryMode->value === 'GAM_BRIDGE')
 <section class="detail-grid">
 <article>
     <p class="eyebrow">Centralized GAM automation</p>
@@ -134,4 +142,7 @@
     @empty<p class="muted">No setup runs yet.</p>@endforelse
 </article>
 </section>
+@else
+<article><p class="eyebrow">Standalone delivery</p><h3>No GAM automation required</h3><p class="muted">This resolved mode uses the pinned Horus Prebid build and direct isolated banner rendering. GAM setup objects are not created or modified.</p></article>
+@endif
 @endsection
