@@ -62,7 +62,8 @@ final class SiteConfigurationBuilder
         $gamDisabled = $this->controls->disabledForSite('GAM', $site->id, $connection?->id);
         $prebidDisabled = $this->controls->disabledForSite('PREBID', $site->id);
         $legacyNativeDisabled = $this->controls->disabledForSite('NATIVE_DEMAND', $site->id);
-        $directJsDisabled = $this->controls->disabledForSite('DIRECT_JS', $site->id) || $legacyNativeDisabled;
+        $directJsOnlyDisabled = $this->controls->disabledForSite('DIRECT_JS', $site->id);
+        $directJsDisabled = $directJsOnlyDisabled || $legacyNativeDisabled;
 
         $active = $site->status === SiteStatus::Active
             && ! $adServingDisabled && $config->status === 'ACTIVE'
@@ -71,10 +72,17 @@ final class SiteConfigurationBuilder
 
         $prebid = $this->prebid->build($site, $connection, $engineState->prebidDeliveryMode);
         $native = $this->demand->build($site);
-        $legacyPrebidEnabled = ! $prebidDisabled && (bool) $prebid['enabled'];
-        $legacyNativeEnabled = ! $directJsDisabled && (bool) $native['enabled'];
+        $publicNative = $this->filterNativeDemand($native, $legacyNativeDisabled, $directJsOnlyDisabled);
+
+        // Legacy Prebid flags remain bridge-only so the existing Loader never
+        // attempts to treat a standalone configuration as GPT/GAM delivery.
+        $legacyPrebidEnabled = $engineState->prebidDeliveryMode === PrebidDeliveryMode::GamBridge
+            && $engineState->prebidEnabled
+            && ! $prebidDisabled
+            && (bool) $prebid['enabled'];
+        $legacyNativeEnabled = (bool) $publicNative['enabled'];
         $effectivePrebidEnabled = $active && $engineState->prebidEnabled && (bool) $prebid['enabled'];
-        $effectiveDirectJsEnabled = $active && $engineState->directJsEnabled && $this->hasDirectJsCandidate($native);
+        $effectiveDirectJsEnabled = $active && $engineState->directJsEnabled && $this->hasDirectJsCandidate($publicNative);
         $effectiveGamEnabled = $active && $engineState->gamEnabled && ! $gamDisabled && filled($networkCode);
 
         $enginePayload = $engineState->publicEngineState($networkCode);
@@ -84,7 +92,7 @@ final class SiteConfigurationBuilder
             $enginePayload['prebid']['reason'] = 'PREBID_CONFIGURATION_INCOMPLETE';
         }
         $enginePayload['directJs']['enabled'] = $effectiveDirectJsEnabled;
-        if ($engineState->directJsEnabled && ! $this->hasDirectJsCandidate($native)) {
+        if ($engineState->directJsEnabled && ! $this->hasDirectJsCandidate($publicNative)) {
             $enginePayload['directJs']['reason'] = 'DIRECT_JS_CONFIGURATION_INCOMPLETE';
         }
 
@@ -133,7 +141,7 @@ final class SiteConfigurationBuilder
             'prebidEnabled' => $legacyPrebidEnabled,
             'prebid' => array_replace($prebid, ['enabled' => $legacyPrebidEnabled]),
             'nativeDemandEnabled' => $legacyNativeEnabled,
-            'nativeDemand' => array_replace($native, ['enabled' => $legacyNativeEnabled]),
+            'nativeDemand' => array_replace($publicNative, ['enabled' => $legacyNativeEnabled]),
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'clickGuard' => $this->clickGuard($config->click_guard_settings),
@@ -143,8 +151,8 @@ final class SiteConfigurationBuilder
                 'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
                 'cacheBust' => $version,
             ],
-            // GPT metadata remains for compatibility, but the Loader must only
-            // initialize GPT for a placement whose resolved renderer is GAM.
+            // GPT metadata remains for compatibility, but the Loader initializes
+            // GPT only when a generated placement still has a GAM adUnitPath.
             'gpt' => [
                 'url' => $tag?->gpt_url ?: config('horus.gpt_url'),
                 'tagVersion' => $tag?->version ?? '1.0.0',
@@ -174,12 +182,45 @@ final class SiteConfigurationBuilder
                     $effectiveGamEnabled ? $networkCode : null,
                     $environment,
                     $config->house_ad_testing,
-                    $directJsDisabled ? [] : (array) data_get($native, 'placements.'.$placement->code, []),
+                    (array) data_get($publicNative, 'placements.'.$placement->code, []),
                     in_array($placement->code, $standalonePrebidCodes, true),
                 ))
                 ->values()
                 ->all(),
             'generatedAt' => now()->utc()->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function filterNativeDemand(array $native, bool $legacyNativeDisabled, bool $directJsOnlyDisabled): array
+    {
+        if ($legacyNativeDisabled) {
+            return ['enabled' => false, 'fallbackOrder' => [], 'placements' => []];
+        }
+        if (! $directJsOnlyDisabled) {
+            return $native;
+        }
+
+        $placements = [];
+        foreach ((array) ($native['placements'] ?? []) as $code => $placement) {
+            $candidates = collect((array) ($placement['candidates'] ?? []))
+                ->filter(fn (array $candidate) => (bool) ($candidate['gamManaged'] ?? false))
+                ->values()->all();
+            $house = $placement['house'] ?? null;
+            if ($candidates === [] && empty($house)) {
+                continue;
+            }
+            $placements[$code] = [
+                'enabled' => true,
+                'candidates' => $candidates,
+                'house' => $house,
+            ];
+        }
+
+        return [
+            'enabled' => $placements !== [],
+            'fallbackOrder' => (array) ($native['fallbackOrder'] ?? []),
+            'placements' => $placements,
         ];
     }
 
