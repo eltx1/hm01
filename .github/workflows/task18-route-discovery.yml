@@ -1,0 +1,20 @@
+name: Task18 Route Discovery
+
+'on':
+  push:
+    branches:
+      - task-18-direct-demand-admin-control-center
+
+jobs:
+  routes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-18-direct-demand-admin-control-center
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: php artisan route:list --name=demand --columns=method,uri,name,action,middleware
