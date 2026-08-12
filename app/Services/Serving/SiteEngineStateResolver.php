@@ -34,17 +34,19 @@ final class SiteEngineStateResolver
         $masterServingEnabled = ! $paused;
 
         $gamControlDisabled = $this->controls->disabledForSite('GAM', $site->id, $connection?->id);
+        $legacyNetworkCodeAvailable = $gamRequired && filled($site->current_gam_network_code);
+        $gamConnectionAvailable = $connection !== null && $connection->is_enabled;
         $gamEnabled = $masterServingEnabled
             && $gamRequired
-            && $connection !== null
-            && $connection->is_enabled
+            && ($gamConnectionAvailable || $legacyNetworkCodeAvailable)
             && ! $gamControlDisabled;
         $gamReason = match (true) {
             ! $masterServingEnabled => 'MASTER_SERVING_DISABLED',
             ! $gamRequired => 'NOT_REQUIRED_BY_SERVING_MODE',
-            $connection === null => 'NO_GAM_CONNECTION',
-            ! $connection->is_enabled => 'GAM_CONNECTION_DISABLED',
+            $connection !== null && ! $connection->is_enabled && ! $legacyNetworkCodeAvailable => 'GAM_CONNECTION_DISABLED',
+            ! $gamConnectionAvailable && ! $legacyNetworkCodeAvailable => 'NO_GAM_CONNECTION',
             $gamControlDisabled => 'GAM_CONTROL_DISABLED',
+            ! $gamConnectionAvailable && $legacyNetworkCodeAvailable => 'LEGACY_NETWORK_CODE_FALLBACK',
             default => 'ENABLED',
         };
 
