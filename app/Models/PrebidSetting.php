@@ -33,6 +33,13 @@ class PrebidSetting extends Model
     protected static function booted(): void
     {
         static::saving(function (PrebidSetting $settings): void {
+            // Existing code/tests may construct connection-owned settings
+            // without naming the new scope. Preserve that legacy contract while
+            // still enforcing one and only one runtime owner.
+            if (blank($settings->scope) && filled($settings->gam_connection_id) && blank($settings->site_id)) {
+                $settings->scope = self::SCOPE_GAM_CONNECTION;
+            }
+
             $gamOwned = $settings->scope === self::SCOPE_GAM_CONNECTION
                 && filled($settings->gam_connection_id)
                 && blank($settings->site_id);
