@@ -112,7 +112,17 @@ class PrebidController extends Controller
             'gam_fallback' => $request->boolean('gam_fallback', true),
         ];
 
-        if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
+        // Persist the profile selected by the administrator, not a profile
+        // inferred indirectly from a later runtime branch. AUTO deliberately
+        // follows the central resolver; explicit modes always write their own
+        // owner so switching modes never leaves the chosen profile stale.
+        $profileDeliveryMode = match ($configuredMode) {
+            PrebidConfiguredMode::Standalone => PrebidDeliveryMode::Standalone,
+            PrebidConfiguredMode::GamBridge => PrebidDeliveryMode::GamBridge,
+            PrebidConfiguredMode::Auto => $engineState->prebidDeliveryMode,
+        };
+
+        if ($profileDeliveryMode === PrebidDeliveryMode::Standalone) {
             $manager->updateStandaloneSettings($site, $runtimeData, $request->user());
         } elseif ($engineState->gamConnection !== null) {
             $manager->updateSettings($engineState->gamConnection, $runtimeData, $request->user());
