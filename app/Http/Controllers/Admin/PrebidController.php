@@ -302,11 +302,12 @@ class PrebidController extends Controller
             return [];
         }
         try {
+            $decodedObject = json_decode($value, false, 512, JSON_THROW_ON_ERROR);
             $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
             throw ValidationException::withMessages([$field => 'The JSON object is invalid.']);
         }
-        if (! is_array($decoded) || array_is_list($decoded)) {
+        if (! is_object($decodedObject) || ! is_array($decoded)) {
             throw ValidationException::withMessages([$field => 'The value must be a JSON object.']);
         }
 
