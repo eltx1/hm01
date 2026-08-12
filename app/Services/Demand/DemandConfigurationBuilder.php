@@ -13,10 +13,16 @@ use Throwable;
 
 final class DemandConfigurationBuilder
 {
+    private readonly PlatformControlService $controls;
+
     public function __construct(
         private readonly DemandConnectorManager $connectors,
-        private readonly PlatformControlService $controls,
+        ?PlatformControlService $controls = null,
     ) {
+        // Keep the pre-Task17 one-argument construction valid for existing
+        // callers/tests while normal container resolution still injects the
+        // operational control service explicitly.
+        $this->controls = $controls ?? app(PlatformControlService::class);
     }
 
     public function build(Site $site): array
@@ -142,7 +148,19 @@ final class DemandConfigurationBuilder
             throw new \RuntimeException('Unsupported Direct Demand execution mode.');
         }
 
-        $scripts = collect((array) ($tag['scripts'] ?? []))
+        $rawScripts = (array) ($tag['scripts'] ?? []);
+        // Schema-v3/legacy callers may still provide the original flattened
+        // scriptUrl shape. Normalize it into the v4 recipe before sanitizing.
+        if ($rawScripts === [] && filled($tag['scriptUrl'] ?? null)) {
+            $rawScripts[] = [
+                'url' => (string) $tag['scriptUrl'],
+                'async' => true,
+                'defer' => false,
+                'attributes' => [],
+            ];
+        }
+
+        $scripts = collect($rawScripts)
             ->take(8)
             ->map(function ($script): array {
                 $script = (array) $script;
@@ -262,7 +280,7 @@ final class DemandConfigurationBuilder
     {
         return collect($attributes)
             ->filter(fn ($value, $key) => is_scalar($value)
-                && preg_match('/^(?:data|aria)-[a-z0-9_.:-]+$/i', (string) $key)
+                && preg_match('/^data-[a-z0-9_.:-]+$/i', (string) $key)
                 && ! preg_match('/secret|token|password|credential|private|(?:^|[-_])key/i', (string) $key))
             ->map(fn ($value) => mb_substr((string) $value, 0, 2000))
             ->reject(fn ($value) => preg_match('/javascript\s*:/i', $value) || preg_match('/^(?:env|file):/i', $value))
