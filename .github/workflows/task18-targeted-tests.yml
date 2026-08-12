@@ -46,6 +46,21 @@ jobs:
               text = text.replace('use App\\Models\\DemandAccount;\n', 'use App\\Models\\DemandAccount;\nuse App\\Models\\DemandAdsTxtRecord;\n')
           text = text.replace('$this->actingAs($this->admin)', '$this->adminSession()')
           text = text.replace("        $this->assertDatabaseHas('ads_txt_records', ['site_id' => $this->site->id, 'account_id' => '100']);", "        $this->assertTrue(DemandAdsTxtRecord::withoutGlobalScopes()\n            ->where('site_id', $this->site->id)\n            ->where('demand_account_id', $this->account->id)\n            ->where('publisher_account_id', '100')\n            ->where('status', 'ACTIVE')\n            ->exists());")
+          text = text.replace("['scope_type' => 'GLOBAL', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]", "['scope_type' => 'PLATFORM', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]")
+          old_isolation = """        $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
+        $this->assertStringContainsString('ISOLATED_IFRAME', $encoded);
+        $this->assertStringContainsString('allow-scripts', $encoded);
+        $this->assertStringNotContainsString('allow-same-origin', $encoded);
+"""
+          new_isolation = """        $customCandidate = collect(data_get($payload, 'directDemand.placements.header_banner.candidates', []))
+            ->firstWhere('network', 'CUSTOM_THIRD_PARTY_TAG');
+        $this->assertSame('ISOLATED_IFRAME', data_get($customCandidate, 'tag.executionMode'));
+        $this->assertSame(['allow-scripts'], data_get($customCandidate, 'tag.isolation.sandbox'));
+        $this->assertStringNotContainsString('allow-same-origin', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
+        $this->assertStringNotContainsString('allow-top-navigation', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
+"""
+          if old_isolation in text:
+              text = text.replace(old_isolation, new_isolation, 1)
           marker = '    private function approvedMgid($site, $placement): array\n'
           helper = '''    private function adminSession(): static\n    {\n        $this->actingAs($this->admin);\n        $this->withSession(['two_factor_passed_at' => now()->timestamp]);\n\n        return $this;\n    }\n\n'''
           if helper not in text:
