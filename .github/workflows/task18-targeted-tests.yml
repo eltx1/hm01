@@ -24,72 +24,16 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Install and apply validated harness/UI corrections
-        run: |
-          set -euo pipefail
-          composer install --prefer-dist --no-interaction --no-progress
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('resources/views/admin/demand/index.blade.php')
-          text = p.read_text()
-          text = text.replace("route('admin.supply-chain.ads-txt.index')", "route('admin.compliance.ads-txt.index')")
-          old = '''                <label>Approved script origins<textarea class="hm-input" rows="3" name="script_origins[]">{{ implode("\n", $network->script_origins ?? []) }}</textarea></label>'''
-          new = '''                <div><label>Approved script origins</label>@foreach($network->script_origins ?? [] as $origin)<input class="hm-input" type="url" name="script_origins[]" value="{{ $origin }}">@endforeach<input class="hm-input" type="url" name="script_origins[]" placeholder="https://provider.example"></div>'''
-          if old in text:
-              text = text.replace(old, new, 1)
-          p.write_text(text)
-
-          p = Path('tests/Feature/DirectDemandAdminControlCenterTest.php')
-          text = p.read_text()
-          if 'use App\\Models\\DemandAdsTxtRecord;' not in text:
-              text = text.replace('use App\\Models\\DemandAccount;\n', 'use App\\Models\\DemandAccount;\nuse App\\Models\\DemandAdsTxtRecord;\n')
-          text = text.replace('$this->actingAs($this->admin)', '$this->adminSession()')
-          text = text.replace("        $this->assertDatabaseHas('ads_txt_records', ['site_id' => $this->site->id, 'account_id' => '100']);", "        $this->assertTrue(DemandAdsTxtRecord::withoutGlobalScopes()\n            ->where('site_id', $this->site->id)\n            ->where('demand_account_id', $this->account->id)\n            ->where('publisher_account_id', '100')\n            ->where('status', 'ACTIVE')\n            ->exists());")
-          text = text.replace("['scope_type' => 'GLOBAL', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]", "['scope_type' => 'PLATFORM', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]")
-          old_isolation = """        $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
-        $this->assertStringContainsString('ISOLATED_IFRAME', $encoded);
-        $this->assertStringContainsString('allow-scripts', $encoded);
-        $this->assertStringNotContainsString('allow-same-origin', $encoded);
-"""
-          new_isolation = """        $customCandidate = collect(data_get($payload, 'directDemand.placements.header_banner.candidates', []))
-            ->firstWhere('network', 'CUSTOM_THIRD_PARTY_TAG');
-        $this->assertSame('ISOLATED_IFRAME', data_get($customCandidate, 'tag.executionMode'));
-        $this->assertSame(['allow-scripts'], data_get($customCandidate, 'tag.isolation.sandbox'));
-        $this->assertStringNotContainsString('allow-same-origin', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
-        $this->assertStringNotContainsString('allow-top-navigation', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
-"""
-          if old_isolation in text:
-              text = text.replace(old_isolation, new_isolation, 1)
-          marker = '    private function approvedMgid($site, $placement): array\n'
-          helper = '''    private function adminSession(): static\n    {\n        $this->actingAs($this->admin);\n        $this->withSession(['two_factor_passed_at' => now()->timestamp]);\n\n        return $this;\n    }\n\n'''
-          if helper not in text:
-              if marker not in text:
-                  raise SystemExit('adminSession insertion marker missing')
-              text = text.replace(marker, helper + marker, 1)
-          p.write_text(text)
-          PY
-          php -l app/Services/Monetization/SiteMonetizationReadinessService.php
-          php -l app/Http/Controllers/Admin/DemandNetworkController.php
-          php -l tests/Feature/DirectDemandAdminControlCenterTest.php
-      - name: Targeted backend matrix
-        run: |
-          set -euo pipefail
-          cp .env.example .env
-          php artisan key:generate
-          php artisan test tests/Feature/DirectDemandAdminControlCenterTest.php
-          php artisan test tests/Feature/UniversalDirectDemandEngineTest.php
-          php artisan test tests/Feature/DemandNetworkSystemTest.php
-          php artisan test tests/Feature/GamOptionalServingModelTest.php
+      - name: Install and patch
+        run: composer install --prefer-dist --no-interaction --no-progress && python3 scripts/task18_targeted_fix.py
+      - name: Lint
+        run: php -l app/Services/Monetization/SiteMonetizationReadinessService.php && php -l app/Http/Controllers/Admin/DemandNetworkController.php && php -l tests/Feature/DirectDemandAdminControlCenterTest.php
+      - name: Backend matrix
+        run: cp .env.example .env && php artisan key:generate && php artisan test tests/Feature/DirectDemandAdminControlCenterTest.php && php artisan test tests/Feature/UniversalDirectDemandEngineTest.php && php artisan test tests/Feature/DemandNetworkSystemTest.php && php artisan test tests/Feature/GamOptionalServingModelTest.php
       - name: Browser regressions
+        run: npm ci && node --test tests/Browser/hm-loader-direct-demand.test.js tests/Browser/hm-loader-prebid-standalone.test.js tests/Browser/hm-loader-prebid-mode-hardening.test.js tests/Browser/hm-loader-native.test.js
+      - name: Commit validated result
         run: |
-          set -euo pipefail
-          npm ci
-          node --test tests/Browser/hm-loader-direct-demand.test.js tests/Browser/hm-loader-prebid-standalone.test.js tests/Browser/hm-loader-prebid-mode-hardening.test.js tests/Browser/hm-loader-native.test.js
-      - name: Commit validated corrections and remove workflow
-        run: |
-          set -euo pipefail
-          rm .github/workflows/task18-targeted-tests.yml
           git config user.name "Horus Media CI"
           git config user.email "ci@horusmedia.net"
           git add -A
