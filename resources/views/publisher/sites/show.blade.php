@@ -82,7 +82,7 @@
 </article>
 
 <article id="native-demand" class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Optional demand</p><h2>Native demand</h2></div>@if(auth()->user()->hasPermission('demand.view'))<a class="section-anchor" href="{{ route('admin.sites.demand.index', $site) }}">Manage native demand</a>@endif</div>
+    <div class="workspace-heading"><div><p class="eyebrow">Monetization</p><h2>Direct Monetization</h2></div></div>
     <div class="compact-row"><div><strong>{{ $site->native_demand_enabled ? 'Enabled for this website' : 'Disabled for this website' }}</strong><p>{{ $site->demandSites->where('is_enabled', true)->count() }} active mappings.</p></div><x-status-badge :status="$moduleHealth['native']['status']" /></div>
     @foreach($site->demandSites as $mapping)<div class="compact-row"><div><strong>{{ $mapping->account->network->name ?? $mapping->account->name }}</strong><p>{{ $mapping->account->name }} · {{ $mapping->integration_mode->value }} · sync {{ $mapping->sync_status->value }}</p></div><x-status-badge :status="$mapping->approval_status" /></div>@endforeach
 </article>

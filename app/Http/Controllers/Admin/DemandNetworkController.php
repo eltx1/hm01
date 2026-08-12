@@ -17,8 +17,12 @@ use App\Models\Publisher;
 use App\Models\Site;
 use App\Services\Demand\DemandAccountService;
 use App\Services\Demand\DemandGamDeploymentService;
+use App\Services\Demand\DemandConnectorManager;
 use App\Services\Demand\DemandReportService;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Operations\PlatformControlService;
+use App\Services\Audit\AuditRecorder;
+use Illuminate\Support\Facades\DB;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -45,6 +49,7 @@ class DemandNetworkController extends Controller
             'modes' => DemandIntegrationMode::cases(),
             'statuses' => DemandApprovalStatus::cases(),
             'summaries' => $accounts->getCollection()->mapWithKeys(fn ($account) => [$account->id => $reports->summary($account)]),
+            'directDemandMasterEnabled' => ! app(PlatformControlService::class)->disabled('PLATFORM', null, 'DIRECT_JS'),
         ]);
     }
 
@@ -85,7 +90,88 @@ class DemandNetworkController extends Controller
         $site->update(['native_demand_enabled' => (bool) $data['enabled']]);
         $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', $site->native_demand_enabled ? 'Native demand enabled for this website.' : 'Native demand disabled and removed from the current configuration.');
+        return back()->with('status', $site->native_demand_enabled ? 'Direct Demand enabled for this website.' : 'Direct Demand disabled and removed from the current configuration.');
+    }
+
+    public function toggleMaster(Request $request, PlatformControlService $controls, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'reason' => ['required', 'string', 'min:5', 'max:10000'],
+        ]);
+        $controls->set('PLATFORM', null, 'DIRECT_JS', ! (bool) $data['enabled'], $data['reason'], $request->user());
+        Site::withoutGlobalScopes()->where('native_demand_enabled', true)->get()->each(
+            fn (Site $site) => $publisher->publishActiveProduction($site, $request->user())
+        );
+
+        return back()->with('status', (bool) $data['enabled'] ? 'Direct Demand master enabled.' : 'Direct Demand master paused and affected configurations republished.');
+    }
+
+    public function updateNetwork(Request $request, DemandNetwork $demandNetwork, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate([
+            'supports_direct_js' => ['required', 'boolean'],
+            'supported_formats' => ['nullable', 'array'],
+            'supported_formats.*' => ['string', Rule::in(['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM'])],
+            'integration_modes' => ['nullable', 'array'],
+            'integration_modes.*' => [Rule::enum(DemandIntegrationMode::class)],
+            'script_origins' => ['nullable', 'array', 'max:20'],
+            'script_origins.*' => ['url:https', 'max:500'],
+            'operational_health' => ['nullable', Rule::in(['HEALTHY', 'DEGRADED', 'FAILED', 'UNKNOWN'])],
+        ]);
+        $origins = collect($data['script_origins'] ?? [])->map(fn ($value) => strtolower(rtrim((string) $value, '/')))->unique()->values();
+        foreach ($origins as $origin) {
+            $host = strtolower((string) parse_url($origin, PHP_URL_HOST));
+            if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
+                throw ValidationException::withMessages(['script_origins' => 'Provider script origins cannot use the Horus control-plane origin.']);
+            }
+        }
+        $before = $demandNetwork->only(['supports_direct_js', 'script_origins', 'capabilities', 'metadata']);
+        $capabilities = array_replace((array) $demandNetwork->capabilities, [
+            'supported_formats' => array_values(array_unique($data['supported_formats'] ?? [])),
+            'integration_modes' => array_values(array_unique($data['integration_modes'] ?? [])),
+        ]);
+        $metadata = array_replace((array) $demandNetwork->metadata, ['operational_health' => $data['operational_health'] ?? 'UNKNOWN']);
+        $demandNetwork->update([
+            'supports_direct_js' => (bool) $data['supports_direct_js'],
+            'script_origins' => $origins->all(),
+            'capabilities' => $capabilities,
+            'metadata' => $metadata,
+        ]);
+        $audit->record('demand.network.updated', $request->user()->organization_id, $request->user(), $demandNetwork,
+            $before, $demandNetwork->only(array_keys($before)));
+        $this->publishNetworkSites($demandNetwork, $request, $publisher);
+
+        return back()->with('status', 'Direct Demand network settings updated and affected configurations published.');
+    }
+
+    public function toggleNetworkRuntime(Request $request, DemandNetwork $demandNetwork, PlatformControlService $controls, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'reason' => ['required', 'string', 'min:5', 'max:10000'],
+        ]);
+        $controls->set('DEMAND_NETWORK', $demandNetwork->id, 'DIRECT_JS', ! (bool) $data['enabled'], $data['reason'], $request->user());
+        $this->publishNetworkSites($demandNetwork, $request, $publisher);
+
+        return back()->with('status', 'Network Direct Demand runtime control updated.');
+    }
+
+    public function toggleAccount(Request $request, DemandAccount $demandAccount, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $service->update($demandAccount, ['is_enabled' => (bool) $data['enabled']], $request->user());
+        $this->publishAccountSites($demandAccount, $request, $publisher);
+
+        return back()->with('status', 'Demand account delivery toggle updated.');
+    }
+
+    public function tagPreview(Request $request, DemandAccount $demandAccount, DemandConnectorManager $connectors): View
+    {
+        $data = $request->validate(['tag' => ['required', 'string', 'max:100000']]);
+        $review = $connectors->for($demandAccount->loadMissing('network'))->parseDirectTag($data['tag']);
+
+        return view('admin.demand.tag-preview', ['account' => $demandAccount, 'review' => $review]);
     }
 
     public function storeAccount(Request $request, DemandAccountService $service): RedirectResponse
@@ -105,9 +191,13 @@ class DemandNetworkController extends Controller
             'fallback_priority' => ['required', 'integer', 'between:0,10000'],
             'account_identifier' => ['nullable', 'string', 'max:255'],
             'configuration_json' => ['nullable', 'json'],
+            'reporting_method' => ['nullable', Rule::in(['API', 'CSV'])],
+            'default_render_timeout_ms' => ['nullable', 'integer', 'between:500,10000'],
+            'approved_script_origins' => ['nullable', 'array', 'max:20'],
+            'approved_script_origins.*' => ['url:https', 'max:500'],
         ]);
-        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
-        unset($data['configuration_json']);
+        $data['configuration'] = $this->accountConfiguration($data, $this->json($data['configuration_json'] ?? null));
+        unset($data['configuration_json'], $data['reporting_method'], $data['default_render_timeout_ms'], $data['approved_script_origins']);
 
         $account = $service->create($data, $request->user());
 
@@ -127,9 +217,13 @@ class DemandNetworkController extends Controller
             'fallback_priority' => ['required', 'integer', 'between:0,10000'],
             'account_identifier' => ['nullable', 'string', 'max:255'],
             'configuration_json' => ['nullable', 'json'],
+            'reporting_method' => ['nullable', Rule::in(['API', 'CSV'])],
+            'default_render_timeout_ms' => ['nullable', 'integer', 'between:500,10000'],
+            'approved_script_origins' => ['nullable', 'array', 'max:20'],
+            'approved_script_origins.*' => ['url:https', 'max:500'],
         ]);
-        $data['configuration'] = $this->json($data['configuration_json'] ?? null);
-        unset($data['configuration_json']);
+        $data['configuration'] = $this->accountConfiguration($data, $this->json($data['configuration_json'] ?? null));
+        unset($data['configuration_json'], $data['reporting_method'], $data['default_render_timeout_ms'], $data['approved_script_origins']);
         $service->update($demandAccount, $data, $request->user());
         $this->publishAccountSites($demandAccount, $request, app(SiteConfigPublisher::class));
 
@@ -209,6 +303,16 @@ class DemandNetworkController extends Controller
         return back()->with('status', 'Website demand mapping updated and queued automatically when active.');
     }
 
+    public function toggleSiteMapping(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandSite->site_id === $site->id, 404);
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $service->setSiteEnabled($demandSite, (bool) $data['enabled'], $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
+
+        return back()->with('status', 'Website mapping delivery toggle updated.');
+    }
+
     public function syncSite(Request $request, Site $site, DemandSite $demandSite, DemandAccountService $service): RedirectResponse
     {
         abort_unless($demandSite->site_id === $site->id, 404);
@@ -253,7 +357,17 @@ class DemandNetworkController extends Controller
         return back()->with('status', 'Demand placement updated and queued automatically when the website is active.');
     }
 
-    public function storeWidget(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    public function togglePlacementMapping(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $service->setPlacementMappingEnabled($demandPlacement, (bool) $data['enabled'], $request->user());
+        $publisher->publishActiveProduction($site, $request->user());
+
+        return back()->with('status', 'Placement mapping delivery toggle updated.');
+    }
+
+    public function storeWidget(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service, SiteConfigPublisher $publisher, DemandConnectorManager $connectors): RedirectResponse
     {
         abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
         $data = $request->validate([
@@ -265,14 +379,50 @@ class DemandNetworkController extends Controller
             'gam_creative_template' => ['nullable', 'string', 'max:100000'],
             'approval_status' => ['required', Rule::enum(DemandApprovalStatus::class)],
             'is_enabled' => ['required', 'boolean'],
+            'tag_review_approved' => ['nullable', 'boolean'],
             'configuration_json' => ['nullable', 'json'],
         ]);
         $data['configuration'] = $this->json($data['configuration_json'] ?? null);
         unset($data['configuration_json']);
-        $service->upsertWidget($demandPlacement, $data, $request->user());
+        $requestedStatus = DemandApprovalStatus::from($data['approval_status']);
+        $tag = trim((string) ($data['direct_tag_template'] ?? ''));
+        $mode = $data['integration_mode'] ?? $demandPlacement->integration_mode ?? $demandPlacement->demandSite->integration_mode ?? $demandPlacement->demandSite->account->integration_mode;
+
+        if ($tag !== '' && $mode === DemandIntegrationMode::DirectJs) {
+            if ($requestedStatus === DemandApprovalStatus::Approved && ! $request->boolean('tag_review_approved')) {
+                throw ValidationException::withMessages(['tag_review_approved' => 'Explicit tag review approval is required before production publication.']);
+            }
+            $connector = $connectors->for($demandPlacement->demandSite->account->loadMissing('network'));
+            $review = $connector->parseDirectTag($tag);
+            $isCustom = $demandPlacement->demandSite->account->network->code->value === 'CUSTOM_THIRD_PARTY_TAG';
+            if (! $isCustom && ! (bool) ($review['safe'] ?? false)) {
+                throw ValidationException::withMessages(['direct_tag_template' => $review['securityWarnings'] ?: ['The tag cannot be represented by a safe structured Direct Demand recipe.']]);
+            }
+            if ($isCustom) {
+                $warnings = collect((array) ($review['securityWarnings'] ?? []));
+                if ($warnings->contains(fn ($warning) => str_contains(strtolower((string) $warning), 'credential') || str_contains(strtolower((string) $warning), 'javascript:'))) {
+                    throw ValidationException::withMessages(['direct_tag_template' => $warnings->all()]);
+                }
+                if (empty($data['configuration']['isolation_allowed_origins'])) {
+                    throw ValidationException::withMessages(['configuration_json' => 'Custom Third Party tags require explicit isolation_allowed_origins for iframe CSP.']);
+                }
+            } else {
+                $data['configuration']['direct_recipe'] = $review['recipe'];
+            }
+        }
+        unset($data['tag_review_approved']);
+
+        DB::transaction(function () use ($service, $demandPlacement, $data, $request, $connectors, $tag, $mode): void {
+            $widget = $service->upsertWidget($demandPlacement, $data, $request->user());
+            if ($tag !== '' && $mode === DemandIntegrationMode::DirectJs && $data['approval_status'] === DemandApprovalStatus::Approved->value) {
+                // Final runtime validation happens inside the same transaction so
+                // an unsafe/unsupported recipe cannot leave an approved widget behind.
+                $connectors->for($demandPlacement->demandSite->account->loadMissing('network'))->generateDirectTag($demandPlacement->fresh(['widgets', 'placement.sizes', 'demandSite.account.network']));
+            }
+        });
         $publisher->publishActiveProduction($site, $request->user());
 
-        return back()->with('status', 'Demand widget saved and queued automatically when the website is active.');
+        return back()->with('status', 'Direct Demand tag/widget saved after safety review and the active static configuration was republished.');
     }
 
     public function syncPlacement(Request $request, Site $site, DemandPlacement $demandPlacement, DemandAccountService $service): RedirectResponse
@@ -383,6 +533,30 @@ class DemandNetworkController extends Controller
         } catch (JsonException $exception) {
             throw ValidationException::withMessages(['configuration_json' => $exception->getMessage()]);
         }
+    }
+
+    private function accountConfiguration(array $data, array $configuration): array
+    {
+        if (! empty($data['reporting_method'])) {
+            $configuration['reporting_method'] = $data['reporting_method'];
+        }
+        if (! empty($data['default_render_timeout_ms'])) {
+            $configuration['render_timeout_ms'] = (int) $data['default_render_timeout_ms'];
+        }
+        if (array_key_exists('approved_script_origins', $data)) {
+            $configuration['allowed_script_origins'] = collect((array) $data['approved_script_origins'])
+                ->map(fn ($value) => strtolower(rtrim((string) $value, '/')))->unique()->values()->all();
+        }
+
+        return $configuration;
+    }
+
+    private function publishNetworkSites(DemandNetwork $network, Request $request, SiteConfigPublisher $publisher): void
+    {
+        Site::withoutGlobalScopes()
+            ->whereHas('demandSites.account', fn ($query) => $query->where('demand_network_id', $network->id))
+            ->get()
+            ->each(fn (Site $site) => $publisher->publishActiveProduction($site, $request->user()));
     }
 
     private function publishAccountSites(DemandAccount $account, Request $request, SiteConfigPublisher $publisher): void
