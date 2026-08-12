@@ -11,7 +11,7 @@
         ['label' => 'Serving', 'href' => '#serving'],
         ['label' => 'GAM', 'href' => '#gam'],
         ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Native demand', 'href' => '#native-demand'],
+        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
         ['label' => 'Configuration', 'href' => '#configuration'],
         ['label' => 'Compliance', 'href' => '#compliance'],
         ['label' => 'Health', 'href' => '#health'],

@@ -84,10 +84,13 @@ class DemandNetworkController extends Controller
         ]);
     }
 
-    public function toggleSiteNative(Request $request, Site $site, SiteConfigPublisher $publisher): RedirectResponse
+    public function toggleSiteNative(Request $request, Site $site, SiteConfigPublisher $publisher, AuditRecorder $audit): RedirectResponse
     {
         $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $before = (bool) $site->native_demand_enabled;
         $site->update(['native_demand_enabled' => (bool) $data['enabled']]);
+        $audit->record('demand.site.direct_demand_enabled_changed', $site->organization_id, $request->user(), $site,
+            ['native_demand_enabled' => $before], ['native_demand_enabled' => (bool) $data['enabled']]);
         $publisher->publishActiveProduction($site, $request->user());
 
         return back()->with('status', $site->native_demand_enabled ? 'Direct Demand enabled for this website.' : 'Direct Demand disabled and removed from the current configuration.');
@@ -267,10 +270,13 @@ class DemandNetworkController extends Controller
         return back()->with('status', 'Demand account approval status updated and affected configurations published.');
     }
 
-    public function toggleNetwork(Request $request, DemandNetwork $demandNetwork, SiteConfigPublisher $publisher): RedirectResponse
+    public function toggleNetwork(Request $request, DemandNetwork $demandNetwork, SiteConfigPublisher $publisher, AuditRecorder $audit): RedirectResponse
     {
         $data = $request->validate(['is_enabled' => ['required', 'boolean']]);
+        $before = (bool) $demandNetwork->is_enabled;
         $demandNetwork->update(['is_enabled' => (bool) $data['is_enabled']]);
+        $audit->record('demand.network.enabled_changed', $request->user()->organization_id, $request->user(), $demandNetwork,
+            ['is_enabled' => $before], ['is_enabled' => (bool) $data['is_enabled']]);
 
         $sites = Site::withoutGlobalScopes()
             ->whereHas('demandSites.account', fn ($query) => $query->where('demand_network_id', $demandNetwork->id))
@@ -340,7 +346,9 @@ class DemandNetworkController extends Controller
     public function assignPlacement(Request $request, Site $site, DemandSite $demandSite, Placement $placement, DemandAccountService $service, SiteConfigPublisher $publisher): RedirectResponse
     {
         abort_unless($demandSite->site_id === $site->id && $placement->site_id === $site->id, 404);
-        $service->assignPlacement($demandSite, $placement, $this->placementData($request), $request->user());
+        $data = $this->placementData($request);
+        $this->assertDirectPlacementSupported($demandSite, $placement, $data['integration_mode'] ?? null);
+        $service->assignPlacement($demandSite, $placement, $data, $request->user());
         $publisher->publishActiveProduction($site, $request->user());
 
         return back()->with('status', 'Placement mapping saved and queued automatically when the website is active.');
@@ -350,6 +358,7 @@ class DemandNetworkController extends Controller
     {
         abort_unless($demandPlacement->demandSite->site_id === $site->id, 404);
         $data = $this->placementData($request);
+        $this->assertDirectPlacementSupported($demandPlacement->demandSite, $demandPlacement->placement, $data['integration_mode'] ?? null);
         $demandPlacement->update($data + ['updated_by' => $request->user()->id]);
         $service->reviewPlacement($demandPlacement, DemandApprovalStatus::from($data['approval_status']), $request->user());
         $publisher->publishActiveProduction($site, $request->user());
@@ -386,7 +395,8 @@ class DemandNetworkController extends Controller
         unset($data['configuration_json']);
         $requestedStatus = DemandApprovalStatus::from($data['approval_status']);
         $tag = trim((string) ($data['direct_tag_template'] ?? ''));
-        $mode = $data['integration_mode'] ?? $demandPlacement->integration_mode ?? $demandPlacement->demandSite->integration_mode ?? $demandPlacement->demandSite->account->integration_mode;
+        $modeValue = $data['integration_mode'] ?? $demandPlacement->integration_mode ?? $demandPlacement->demandSite->integration_mode ?? $demandPlacement->demandSite->account->integration_mode;
+        $mode = $modeValue instanceof DemandIntegrationMode ? $modeValue : DemandIntegrationMode::from((string) $modeValue);
 
         if ($tag !== '' && $mode === DemandIntegrationMode::DirectJs) {
             if ($requestedStatus === DemandApprovalStatus::Approved && ! $request->boolean('tag_review_approved')) {
@@ -532,6 +542,39 @@ class DemandNetworkController extends Controller
             return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
         } catch (JsonException $exception) {
             throw ValidationException::withMessages(['configuration_json' => $exception->getMessage()]);
+        }
+    }
+
+    private function assertDirectPlacementSupported(DemandSite $demandSite, Placement $placement, mixed $modeOverride): void
+    {
+        $demandSite->loadMissing('account.network');
+        $modeValue = $modeOverride ?: $demandSite->integration_mode ?: $demandSite->account->integration_mode;
+        $mode = $modeValue instanceof DemandIntegrationMode ? $modeValue : DemandIntegrationMode::from((string) $modeValue);
+        if ($mode !== DemandIntegrationMode::DirectJs) {
+            return;
+        }
+
+        $network = $demandSite->account->network;
+        if (! $network->supports_direct_js) {
+            throw ValidationException::withMessages(['integration_mode' => 'This network is not approved for Direct JS delivery.']);
+        }
+        $formats = collect((array) data_get($network->capabilities, 'supported_formats', []))->map(fn ($value) => strtoupper((string) $value));
+        $placementFormat = strtoupper($placement->type->value);
+        if ($formats->isNotEmpty() && ! $formats->contains($placementFormat)) {
+            throw ValidationException::withMessages(['placement' => "{$network->name} is not approved for {$placementFormat} Direct Demand placements."]);
+        }
+
+        $allowedSizes = collect((array) data_get($network->capabilities, 'supported_sizes', []))
+            ->filter(fn ($size) => is_array($size) && count($size) === 2)
+            ->map(fn ($size) => ((int) $size[0]).'x'.((int) $size[1]));
+        if ($allowedSizes->isEmpty()) {
+            return;
+        }
+        $placement->loadMissing('sizes');
+        $hasCompatibleSize = $placement->sizes->where('is_active', true)
+            ->contains(fn ($size) => $size->width && $size->height && $allowedSizes->contains(((int) $size->width).'x'.((int) $size->height)));
+        if (! $hasCompatibleSize) {
+            throw ValidationException::withMessages(['placement' => 'The Horus placement has no size approved by this Direct Demand network.']);
         }
     }
 
