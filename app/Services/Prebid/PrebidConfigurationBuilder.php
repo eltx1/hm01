@@ -8,7 +8,6 @@ use App\Enums\PrebidDeliveryMode;
 use App\Models\BidderSiteMapping;
 use App\Models\GamConnection;
 use App\Models\Placement;
-use App\Models\PrebidBuild;
 use App\Models\PrebidPriceBucket;
 use App\Models\Site;
 
@@ -25,39 +24,59 @@ final class PrebidConfigurationBuilder
     ): array {
         $context = $deliveryMode === PrebidDeliveryMode::GamBridge
             ? $this->gamBridgeContext($connection)
-            : $this->standaloneContext();
+            : $this->standaloneContext($site);
         $build = $context['build'];
         $site->loadMissing(['placements.sizes']);
 
         $siteMappings = BidderSiteMapping::withoutGlobalScopes()
+            ->where('organization_id', $site->organization_id)
             ->where('site_id', $site->id)
             ->where('enabled', true)
             ->with([
                 'account.bidder.adapter',
-                'placementMappings' => fn ($query) => $query->where('enabled', true)->orderBy('sequence'),
+                'placementMappings' => fn ($query) => $query
+                    ->where('organization_id', $site->organization_id)
+                    ->where('enabled', true)
+                    ->orderBy('sequence'),
             ])
             ->orderBy('sequence')
             ->get();
 
         $adUnits = $site->placements
             ->filter(fn (Placement $placement) => $placement->status === PlacementStatus::Active)
-            ->map(function (Placement $placement) use ($siteMappings): ?array {
-                $bids = $siteMappings->map(function ($siteMapping) use ($placement): ?array {
+            ->map(function (Placement $placement) use ($siteMappings, $deliveryMode, $site): ?array {
+                $mediaTypes = $this->mediaTypes($placement);
+                if ($deliveryMode === PrebidDeliveryMode::Standalone && ! isset($mediaTypes['banner'])) {
+                    // Task 15 standalone runtime intentionally supports banner
+                    // only. Native/video require renderer/cache capabilities that
+                    // are not silently approximated.
+                    return null;
+                }
+                if (isset($mediaTypes['banner']) && ($mediaTypes['banner']['sizes'] ?? []) === []) {
+                    return null;
+                }
+
+                $bids = $siteMappings->map(function ($siteMapping) use ($placement, $site): ?array {
                     $placementMapping = $siteMapping->placementMappings->firstWhere('placement_id', $placement->id);
-                    if (! $placementMapping || ! $siteMapping->account?->enabled || ! $siteMapping->account?->bidder?->enabled || ! $siteMapping->account?->bidder?->adapter?->enabled) {
+                    $account = $siteMapping->account;
+                    $bidder = $account?->bidder;
+                    $adapter = $bidder?->adapter;
+                    if (! $placementMapping
+                        || (string) $siteMapping->organization_id !== (string) $site->organization_id
+                        || (string) $placementMapping->organization_id !== (string) $site->organization_id
+                        || (string) $account?->organization_id !== (string) $site->organization_id
+                        || ! $account?->enabled || ! $bidder?->enabled || ! $adapter?->enabled) {
                         return null;
                     }
 
-                    $bidder = $siteMapping->account->bidder;
-                    $adapter = $bidder->adapter;
                     $params = array_merge(
                         $bidder->default_public_parameters ?? [],
-                        $siteMapping->account->public_parameters ?? [],
+                        $account->public_parameters ?? [],
                         $siteMapping->public_parameters ?? [],
                         $placementMapping->public_parameters ?? [],
                     );
-                    if ($adapter->publisher_parameter && filled($siteMapping->account->publisher_id)) {
-                        $params[$adapter->publisher_parameter] = (string) $siteMapping->account->publisher_id;
+                    if ($adapter->publisher_parameter && filled($account->publisher_id)) {
+                        $params[$adapter->publisher_parameter] = (string) $account->publisher_id;
                     }
                     if ($adapter->placement_parameter && filled($placementMapping->placement_id_value)) {
                         $params[$adapter->placement_parameter] = (string) $placementMapping->placement_id_value;
@@ -78,7 +97,7 @@ final class PrebidConfigurationBuilder
 
                 return [
                     'code' => $placement->code,
-                    'mediaTypes' => $this->mediaTypes($placement),
+                    'mediaTypes' => $mediaTypes,
                     'ortb2Imp' => ['ext' => ['gpid' => $placement->code]],
                     'bids' => $bids,
                 ];
@@ -90,14 +109,16 @@ final class PrebidConfigurationBuilder
         $enabled = (bool) $site->prebid_enabled
             && (bool) $context['enabled']
             && $build !== null
+            && filled($build->minified_path)
             && $adUnits !== [];
 
         return [
             'enabled' => $enabled,
+            'hasProfile' => (bool) $context['has_profile'],
             'deliveryMode' => $deliveryMode->value,
             'build' => [
                 'version' => $build?->version,
-                'url' => $build ? config('prebid.cdn_url').'/'.ltrim($build->minified_path, '/') : null,
+                'url' => $build ? rtrim((string) config('prebid.cdn_url'), '/').'/'.ltrim($build->minified_path, '/') : null,
                 'checksum' => $build?->checksum,
             ],
             'auction' => [
@@ -120,6 +141,23 @@ final class PrebidConfigurationBuilder
                 'bidderTimeoutReporting' => (bool) $context['bidder_timeout_reporting'],
                 'gamFallback' => $deliveryMode === PrebidDeliveryMode::GamBridge && (bool) $context['gam_fallback'],
             ],
+            'directRender' => $deliveryMode === PrebidDeliveryMode::Standalone ? [
+                'implemented' => true,
+                'supportedMediaTypes' => ['banner'],
+                'suppressExpiredRender' => true,
+                'allowTopWindowRenderers' => false,
+                'sandbox' => [
+                    'allow-forms',
+                    'allow-popups',
+                    'allow-popups-to-escape-sandbox',
+                    'allow-same-origin',
+                    'allow-scripts',
+                    'allow-top-navigation-by-user-activation',
+                ],
+            ] : [
+                'implemented' => false,
+                'supportedMediaTypes' => [],
+            ],
             'adUnits' => $adUnits,
         ];
     }
@@ -131,11 +169,13 @@ final class PrebidConfigurationBuilder
             return $this->disabledContext();
         }
 
-        // Existing GAM behavior remains authoritative, including managed defaults.
+        // Existing GAM behavior remains authoritative, including managed
+        // price buckets and setup objects.
         $settings = $this->manager->settingsFor($connection);
         $settings->loadMissing('build');
 
         return [
+            'has_profile' => true,
             'enabled' => (bool) $settings->enabled,
             'build' => $settings->build,
             'auction_timeout_ms' => (int) $settings->auction_timeout_ms,
@@ -151,24 +191,25 @@ final class PrebidConfigurationBuilder
     }
 
     /** @return array<string, mixed> */
-    private function standaloneContext(): array
+    private function standaloneContext(Site $site): array
     {
-        $build = PrebidBuild::query()->where('is_active', true)->latest('built_at')->first();
+        $settings = $this->manager->settingsForSite($site);
+        $settings->loadMissing('build');
 
         return [
-            'enabled' => true,
-            'build' => $build,
-            'auction_timeout_ms' => (int) config('prebid.default_timeout_ms', 1200),
-            'price_granularity' => 'medium',
-            'currency' => (string) config('prebid.default_currency', 'USD'),
-            'bidder_sequence' => 'fixed',
-            'consent_behavior' => [
-                'gdpr' => ['cmpApi' => 'iab', 'timeout' => 800, 'defaultGdprScope' => true],
-                'gpp' => ['cmpApi' => 'iab', 'timeout' => 800],
-            ],
-            'lazy_loading' => ['enabled' => true],
-            'refresh_behavior' => ['enabled' => true, 'minimumIntervalSeconds' => 30],
-            'bidder_timeout_reporting' => true,
+            'has_profile' => true,
+            'enabled' => (bool) $settings->enabled,
+            'build' => $settings->build,
+            'auction_timeout_ms' => (int) $settings->auction_timeout_ms,
+            // Price granularity is a normal Prebid auction setting here; no GAM
+            // bucket records or line-item requirements are consulted.
+            'price_granularity' => $settings->price_granularity ?: 'medium',
+            'currency' => (string) $settings->currency,
+            'bidder_sequence' => $settings->bidder_sequence ?: 'fixed',
+            'consent_behavior' => $settings->consent_behavior ?? [],
+            'lazy_loading' => $settings->lazy_loading ?? ['enabled' => true],
+            'refresh_behavior' => $settings->refresh_behavior ?? ['enabled' => true, 'minimumIntervalSeconds' => 30],
+            'bidder_timeout_reporting' => (bool) $settings->bidder_timeout_reporting,
             'gam_fallback' => false,
         ];
     }
@@ -177,6 +218,7 @@ final class PrebidConfigurationBuilder
     private function disabledContext(): array
     {
         return [
+            'has_profile' => false,
             'enabled' => false,
             'build' => null,
             'auction_timeout_ms' => (int) config('prebid.default_timeout_ms', 1200),
