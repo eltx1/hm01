@@ -6,24 +6,72 @@ Horus Media Platform is the control plane. It stores operational configuration,
 connector metadata, and aggregated reporting. It never sits in the advertising
 request path.
 
+The permanent Horus Loader controls three independent serving engines from
+static CDN configuration. GAM remains the established/default GAM path but is
+optional at the product architecture level.
+
 ~~~mermaid
 flowchart LR
     A["Publisher Website"] --> B["Cloudflare Pages static edge<br/>cdn.horusmedia.net"]
-    B --> J["Loader + manifest + immutable config"]
-    J --> C["Prebid.js"]
-    C --> D["Google Publisher Tag"]
-    D --> E{"Selected GAM Network<br/>Default: HORUS_GAM"}
+    B --> J["Permanent Loader + manifest + immutable config"]
+    J --> GAM["GAM Engine"]
+    J --> PB["Prebid Engine"]
+    J --> JS["Direct JS Engine"]
+
+    GAM --> GPT["Google Publisher Tag"]
+    GPT --> E{"Selected GAM connection"}
     E --> F["HORUS_GAM"]
     E --> G["MCM_PARTNER_GAM"]
     E --> H["PUBLISHER_GAM"]
-    F --> I["Demand Sources"]
-    G --> I
-    H --> I
-    C --> I
+
+    PB --> PBG["GAM_BRIDGE"]
+    PBG --> GPT
+    PB --> PBS["STANDALONE"]
+    PBS --> W["Prebid winning bid direct render"]
+
+    JS --> N["Approved provider JS / custom direct demand"]
 ~~~
 
-DIRECT_NATIVE_ONLY branches from loader configuration to configured native
-connectors, and PAUSED prevents slot activation.
+`HORUS_GAM` remains the application/database default serving mode for the
+established GAM-managed path. `HORUS_DIRECT` represents a Horus-managed website
+that does not require a GAM connection. `DIRECT_NATIVE_ONLY` remains a
+legacy/specialized direct-native mode and `PAUSED` continues to prevent serving.
+
+Serving mode and serving engine are intentionally distinct. Engine state is
+additive: GAM, Prebid, and Direct JS may all be enabled on a site, or a site may
+operate without GAM. Prebid and Direct JS may run simultaneously across
+independent placements. One physical placement/container has one active renderer
+at a time unless a future explicitly isolated composite-placement design defines
+otherwise.
+
+For the complete contract see [Multi-engine serving](MULTI_ENGINE_SERVING.md).
+
+## Prebid delivery contexts
+
+GAM-enabled Prebid preserves the current flow:
+
+~~~mermaid
+flowchart LR
+    A["Prebid auction"] --> B["Targeting"] --> C["GPT"] --> D["GAM"] --> E["Final GAM serving decision"]
+~~~
+
+Standalone Prebid is the approved no-GAM flow:
+
+~~~mermaid
+flowchart LR
+    A["Prebid auction"] --> B["Winning bid"] --> C["Horus Loader direct render"]
+~~~
+
+The standalone direct renderer is implemented incrementally by a dedicated
+runtime task. The architecture must not simulate standalone mode by inventing a
+GAM connection or by converting unrelated Direct JS demand into a Prebid bidder.
+
+Direct JS is independent:
+
+~~~mermaid
+flowchart LR
+    A["Horus Loader"] --> B["Approved provider JS/tag"] --> C["Provider serving endpoint"]
+~~~
 
 ## Control-plane workflow
 
@@ -34,14 +82,15 @@ flowchart TD
     C --> D["Placements"]
     D --> E["Direct Advertisers"]
     E --> F["Campaigns"]
-    F --> G["GAM API"]
+    F --> G["GAM API for GAM-backed deployments"]
     G --> H["Reports"]
     H --> I["Revenue Shares"]
     I --> J["Publisher Payments"]
 ~~~
 
-This is the implemented capability sequence. Live external activation and
-payment execution remain governed by the go-live and finance gates.
+This is the implemented capability sequence. Existing GAM campaign deployment
+remains unchanged for GAM-enabled sites. Live external activation and payment
+execution remain governed by the go-live and finance gates.
 
 ## Runtime components
 
@@ -49,8 +98,8 @@ payment execution remain governed by the go-live and finance gates.
 - cdn.horusmedia.net: Cloudflare Pages static loader, browser bundles, manifests, and configuration artifacts
 - MySQL: transactional control-plane data, sessions, cache, queue, audit log, and aggregated reporting
 - cron: Laravel scheduler once per minute
-- browser: Prebid.js auctions, GPT setup, native fallback, and direct advertising requests
-- GAM and external networks: serving and source reporting systems
+- browser: Prebid.js auctions, optional GPT/GAM setup, Direct JS/native provider execution, Click Guard, and direct advertising requests
+- GAM and external networks: optional serving engines/sources and aggregated reporting systems
 
 ## Configuration publication
 
@@ -68,6 +117,10 @@ emergency pause queue urgent paused versions. The payload builder independently
 requires website status `ACTIVE`, so manual or concurrent publication cannot
 turn an inactive website on at the edge.
 
+The static schema evolves compatibly: old deployed schema versions remain valid
+while newer versions may add explicit `engines` state. Publication, rollback,
+and cache behavior remain deterministic, and secrets never enter CDN payloads.
+
 See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane
@@ -77,8 +130,12 @@ profiles, private contract documents, websites, authorized domains, verification
 attempts, reviews, internal notes, status history, serving settings, and serving
 mode history. The website owns one stable public key used in the permanent loader
 tag. Its serving mode defaults independently in both sites and
-site_serving_settings to HORUS_GAM; changing either operational selection is
-performed transactionally without changing the public key.
+site_serving_settings to HORUS_GAM; changing the operational selection does not
+change the public key or permanent Loader tag.
+
+`HORUS_DIRECT` is a first-class no-GAM mode. It must not require a synthetic
+`gam_connection_id` or network code. Existing records are not automatically
+rewritten to it, including `DIRECT_NATIVE_ONLY` records.
 
 Domain checks support HTML meta, well-known text file, DNS TXT, and audited
 manual verification. HTTP verification accepts public DNS targets only and does
