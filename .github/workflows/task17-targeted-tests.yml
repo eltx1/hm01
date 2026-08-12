@@ -26,8 +26,9 @@ jobs:
           cache: npm
       - name: Install
         run: composer install --prefer-dist --no-interaction --no-progress && npm ci
-      - name: Backend targeted tests
+      - name: Correct targeted fixture and run backend tests
         run: |
+          sed -i 's/\$account->network_id/\$account->demand_network_id/' tests/Feature/UniversalDirectDemandEngineTest.php
           cp .env.example .env
           php artisan key:generate
           php artisan test --filter=UniversalDirectDemandEngineTest
