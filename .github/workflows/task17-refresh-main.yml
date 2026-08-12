@@ -48,23 +48,15 @@ jobs:
           text, count = pattern.subn(replacement, text, count=1)
           if count != 1:
               raise SystemExit('Task 17 ensureElementId function marker missing')
-          reset_old = """            state.nativeAttempts = {};
-              state.nativeRendered = {};
-          """
-          reset_new = """            state.nativeAttempts = {};
-              state.nativeRendered = {};
-              state.directScripts = {};
-              state.directTaboolaFlushScheduled = false;
-              state.elementSequence = 0;
-          """
-          if reset_old not in text:
+          reset_pattern = re.compile(r"(\s+state\.nativeAttempts = \{\};\n\s+state\.nativeRendered = \{\};\n)")
+          reset_replacement = r"\1            state.directScripts = {};\n            state.directTaboolaFlushScheduled = false;\n            state.elementSequence = 0;\n"
+          text, reset_count = reset_pattern.subn(reset_replacement, text, count=1)
+          if reset_count != 1:
               raise SystemExit('Task 17 runtime reset marker missing')
-          text = text.replace(reset_old, reset_new, 1)
           path.write_text(text)
 
           test_path = Path('tests/Browser/hm-loader-direct-demand.test.js')
-          test_text = test_path.read_text()
-          test_text = test_text.replace('blockedUntil: Date.now() + 60_000', 'blockedUntil: Date.now() + 500')
+          test_text = test_path.read_text().replace('blockedUntil: Date.now() + 60_000', 'blockedUntil: Date.now() + 500')
           test_path.write_text(test_text)
           PY
             git add public/assets/hm-loader.js tests/Browser/hm-loader-direct-demand.test.js
