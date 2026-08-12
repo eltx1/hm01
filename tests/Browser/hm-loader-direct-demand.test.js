@@ -324,3 +324,22 @@ test('custom third-party execution stays in an opaque script-only iframe', async
     assert.doesNotMatch(metrics.frames[0].srcdoc, /app\.horusmedia\.net/);
     assert.equal(elements[0].getAttribute('data-hm-direct'), 'ONE');
 });
+
+test('Click Guard block prevents Direct Demand script requests', async () => {
+    const definition = { header: { enabled: true, candidates: [candidate('ONE', recipe())], house: null } };
+    const selected = config(definition, { clickGuard: { enabled: true, maxClicks: 3, windowHours: 6, blockHours: 12 } });
+    const runtime = harness(selected);
+    runtime.sandbox.localStorage.setItem('hm:click-guard:v1:' + selected.siteKey, JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + 60_000 }));
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.metrics.directLoads.length, 0);
+});
+
+test('consent timeout with BLOCK_ADS prevents Direct Demand script requests', async () => {
+    const definition = { header: { enabled: true, candidates: [candidate('ONE', recipe())], house: null } };
+    const selected = config(definition, {
+        privacy: { mode: 'STRICT', cmp: { timeoutMs: 1, actionOnTimeout: 'BLOCK_ADS' }, requireConsentBeforeAds: true },
+    });
+    const runtime = harness(selected);
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.metrics.directLoads.length, 0);
+});
