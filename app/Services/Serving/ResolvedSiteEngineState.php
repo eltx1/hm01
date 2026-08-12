@@ -2,6 +2,7 @@
 
 namespace App\Services\Serving;
 
+use App\Enums\PrebidConfiguredMode;
 use App\Enums\PrebidDeliveryMode;
 use App\Models\GamConnection;
 
@@ -15,6 +16,7 @@ final readonly class ResolvedSiteEngineState
         public bool $gamEnabled,
         public string $gamReason,
         public bool $prebidEnabled,
+        public PrebidConfiguredMode $prebidConfiguredMode,
         public PrebidDeliveryMode $prebidDeliveryMode,
         public string $prebidReason,
         public bool $directJsEnabled,
@@ -33,6 +35,7 @@ final readonly class ResolvedSiteEngineState
             ],
             'prebid' => [
                 'enabled' => $this->prebidEnabled,
+                'configuredMode' => $this->prebidConfiguredMode->value,
                 'deliveryMode' => $this->prebidDeliveryMode->value,
                 'reason' => $this->prebidReason,
             ],
