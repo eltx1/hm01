@@ -1,0 +1,56 @@
+name: Task18 Targeted Tests
+
+'on':
+  push:
+    branches:
+      - task-18-direct-demand-admin-control-center
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-18-direct-demand-admin-control-center
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - name: Install and polish UI
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('resources/views/admin/demand/index.blade.php')
+          text = p.read_text()
+          text = text.replace("route('admin.supply-chain.ads-txt.index')", "route('admin.compliance.ads-txt.index')")
+          old = '''                <label>Approved script origins<textarea class="hm-input" rows="3" name="script_origins[]">{{ implode("\n", $network->script_origins ?? []) }}</textarea></label>'''
+          new = '''                <div><label>Approved script origins</label>@foreach($network->script_origins ?? [] as $origin)<input class="hm-input" type="url" name="script_origins[]" value="{{ $origin }}">@endforeach<input class="hm-input" type="url" name="script_origins[]" placeholder="https://provider.example"></div>'''
+          if old not in text:
+              raise SystemExit('network origins UI marker missing')
+          p.write_text(text.replace(old, new, 1))
+          PY
+          php -l app/Http/Controllers/Admin/DemandNetworkController.php
+          php -l tests/Feature/DirectDemandAdminControlCenterTest.php
+      - name: Targeted backend matrix
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test tests/Feature/DirectDemandAdminControlCenterTest.php
+          php artisan test tests/Feature/UniversalDirectDemandEngineTest.php
+          php artisan test tests/Feature/DemandNetworkSystemTest.php
+          php artisan test tests/Feature/GamOptionalServingModelTest.php
+      - name: Browser regressions
+        run: npm ci && node --test tests/Browser/hm-loader-direct-demand.test.js tests/Browser/hm-loader-prebid-standalone.test.js tests/Browser/hm-loader-prebid-mode-hardening.test.js tests/Browser/hm-loader-native.test.js
+      - name: Commit validated UI and remove workflow
+        run: |
+          rm .github/workflows/task18-targeted-tests.yml
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 18: validate Direct Demand Admin operations"
+          git push origin HEAD:task-18-direct-demand-admin-control-center
