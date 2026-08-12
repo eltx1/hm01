@@ -34,3 +34,13 @@ test('pure standalone placements complete before GPT initialization', () => {
     assert.ok(noGamReturn > partition, 'No-GAM pages must return through independent engines before GPT.');
     assert.ok(loadGpt > noGamReturn, 'GPT may initialize only after a real GAM placement exists.');
 });
+
+test('repeated containers do not derive IDs from the GAM slot count', () => {
+    const ensureId = loaderSource.indexOf('function ensureElementId(element, config, placement)');
+    const nextFunction = loaderSource.indexOf('function nativeDefinition', ensureId);
+    const implementation = loaderSource.slice(ensureId, nextFunction);
+
+    assert.match(implementation, /state\.elementSequence/);
+    assert.doesNotMatch(implementation, /Object\.keys\(state\.slots\)\.length/);
+    assert.match(loaderSource, /state\.elementSequence = 0;/);
+});
