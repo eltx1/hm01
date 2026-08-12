@@ -29,19 +29,26 @@ jobs:
             git checkout --ours public/assets/hm-loader.js
             python3 - <<'PY'
           from pathlib import Path
+          import re
           path = Path('public/assets/hm-loader.js')
           text = path.read_text()
-          old = """        state.elementSequence = Number(state.elementSequence || 0) + 1;
-          element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + state.elementSequence;
-          """
-          new = """        var sequence = Number(state.elementSequence);
-          if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
-          state.elementSequence = sequence + 1;
-          element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
-          """
-          if old not in text:
-              raise SystemExit('Task 17 element sequence marker missing')
-          path.write_text(text.replace(old, new, 1))
+          pattern = re.compile(r"    function ensureElementId\(element, config, placement\) \{.*?\n    \}\n\n    function nativeDefinition", re.S)
+          replacement = """    function ensureElementId(element, config, placement) {
+              if (element.id) return element.id;
+              var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
+              var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
+              var sequence = Number(state.elementSequence);
+              if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
+              state.elementSequence = sequence + 1;
+              element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
+              return element.id;
+          }
+
+          function nativeDefinition"""
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Task 17 ensureElementId function marker missing')
+          path.write_text(text)
           PY
             git add public/assets/hm-loader.js
             git commit --no-edit
