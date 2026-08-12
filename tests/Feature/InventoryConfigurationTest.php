@@ -54,6 +54,8 @@ class InventoryConfigurationTest extends TestCase
     public function test_new_site_defaults_to_horus_gam_and_generated_configuration_uses_primary_network(): void
     {
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
+        $site->update(['status' => 'ACTIVE']);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
         $this->seed(AdFormatSeeder::class);
         $format = AdFormat::query()->where('code', 'display_banner')->firstOrFail();
         $inventory = app(InventoryManager::class);
@@ -91,6 +93,8 @@ class InventoryConfigurationTest extends TestCase
     public function test_switching_selected_gam_changes_static_configuration_without_changing_installation_code(): void
     {
         [$site, $admin] = $this->siteWithPrimaryHorus();
+        $site->update(['status' => 'ACTIVE']);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
         $beforeCode = $site->installationCode();
         $partner = $this->makeGamConnection($admin->organization, $admin, [
             'type' => GamConnectionType::McmPartnerGam,
