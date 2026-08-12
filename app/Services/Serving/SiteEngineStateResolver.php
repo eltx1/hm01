@@ -81,8 +81,8 @@ final class SiteEngineStateResolver
             ! $masterServingEnabled => 'MASTER_SERVING_DISABLED',
             ! $site->prebid_enabled => 'SITE_PREBID_DISABLED',
             $prebidControlDisabled => 'PREBID_CONTROL_DISABLED',
-            ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $prebidBridgeAvailable => 'GAM_BRIDGE_CONNECTION_REQUIRED',
+            ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             default => 'ENABLED',
         };
 
