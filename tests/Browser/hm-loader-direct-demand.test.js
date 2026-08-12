@@ -329,7 +329,7 @@ test('Click Guard block prevents Direct Demand script requests', async () => {
     const definition = { header: { enabled: true, candidates: [candidate('ONE', recipe())], house: null } };
     const selected = config(definition, { clickGuard: { enabled: true, maxClicks: 3, windowHours: 6, blockHours: 12 } });
     const runtime = harness(selected);
-    runtime.sandbox.localStorage.setItem('hm:click-guard:v1:' + selected.siteKey, JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + 60_000 }));
+    runtime.sandbox.localStorage.setItem('hm:click-guard:v1:' + selected.siteKey, JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + 500 }));
     await runtime.sandbox.HorusMediaLoader.boot();
     assert.equal(runtime.metrics.directLoads.length, 0);
 });

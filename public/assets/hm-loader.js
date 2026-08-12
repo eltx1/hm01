@@ -708,15 +708,17 @@
     }
 
     function ensureElementId(element, config, placement) {
-        if (element.id) return element.id;
-        var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
-        var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
-        state.elementSequence = Number(state.elementSequence || 0) + 1;
-        element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + state.elementSequence;
-        return element.id;
-    }
+    if (element.id) return element.id;
+    var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
+    var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
+    var sequence = Number(state.elementSequence);
+    if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
+    state.elementSequence = sequence + 1;
+    element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
+    return element.id;
+}
 
-    function nativeDefinition(config, code) {
+function nativeDefinition(config, code) {
         var direct = config.directDemand || config.nativeDemand || {};
         return direct.enabled && direct.placements ? direct.placements[code] || null : null;
     }
@@ -1731,6 +1733,9 @@
             state.gamFallbackInstalled = false;
             state.nativeAttempts = {};
             state.nativeRendered = {};
+            state.directScripts = {};
+            state.directTaboolaFlushScheduled = false;
+            state.elementSequence = 0;
             Object.keys(state.standaloneObservers || {}).forEach(function (key) {
                 if (state.standaloneObservers[key] && state.standaloneObservers[key].disconnect) state.standaloneObservers[key].disconnect();
             });
