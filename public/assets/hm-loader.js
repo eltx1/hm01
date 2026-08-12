@@ -898,7 +898,7 @@
         if (!winner || !winner.adId || String(winner.mediaType || '').toLowerCase() !== 'banner') return false;
         if (winner.auctionId && auctionId && String(winner.auctionId) !== String(auctionId)) return false;
         var callbackBids = responseBids && responseBids.bids;
-        if (Array.isArray(callbackBids) && !callbackBids.some(function (bid) { return bid && bid.adId === winner.adId; })) return false;
+        if (!Array.isArray(callbackBids) || !callbackBids.some(function (bid) { return bid && bid.adId === winner.adId; })) return false;
         var ttl = Number(winner.ttl);
         var responseTimestamp = Number(winner.responseTimestamp || winner.requestTimestamp);
         if (!Number.isFinite(ttl) || ttl <= 0 || !Number.isFinite(responseTimestamp) || responseTimestamp <= 0) return false;
