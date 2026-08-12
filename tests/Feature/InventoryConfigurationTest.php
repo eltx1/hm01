@@ -37,6 +37,10 @@ class InventoryConfigurationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // PlatformControlService intentionally caches kill-switch reads. Database
+        // rollback between tests does not clear an external/array cache, so reset
+        // it here to keep control state isolated from earlier feature cases.
+        Cache::flush();
         $this->staticRoot = storage_path('framework/testing/horus-configs-'.bin2hex(random_bytes(4)));
         config([
             'horus.cdn_url' => 'https://cdn.horusmedia.net',
