@@ -54,9 +54,14 @@ final class SiteEngineStateResolver
         // AUTO never reaches the browser. It is resolved here to one of the two
         // concrete runtime delivery modes. A bridge requires a real, enabled,
         // operational GAM connection; a legacy network-code fallback is not
-        // sufficient for Prebid-to-GAM setup/targeting.
+        // sufficient for Prebid-to-GAM setup/targeting. The master AD_SERVING
+        // pause stops requests but does not mutate which delivery mode AUTO
+        // would use after serving resumes.
         $configuredPrebidMode = $site->prebid_delivery_mode ?? PrebidConfiguredMode::Auto;
-        $prebidBridgeAvailable = $gamEnabled && $connection !== null && $connection->is_enabled;
+        $prebidBridgeAvailable = $gamRequired
+            && $connection !== null
+            && $connection->is_enabled
+            && ! $gamControlDisabled;
         $prebidDeliveryMode = match ($configuredPrebidMode) {
             PrebidConfiguredMode::GamBridge => PrebidDeliveryMode::GamBridge,
             PrebidConfiguredMode::Standalone => PrebidDeliveryMode::Standalone,
