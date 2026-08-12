@@ -15,14 +15,16 @@ use App\Models\PrebidBuild;
 use App\Models\PrebidSetupRun;
 use App\Models\PrebidSetting;
 use App\Models\Site;
-use App\Services\Gam\GamConnectionResolver;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Operations\PlatformControlService;
 use App\Services\Prebid\PrebidGamSetupService;
 use App\Services\Prebid\PrebidManager;
 use App\Services\Serving\SiteEngineStateResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use JsonException;
 
@@ -30,7 +32,6 @@ class PrebidController extends Controller
 {
     public function index(
         Site $site,
-        GamConnectionResolver $connections,
         PrebidManager $manager,
         PrebidGamSetupService $setup,
         SiteEngineStateResolver $engines,
@@ -77,10 +78,11 @@ class PrebidController extends Controller
     public function updateSettings(
         Request $request,
         Site $site,
-        GamConnectionResolver $connections,
         PrebidManager $manager,
         SiteConfigPublisher $publisher,
         SiteEngineStateResolver $engines,
+        PlatformControlService $controls,
+        AuditRecorder $audit,
     ): RedirectResponse {
         $data = $request->validate([
             'prebid_build_id' => ['nullable', 'ulid', 'exists:prebid_builds,id'],
@@ -98,7 +100,7 @@ class PrebidController extends Controller
             'gam_fallback' => ['sometimes', 'boolean'],
         ]);
         $data['enabled'] = $request->boolean('enabled');
-        $data['consent_behavior'] = $this->jsonObject($data['consent_json'] ?? '');
+        $data['consent_behavior'] = $this->jsonObject($data['consent_json'] ?? '', 'consent_json');
         $data['lazy_loading'] = ['enabled' => $request->boolean('lazy_loading')];
         $data['refresh_behavior'] = ['enabled' => $request->boolean('refresh_enabled'), 'minimumIntervalSeconds' => (int) $data['refresh_minimum_seconds']];
         $data['bidder_timeout_reporting'] = $request->boolean('bidder_timeout_reporting');
@@ -107,8 +109,26 @@ class PrebidController extends Controller
 
         $configuredMode = PrebidConfiguredMode::from($data['prebid_configured_mode']);
         unset($data['prebid_configured_mode']);
+
+        $beforeState = $engines->resolve($site->loadMissing('servingSettings'));
+        $connection = $beforeState->gamConnection;
+        $bridgeAvailableForConfiguration = $beforeState->gamRequired
+            && $connection !== null
+            && $connection->is_enabled
+            && ! $controls->disabledForSite('GAM', $site->id, $connection->id);
+        if ($configuredMode === PrebidConfiguredMode::GamBridge && ! $bridgeAvailableForConfiguration) {
+            throw ValidationException::withMessages([
+                'prebid_configured_mode' => 'GAM_BRIDGE requires an eligible enabled GAM connection. No Prebid mode or runtime settings were changed.',
+            ]);
+        }
+
+        $before = [
+            'prebid_enabled' => (bool) $site->prebid_enabled,
+            'prebid_configured_mode' => ($site->servingSettings?->prebid_configured_mode ?? PrebidConfiguredMode::Auto)->value,
+        ];
+
         $site->update(['prebid_enabled' => $data['enabled']]);
-        $site->servingSettings()->updateOrCreate(
+        $servingSettings = $site->servingSettings()->updateOrCreate(
             ['site_id' => $site->id],
             [
                 'organization_id' => $site->organization_id,
@@ -117,6 +137,21 @@ class PrebidController extends Controller
                 'prebid_configured_mode' => $configuredMode,
             ],
         );
+        $after = [
+            'prebid_enabled' => (bool) $data['enabled'],
+            'prebid_configured_mode' => $configuredMode->value,
+        ];
+        if ($before !== $after) {
+            $audit->record(
+                'prebid.site_configuration.updated',
+                $site->organization_id,
+                $request->user(),
+                $servingSettings,
+                $before,
+                $after,
+                ['site_id' => $site->id],
+            );
+        }
 
         $site = $site->refresh()->load('servingSettings');
         $engineState = $engines->resolve($site);
@@ -136,9 +171,6 @@ class PrebidController extends Controller
 
         $version = $publisher->publishActiveProduction($site->refresh(), $request->user());
         $message = 'Prebid settings saved. Configured '.$configuredMode->value.'; resolved '.$engineState->prebidDeliveryMode->value.'. ';
-        if ($configuredMode === PrebidConfiguredMode::GamBridge && $engineState->prebidReason === 'GAM_BRIDGE_CONNECTION_REQUIRED') {
-            $message .= 'ACTION REQUIRED: GAM bridge is unavailable; no standalone fallback was applied. ';
-        }
         $message .= $version
             ? 'Production configuration v'.$version->version.' was queued automatically.'
             : 'The production configuration will publish automatically when the website is activated.';
@@ -155,7 +187,7 @@ class PrebidController extends Controller
             'public_parameters_json' => ['nullable', 'string', 'max:20000'],
             'enabled' => ['sometimes', 'boolean'],
         ]);
-        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '');
+        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '', 'public_parameters_json');
         $data['enabled'] = $request->boolean('enabled', true);
         $manager->addAccount(PrebidBidder::withoutGlobalScopes()->findOrFail($data['prebid_bidder_id']), $data, $request->user());
 
@@ -174,7 +206,7 @@ class PrebidController extends Controller
             'sequence' => ['nullable', 'integer', 'between:0,1000'],
             'enabled' => ['sometimes', 'boolean'],
         ]);
-        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '');
+        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '', 'public_parameters_json');
         $data['enabled'] = $request->boolean('enabled', true);
         $manager->assignToSite($bidderAccount, $site, $data, $request->user());
         $publisher->publishActiveProduction($site->refresh(), $request->user());
@@ -197,7 +229,7 @@ class PrebidController extends Controller
             'sequence' => ['nullable', 'integer', 'between:0,1000'],
             'enabled' => ['sometimes', 'boolean'],
         ]);
-        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '');
+        $data['public_parameters'] = $this->jsonObject($data['public_parameters_json'] ?? '', 'public_parameters_json');
         $data['enabled'] = $request->boolean('enabled', true);
         $manager->assignToPlacement($bidderSiteMapping, $placement, $data, $request->user());
         $publisher->publishActiveProduction($site->refresh(), $request->user());
@@ -264,7 +296,7 @@ class PrebidController extends Controller
         return back()->with($run->status === 'FAILED' ? 'error' : 'status', 'Prebid GAM setup resumed: '.$run->status.'.');
     }
 
-    private function jsonObject(string $value): array
+    private function jsonObject(string $value, string $field): array
     {
         if (trim($value) === '') {
             return [];
@@ -272,10 +304,10 @@ class PrebidController extends Controller
         try {
             $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['public_parameters_json' => 'The JSON parameters are invalid.']);
+            throw ValidationException::withMessages([$field => 'The JSON object is invalid.']);
         }
         if (! is_array($decoded) || array_is_list($decoded)) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['public_parameters_json' => 'Parameters must be a JSON object.']);
+            throw ValidationException::withMessages([$field => 'The value must be a JSON object.']);
         }
 
         return $decoded;
