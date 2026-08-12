@@ -54,6 +54,8 @@ class InventoryConfigurationTest extends TestCase
     public function test_new_site_defaults_to_horus_gam_and_generated_configuration_uses_primary_network(): void
     {
         [$site, $admin, $connection] = $this->siteWithPrimaryHorus();
+        $site->update(['status' => 'ACTIVE']);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
         $this->seed(AdFormatSeeder::class);
         $format = AdFormat::query()->where('code', 'display_banner')->firstOrFail();
         $inventory = app(InventoryManager::class);
@@ -72,10 +74,16 @@ class InventoryConfigurationTest extends TestCase
 
         $this->assertSame(ServingMode::HorusGam, $site->serving_mode);
         $this->assertSame($connection->network_code, $config['gamNetworkCode']);
-        $this->assertSame(2, $config['schemaVersion']);
+        $this->assertSame(3, $config['schemaVersion']);
         $this->assertSame('HORUS_GAM', $config['servingMode']);
+        $this->assertTrue($config['engines']['gam']['enabled']);
+        $this->assertSame($connection->network_code, $config['engines']['gam']['networkCode']);
+        $this->assertArrayHasKey('prebidEnabled', $config);
+        $this->assertArrayHasKey('nativeDemandEnabled', $config);
+        $this->assertArrayHasKey('gpt', $config);
         $this->assertSame('display_banner', $config['placements'][0]['format']['code']);
         $this->assertTrue($config['placements'][0]['format']['settings']['reserveSpace']);
+        $this->assertSame('GAM', $config['placements'][0]['renderer']);
         $this->assertSame('/'.$connection->network_code.'/article_top', $config['placements'][0]['adUnitPath']);
         $this->assertContains($site->primary_domain, $config['allowedHostnames']);
         $this->assertStringContainsString('hm-loader.js', $site->installationCode());
@@ -85,6 +93,8 @@ class InventoryConfigurationTest extends TestCase
     public function test_switching_selected_gam_changes_static_configuration_without_changing_installation_code(): void
     {
         [$site, $admin] = $this->siteWithPrimaryHorus();
+        $site->update(['status' => 'ACTIVE']);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
         $beforeCode = $site->installationCode();
         $partner = $this->makeGamConnection($admin->organization, $admin, [
             'type' => GamConnectionType::McmPartnerGam,
@@ -98,6 +108,7 @@ class InventoryConfigurationTest extends TestCase
 
         $this->assertSame('MCM_PARTNER_GAM', $config['servingMode']);
         $this->assertSame('987654321', $config['gamNetworkCode']);
+        $this->assertTrue($config['engines']['gam']['enabled']);
         $this->assertSame($beforeCode, $site->refresh()->installationCode());
     }
 
@@ -122,6 +133,7 @@ class InventoryConfigurationTest extends TestCase
         $this->assertSame(3, $rollback->version);
         $this->assertSame($versionOne->id, $rollback->source_version_id);
         $this->assertSame('active', $rollback->payload['placements'][0]['status']);
+        $this->assertSame(3, $rollback->payload['schemaVersion']);
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v1.*.json'));
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v3.*.json'));
         $this->assertFileExists($this->staticRoot.'/configs/'.$site->public_key.'/production.json');
@@ -146,6 +158,9 @@ class InventoryConfigurationTest extends TestCase
         $this->assertSame('paused', $version->payload['status']);
         $this->assertTrue($version->payload['immediatePause']);
         $this->assertFalse($version->payload['placements'][0]['enabled']);
+        $this->assertFalse($version->payload['engines']['gam']['enabled']);
+        $this->assertFalse($version->payload['engines']['prebid']['enabled']);
+        $this->assertFalse($version->payload['engines']['directJs']['enabled']);
         $this->assertStringNotContainsString('private_key', $encoded);
         $this->assertStringNotContainsString('credential', strtolower($encoded));
     }

@@ -12,6 +12,22 @@
         <p><strong>Next action:</strong> {{ $monetization['overall']['action_required'] }}</p>
     @endif
 
+    @php
+        $diagnosticValue = static function (mixed $value): string {
+            if (!is_array($value)) {
+                return (string) ($value ?? '—');
+            }
+
+            return collect($value)->map(static function (mixed $item, mixed $key): string {
+                if (is_array($item)) {
+                    return (string) $key.': '.json_encode($item, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
+
+                return is_string($key) ? $key.': '.(string) ($item ?? '—') : (string) ($item ?? '—');
+            })->implode(', ');
+        };
+    @endphp
+
     <div class="health-grid">
         @foreach($monetization['modules'] as $module)
             <div>
@@ -33,7 +49,7 @@
                         <dl>
                             @foreach($module['diagnostics'] as $key => $value)
                                 <dt>{{ str($key)->replace('_', ' ')->headline() }}</dt>
-                                <dd>{{ is_array($value) ? implode(', ', array_map('strval', $value)) : ($value ?? '—') }}</dd>
+                                <dd>{{ $diagnosticValue($value) }}</dd>
                             @endforeach
                         </dl>
                     </details>
@@ -48,7 +64,7 @@
             <dl>
                 @foreach($monetization['diagnostics'] as $key => $value)
                     <dt>{{ str($key)->replace('_', ' ')->headline() }}</dt>
-                    <dd>{{ is_array($value) ? implode(', ', array_map('strval', $value)) : ($value ?? '—') }}</dd>
+                    <dd>{{ $diagnosticValue($value) }}</dd>
                 @endforeach
             </dl>
         </details>

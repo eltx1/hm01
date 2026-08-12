@@ -6,10 +6,10 @@ return [
     'queue_tries' => (int) env('QUEUE_CRON_TRIES', 3),
     'error_notification_email' => env('ERROR_NOTIFICATION_EMAIL'),
     'controls' => [
-        'PLATFORM' => ['AD_SERVING', 'PREBID', 'NATIVE_DEMAND'],
-        'SITE' => ['AD_SERVING', 'PREBID', 'NATIVE_DEMAND'],
-        'PLACEMENT' => ['AD_SERVING'],
-        'GAM_CONNECTION' => ['AD_SERVING'],
-        'DEMAND_NETWORK' => ['AD_SERVING'],
+        'PLATFORM' => ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'],
+        'SITE' => ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'],
+        'PLACEMENT' => ['AD_SERVING', 'PREBID', 'DIRECT_JS'],
+        'GAM_CONNECTION' => ['AD_SERVING', 'GAM'],
+        'DEMAND_NETWORK' => ['AD_SERVING', 'DIRECT_JS', 'NATIVE_DEMAND'],
     ],
 ];

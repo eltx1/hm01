@@ -32,7 +32,9 @@ final class PlatformControlService
     {
         return $this->disabled('PLATFORM', null, $control)
             || $this->disabled('SITE', $siteId, $control)
-            || ($connectionId && $control === 'AD_SERVING' && $this->disabled('GAM_CONNECTION', $connectionId, 'AD_SERVING'));
+            || ($connectionId
+                && in_array($control, ['AD_SERVING', 'GAM'], true)
+                && $this->disabled('GAM_CONNECTION', $connectionId, $control));
     }
 
     public function set(string $scopeType, ?string $scopeId, string $control, bool $disabled, string $reason, User $actor): PlatformControl
@@ -102,6 +104,14 @@ final class PlatformControlService
     {
         return $this->disabled('PLATFORM', null, 'AD_SERVING')
             || $this->disabled('PLACEMENT', $placementId, 'AD_SERVING');
+    }
+
+    public function placementEngineDisabled(string $placementId, string $control): bool
+    {
+        return $this->disabled('PLATFORM', null, 'AD_SERVING')
+            || $this->disabled('PLACEMENT', $placementId, 'AD_SERVING')
+            || $this->disabled('PLATFORM', null, $control)
+            || $this->disabled('PLACEMENT', $placementId, $control);
     }
 
     private function assertTargetExists(string $scopeType, string $scopeId): void

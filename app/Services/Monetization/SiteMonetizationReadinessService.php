@@ -4,9 +4,11 @@ namespace App\Services\Monetization;
 
 use App\Enums\AdsTxtComplianceStatus;
 use App\Enums\ConfigEnvironment;
+use App\Enums\DemandIntegrationMode;
 use App\Enums\GamHealthStatus;
 use App\Enums\MonetizationDependency;
 use App\Enums\MonetizationStatus;
+use App\Enums\PrebidDeliveryMode;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\BidderSiteMapping;
@@ -14,19 +16,21 @@ use App\Models\ConfigVersion;
 use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\GamConnection;
+use App\Models\PrebidBuild;
 use App\Models\PrebidSetting;
 use App\Models\ReportDimension;
 use App\Models\Site;
 use App\Services\Compliance\AdsTxtComplianceService;
-use App\Services\Gam\GamConnectionResolver;
 use App\Services\Inventory\RuntimePolicyResolver;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Serving\ResolvedSiteEngineState;
+use App\Services\Serving\SiteEngineStateResolver;
 use DateTimeInterface;
 
 final class SiteMonetizationReadinessService
 {
     public function __construct(
-        private readonly GamConnectionResolver $gamConnections,
+        private readonly SiteEngineStateResolver $engines,
         private readonly PlatformControlService $controls,
         private readonly AdsTxtComplianceService $adsTxt,
         private readonly RuntimePolicyResolver $runtimePolicies,
@@ -63,13 +67,11 @@ final class SiteMonetizationReadinessService
     private function evaluate(Site $site): array
     {
         $site->loadMissing(['siteConfig', 'placements.adUnit']);
-        $connection = $this->gamConnections->resolve($site);
+        $engineState = $this->engines->resolve($site);
+        $connection = $engineState->gamConnection;
         $config = $site->siteConfig;
-        $runtimePaused = $site->serving_mode === ServingMode::Paused
-            || $site->status === SiteStatus::Suspended
-            || (bool) $config?->immediate_pause
-            || ($config !== null && $config->status !== 'ACTIVE')
-            || $this->controls->disabledForSite('AD_SERVING', $site->id, $connection?->id);
+        $runtimePaused = $engineState->paused
+            || ($config !== null && $config->status !== 'ACTIVE');
 
         $production = ConfigVersion::withoutGlobalScopes()
             ->with('deliveryItem')
@@ -79,9 +81,9 @@ final class SiteMonetizationReadinessService
             ->first();
 
         $modules = [
-            $this->display($site, $connection, $runtimePaused, $production),
-            $this->prebid($site, $connection),
-            $this->native($site),
+            $this->display($site, $engineState, $runtimePaused, $production),
+            $this->prebid($site, $engineState),
+            $this->native($site, $engineState),
             $this->privacy($site),
             $this->adsTxt($site),
             $this->reporting($site),
@@ -97,6 +99,7 @@ final class SiteMonetizationReadinessService
             'diagnostics' => [
                 'serving_mode' => $site->serving_mode->value,
                 'site_status' => $site->status->value,
+                'engines' => $engineState->publicEngineState($connection?->network_code ?: ($engineState->gamRequired ? $site->current_gam_network_code : null)),
                 'resolved_gam_connection_id' => $connection?->id,
                 'resolved_gam_connection_name' => $connection?->name,
                 'gam_network_code' => $connection?->network_code,
@@ -112,20 +115,21 @@ final class SiteMonetizationReadinessService
         ];
     }
 
-    private function display(Site $site, ?GamConnection $connection, bool $runtimePaused, ?ConfigVersion $production): array
+    private function display(Site $site, ResolvedSiteEngineState $engineState, bool $runtimePaused, ?ConfigVersion $production): array
     {
-        $dependency = $site->serving_mode === ServingMode::DirectNativeOnly
-            ? MonetizationDependency::Optional
-            : MonetizationDependency::Critical;
+        $connection = $engineState->gamConnection;
+        $dependency = $engineState->gamRequired
+            ? MonetizationDependency::Critical
+            : MonetizationDependency::Optional;
 
-        if ($site->serving_mode === ServingMode::DirectNativeOnly) {
-            return $this->module('display', 'Display Monetization', MonetizationStatus::NotConfigured, $dependency,
-                'This website is configured for native-only serving.', lastUpdate: $production?->published_at,
-                diagnostics: ['serving_mode' => $site->serving_mode->value]);
+        if (! $engineState->gamRequired) {
+            return $this->module('display', 'GAM / Display Monetization', MonetizationStatus::NotConfigured, $dependency,
+                'GAM is optional for this serving mode and no GAM engine is required.', lastUpdate: $production?->published_at,
+                diagnostics: ['serving_mode' => $site->serving_mode->value, 'gam_reason' => $engineState->gamReason]);
         }
         if ($runtimePaused) {
             return $this->module('display', 'Display Monetization', MonetizationStatus::Paused, $dependency,
-                'Ad serving is currently paused by a site or operational control.',
+                'Ad serving is currently paused by a site or master operational control.',
                 'Review serving controls before resuming monetization.', null, $production?->published_at,
                 ['connection_id' => $connection?->id, 'health' => $connection?->health_status?->value]);
         }
@@ -135,10 +139,17 @@ final class SiteMonetizationReadinessService
                 'Complete website review and activation.', $this->publisherRoute('publisher.sites.show', $site), $site->updated_at,
                 ['site_status' => $site->status->value]);
         }
+        if ($this->controls->disabledForSite('GAM', $site->id, $connection?->id)) {
+            return $this->module('display', 'Display Monetization', MonetizationStatus::Paused, $dependency,
+                'The GAM engine is temporarily paused by an operational control.',
+                'Review the GAM engine control before resuming GAM delivery.', null, $site->updated_at,
+                ['connection_id' => $connection?->id, 'gam_reason' => $engineState->gamReason]);
+        }
         if ($connection === null) {
             return $this->module('display', 'Display Monetization', MonetizationStatus::ActionRequired, $dependency,
-                'No eligible ad-serving connection can currently be resolved.',
-                'Horus Media must restore an eligible display serving connection.', null, $site->updated_at);
+                'No eligible GAM connection can currently be resolved for this GAM serving mode.',
+                'Horus Media must restore an eligible GAM serving connection.', null, $site->updated_at,
+                ['legacy_network_code_present' => filled($site->current_gam_network_code)]);
         }
         if (! $connection->is_enabled || in_array($connection->health_status, [GamHealthStatus::Failed, GamHealthStatus::Disabled], true)) {
             return $this->module('display', 'Display Monetization', MonetizationStatus::ActionRequired, $dependency,
@@ -158,81 +169,127 @@ final class SiteMonetizationReadinessService
             diagnostics: $this->gamDiagnostics($connection));
     }
 
-    private function prebid(Site $site, ?GamConnection $connection): array
+    private function prebid(Site $site, ResolvedSiteEngineState $engineState): array
     {
-        $dependency = MonetizationDependency::Optional;
+        $dependency = $site->serving_mode === ServingMode::HorusDirect && $site->prebid_enabled
+            ? MonetizationDependency::Critical
+            : MonetizationDependency::Optional;
         if (! $site->prebid_enabled) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::NotConfigured, $dependency,
                 'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at);
         }
         if ($this->controls->disabledForSite('PREBID', $site->id)) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
-                'Header bidding is temporarily paused by an operational control.', lastUpdate: $site->updated_at);
+                'Header bidding is temporarily paused by an operational control.', lastUpdate: $site->updated_at,
+                diagnostics: ['delivery_mode' => $engineState->prebidDeliveryMode->value]);
         }
+
+        $mappingCount = BidderSiteMapping::withoutGlobalScopes()
+            ->where('site_id', $site->id)->where('enabled', true)
+            ->whereHas('account', fn ($query) => $query->where('enabled', true))
+            ->whereHas('placementMappings', fn ($query) => $query->where('enabled', true))
+            ->count();
+
+        if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
+            $build = PrebidBuild::query()->where('is_active', true)->latest('built_at')->first();
+            if (! $build || $mappingCount === 0) {
+                return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                    'Standalone Prebid is enabled but its browser build or placement mappings are incomplete.',
+                    'Horus Media must complete the standalone Prebid build and bidder mapping setup.', null, $build?->built_at ?? $site->updated_at,
+                    ['delivery_mode' => PrebidDeliveryMode::Standalone->value, 'build' => $build?->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => null]);
+            }
+
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Ready, $dependency,
+                'Standalone Prebid configuration is ready without GAM; direct winning-bid rendering is activated by the dedicated browser-runtime rollout.',
+                lastUpdate: $build->built_at ?? $site->updated_at,
+                diagnostics: ['delivery_mode' => PrebidDeliveryMode::Standalone->value, 'build' => $build->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => null]);
+        }
+
+        $connection = $engineState->gamConnection;
         if ($connection === null) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::Degraded, $dependency,
-                'Header bidding is enabled but display serving is not currently resolvable.', lastUpdate: $site->updated_at);
+                'Header bidding is enabled in GAM bridge mode but display serving is not currently resolvable.', lastUpdate: $site->updated_at,
+                diagnostics: ['delivery_mode' => PrebidDeliveryMode::GamBridge->value]);
         }
 
         // Read-only by design: do not call PrebidManager::settingsFor(), because it can create defaults.
         $settings = PrebidSetting::withoutGlobalScopes()->with('build')
             ->where('gam_connection_id', $connection->id)->first();
-        $mappingCount = BidderSiteMapping::withoutGlobalScopes()
-            ->where('site_id', $site->id)->where('enabled', true)
-            ->whereHas('account', fn ($query) => $query->where('enabled', true))
-            ->count();
 
         if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
-                'Header bidding is enabled for this website but its managed setup is incomplete.',
+                'Header bidding is enabled for this website but its managed GAM bridge setup is incomplete.',
                 'Horus Media must complete the managed header-bidding setup.', null, $settings?->updated_at,
-                ['settings_enabled' => (bool) $settings?->enabled, 'build' => $settings?->build?->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
+                ['delivery_mode' => PrebidDeliveryMode::GamBridge->value, 'settings_enabled' => (bool) $settings?->enabled, 'build' => $settings?->build?->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
         }
 
         return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
-            'Header bidding is active and centrally managed.', lastUpdate: $settings->updated_at,
-            diagnostics: ['build' => $settings->build->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
+            'Header bidding is active and centrally managed through the GAM bridge.', lastUpdate: $settings->updated_at,
+            diagnostics: ['delivery_mode' => PrebidDeliveryMode::GamBridge->value, 'build' => $settings->build->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
     }
 
-    private function native(Site $site): array
+    private function native(Site $site, ResolvedSiteEngineState $engineState): array
     {
-        $dependency = $site->serving_mode === ServingMode::DirectNativeOnly
+        $dependency = in_array($site->serving_mode, [ServingMode::DirectNativeOnly, ServingMode::HorusDirect], true)
+            && $site->native_demand_enabled
             ? MonetizationDependency::Critical
             : MonetizationDependency::Optional;
         if (! $site->native_demand_enabled) {
-            $critical = $dependency === MonetizationDependency::Critical;
-            return $this->module('native', 'Native Monetization', $critical ? MonetizationStatus::ActionRequired : MonetizationStatus::NotConfigured, $dependency,
-                $critical ? 'Native monetization is required by the current serving mode but is not enabled.' : 'Native monetization is not configured for this website.',
+            $critical = $site->serving_mode === ServingMode::DirectNativeOnly;
+            return $this->module('native', 'Native Monetization', $critical ? MonetizationStatus::ActionRequired : MonetizationStatus::NotConfigured,
+                $critical ? MonetizationDependency::Critical : $dependency,
+                $critical ? 'Native monetization is required by the current serving mode but is not enabled.' : 'Direct JS / Native Network monetization is not configured for this website.',
                 $critical ? 'Enable and configure Native Monetization.' : null, null, $site->updated_at);
         }
-        if ($this->controls->disabledForSite('NATIVE_DEMAND', $site->id)) {
+        if ($this->controls->disabledForSite('NATIVE_DEMAND', $site->id)
+            || $this->controls->disabledForSite('DIRECT_JS', $site->id)) {
             return $this->module('native', 'Native Monetization', MonetizationStatus::Paused, $dependency,
-                'Native monetization is temporarily paused by an operational control.', lastUpdate: $site->updated_at);
+                'Direct JS / Native Network monetization is temporarily paused by an operational control.', lastUpdate: $site->updated_at);
         }
 
         $mappings = DemandSite::withoutGlobalScopes()
             ->where('site_id', $site->id)->where('is_enabled', true)
-            ->with(['account.network'])->get();
+            ->with(['account.network', 'placements'])->get();
         $eligible = $mappings->filter(fn ($mapping) => $mapping->approval_status?->value === 'APPROVED'
             && $mapping->account?->is_enabled
             && $mapping->account?->approval_status?->value === 'APPROVED'
             && $mapping->account?->network?->is_enabled);
+        $directPlacementCount = $eligible->sum(function ($mapping): int {
+            return $mapping->placements->filter(function ($placement) use ($mapping): bool {
+                if (! $placement->is_enabled || $placement->approval_status?->value !== 'APPROVED') {
+                    return false;
+                }
+                $mode = $placement->integration_mode ?? $mapping->integration_mode ?? $mapping->account?->integration_mode;
+
+                return ! in_array($mode, [DemandIntegrationMode::GamThirdPartyCreative, DemandIntegrationMode::GamLineItem], true);
+            })->count();
+        });
 
         $adminDiagnostics = [
+            'engine' => 'DIRECT_JS',
+            'engine_reason' => $engineState->directJsReason,
             'mapping_count' => $mappings->count(),
             'eligible_mappings' => $eligible->count(),
+            'eligible_direct_placements' => $directPlacementCount,
             'provider_names' => $mappings->pluck('account.network.name')->filter()->unique()->values()->all(),
             'account_names' => $mappings->pluck('account.name')->filter()->unique()->values()->all(),
             'account_ids' => $mappings->pluck('demand_account_id')->values()->all(),
         ];
-        if ($eligible->isEmpty()) {
+
+        $requiresDirect = in_array($site->serving_mode, [ServingMode::HorusDirect, ServingMode::DirectNativeOnly], true);
+        if ($eligible->isEmpty() || ($requiresDirect && $directPlacementCount === 0)) {
             return $this->module('native', 'Native Monetization', MonetizationStatus::ActionRequired, $dependency,
-                'Native monetization is enabled but no approved managed Native Network mapping is ready.',
+                $requiresDirect
+                    ? 'Direct JS / Native Network monetization is enabled but no approved direct placement is ready.'
+                    : 'Native monetization is enabled but no approved managed Native Network mapping is ready.',
                 'Horus Media must complete the Native Network setup.', null, $mappings->max('updated_at'), $adminDiagnostics);
         }
 
         return $this->module('native', 'Native Monetization', MonetizationStatus::Active, $dependency,
-            'Native Network monetization is active.', lastUpdate: $eligible->max('last_synced_at') ?? $eligible->max('updated_at'), diagnostics: $adminDiagnostics);
+            $requiresDirect
+                ? 'Direct JS / Native Network monetization is active without requiring GAM.'
+                : 'Native Network monetization is active.',
+            lastUpdate: $eligible->max('last_synced_at') ?? $eligible->max('updated_at'), diagnostics: $adminDiagnostics);
     }
 
     private function privacy(Site $site): array
@@ -343,7 +400,7 @@ final class SiteMonetizationReadinessService
 
         return $this->module('overall', 'Monetization Overall', $status, MonetizationDependency::Critical,
             match ($status) {
-                MonetizationStatus::Active => 'Critical monetization dependencies are active. Optional integrations do not block this status.',
+                MonetizationStatus::Active => 'Critical monetization dependencies are active or ready. Optional integrations do not block this status.',
                 MonetizationStatus::ActionRequired => 'A critical monetization dependency requires action.',
                 MonetizationStatus::Degraded => 'Monetization is operating with a degraded critical or recommended dependency.',
                 MonetizationStatus::Pending => 'A critical monetization dependency is still pending.',
