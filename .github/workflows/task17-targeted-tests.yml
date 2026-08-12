@@ -1,0 +1,45 @@
+name: Task17 Targeted Tests
+
+'on':
+  push:
+    branches:
+      - task-17-universal-direct-js-demand-engine
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-17-universal-direct-js-demand-engine
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: composer install --prefer-dist --no-interaction --no-progress && npm ci
+      - name: Backend targeted tests
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test --filter=UniversalDirectDemandEngineTest
+          php artisan test --filter=DemandNetworkSystemTest
+          php artisan test --filter=GamOptionalServingModelTest
+      - name: Browser targeted tests
+        run: node --test tests/Browser/hm-loader-direct-demand.test.js tests/Browser/hm-loader-native.test.js tests/Browser/hm-loader-prebid-standalone.test.js
+      - name: Remove temporary workflow after green validation
+        run: |
+          rm .github/workflows/task17-targeted-tests.yml
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 17: record targeted Direct Demand validation"
+          git push origin HEAD:task-17-universal-direct-js-demand-engine
