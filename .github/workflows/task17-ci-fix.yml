@@ -1,0 +1,42 @@
+name: Task17 CI Fix
+
+'on':
+  push:
+    branches:
+      - task-17-universal-direct-js-demand-engine
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-17-universal-direct-js-demand-engine
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - name: Install and patch
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress
+          python3 scripts/task17_ci_fix.py
+          php -l app/Services/Demand/DemandConfigurationBuilder.php
+          php -l tests/Feature/InventoryConfigurationTest.php
+      - name: Validate regressions
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test tests/Unit/DemandConfigurationSecurityTest.php
+          php artisan test tests/Feature/InventoryConfigurationTest.php
+          php artisan test tests/Feature/UniversalDirectDemandEngineTest.php
+      - name: Commit validated fixes
+        run: |
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 17: preserve legacy Direct Demand security compatibility"
+          git push origin HEAD:task-17-universal-direct-js-demand-engine
