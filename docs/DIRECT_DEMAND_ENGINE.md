@@ -14,6 +14,8 @@ During rollout the existing database master `native_demand_enabled`, operational
 
 `DIRECT_JS` remains the engine-level operational control key. `NATIVE_DEMAND` remains a legacy broad compatibility control and may still suppress the historical demand surface.
 
+Legacy callers that still provide the original flattened public tag (`scriptUrl`, `containerId`, `containerClass`, `attributes`, render timeout/success fields) are normalized into the structured v4 recipe before sanitization. Existing one-dependency construction of `DemandConfigurationBuilder` also remains valid while normal container resolution injects operational controls explicitly.
+
 ## Renderer ownership
 
 Direct Demand is independent from GAM and Prebid. Different physical placements may run simultaneously, for example:
@@ -73,7 +75,7 @@ Recipe rules:
 - every external script is HTTPS and must match an approved provider/network origin;
 - one recipe may contain multiple ordered scripts;
 - shared loader scripts are deduplicated page-wide while each placement still performs its own initialization;
-- public `data-*`/`aria-*` attributes and provider-issued public IDs are allowed;
+- provider container attributes exposed in the public runtime are limited to reviewed `data-*` values and provider-issued public IDs;
 - credentials, authorization tokens, environment/file references, secrets and private keys are never emitted;
 - `javascript:` URLs and inline DOM event handlers are rejected;
 - arbitrary initialization JavaScript is never stored or evaluated;
@@ -139,7 +141,7 @@ For a structured Direct Demand placement the permanent Loader:
 
 A DNS/script error, timeout, initialization failure, no-render or malformed recipe is contained to the placement. Raw provider errors are not exposed to Publisher UI.
 
-The existing SPA rescan and duplicate-Loader protections remain. Dynamic replacement nodes receive monotonic Loader element IDs so a removed no-GAM placement cannot accidentally reuse an earlier runtime key.
+The existing SPA rescan and duplicate-Loader protections remain. Dynamic replacement nodes receive monotonic Loader element IDs so a removed no-GAM placement cannot accidentally reuse an earlier runtime key. Test/runtime reset also clears Direct Demand script promises and the element sequence so repeated scans remain deterministic.
 
 ## Lifecycle and controls
 
