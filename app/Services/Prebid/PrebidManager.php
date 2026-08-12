@@ -26,27 +26,15 @@ final class PrebidManager
 
     public function settingsFor(GamConnection $connection): PrebidSetting
     {
-        $build = PrebidBuild::query()->where('is_active', true)->latest('built_at')->first();
-
         $settings = PrebidSetting::withoutGlobalScopes()->firstOrCreate(
-            ['gam_connection_id' => $connection->id],
             [
-                'organization_id' => $connection->organization_id,
-                'prebid_build_id' => $build?->id,
-                'enabled' => false,
-                'auction_timeout_ms' => config('prebid.default_timeout_ms', 1200),
-                'price_granularity' => 'medium',
-                'currency' => config('prebid.default_currency', 'USD'),
-                'bidder_sequence' => 'fixed',
-                'consent_behavior' => ['gdpr' => ['cmpApi' => 'iab', 'timeout' => 800, 'defaultGdprScope' => true], 'gpp' => ['cmpApi' => 'iab', 'timeout' => 800]],
-                'lazy_loading' => ['enabled' => true],
-                'refresh_behavior' => ['enabled' => true, 'minimumIntervalSeconds' => 30],
-                'bidder_timeout_reporting' => true,
-                'gam_fallback' => true,
-                'configuration' => [],
+                'scope' => PrebidSetting::SCOPE_GAM_CONNECTION,
+                'gam_connection_id' => $connection->id,
             ],
+            $this->defaultSettings($connection->organization_id) + ['site_id' => null],
         );
 
+        // Preserve the established GAM setup objects and price buckets exactly.
         if (! PrebidPriceBucket::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->exists()) {
             foreach ([
                 ['code' => 'low', 'minimum' => 0, 'maximum' => 5, 'increment' => .05, 'precision' => 2, 'sort_order' => 10],
@@ -74,14 +62,58 @@ final class PrebidManager
         return $settings;
     }
 
+    public function settingsForSite(Site $site): PrebidSetting
+    {
+        return PrebidSetting::withoutGlobalScopes()->firstOrCreate(
+            [
+                'scope' => PrebidSetting::SCOPE_SITE_STANDALONE,
+                'site_id' => $site->id,
+            ],
+            $this->defaultSettings($site->organization_id, standalone: true) + ['gam_connection_id' => null],
+        );
+    }
+
     public function updateSettings(GamConnection $connection, array $data, User $actor): PrebidSetting
     {
-        $settings = $this->settingsFor($connection);
+        return $this->updateRuntimeSettings(
+            $this->settingsFor($connection),
+            $data,
+            $actor,
+            $connection->organization_id,
+            'prebid.settings.updated',
+            allowGamFallback: true,
+        );
+    }
+
+    public function updateStandaloneSettings(Site $site, array $data, User $actor): PrebidSetting
+    {
+        if ((string) $site->organization_id !== (string) $actor->organization_id) {
+            throw ValidationException::withMessages(['site_id' => 'The website must belong to your organization.']);
+        }
+
+        return $this->updateRuntimeSettings(
+            $this->settingsForSite($site),
+            $data,
+            $actor,
+            $site->organization_id,
+            'prebid.standalone_settings.updated',
+            allowGamFallback: false,
+        );
+    }
+
+    private function updateRuntimeSettings(
+        PrebidSetting $settings,
+        array $data,
+        User $actor,
+        string $organizationId,
+        string $auditAction,
+        bool $allowGamFallback,
+    ): PrebidSetting {
         $before = $settings->toArray();
         $settings->update([
             'prebid_build_id' => $data['prebid_build_id'] ?? $settings->prebid_build_id,
             'enabled' => (bool) ($data['enabled'] ?? false),
-            'auction_timeout_ms' => (int) ($data['auction_timeout_ms'] ?? 1200),
+            'auction_timeout_ms' => max(100, min(5000, (int) ($data['auction_timeout_ms'] ?? 1200))),
             'price_granularity' => (string) ($data['price_granularity'] ?? 'medium'),
             'currency' => strtoupper((string) ($data['currency'] ?? 'USD')),
             'bidder_sequence' => (string) ($data['bidder_sequence'] ?? 'fixed'),
@@ -89,13 +121,43 @@ final class PrebidManager
             'lazy_loading' => $data['lazy_loading'] ?? ['enabled' => true],
             'refresh_behavior' => $data['refresh_behavior'] ?? ['enabled' => true, 'minimumIntervalSeconds' => 30],
             'bidder_timeout_reporting' => (bool) ($data['bidder_timeout_reporting'] ?? false),
-            'gam_fallback' => (bool) ($data['gam_fallback'] ?? true),
+            'gam_fallback' => $allowGamFallback && (bool) ($data['gam_fallback'] ?? true),
             'configuration' => $data['configuration'] ?? [],
             'updated_by' => $actor->id,
         ]);
-        $this->audit->record('prebid.settings.updated', $connection->organization_id, $actor, $settings, $before, $settings->fresh()->toArray());
+        $this->audit->record($auditAction, $organizationId, $actor, $settings, $before, $settings->fresh()->toArray());
 
         return $settings->fresh();
+    }
+
+    private function defaultSettings(string $organizationId, bool $standalone = false): array
+    {
+        $build = PrebidBuild::query()->where('is_active', true)->latest('built_at')->first();
+
+        return [
+            'organization_id' => $organizationId,
+            'prebid_build_id' => $build?->id,
+            'enabled' => false,
+            'auction_timeout_ms' => config('prebid.default_timeout_ms', 1200),
+            'price_granularity' => 'medium',
+            'currency' => config('prebid.default_currency', 'USD'),
+            'bidder_sequence' => 'fixed',
+            'consent_behavior' => [
+                'gdpr' => ['cmpApi' => 'iab', 'timeout' => 800, 'defaultGdprScope' => true],
+                'gpp' => ['cmpApi' => 'iab', 'timeout' => 800],
+            ],
+            'lazy_loading' => ['enabled' => true],
+            'refresh_behavior' => ['enabled' => true, 'minimumIntervalSeconds' => 30],
+            'bidder_timeout_reporting' => true,
+            'gam_fallback' => ! $standalone,
+            'configuration' => $standalone ? [
+                'standalone' => [
+                    'supportedMediaTypes' => ['banner'],
+                    'suppressExpiredRender' => true,
+                    'allowTopWindowRenderers' => false,
+                ],
+            ] : [],
+        ];
     }
 
     public function addAccount(PrebidBidder $bidder, array $data, User $actor): BidderAccount
@@ -126,6 +188,9 @@ final class PrebidManager
 
     public function assignToSite(BidderAccount $account, Site $site, array $data, User $actor): BidderSiteMapping
     {
+        if ((string) $account->organization_id !== (string) $site->organization_id || (string) $site->organization_id !== (string) $actor->organization_id) {
+            throw ValidationException::withMessages(['site_id' => 'Bidder account and website must belong to your organization.']);
+        }
         $account->loadMissing('bidder.adapter');
         $parameters = $this->validatedParameters($account->bidder, $data['public_parameters'] ?? []);
 
@@ -145,8 +210,10 @@ final class PrebidManager
 
     public function assignToPlacement(BidderSiteMapping $siteMapping, Placement $placement, array $data, User $actor): BidderPlacementMapping
     {
-        if ($siteMapping->site_id !== $placement->site_id) {
-            throw ValidationException::withMessages(['placement_id' => 'The placement must belong to the mapped website.']);
+        if ($siteMapping->site_id !== $placement->site_id
+            || (string) $siteMapping->organization_id !== (string) $placement->organization_id
+            || (string) $placement->organization_id !== (string) $actor->organization_id) {
+            throw ValidationException::withMessages(['placement_id' => 'The placement and mapping must belong to the same organization and website.']);
         }
         $siteMapping->loadMissing('account.bidder.adapter');
         $parameters = $this->validatedParameters($siteMapping->account->bidder, $data['public_parameters'] ?? []);
@@ -168,6 +235,9 @@ final class PrebidManager
 
     public function toggle(BidderAccount|BidderSiteMapping|BidderPlacementMapping $model, bool $enabled, User $actor): void
     {
+        if ((string) $model->organization_id !== (string) $actor->organization_id) {
+            throw ValidationException::withMessages(['organization_id' => 'The Prebid resource must belong to your organization.']);
+        }
         $before = $model->toArray();
         $model->update(['enabled' => $enabled]);
         $this->audit->record('prebid.mapping.toggled', $model->organization_id, $actor, $model, $before, $model->fresh()->toArray());
