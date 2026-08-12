@@ -1,0 +1,28 @@
+name: Task17 Refresh Main
+
+'on':
+  push:
+    branches:
+      - task-17-universal-direct-js-demand-engine
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-17-universal-direct-js-demand-engine
+          fetch-depth: 0
+      - name: Merge latest main
+        run: |
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git fetch origin main
+          git merge --no-edit origin/main
+          rm .github/workflows/task17-refresh-main.yml
+          git add -A
+          git commit -m "Task 17: remove temporary main refresh workflow"
+          git push origin HEAD:task-17-universal-direct-js-demand-engine
