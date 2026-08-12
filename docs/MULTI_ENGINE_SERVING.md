@@ -2,187 +2,222 @@
 
 Status: authoritative product and engineering contract.
 
-This document defines the approved Horus Media serving architecture evolution.
-It does not remove, replace, weaken, deprecate, or redesign the existing Google
-Ad Manager integration. Existing GAM-enabled sites continue to use the current
-GAM implementation. GAM is no longer a universal prerequisite for monetization.
+This document defines the approved Horus Media serving architecture after Tasks 13–16. It preserves the established Google Ad Manager path while making GAM optional for Horus-managed serving.
 
 ## Serving mode is not serving engine
 
-A **serving mode** describes how a website is broadly operated. A **serving
-engine** is an independently enabled delivery capability used by one or more
-placements.
+A **serving mode** describes the website-level operating model. A **serving engine** is an independently controlled delivery capability used by placements.
 
-Supported serving modes:
+Supported serving modes remain:
 
-- `HORUS_GAM` — Horus-managed GAM; default GAM mode and fully backward compatible.
-- `HORUS_DIRECT` — Horus-managed serving without a required GAM connection.
-- `MCM_PARTNER_GAM` — optional partner GAM mode.
-- `PUBLISHER_GAM` — optional publisher-owned GAM mode.
-- `DIRECT_NATIVE_ONLY` — legacy/specialized direct-native mode retained for
-  backward compatibility until a deliberate migration is approved.
-- `PAUSED` — explicit paused mode.
+- `HORUS_GAM`
+- `HORUS_DIRECT`
+- `MCM_PARTNER_GAM`
+- `PUBLISHER_GAM`
+- `DIRECT_NATIVE_ONLY`
+- `PAUSED`
 
-The independent serving engines are:
+Independent serving engines are:
 
 - **GAM**
 - **PREBID**
 - **DIRECT_JS**
 
-Engine state is not a mutually exclusive enum. A site may legitimately resolve
-to any supported combination, for example:
+Valid states include all three engines enabled, standalone Prebid plus Direct JS with GAM disabled, or Direct JS alone. Engine enablement is never modeled as a global Prebid-versus-Direct-JS winner.
 
-```text
-GAM=true   PREBID=true   DIRECT_JS=true
-GAM=false  PREBID=true   DIRECT_JS=true
-GAM=false  PREBID=false  DIRECT_JS=true
-```
+`SiteEngineStateResolver` is the central source of effective engine state. Controllers, readiness, and static configuration must consume that result rather than duplicate serving eligibility rules.
 
-`SiteEngineStateResolver` is the central source of per-site engine state.
-Controllers, static configuration, and readiness must not independently invent
-GAM/Prebid/Direct-JS eligibility rules.
+## Fixed runtime and deployment invariants
 
-`AD_SERVING` remains the master operational control. A disabled master control
-turns all engines and placement eligibility off. Engine-specific controls are
-independent:
+The architecture continues to require:
 
-- `GAM` disables only the GAM engine.
-- `PREBID` disables only Prebid.
-- `DIRECT_JS` disables only direct provider JavaScript.
-- `NATIVE_DEMAND` remains a backward-compatible broader alias during the
-  compatibility period.
+- one permanent Horus Loader;
+- browser-side Prebid;
+- static CDN runtime configuration;
+- no advertising request through Laravel;
+- aggregated reporting only;
+- no raw browser bid/impression/click ingestion;
+- no credentials or secrets in public configuration;
+- PHP 8.2+ and MySQL portability;
+- no Redis, Supervisor, WebSockets, Docker, permanent worker, or production Node runtime requirement;
+- organization isolation;
+- audit trails for sensitive control-plane changes;
+- dry-run and idempotency for external writes.
 
-A GAM control must not implicitly disable Direct JS, and a Direct JS control
-must not disable GAM-managed demand or House rendering.
+## Engine controls
 
-## Runtime topology
+`AD_SERVING` is the master operational control. When disabled, all ad delivery stops.
 
-```text
-Publisher page
-    |
-    v
-Permanent Horus Loader
-    |
-    +-- GAM Engine
-    |      +-- GPT
-    |      +-- selected GAM connection
-    |      +-- existing inventory / direct-campaign deployment
-    |
-    +-- Prebid Engine
-    |      +-- GAM_BRIDGE
-    |      |      Prebid auction -> targeting -> GPT -> GAM
-    |      |
-    |      +-- STANDALONE
-    |             Prebid auction -> winning bid -> direct browser render
-    |
-    +-- Direct JS Engine
-           Loader -> approved provider JS/tag
-```
+Engine controls remain independent:
 
-The permanent Loader and static CDN configuration remain the runtime control
-surface. Advertising requests do not traverse Laravel.
+- `GAM` stops the GAM engine.
+- `PREBID` stops both Prebid delivery modes.
+- `DIRECT_JS` stops direct-provider JavaScript.
+- `NATIVE_DEMAND` remains a legacy compatibility control during the transition period.
 
-## GAM engine contract
+Disabling GAM must not inherently stop standalone Prebid or Direct JS. Disabling Direct JS must not disable GAM-managed demand.
 
-The GAM engine preserves the current implementation and remains a first-class
-Horus product path.
+## GAM contract
 
-For `HORUS_GAM`, `MCM_PARTNER_GAM`, and `PUBLISHER_GAM` when GAM is active:
+`HORUS_GAM`, `MCM_PARTNER_GAM`, and `PUBLISHER_GAM` retain the existing GAM implementation.
 
-- GPT remains the delivery layer.
-- `GamConnectionResolver` remains the source of the selected GAM connection.
-- inventory synchronization remains unchanged.
-- direct campaign GAM deployment remains unchanged.
-- Prebid-to-GAM integration remains available.
-- Prebid may compete with GAM/AdX through the existing header-bidding flow.
-- current dry-run, idempotency, authorization, audit, and reconciliation rules
-  remain mandatory.
+When GAM is active:
 
-The schema-v3 engine resolver preserves the legacy `current_gam_network_code`
-runtime fallback for established GAM modes so a previously valid deployment is
-not silently invalidated during rollout. Readiness still reports a missing real
-GAM connection as an operational issue. `HORUS_DIRECT` never receives that
-fallback and never receives a synthetic GAM identifier.
+- GPT remains the browser delivery layer;
+- `GamConnectionResolver` selects the eligible connection;
+- inventory synchronization remains unchanged;
+- direct-campaign GAM deployment remains unchanged;
+- existing GAM identifiers and remote mappings remain authoritative;
+- the legacy network-code fallback may preserve established GAM display delivery but does not manufacture a Prebid bridge relationship.
 
-## Prebid engine contract
+No AdX-specific competition code is introduced. If GAM contains AdX/Open Auction demand, the normal GAM decision remains authoritative after Prebid targeting is supplied through the bridge.
 
-Prebid remains browser-side and has two delivery contexts.
+## Prebid configured mode and resolved delivery mode
 
-### GAM_BRIDGE
+Admin exposes a configured preference stored on `SiteServingSetting.prebid_configured_mode`:
 
-This is the existing behavior and remains unchanged:
+- `AUTO`
+- `GAM_BRIDGE`
+- `STANDALONE`
+
+Browser runtime receives only a concrete delivery mode:
+
+- `GAM_BRIDGE`
+- `STANDALONE`
+
+`AUTO` is deterministic. The central resolver chooses:
+
+1. `GAM_BRIDGE` when a real eligible GAM bridge is available;
+2. otherwise `STANDALONE` when an enabled site-owned standalone profile exists;
+3. `HORUS_DIRECT` may resolve to the standalone path, which remains incomplete until its standalone profile is configured;
+4. otherwise the unresolved GAM-capable path remains `GAM_BRIDGE` and readiness reports the missing dependency.
+
+An explicit `GAM_BRIDGE` selection never silently changes to standalone. If its GAM dependency later becomes unavailable, Prebid stops safely and readiness reports **Action Required**.
+
+An explicit `STANDALONE` selection does not become GAM merely because a GAM connection exists.
+
+The operational GAM switch participates in AUTO resolution: when GAM is disabled, an already configured standalone profile may continue through standalone Prebid. The master `AD_SERVING` control pauses delivery without changing the configured preference.
+
+## Prebid runtime profiles
+
+`prebid_settings` is the single generic runtime-settings table. Each row has exactly one owner:
+
+- `GAM_CONNECTION` — connection-owned profile for `GAM_BRIDGE`;
+- `SITE_STANDALONE` — site-owned profile for `STANDALONE`.
+
+The Task 15 migration deterministically backfilled existing settings rows to `GAM_CONNECTION`, made the connection nullable only for the standalone owner, and added the site owner constraint.
+
+The following remain shared and are **not duplicated** for standalone mode:
+
+- bidder adapters;
+- bidders;
+- bidder accounts;
+- bidder-site mappings;
+- bidder-placement mappings.
+
+Existing GAM price buckets, setup runs, templates, and remote-object mappings are not deleted or converted into standalone objects.
+
+## GAM_BRIDGE runtime
+
+The established flow remains:
 
 ```text
 Prebid auction
-  -> targeting
+  -> set Prebid targeting for GPT
   -> GPT
-  -> GAM
-  -> GAM makes the final serving decision
+  -> GAM refresh/request
+  -> GAM makes its normal final serving decision
 ```
 
-A valid GAM context is required for the bridge. Existing GAM settings, price
-buckets, line items, targeting, and remote-object idempotency remain intact.
+The existing connection-owned Prebid profile and GAM setup planner/service remain responsible for GAM-specific setup. Line-item/creative setup remains dry-run capable, idempotent, audited, and resumable according to the existing control-plane contract.
 
-### STANDALONE
+A placement resolved to GAM must not use the standalone direct renderer.
 
-This is the approved no-GAM behavior:
+## STANDALONE runtime
+
+Standalone Prebid is a real no-ad-server browser path and requires no `GamConnection`.
+
+The runtime sequence is:
 
 ```text
-Prebid auction
-  -> winning bid
-  -> Horus Loader direct render
+eligible PREBID_STANDALONE placement
+  -> master / PREBID control gate
+  -> privacy / consent gate
+  -> Click Guard gate
+  -> lazy visibility gate when configured
+  -> load pinned Horus Prebid build
+  -> add the placement ad unit
+  -> bounded pbjs.requestBids auction
+  -> select pbjs.getHighestCpmBids winner
+  -> validate winner membership / auction / media type / TTL / timestamp
+  -> create isolated iframe
+  -> pbjs.renderAd(iframe document, adId)
+  -> mark rendered
 ```
 
-Task 14 implements the **core standalone configuration foundation** only:
+No synthetic CPM is generated.
 
-- no GAM connection or network code is required;
-- the active pinned Prebid build is resolved without creating a GAM-scoped
-  `PrebidSetting`;
-- site and placement bidder mappings are reused;
-- static configuration identifies `deliveryMode: STANDALONE`;
-- a standalone placement may be eligible without `adUnitPath`;
-- the legacy `prebidEnabled` compatibility flag stays `false` for standalone
-  mode so the existing Loader cannot accidentally run the GAM bridge path.
+A pure standalone placement must not:
 
-Direct winning-bid rendering is intentionally **not** implemented by Task 14.
-Until the dedicated browser-runtime rollout, readiness reports a complete
-standalone configuration as `READY`, not falsely `ACTIVE`.
+- require `gamNetworkCode`;
+- create a GPT slot;
+- initialize GPT solely for that placement;
+- set GAM targeting;
+- call GAM;
+- fall back into GAM.
 
-No raw browser bid, impression, or click stream may be sent to Laravel. Only
-approved aggregate reporting remains permitted.
+## Supported standalone formats
 
-## Direct JS engine contract
+Standalone direct rendering currently supports **banner only**.
 
-Direct JS is an independent serving engine for approved provider integrations,
-including custom approved tags and providers such as ExoClick, Adsterra, MGID,
-or future approved networks.
+Native and video standalone direct rendering are intentionally unsupported and fail closed until Horus implements and validates the provider renderer/cache behavior required by those media types.
 
-Direct JS:
+GAM bridge media behavior is not reduced by this standalone limitation.
 
-- does not enter a Prebid auction;
-- does not require GAM;
-- does not need to wait for a Prebid loss;
-- may operate on independent placements while Prebid is operating elsewhere on
-  the same page;
-- is controlled by static Horus configuration and the permanent Loader;
-- must use sanitized, approved public runtime values only; credentials and
-  secrets never belong in CDN configuration.
+## Standalone render security
 
-Task 14 keeps the existing `nativeDemand` payload as a schema-v2 compatibility
-surface while adding explicit Direct JS engine state. The new `DIRECT_JS`
-control removes only direct-provider candidates; it does not remove GAM-managed
-demand or House content. The legacy `NATIVE_DEMAND` control retains its broader
-historical semantics during the migration window.
+The direct-render iframe is isolated and grants only the bounded capabilities required by the approved banner path. Unrestricted top-window navigation is not granted.
 
-Provider tags must not be represented as fake Prebid bidders merely to fit an
-older architecture.
+Standalone Prebid configuration disables top-window renderers and enables stale/expired rendering protections. A winner that is not part of the current callback auction, is expired, is stale, has an invalid media type, or otherwise cannot be safely rendered is rejected.
+
+## Refresh, lazy loading, SPA, and duplicate safety
+
+Standalone refresh:
+
+- honors the platform minimum refresh interval;
+- honors placement refresh limits;
+- skips hidden pages;
+- performs a new auction for each refresh;
+- does not reuse an old winning bid as the next auction winner;
+- replaces the previous render surface only after the new render succeeds;
+- remains gated by privacy, Click Guard, PREBID, and AD_SERVING controls.
+
+SPA mutation rescans may discover dynamically inserted placements. Already-defined DOM elements remain idempotent.
+
+Generated element IDs use an independent Loader instance sequence rather than the number of GPT slots. Multiple DOM containers using the same placement code therefore receive distinct auction/render state even on a page with no GAM slots.
+
+Duplicate Loader boot protection remains unchanged.
+
+## Click Guard and privacy
+
+The existing browser privacy gate executes before standalone bidding. A blocking consent outcome prevents auctions. Consent settings and activity controls remain part of the public Prebid runtime configuration.
+
+Click Guard gates standalone initial auctions, refresh auctions, and render requests exactly as it gates the existing ad paths. Click Guard state remains browser-local; it is not streamed to Laravel.
+
+## Direct JS independence
+
+Direct JS remains an independent engine:
+
+- it is not represented as a fake Prebid bidder;
+- it does not require GAM;
+- it does not wait for standalone Prebid to lose;
+- it may run on a different placement while standalone Prebid runs elsewhere on the same page.
+
+There is no automatic Direct JS fallback from standalone Prebid in Tasks 15–16.
 
 ## Placement renderer ownership
 
-Engine enablement is site-level capability. Rendering is placement-level
-ownership.
-
-Schema v3 gives each generated placement an explicit renderer:
+Each generated placement has one renderer owner:
 
 - `GAM`
 - `PREBID_STANDALONE`
@@ -191,121 +226,85 @@ Schema v3 gives each generated placement an explicit renderer:
 - `NONE`
 - `CONFLICT`
 
-A single physical DOM surface has exactly one active renderer at a time. If a
-GAM-less placement is configured for both standalone Prebid and Direct JS,
-Task 14 emits `renderer: CONFLICT`, sets `rendererConflict: true`, and disables
-that placement rather than allowing accidental double rendering.
+One physical placement must not have two renderers. A standalone-Prebid/direct-JS conflict emits `CONFLICT` and disables the placement rather than double-rendering.
 
-Valid examples remain:
+Examples of valid independent placement routing:
 
 ```text
-Placement A -> STANDALONE PREBID
-Placement B -> EXOCLICK DIRECT JS
-Placement C -> ADSTERRA DIRECT JS
-Placement D -> HOUSE
+Placement A -> PREBID_STANDALONE
+Placement B -> DIRECT_JS
 ```
 
 and:
 
 ```text
-Placement A -> GAM + PREBID GAM_BRIDGE
-Placement B -> DIRECT JS
+Placement A -> GAM with PREBID GAM_BRIDGE
+Placement B -> DIRECT_JS
 ```
 
-Prebid and Direct JS do not require a global arbitration winner.
+## Static schema v3
 
-## HORUS_DIRECT contract
+Schema v3 is additive and continues to retain legacy schema-v2 fields for rollback compatibility.
 
-`HORUS_DIRECT` is the first-class Horus-managed no-GAM serving mode.
-
-A `HORUS_DIRECT` site:
-
-- may be active without `gam_connection_id`;
-- receives `gamNetworkCode: null` in generated configuration;
-- must not receive a fake `network_code` or synthetic GAM identifier;
-- may enable standalone Prebid;
-- may enable Direct JS;
-- may enable both engines across independent placements;
-- remains subject to the same organization, approval, privacy, supply-chain,
-  Click Guard, static-delivery, and audit rules as other sites.
-
-`DIRECT_NATIVE_ONLY` is not automatically migrated to `HORUS_DIRECT`. Existing
-records retain their current semantics until a separate safe migration is
-approved and tested.
-
-## Static configuration schema v3
-
-Task 14 introduces schema version 3 additively:
+The engine payload exposes both the configured and concrete Prebid state:
 
 ```json
 {
-  "schemaVersion": 3,
-  "gamNetworkCode": null,
   "engines": {
-    "gam": {
-      "enabled": false,
-      "networkCode": null
-    },
+    "gam": { "enabled": false },
     "prebid": {
       "enabled": true,
+      "configuredMode": "AUTO",
       "deliveryMode": "STANDALONE"
     },
-    "directJs": {
-      "enabled": true
-    }
+    "directJs": { "enabled": true }
   }
 }
 ```
 
-Schema v3 deliberately retains the schema-v2 compatibility fields used by
-existing deployed Loaders, including:
+The legacy top-level `prebidEnabled` remains bridge-only. The schema-v3 nested `prebid.enabled`, concrete `deliveryMode`, and placement renderer ownership activate standalone runtime without redefining schema-v2 semantics.
 
-- `gamNetworkCode`
-- `prebidEnabled`
-- `prebid`
-- `nativeDemandEnabled`
-- `nativeDemand`
-- `gpt`
+Static output may contain public bidder parameters required by browser adapters. It must never contain credential references, secrets, private notes, or sensitive control-plane data.
 
-Old immutable schema-v2 configurations remain readable by the current Loader;
-the browser regression suite continues exercising old-shape configurations.
-New schema-v3 payloads remain rollback-safe and deterministic. GPT metadata may
-remain present for compatibility, but a GAM-less placement receives no GAM
-`adUnitPath`, so the existing Loader does not load GPT for that placement.
+## Admin control and readiness
 
-Static payloads remain public-only. Credential references, API tokens, revenue
-terms, private notes, and other secrets are excluded.
+The existing Admin Prebid screen is the single management surface. It controls:
 
-## Fixed deployment and security invariants
+- website Prebid ON/OFF;
+- configured mode and visible resolved mode;
+- build;
+- timeout;
+- currency;
+- bidder sequence;
+- consent behavior;
+- lazy loading;
+- refresh;
+- bidder accounts;
+- site mappings;
+- placement mappings;
+- standalone behavior;
+- GAM bridge behavior when relevant.
 
-The multi-engine architecture does not change these rules:
+The GAM setup workbench is shown only when the resolved bridge and eligible GAM connection make it relevant.
 
-- one permanent Horus Loader;
-- no publisher code replacement after configuration changes;
-- no ad request through Laravel;
-- browser-side Prebid;
-- static CDN runtime configuration;
-- aggregated reporting only;
-- no raw browser bid/impression/click ingestion;
-- no credentials or secrets in static configuration;
-- no Redis requirement;
-- no Supervisor requirement;
-- no WebSockets requirement;
-- no Docker requirement;
-- no permanent worker requirement;
-- no production Node runtime;
-- PHP 8.2+ and MySQL portability;
-- organization isolation;
-- audited sensitive operations;
-- dry-run/idempotency for external writes;
-- approved Horus Media brand rules.
+A new explicit `GAM_BRIDGE` save is rejected if no eligible enabled GAM connection exists, so Admin never receives a false “settings saved” message for runtime values that cannot be attached to a bridge profile. If an already-configured bridge loses GAM later, the stored preference remains explicit and readiness reports Action Required.
 
-## Implementation boundary
+Changes to website-level Prebid enablement/configured mode are audited separately from runtime-profile edits.
 
-Task 14 establishes the centralized engine model, independent operational
-controls, GAM-optional configuration generation, additive schema v3, renderer
-ownership, readiness behavior, and backward compatibility. It does **not**
-implement standalone Prebid winning-bid rendering or redesign every Direct JS
-provider integration. Those runtime changes require separate browser-focused
-work and must keep the schema-v2 compatibility window intact until safe rollout
-and rollback evidence exists.
+Publisher Monetization Health remains white-labelled. It exposes safe module status/reason/action fields only. Bidder account details, GAM network identifiers, credentials, and Admin diagnostics are excluded.
+
+Admin diagnostics may include configured mode, resolved mode, build, mapping count, the relevant GAM connection when applicable, and last static-delivery state.
+
+## Current implementation boundary
+
+Tasks 15–16 deliver:
+
+- GAM-independent standalone Prebid configuration;
+- production standalone banner rendering;
+- deterministic AUTO/GAM_BRIDGE/STANDALONE Admin control;
+- independent GAM/PREBID/DIRECT_JS operational switches;
+- publisher-safe readiness;
+- preserved GAM bridge behavior;
+- production hardening for refresh, SPA, duplicate placement instances, consent, Click Guard, and renderer ownership.
+
+Standalone native/video direct rendering remains the primary intentional limitation.
