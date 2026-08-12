@@ -10,6 +10,7 @@ use App\Enums\ServingMode;
 use App\Models\AuditLog;
 use App\Models\PrebidBuild;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Prebid\PrebidManager;
 use Database\Seeders\InventoryDeliverySeeder;
 use Database\Seeders\PrebidSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -148,6 +149,53 @@ class PrebidAdminSaveHardeningTest extends TestCase
         $site = $site->refresh()->load('servingSettings');
         $this->assertFalse($site->prebid_enabled);
         $this->assertSame(PrebidConfiguredMode::Auto, $site->servingSettings->prebid_configured_mode);
+    }
+
+    public function test_existing_gam_bridge_remains_manageable_during_operational_gam_pause(): void
+    {
+        $site = $this->makeSiteFor($this->publisher, $this->publisherUser, [
+            'display_name' => 'Existing Paused Bridge',
+            'primary_domain' => 'existing-paused-bridge.example',
+            'prebid_enabled' => true,
+        ]);
+        $site->update(['serving_mode' => ServingMode::HorusGam, 'prebid_enabled' => true]);
+        $site->servingSettings()->update([
+            'serving_mode' => ServingMode::HorusGam,
+            'prebid_enabled' => true,
+            'prebid_configured_mode' => PrebidConfiguredMode::GamBridge,
+        ]);
+        app(PrebidManager::class)->updateSettings($this->gam, [
+            'enabled' => true,
+            'auction_timeout_ms' => 1200,
+            'price_granularity' => 'medium',
+            'currency' => 'USD',
+            'bidder_sequence' => 'fixed',
+            'consent_behavior' => [],
+            'lazy_loading' => ['enabled' => true],
+            'refresh_behavior' => ['enabled' => true, 'minimumIntervalSeconds' => 30],
+            'bidder_timeout_reporting' => true,
+            'gam_fallback' => true,
+        ], $this->admin);
+        app(PlatformControlService::class)->set('SITE', $site->id, 'GAM', true, 'Temporary GAM outage.', $this->admin);
+
+        $this->actingAs($this->admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.sites.prebid.settings', $site), $this->settingsPayload([
+                'enabled' => '0',
+                'prebid_configured_mode' => 'GAM_BRIDGE',
+                'auction_timeout_ms' => 1666,
+            ]))
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $site = $site->refresh()->load('servingSettings');
+        $this->assertFalse($site->prebid_enabled);
+        $this->assertSame(PrebidConfiguredMode::GamBridge, $site->servingSettings->prebid_configured_mode);
+        $this->assertDatabaseHas('prebid_settings', [
+            'gam_connection_id' => $this->gam->id,
+            'enabled' => false,
+            'auction_timeout_ms' => 1666,
+        ]);
     }
 
     public function test_invalid_consent_json_is_reported_on_the_consent_field(): void
