@@ -1,0 +1,36 @@
+name: Task 15 Loader Patch
+
+on:
+  push:
+    branches:
+      - task-15-standalone-prebid-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  apply-loader-runtime:
+    if: ${{ !contains(github.event.head_commit.message, 'Task 15: materialize standalone Loader runtime') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-15-standalone-prebid-runtime
+          fetch-depth: 0
+      - name: Apply reviewed Loader patch
+        run: |
+          set -euo pipefail
+          test -f scripts/task15-loader.patch
+          git apply --check scripts/task15-loader.patch
+          git apply scripts/task15-loader.patch
+          node --check public/assets/hm-loader.js
+          rm scripts/task15-loader.patch
+          rm .github/workflows/task15-apply-loader.yml
+      - name: Commit materialized runtime
+        run: |
+          set -euo pipefail
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 15: materialize standalone Loader runtime"
+          git push origin HEAD:task-15-standalone-prebid-runtime
