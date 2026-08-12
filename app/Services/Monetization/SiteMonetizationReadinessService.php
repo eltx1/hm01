@@ -184,59 +184,47 @@ final class SiteMonetizationReadinessService
             'resolved_mode' => $engineState->prebidDeliveryMode->value,
             'engine_reason' => $engineState->prebidReason,
         ];
+
         if (! $site->prebid_enabled) {
-            return $this->module('prebid', 'Header Bidding', MonetizationStatus::NotConfigured, $dependency,
-                'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at,
-                diagnostics: $baseDiagnostics);
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::NotConfigured, MonetizationDependency::Optional,
+                'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at, diagnostics: $baseDiagnostics);
         }
-        if (! $engineState->masterServingEnabled) {
-            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
-                'Header bidding is paused by the master ad-serving control.', lastUpdate: $site->updated_at,
-                diagnostics: $baseDiagnostics);
-        }
-        if ($this->controls->disabledForSite('PREBID', $site->id)) {
-            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
-                'Header bidding is temporarily paused by an operational control.', lastUpdate: $site->updated_at,
-                diagnostics: $baseDiagnostics);
+        if (! $engineState->prebidEnabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                $engineState->prebidReason === 'GAM_BRIDGE_CONNECTION_REQUIRED'
+                    ? 'Header bidding is configured for the GAM bridge, but an eligible GAM connection is unavailable.'
+                    : 'Header bidding is enabled but cannot currently run.',
+                'Horus Media must restore the selected header-bidding delivery mode.', null, $site->updated_at, $baseDiagnostics);
         }
 
-        $mappingCount = BidderSiteMapping::withoutGlobalScopes()
-            ->where('site_id', $site->id)->where('enabled', true)
-            ->whereHas('account', fn ($query) => $query->where('enabled', true))
-            ->whereHas('placementMappings', fn ($query) => $query->where('enabled', true))
-            ->count();
-        $baseDiagnostics['enabled_site_mappings'] = $mappingCount;
-
+        $mappingCount = BidderSiteMapping::withoutGlobalScopes()->where('site_id', $site->id)->where('enabled', true)->count();
         if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
             $settings = PrebidSetting::withoutGlobalScopes()->with('build')
                 ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
-                ->where('site_id', $site->id)
-                ->first();
+                ->where('site_id', $site->id)->first();
             $diagnostics = $baseDiagnostics + [
                 'settings_enabled' => (bool) $settings?->enabled,
                 'build' => $settings?->build?->version,
-                'gam_connection_id' => null,
+                'mapping_count' => $mappingCount,
             ];
-            if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0 || ! $engineState->prebidEnabled) {
+            if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
                 return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
-                    'Standalone header bidding requires an enabled site profile, pinned browser build, and active bidder placement mappings.',
-                    'Horus Media must complete the standalone Prebid profile and mappings.', null, $settings?->updated_at ?? $site->updated_at,
+                    'Header bidding is enabled for standalone delivery but its runtime profile is incomplete.',
+                    'Horus Media must complete the standalone header-bidding profile and bidder mappings.', null, $settings?->updated_at,
                     $diagnostics);
             }
 
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
-                'Header bidding is active in standalone mode without GAM.', lastUpdate: $settings->updated_at,
+                'Header bidding is active with standalone browser delivery.', lastUpdate: $settings->updated_at,
                 diagnostics: $diagnostics);
         }
 
         $connection = $engineState->gamConnection;
-        if ($connection === null || ! $engineState->prebidEnabled) {
+        if ($connection === null) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
-                'Header bidding is configured for the GAM bridge, but an eligible GAM connection is unavailable.',
-                'Restore GAM or choose STANDALONE/AUTO intentionally. Explicit GAM_BRIDGE never falls back silently.', null, $site->updated_at,
-                $baseDiagnostics + ['gam_connection_id' => $connection?->id]);
+                'Header bidding is configured for the GAM bridge, but no eligible GAM connection is available.',
+                'Horus Media must restore the GAM bridge connection.', null, $site->updated_at, $baseDiagnostics);
         }
-
         $settings = PrebidSetting::withoutGlobalScopes()->with('build')
             ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
             ->where('gam_connection_id', $connection->id)->first();
@@ -265,15 +253,15 @@ final class SiteMonetizationReadinessService
             : MonetizationDependency::Optional;
         if (! $site->native_demand_enabled) {
             $critical = $site->serving_mode === ServingMode::DirectNativeOnly;
-            return $this->module('native', 'Native Monetization', $critical ? MonetizationStatus::ActionRequired : MonetizationStatus::NotConfigured,
+            return $this->module('native', 'Direct Monetization', $critical ? MonetizationStatus::ActionRequired : MonetizationStatus::NotConfigured,
                 $critical ? MonetizationDependency::Critical : $dependency,
-                $critical ? 'Native monetization is required by the current serving mode but is not enabled.' : 'Direct JS / Native Network monetization is not configured for this website.',
-                $critical ? 'Enable and configure Native Monetization.' : null, null, $site->updated_at);
+                $critical ? 'Direct monetization is required by the current serving mode but is not enabled.' : 'Direct monetization is not configured for this website.',
+                $critical ? 'Enable and configure Direct Monetization.' : null, null, $site->updated_at);
         }
         if ($this->controls->disabledForSite('NATIVE_DEMAND', $site->id)
             || $this->controls->disabledForSite('DIRECT_JS', $site->id)) {
-            return $this->module('native', 'Native Monetization', MonetizationStatus::Paused, $dependency,
-                'Direct JS / Native Network monetization is temporarily paused by an operational control.', lastUpdate: $site->updated_at);
+            return $this->module('native', 'Direct Monetization', MonetizationStatus::Paused, $dependency,
+                'Direct monetization is temporarily paused by an operational control.', lastUpdate: $site->updated_at);
         }
 
         $mappings = DemandSite::withoutGlobalScopes()
@@ -307,17 +295,15 @@ final class SiteMonetizationReadinessService
 
         $requiresDirect = in_array($site->serving_mode, [ServingMode::HorusDirect, ServingMode::DirectNativeOnly], true);
         if ($eligible->isEmpty() || ($requiresDirect && $directPlacementCount === 0)) {
-            return $this->module('native', 'Native Monetization', MonetizationStatus::ActionRequired, $dependency,
+            return $this->module('native', 'Direct Monetization', MonetizationStatus::ActionRequired, $dependency,
                 $requiresDirect
-                    ? 'Direct JS / Native Network monetization is enabled but no approved direct placement is ready.'
-                    : 'Native monetization is enabled but no approved managed Native Network mapping is ready.',
-                'Horus Media must complete the Native Network setup.', null, $mappings->max('updated_at'), $adminDiagnostics);
+                    ? 'Direct monetization is enabled but no approved direct placement is ready.'
+                    : 'Direct monetization is enabled but no approved managed mapping is ready.',
+                'Horus Media must complete the Direct Monetization setup.', null, $mappings->max('updated_at'), $adminDiagnostics);
         }
 
-        return $this->module('native', 'Native Monetization', MonetizationStatus::Active, $dependency,
-            $requiresDirect
-                ? 'Direct JS / Native Network monetization is active without requiring GAM.'
-                : 'Native Network monetization is active.',
+        return $this->module('native', 'Direct Monetization', MonetizationStatus::Active, $dependency,
+            'Direct monetization is active.',
             lastUpdate: $eligible->max('last_synced_at') ?? $eligible->max('updated_at'), diagnostics: $adminDiagnostics);
     }
 
@@ -469,43 +455,40 @@ final class SiteMonetizationReadinessService
     /** @return array<string, mixed> */
     private function publicModule(array $module): array
     {
-        unset($module['diagnostics']);
-        if (is_string($module['action_route'] ?? null) && str_contains($module['action_route'], '/admin/')) {
-            $module['action_route'] = null;
-        }
-
-        return $module;
+        return [
+            'key' => $module['key'],
+            'title' => $module['title'],
+            'status' => $module['status'],
+            'dependency' => $module['dependency'],
+            'reason' => $module['reason'],
+            'action_required' => $module['action_required'],
+            'action_route' => $module['action_route'],
+            'last_update' => $module['last_update'],
+        ];
     }
 
-    /** @return array<string, mixed> */
+    private function publisherRoute(string $name, mixed ...$parameters): ?string
+    {
+        try {
+            return route($name, $parameters);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     private function gamDiagnostics(GamConnection $connection): array
     {
         return [
             'connection_id' => $connection->id,
             'connection_name' => $connection->name,
-            'connection_type' => $connection->type->value,
             'network_code' => $connection->network_code,
             'health' => $connection->health_status->value,
             'last_health_check_at' => $this->timestamp($connection->last_health_check_at),
-            'last_successful_sync_at' => $this->timestamp($connection->last_successful_sync_at),
         ];
-    }
-
-    private function publisherRoute(string $name, mixed $parameter = null): ?string
-    {
-        if (! app('router')->has($name)) {
-            return null;
-        }
-
-        return route($name, $parameter === null ? [] : $parameter);
     }
 
     private function timestamp(mixed $value): ?string
     {
-        if ($value instanceof DateTimeInterface) {
-            return $value->format(DATE_ATOM);
-        }
-
-        return is_string($value) && $value !== '' ? $value : null;
+        return $value instanceof DateTimeInterface ? $value->format(DATE_ATOM) : null;
     }
 }
