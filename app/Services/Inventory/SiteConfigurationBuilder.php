@@ -294,7 +294,7 @@ final class SiteConfigurationBuilder
         }
 
         $placementDisabled = $this->controls->placementDisabled($placement->id);
-        $gamEnabled = $siteServingActive && ! $placementDisabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
+        $gamEligible = $siteServingActive && ! $placementDisabled && (bool) $placement->adUnit?->is_enabled && (bool) $networkCode;
         $directJsPlacementDisabled = $this->controls->placementEngineDisabled($placement->id, 'DIRECT_JS');
         $prebidPlacementDisabled = $this->controls->placementEngineDisabled($placement->id, 'PREBID');
         $directCandidates = collect((array) ($native['candidates'] ?? []))
@@ -306,12 +306,12 @@ final class SiteConfigurationBuilder
             && $directCandidates !== [];
         $houseEnabled = $siteServingActive && (bool) ($native['enabled'] ?? false) && ! empty($native['house']);
         $standalonePrebidEnabled = $siteServingActive && $standalonePrebidEnabled && ! $prebidPlacementDisabled;
-        $rendererConflict = ! $gamEnabled && $standalonePrebidEnabled && $directJsEnabled;
+        $rendererConflict = $standalonePrebidEnabled && $directJsEnabled;
 
         $renderer = match (true) {
             $rendererConflict => 'CONFLICT',
-            $gamEnabled => 'GAM',
             $standalonePrebidEnabled => 'PREBID_STANDALONE',
+            $gamEligible => 'GAM',
             $directJsEnabled => 'DIRECT_JS',
             $houseEnabled => 'HOUSE',
             default => 'NONE',
@@ -320,6 +320,7 @@ final class SiteConfigurationBuilder
             && (bool) ($native['enabled'] ?? false)
             && (((array) ($native['candidates'] ?? [])) !== [] || $houseEnabled);
         $eligible = ! $rendererConflict && in_array($renderer, ['GAM', 'PREBID_STANDALONE', 'DIRECT_JS', 'HOUSE'], true);
+        $gamEnabled = $renderer === 'GAM';
 
         return [
             'code' => $placement->code,
