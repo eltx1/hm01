@@ -1,14 +1,28 @@
 # Native and Alternative Demand Networks
 
-## Fixed serving architecture
+## Multi-engine serving architecture
 
-Google Ad Manager remains the primary ad server. Native and alternative demand is
-an optional control-plane layer that may serve in either of two ways:
+Native and alternative demand is an optional control-plane layer with two
+fundamentally different delivery paths:
 
-1. Horus deploys a third-party creative and line item to the GAM connection
-   selected for the website. GPT remains the browser delivery path.
-2. The permanent Horus Loader injects an approved public JavaScript tag only
-   after the website and placement configuration enables it.
+1. **GAM-managed demand** — Horus deploys a third-party creative and line item to
+   the GAM connection selected for the website. GPT remains the browser delivery
+   path.
+2. **Direct JS engine** — the permanent Horus Loader injects an approved public
+   JavaScript tag when that physical placement is assigned to Direct JS.
+
+GAM remains a first-class/default engine for GAM-enabled sites but is not a
+universal prerequisite. Direct JS is an independent serving engine: it does not
+enter a Prebid auction, does not require GAM, and does not need to lose a
+Prebid/GAM request before it may run. A site may run standalone Prebid on one
+placement and Direct JS on other independent placements at the same time.
+
+No global winner is created between Prebid and Direct JS. One physical placement
+must still have one renderer at a time. GAM-slot no-fill fallback to Direct JS
+remains a valid backward-compatible behavior for configured GAM placements, but
+it is no longer the only conceptual way Direct JS may operate.
+
+See `MULTI_ENGINE_SERVING.md` for the authoritative serving-engine contract.
 
 Publishers continue to install only:
 
@@ -83,8 +97,10 @@ the provider accepts them, and persist remote IDs before a retry can advance.
 
 ## Integration modes
 
-- `DIRECT_JS`: Loader injects the approved public script after GAM/Prebid no-fill
-  or directly when the placement has no GAM inventory.
+- `DIRECT_JS`: Loader injects the approved public script for a placement owned by
+  the Direct JS renderer. It may also remain configured as a GAM no-fill
+  fallback where backward-compatible placement policy explicitly requests that
+  behavior.
 - `GAM_THIRD_PARTY_CREATIVE`: Horus deploys an advertiser, order, line item,
   third-party creative, association, inventory targeting, and status controls.
 - `GAM_LINE_ITEM`: the same isolated deployment surface, available for accounts
@@ -94,11 +110,14 @@ the provider accepts them, and persist remote IDs before a retry can advance.
 - `API_INTEGRATION`: approved API paths may create or synchronize remote sites,
   placements, status, ads.txt records, and aggregated reports.
 
-The effective mode is resolved in this order:
+The effective demand integration mode is resolved in this order:
 
 1. placement override;
 2. website assignment override;
 3. account default.
+
+This demand integration mode is distinct from the site serving mode and from the
+site-level serving-engine state.
 
 ## Account scopes and approval
 
@@ -159,28 +178,37 @@ administrator supplies the documented paths and encrypted credential reference.
 
 ## Static configuration and Loader
 
-The public payload contains a `nativeDemand` object with an ordered candidate
-list per placement. `GAM_THIRD_PARTY_CREATIVE` and `GAM_LINE_ITEM` candidates
-are marked `gamManaged` and expose no direct tag. Direct candidates contain only
-an allowlisted script URL, public container information, public data attributes,
-a bounded render timeout, and an optional success selector.
+The current public payload contains a `nativeDemand` compatibility object with
+an ordered candidate list per placement. `GAM_THIRD_PARTY_CREATIVE` and
+`GAM_LINE_ITEM` candidates are marked `gamManaged` and expose no direct tag.
+Direct candidates contain only an allowlisted script URL, public container
+information, public data attributes, a bounded render timeout, and an optional
+success selector.
 
-Runtime order is:
+Existing GAM-placement fallback remains:
 
-1. Prebid and GAM request.
-2. If the GAM slot is empty, try approved direct candidates by priority.
+1. Prebid/GAM request.
+2. If the GAM slot is empty and fallback policy permits it, try approved direct candidates by priority.
 3. Continue after script error or verified no-render.
 4. Render sanitized house content when configured.
 5. Stop safely without breaking the publisher page.
 
-A native-only placement can run without an ad-unit path while using the same
-`.hm-ad[data-placement]` publisher markup. Debug mode exposes only delivery
-state, selected public network code, and failure category.
+Independent Direct JS placement serving is also an approved architecture:
+
+1. Loader resolves the placement to the Direct JS renderer.
+2. No GAM or Prebid request is required for that placement.
+3. Loader attempts approved direct candidates by priority.
+4. It may render sanitized house content if configured.
+5. It stops safely on failure.
+
+A direct-only placement can run without an ad-unit path while using the same
+`.hm-ad[data-placement]` publisher markup. Debug mode exposes only delivery state,
+selected public network code, and failure category.
 
 ## GAM deployment
 
-For the GAM connection resolved from the website, Horus creates a deterministic
-plan containing:
+For the GAM connection resolved from a GAM-enabled website, Horus creates a
+deterministic plan containing:
 
 - one advertiser company per demand account;
 - one order per account and website;
@@ -196,6 +224,9 @@ hashes. A partial failure preserves completed mappings, so retry resumes without
 duplicating earlier objects. Pausing or resuming a local GAM-mode placement
 performs the corresponding line-item action before publishing the next static
 configuration.
+
+A `HORUS_DIRECT` site does not require this GAM deployment path for Direct JS
+placements.
 
 ## Reporting
 
