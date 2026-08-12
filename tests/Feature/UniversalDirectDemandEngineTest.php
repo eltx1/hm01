@@ -164,7 +164,7 @@ HTML);
         [$account, , , $site] = $this->approvedMgidMapping('network_control');
         app(PlatformControlService::class)->set(
             'DEMAND_NETWORK',
-            $account->network_id,
+            $account->demand_network_id,
             'DIRECT_JS',
             true,
             'Task 17 network direct serving pause.',
