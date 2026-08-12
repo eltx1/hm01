@@ -48,11 +48,11 @@ final class OutbrainConnector extends AbstractDemandConnector
 
     protected function trustedInitializationForParsedTag(array $parsed): array
     {
-        // Official Outbrain placement markup does not require arbitrary inline
-        // JavaScript. Any supplied inline code therefore remains unsupported.
-        return parent::trustedInitializationForParsedTag($parsed)['type'] === 'NONE'
-            ? ['type' => 'OUTBRAIN_RESEARCH', 'parameters' => []]
-            : ['type' => 'OUTBRAIN_RESEARCH', 'parameters' => []];
+        // Preserve the generic fail-closed inline-code check, then map the
+        // provider's documented dynamic-widget rescan to a fixed Horus action.
+        parent::trustedInitializationForParsedTag($parsed);
+
+        return ['type' => 'OUTBRAIN_RESEARCH', 'parameters' => []];
     }
 
     protected function allowedInitializationTypes(): array
