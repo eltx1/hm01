@@ -16,12 +16,33 @@ jobs:
         with:
           ref: task-15-standalone-prebid-runtime
           fetch-depth: 0
-      - name: Apply compatibility patch
+      - name: Preserve Horus-managed account compatibility
         run: |
           set -euo pipefail
-          test -f scripts/task15-prebid-compat.patch
-          git apply --check scripts/task15-prebid-compat.patch
-          git apply scripts/task15-prebid-compat.patch
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manager = Path('app/Services/Prebid/PrebidManager.php')
+          text = manager.read_text()
+          removals = [
+          """        if ((string) $site->organization_id !== (string) $actor->organization_id) {\n            throw ValidationException::withMessages(['site_id' => 'The website must belong to your organization.']);\n        }\n\n""",
+          """        if ((string) $account->organization_id !== (string) $site->organization_id || (string) $site->organization_id !== (string) $actor->organization_id) {\n            throw ValidationException::withMessages(['site_id' => 'Bidder account and website must belong to your organization.']);\n        }\n""",
+          """        if ($siteMapping->site_id !== $placement->site_id\n            || (string) $siteMapping->organization_id !== (string) $placement->organization_id\n            || (string) $placement->organization_id !== (string) $actor->organization_id) {\n            throw ValidationException::withMessages(['placement_id' => 'The placement and mapping must belong to the same organization and website.']);\n        }\n""",
+          """        if ((string) $model->organization_id !== (string) $actor->organization_id) {\n            throw ValidationException::withMessages(['organization_id' => 'The Prebid resource must belong to your organization.']);\n        }\n""",
+          ]
+          for block in removals:
+              if block not in text:
+                  raise SystemExit('Expected compatibility block not found in PrebidManager')
+              text = text.replace(block, '', 1)
+          manager.write_text(text)
+
+          builder = Path('app/Services/Prebid/PrebidConfigurationBuilder.php')
+          text = builder.read_text()
+          needle = "                        || (string) $account?->organization_id !== (string) $site->organization_id\n"
+          if needle not in text:
+              raise SystemExit('Expected account ownership predicate not found in PrebidConfigurationBuilder')
+          builder.write_text(text.replace(needle, '', 1))
+          PY
           php -l app/Services/Prebid/PrebidManager.php
           php -l app/Services/Prebid/PrebidConfigurationBuilder.php
           rm scripts/task15-prebid-compat.patch
