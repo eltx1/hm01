@@ -2,9 +2,11 @@
 
 namespace App\Services\Serving;
 
+use App\Enums\PrebidConfiguredMode;
 use App\Enums\PrebidDeliveryMode;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
+use App\Models\PrebidSetting;
 use App\Models\Site;
 use App\Services\Gam\GamConnectionResolver;
 use App\Services\Operations\PlatformControlService;
@@ -18,7 +20,7 @@ final class SiteEngineStateResolver
 
     public function resolve(Site $site): ResolvedSiteEngineState
     {
-        $site->loadMissing('siteConfig');
+        $site->loadMissing(['siteConfig', 'servingSettings']);
         $connection = $this->connections->resolve($site);
         $gamRequired = in_array($site->serving_mode, [
             ServingMode::HorusGam,
@@ -50,33 +52,50 @@ final class SiteEngineStateResolver
             default => 'ENABLED',
         };
 
-        $prebidDeliveryMode = $site->serving_mode === ServingMode::HorusDirect
-            ? PrebidDeliveryMode::Standalone
-            : PrebidDeliveryMode::GamBridge;
+        $configuredMode = $site->servingSettings?->prebid_configured_mode ?? PrebidConfiguredMode::Auto;
+        if (! $configuredMode instanceof PrebidConfiguredMode) {
+            $configuredMode = PrebidConfiguredMode::tryFrom((string) $configuredMode) ?? PrebidConfiguredMode::Auto;
+        }
+
+        // A bridge requires a real resolved connection. The legacy network-code
+        // fallback can keep existing GAM display delivery compatible, but it is
+        // not enough to manufacture a Prebid-to-GAM control-plane relationship.
+        $gamBridgeEligible = $gamEnabled && $connection !== null && $connection->is_enabled && ! $gamControlDisabled;
+        $standaloneProfileConfigured = PrebidSetting::withoutGlobalScopes()
+            ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
+            ->where('site_id', $site->id)
+            ->where('enabled', true)
+            ->exists();
+
+        $prebidDeliveryMode = match ($configuredMode) {
+            PrebidConfiguredMode::GamBridge => PrebidDeliveryMode::GamBridge,
+            PrebidConfiguredMode::Standalone => PrebidDeliveryMode::Standalone,
+            PrebidConfiguredMode::Auto => match (true) {
+                $gamBridgeEligible => PrebidDeliveryMode::GamBridge,
+                $standaloneProfileConfigured => PrebidDeliveryMode::Standalone,
+                $site->serving_mode === ServingMode::HorusDirect => PrebidDeliveryMode::Standalone,
+                default => PrebidDeliveryMode::GamBridge,
+            },
+        };
+
         $prebidControlDisabled = $this->controls->disabledForSite('PREBID', $site->id);
-        $prebidModeSupported = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
-            || $gamRequired;
-        // Preserve the existing GAM bridge contract exactly: legacy network-code
-        // fallback can keep GAM placement delivery compatible, but Prebid-to-GAM
-        // configuration is still scoped to a real resolved GAM connection.
-        $prebidBridgeAvailable = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
-            || ($gamEnabled && $connection !== null && $connection->is_enabled);
+        $prebidModeSupported = $prebidDeliveryMode === PrebidDeliveryMode::Standalone || $gamRequired;
+        $prebidPathAvailable = $prebidDeliveryMode === PrebidDeliveryMode::Standalone || $gamBridgeEligible;
         $prebidEnabled = $masterServingEnabled
             && $prebidModeSupported
             && (bool) $site->prebid_enabled
             && ! $prebidControlDisabled
-            && $prebidBridgeAvailable;
+            && $prebidPathAvailable;
         $prebidReason = match (true) {
             ! $masterServingEnabled => 'MASTER_SERVING_DISABLED',
             ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             ! $site->prebid_enabled => 'SITE_PREBID_DISABLED',
             $prebidControlDisabled => 'PREBID_CONTROL_DISABLED',
-            $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $prebidBridgeAvailable => 'GAM_BRIDGE_CONNECTION_REQUIRED',
+            $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $gamBridgeEligible => 'GAM_BRIDGE_CONNECTION_REQUIRED',
+            $configuredMode === PrebidConfiguredMode::Auto && $prebidDeliveryMode === PrebidDeliveryMode::Standalone && ! $standaloneProfileConfigured => 'STANDALONE_PROFILE_REQUIRED',
             default => 'ENABLED',
         };
 
-        // NATIVE_DEMAND remains a backward-compatible alias for the Direct JS
-        // engine control during the schema-v2/v3 compatibility period.
         $directJsControlDisabled = $this->controls->disabledForSite('DIRECT_JS', $site->id)
             || $this->controls->disabledForSite('NATIVE_DEMAND', $site->id);
         $directJsEnabled = $masterServingEnabled
@@ -97,6 +116,7 @@ final class SiteEngineStateResolver
             gamEnabled: $gamEnabled,
             gamReason: $gamReason,
             prebidEnabled: $prebidEnabled,
+            prebidConfiguredMode: $configuredMode,
             prebidDeliveryMode: $prebidDeliveryMode,
             prebidReason: $prebidReason,
             directJsEnabled: $directJsEnabled,
