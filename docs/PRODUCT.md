@@ -7,8 +7,10 @@ publishers, configuring websites and placements, managing optional demand
 connections, importing aggregated reporting, calculating revenue shares,
 preparing publisher payments, and managing direct advertiser campaigns.
 
-The product does not proxy advertising traffic. Google Ad Manager remains the
-primary serving engine.
+The product does not proxy advertising traffic. Runtime monetization is provided
+by three independent serving engines: GAM, Prebid, and Direct JS. GAM remains a
+first-class/default Horus path for GAM-enabled websites but is not a universal
+product prerequisite.
 
 ## Users
 
@@ -23,9 +25,14 @@ primary serving engine.
 The control plane is implemented across identity, publisher onboarding,
 inventory, GAM, browser delivery, Prebid, native demand, direct sales,
 aggregated reporting, reconciliation, revenue shares, statements, invoices,
-and payment records. External provider activation and live payment execution
-remain operational decisions requiring credentials, approvals, and a controlled
-pilot.
+and payment records. The multi-engine architecture contract additionally permits
+GAM-less Horus-managed sites and establishes standalone Prebid and independent
+Direct JS as supported engine contexts. Full standalone Prebid winner rendering
+is delivered incrementally by dedicated runtime work rather than being emulated
+through GAM.
+
+External provider activation and live payment execution remain operational
+decisions requiring credentials, approvals, and a controlled pilot.
 
 ## Account model
 
@@ -36,22 +43,48 @@ internal notes are never rendered to tenant users.
 
 ## Serving modes
 
+Serving mode describes how the site is broadly operated; it is not the same as
+engine state.
+
 | Mode | Purpose | New-website default |
 |---|---|---:|
-| HORUS_GAM | Horus Media's main GAM network | Yes |
+| HORUS_GAM | Horus Media's default GAM-managed mode | Yes |
+| HORUS_DIRECT | Horus-managed site with no required GAM connection | No |
 | MCM_PARTNER_GAM | Optional approved MCM partner connection | No |
 | PUBLISHER_GAM | Optional publisher-owned GAM connection | No |
-| DIRECT_NATIVE_ONLY | Optional native/direct serving without GAM | No |
+| DIRECT_NATIVE_ONLY | Legacy/specialized direct-native mode retained for compatibility | No |
 | PAUSED | Disable serving for the website | No |
 
-There is no activation gate that prevents HORUS_GAM from being selected.
-MCM and Publisher GAM are optional alternatives, never prerequisites.
+There is no activation gate that prevents a valid HORUS_GAM site from being
+selected or operating. MCM and Publisher GAM are optional alternatives, never
+prerequisites. `HORUS_DIRECT` does not require a GAM connection or fake network
+identifier.
+
+## Serving engines
+
+The independent engine capabilities are:
+
+- **GAM** — GPT plus the selected GAM connection and the existing GAM control
+  plane, inventory, direct-campaign, and reconciliation behavior.
+- **Prebid** — browser-side auctions operating either as `GAM_BRIDGE` or
+  `STANDALONE`.
+- **Direct JS** — approved provider JavaScript/tags controlled by Horus static
+  configuration and independent of GAM and Prebid auctions.
+
+Engine combinations are additive rather than mutually exclusive. For example,
+a site may resolve to GAM + Prebid + Direct JS, standalone Prebid + Direct JS,
+or Direct JS alone. Prebid and Direct JS may run simultaneously across different
+placements and do not require a global winner. One physical placement retains
+one renderer at a time.
+
+See `MULTI_ENGINE_SERVING.md` for the authoritative contract.
 
 ## Installation promise
 
 A publisher installs one permanent loader from cdn.horusmedia.net. Website
 configuration is resolved by a stable public site key. Administrators can
 change serving mode and demand configuration without modifying that loader tag.
+GAM-less engine activation must preserve the same installation promise.
 
 ## Release acceptance criteria
 
@@ -62,14 +95,11 @@ The repository release is accepted when:
 - the production artifact contains dependencies and compiled assets without secrets;
 - deployment, scheduler, CDN, security, backup, and rollback procedures are documented.
 
-Production go-live additionally requires:
-
-- real infrastructure and TLS;
-- private production environment and credentials;
-- healthy scheduler and SMTP;
-- a verified HORUS_GAM connection;
-- a test publisher site and controlled campaign;
-- reconciled reporting;
-- operations and finance sign-off.
+Production go-live additionally requires the evidence appropriate to the engines
+actually enabled for a pilot site. A GAM-enabled pilot requires a verified GAM
+connection; a GAM-less pilot does not invent or require one. Every pilot still
+requires real infrastructure/TLS, private credentials where applicable, a
+healthy scheduler and SMTP, a test publisher site, controlled monetization,
+reconciled reporting, and operations/finance sign-off.
 
 See GO_LIVE_CHECKLIST.md and PILOT_RUNBOOK.md for the evidence gates.

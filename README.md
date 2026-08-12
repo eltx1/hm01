@@ -12,24 +12,47 @@ Production domains:
 - Dashboard: https://app.horusmedia.net
 - Advertising CDN: https://cdn.horusmedia.net
 
-## Fixed serving model
+## Multi-engine serving model
 
-HORUS_GAM is the main, default ad server for every newly created website.
-Administrators may later select MCM_PARTNER_GAM, PUBLISHER_GAM,
-DIRECT_NATIVE_ONLY, or PAUSED per website. The permanent publisher loader does
-not change when the selection changes.
+Horus Media uses one permanent publisher Loader and three independent serving
+engines: **GAM**, **Prebid**, and **Direct JS**. Serving mode describes how a
+website is broadly operated; engine state describes which delivery capabilities
+are active for its placements.
 
-The browser requests the loader, manifest, and immutable configuration from a
-static Cloudflare Pages project, runs Prebid.js and Google
-Publisher Tag, and sends advertising traffic directly to the selected serving
-network. Optional approved native demand may run through GAM third-party
-creatives or public direct JavaScript fallback. Ad requests and all other
-publisher runtime requests never transit the Laravel application. Hostinger is
-the control plane only.
+`HORUS_GAM` remains the default, first-class Horus-managed GAM mode and the
+existing GAM path remains backward compatible. `MCM_PARTNER_GAM` and
+`PUBLISHER_GAM` remain optional GAM modes. `HORUS_DIRECT` is the first-class
+Horus-managed mode for a site that does not require any GAM connection.
+`DIRECT_NATIVE_ONLY` remains a legacy/specialized direct-native mode and
+`PAUSED` retains its existing meaning.
 
-Direct advertisers use the Horus Media dashboard. Campaigns are split into
-isolated GAM network instances based on each selected website's configured
-network, with Horus GAM used by default.
+A site may therefore use GAM + Prebid + Direct JS, standalone Prebid + Direct
+JS without GAM, or Direct JS alone. Prebid and Direct JS do not need to compete
+with each other and may operate simultaneously across independent placements.
+A single physical placement still has one clear renderer at a time.
+
+```text
+Permanent Horus Loader
+    +-- GAM Engine       -> GPT -> selected GAM connection
+    +-- Prebid Engine    -> GAM_BRIDGE or STANDALONE
+    +-- Direct JS Engine -> approved provider JavaScript
+```
+
+For GAM-enabled sites, the browser continues to run the existing GPT/GAM path,
+including the existing Prebid-to-GAM bridge. For GAM-less sites, standalone
+Prebid is an approved architecture in which the winning bid is rendered directly
+by the Loader, and Direct JS remains independent of both GAM and Prebid. The
+standalone renderer is implemented incrementally by dedicated runtime work; the
+architecture contract is defined in
+[Multi-engine serving](docs/MULTI_ENGINE_SERVING.md).
+
+The Loader, manifests, and versioned runtime configuration remain static CDN
+assets. Advertising requests and other publisher runtime requests never transit
+the Laravel application. Hostinger remains the control plane only.
+
+Direct advertisers use the Horus Media dashboard. Existing GAM-backed campaign
+deployment remains unchanged for GAM-enabled websites and continues to use the
+selected website GAM connection, with Horus GAM as the default GAM mode.
 
 ## Current release status
 
@@ -123,6 +146,7 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 
 - [Product](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Multi-engine serving](docs/MULTI_ENGINE_SERVING.md)
 - [Database](docs/DATABASE.md)
 - [GAM architecture](docs/GAM_ARCHITECTURE.md)
 - [Inventory and Horus Loader](docs/INVENTORY_AND_LOADER.md)
