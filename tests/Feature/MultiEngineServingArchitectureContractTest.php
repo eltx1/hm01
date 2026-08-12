@@ -46,7 +46,6 @@ class MultiEngineServingArchitectureContractTest extends TestCase
         ]);
 
         $expected = '<script async src="https://cdn.horusmedia.net/hm-loader.js" data-site-key="hm_permanent_loader_contract"></script>';
-        $expected = str_replace('\\"', '"', $expected);
 
         $this->assertSame($expected, $gamSite->installationCode());
         $this->assertSame($expected, $directSite->installationCode());
