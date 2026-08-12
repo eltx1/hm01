@@ -1,0 +1,331 @@
+--- a/public/assets/hm-loader.js
++++ b/public/assets/hm-loader.js
+@@ -20,6 +20,9 @@
+         gamFallbackInstalled: false,
+         nativeAttempts: {},
+         nativeRendered: {},
++        standaloneEntries: {},
++        standaloneAuctions: {},
++        standaloneObservers: {},
+         privacyPromise: null,
+         privacyDecision: null,
+         rewardedListenersInstalled: false,
+@@ -732,8 +735,9 @@
+             var placement = placements[code];
+             var native = nativeDefinition(config, code);
+             var hasNative = native && native.enabled && ((native.candidates || []).length || native.house);
++            var standalonePrebid = placement && placement.renderer === 'PREBID_STANDALONE' && placement.prebidStandaloneEnabled === true;
+             if (!placement || !placement.enabled || placement.status !== 'active') return;
+-            if (!placement.adUnitPath && !hasNative) return;
++            if (!placement.adUnitPath && !hasNative && !standalonePrebid) return;
+             if (element.getAttribute('data-hm-defined') === '1') return;
+             result.push({ element: element, placement: placement, native: native });
+         });
+@@ -788,6 +792,16 @@
+             storageControl: { enforce: true },
+             allowActivities: auction.allowActivities || {}
+         };
++        var standalone = config.prebid && config.prebid.deliveryMode === 'STANDALONE';
++        if (standalone) {
++            prebidConfig.allowTopWindowRenderers = false;
++            prebidConfig.auctionOptions = {
++                suppressExpiredRender: true,
++                suppressStaleRender: true,
++                rejectUnknownMediaTypes: true,
++                rejectInvalidMediaTypes: true
++            };
++        }
+         if (auction.currency) prebidConfig.currency = { adServerCurrency: auction.currency };
+         if (auction.consent && Object.keys(auction.consent).length) prebidConfig.consentManagement = auction.consent;
+         if (auction.ortb2) prebidConfig.ortb2 = auction.ortb2;
+@@ -880,6 +894,214 @@
+         });
+     }
+ 
++    function standaloneBidValid(winner, auctionId, responseBids) {
++        if (!winner || !winner.adId || String(winner.mediaType || '').toLowerCase() !== 'banner') return false;
++        if (winner.auctionId && auctionId && String(winner.auctionId) !== String(auctionId)) return false;
++        var callbackBids = responseBids && responseBids.bids;
++        if (Array.isArray(callbackBids) && !callbackBids.some(function (bid) { return bid && bid.adId === winner.adId; })) return false;
++        var ttl = Number(winner.ttl);
++        var responseTimestamp = Number(winner.responseTimestamp || winner.requestTimestamp);
++        if (!Number.isFinite(ttl) || ttl <= 0 || !Number.isFinite(responseTimestamp) || responseTimestamp <= 0) return false;
++        if (responseTimestamp + ttl * 1000 <= Date.now()) return false;
++        return true;
++    }
++
++    function standaloneRenderFrame(config, entry, pbjs, winner) {
++        if (!canRequestAds(config) || !entry || !winner || !winner.adId) return false;
++        var key = entry.element.id;
++        var previous = state.standaloneEntries[key];
++        var iframe = document.createElement('iframe');
++        iframe.scrolling = 'no';
++        iframe.frameBorder = '0';
++        iframe.marginHeight = '0';
++        iframe.marginWidth = '0';
++        iframe.name = 'prebid_ads_iframe_' + key;
++        iframe.title = '3rd party ad content';
++        iframe.setAttribute('aria-label', 'Advertisement');
++        iframe.setAttribute('data-hm-prebid-frame', '1');
++        var allowedSandbox = [
++            'allow-forms', 'allow-popups', 'allow-popups-to-escape-sandbox',
++            'allow-same-origin', 'allow-scripts', 'allow-top-navigation-by-user-activation'
++        ];
++        var requestedSandbox = config.prebid && config.prebid.directRender && config.prebid.directRender.sandbox;
++        (Array.isArray(requestedSandbox) ? requestedSandbox : allowedSandbox).forEach(function (token) {
++            if (allowedSandbox.indexOf(token) !== -1 && iframe.sandbox && iframe.sandbox.add) iframe.sandbox.add(token);
++        });
++        if (iframe.style && iframe.style.setProperty) {
++            iframe.style.setProperty('border', '0');
++            iframe.style.setProperty('margin', '0');
++            iframe.style.setProperty('overflow', 'hidden');
++            if (Number(winner.width) > 0) iframe.style.setProperty('width', Number(winner.width) + 'px');
++            if (Number(winner.height) > 0) iframe.style.setProperty('height', Number(winner.height) + 'px');
++        }
++
++        try {
++            entry.element.appendChild(iframe);
++            pbjs.renderAd(iframe.contentWindow.document, winner.adId);
++        } catch (error) {
++            if (iframe.parentNode && iframe.parentNode.removeChild) iframe.parentNode.removeChild(iframe);
++            log(config, 'Standalone Prebid render failed', error);
++            return false;
++        }
++        if (previous && previous.iframe && previous.iframe !== iframe && previous.iframe.parentNode && previous.iframe.parentNode.removeChild) {
++            previous.iframe.parentNode.removeChild(previous.iframe);
++        }
++        state.standaloneEntries[key] = Object.assign({}, previous || {}, {
++            element: entry.element,
++            placement: entry.placement,
++            iframe: iframe,
++            adId: winner.adId,
++            refreshCount: Number(previous && previous.refreshCount || 0)
++        });
++        entry.element.setAttribute('data-hm-prebid', 'standalone-rendered');
++        entry.element.setAttribute('data-hm-status', 'rendered');
++        discoverClickGuardIframes(config);
++        return true;
++    }
++
++    function requestStandaloneEntry(config, entry) {
++        if (!canRequestAds(config) || !entry) return Promise.resolve(false);
++        var prebid = config.prebid || {};
++        if (!prebid.enabled || prebid.deliveryMode !== 'STANDALONE' || !prebid.directRender || prebid.directRender.implemented !== true) {
++            return Promise.resolve(false);
++        }
++        var key = ensureElementId(entry.element, config, entry.placement);
++        if (state.standaloneAuctions[key]) return state.standaloneAuctions[key];
++        var adUnits = prebidAdUnits(config, [entry]);
++        if (adUnits.length !== 1 || !adUnits[0].mediaTypes || !adUnits[0].mediaTypes.banner) {
++            entry.element.setAttribute('data-hm-prebid', 'unsupported-media');
++            entry.element.setAttribute('data-hm-status', 'empty');
++            return Promise.resolve(false);
++        }
++
++        state.standaloneAuctions[key] = loadPrebid(config).then(function (pbjs) {
++            if (!pbjs || !canRequestAds(config)) return false;
++            return new Promise(function (resolve) {
++                var finished = false;
++                var timeout = Math.max(100, Math.min(5000, Number(prebid.auction && prebid.auction.timeoutMs || 1200)));
++                function complete(status, bids, auctionId) {
++                    if (finished) return;
++                    finished = true;
++                    if (!canRequestAds(config)) { resolve(false); return; }
++                    try {
++                        var winners = pbjs.getHighestCpmBids ? pbjs.getHighestCpmBids(key) : [];
++                        var winner = Array.isArray(winners) ? winners[0] : null;
++                        var response = bids && bids[key];
++                        if (!standaloneBidValid(winner, auctionId, response)) {
++                            entry.element.setAttribute('data-hm-prebid', status);
++                            if (!state.standaloneEntries[key]) entry.element.setAttribute('data-hm-status', 'empty');
++                            resolve(false);
++                            return;
++                        }
++                        var rendered = standaloneRenderFrame(config, entry, pbjs, winner);
++                        if (rendered && state.standaloneEntries[key]) state.standaloneEntries[key].auctionId = auctionId || winner.auctionId || null;
++                        resolve(rendered);
++                    } catch (error) {
++                        log(config, 'Standalone Prebid winner selection failed', error);
++                        entry.element.setAttribute('data-hm-prebid', 'failed');
++                        resolve(false);
++                    }
++                }
++
++                var timer = window.setTimeout(function () { complete('timeout', null, null); }, timeout + 100);
++                pbjs.que.push(function () {
++                    if (!canRequestAds(config)) { window.clearTimeout(timer); resolve(false); return; }
++                    try {
++                        configurePrebid(config, pbjs);
++                        if (pbjs.removeAdUnit) pbjs.removeAdUnit([key]);
++                        if (pbjs.addAdUnits) pbjs.addAdUnits(adUnits);
++                        var request = pbjs.requestBids({
++                            adUnitCodes: [key],
++                            timeout: timeout,
++                            bidsBackHandler: function (bids, timedOut, auctionId) {
++                                window.clearTimeout(timer);
++                                complete(timedOut ? 'timeout' : 'no-bid', bids || {}, auctionId || null);
++                            }
++                        });
++                        if (request && typeof request.catch === 'function') {
++                            request.catch(function (error) {
++                                window.clearTimeout(timer);
++                                log(config, 'Standalone Prebid auction rejected', error);
++                                complete('failed', null, null);
++                            });
++                        }
++                    } catch (error) {
++                        window.clearTimeout(timer);
++                        log(config, 'Standalone Prebid auction failed', error);
++                        complete('failed', null, null);
++                    }
++                });
++            });
++        }).catch(function (error) {
++            log(config, 'Standalone Prebid build unavailable', error);
++            entry.element.setAttribute('data-hm-prebid', 'failed');
++            if (!state.standaloneEntries[key]) entry.element.setAttribute('data-hm-status', 'empty');
++            return false;
++        }).finally(function () {
++            delete state.standaloneAuctions[key];
++        });
++
++        return state.standaloneAuctions[key];
++    }
++
++    function scheduleStandaloneRefresh(config, entry) {
++        if (!canRequestAds(config)) return;
++        var refresh = entry.placement.refresh || {};
++        var behavior = config.prebid && config.prebid.delivery && config.prebid.delivery.refreshBehavior || {};
++        if (behavior.enabled === false) return;
++        var minimum = Math.max(30, Number(behavior.minimumIntervalSeconds || 30));
++        var interval = Number(refresh.intervalSeconds || 0);
++        if (!refresh.enabled || interval < minimum) return;
++        var limit = Number(refresh.limit || 0);
++        var key = entry.element.id;
++        if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
++        state.refreshTimers[key] = window.setInterval(function () {
++            if (!canRequestAds(config)) {
++                window.clearInterval(state.refreshTimers[key]);
++                delete state.refreshTimers[key];
++                return;
++            }
++            if (document.visibilityState && document.visibilityState !== 'visible') return;
++            var runtime = state.standaloneEntries[key] || { refreshCount: 0 };
++            if (limit > 0 && Number(runtime.refreshCount || 0) >= limit) {
++                window.clearInterval(state.refreshTimers[key]);
++                delete state.refreshTimers[key];
++                return;
++            }
++            runtime.refreshCount = Number(runtime.refreshCount || 0) + 1;
++            state.standaloneEntries[key] = runtime;
++            requestStandaloneEntry(config, entry);
++        }, interval * 1000);
++    }
++
++    function runStandaloneEntry(config, entry) {
++        var key = ensureElementId(entry.element, config, entry.placement);
++        if (entry.element.getAttribute('data-hm-standalone-started') === '1') return Promise.resolve(state.standaloneEntries[key] || false);
++        entry.element.setAttribute('data-hm-defined', '1');
++        entry.element.setAttribute('data-hm-status', 'defined');
++        entry.element.setAttribute('data-hm-standalone-started', '1');
++        var lazy = entry.placement.lazyLoad || {};
++        if (lazy.enabled && typeof window.IntersectionObserver === 'function') {
++            var margin = Math.max(0, Number(lazy.fetchMarginPercent || 0));
++            var observer = new window.IntersectionObserver(function (records) {
++                var visible = (records || []).some(function (record) { return record && (record.isIntersecting || Number(record.intersectionRatio) > 0); });
++                if (!visible) return;
++                observer.disconnect();
++                delete state.standaloneObservers[key];
++                requestStandaloneEntry(config, entry).then(function () { scheduleStandaloneRefresh(config, entry); });
++            }, { rootMargin: margin + '% 0px ' + margin + '% 0px' });
++            state.standaloneObservers[key] = observer;
++            observer.observe(entry.element);
++            // Registration must not keep global Loader boot pending until the
++            // user eventually scrolls the placement into view.
++            return Promise.resolve(false);
++        }
++        return requestStandaloneEntry(config, entry).then(function (rendered) {
++            scheduleStandaloneRefresh(config, entry);
++            return rendered;
++        });
++    }
++
+     function candidateRank(config, candidate) {
+         var fallback = config.nativeDemand && config.nativeDemand.fallbackOrder || [];
+         var index = fallback.indexOf(candidate.network);
+@@ -1032,22 +1254,25 @@
+ 
+     function defineItems(config, items) {
+         if (!canRequestAds(config) || !items.length) return Promise.resolve([]);
+-        var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath; });
++        var standaloneItems = items.filter(function (item) { return item.placement.renderer === 'PREBID_STANDALONE'; });
++        var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath && item.placement.renderer !== 'PREBID_STANDALONE'; });
+         var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });
+ 
++        standaloneItems.forEach(function (item) { ensureElementId(item.element, config, item.placement); });
++        var standalonePromise = Promise.all(standaloneItems.map(function (item) { return runStandaloneEntry(config, item); }));
+         nativeOnly.forEach(function (item) {
+             ensureElementId(item.element, config, item.placement);
+             item.element.setAttribute('data-hm-defined', '1');
+             item.element.setAttribute('data-hm-status', 'fallback');
+         });
+         var nativePromise = Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }));
+-        if (!gamItems.length) return nativePromise.then(function () { diagnostics(config, []); return nativeOnly; });
++        if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
+ 
+         return loadGpt(config).then(function (googletag) {
+             if (!googletag || !canRequestAds(config)) return [];
+             return new Promise(function (resolve) {
+                 googletag.cmd.push(function () {
+-                    if (!canRequestAds(config)) { resolve(nativeOnly); return; }
++                    if (!canRequestAds(config)) { resolve(nativeOnly.concat(standaloneItems)); return; }
+                     try {
+                         var pubads = googletag.pubads();
+                         var privacy = state.privacyDecision || {};
+@@ -1144,24 +1369,23 @@
+ 
+                         requestEntries(config, googletag, pubads, defined).then(function () {
+                             defined.forEach(function (entry) { scheduleRefresh(config, googletag, pubads, entry); });
+-                            nativePromise.then(function () {
+-                                diagnostics(config, defined);
+-                                resolve(defined.concat(nativeOnly));
++                            Promise.all([nativePromise, standalonePromise]).then(function () {
++                                diagnostics(config, defined.concat(standaloneItems));
++                                resolve(defined.concat(nativeOnly).concat(standaloneItems));
+                             });
+                         });
+                     } catch (error) {
+                         log(config, 'Slot definition failed', error);
+-                        nativePromise.then(function () { resolve(nativeOnly); });
++                        Promise.all([nativePromise, standalonePromise]).then(function () { resolve(nativeOnly.concat(standaloneItems)); });
+                     }
+                 });
+             });
+         }).catch(function (error) {
+-            log(config, 'GPT unavailable; trying native demand', error);
+-            return Promise.all(items.map(function (item) {
+-                ensureElementId(item.element, config, item.placement);
+-                item.element.setAttribute('data-hm-defined', '1');
+-                return runNativeFallback(config, item);
+-            })).then(function () { return items; });
++            log(config, 'GPT unavailable; trying independent non-GAM engines', error);
++            return Promise.all([
++                standalonePromise,
++                Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }))
++            ]).then(function () { return nativeOnly.concat(standaloneItems); });
+         });
+     }
+ 
+@@ -1363,6 +1587,12 @@
+             state.gamFallbackInstalled = false;
+             state.nativeAttempts = {};
+             state.nativeRendered = {};
++            Object.keys(state.standaloneObservers || {}).forEach(function (key) {
++                if (state.standaloneObservers[key] && state.standaloneObservers[key].disconnect) state.standaloneObservers[key].disconnect();
++            });
++            state.standaloneEntries = {};
++            state.standaloneAuctions = {};
++            state.standaloneObservers = {};
+         }
+     };
+ 
