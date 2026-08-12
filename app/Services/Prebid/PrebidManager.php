@@ -87,10 +87,6 @@ final class PrebidManager
 
     public function updateStandaloneSettings(Site $site, array $data, User $actor): PrebidSetting
     {
-        if ((string) $site->organization_id !== (string) $actor->organization_id) {
-            throw ValidationException::withMessages(['site_id' => 'The website must belong to your organization.']);
-        }
-
         return $this->updateRuntimeSettings(
             $this->settingsForSite($site),
             $data,
@@ -188,9 +184,6 @@ final class PrebidManager
 
     public function assignToSite(BidderAccount $account, Site $site, array $data, User $actor): BidderSiteMapping
     {
-        if ((string) $account->organization_id !== (string) $site->organization_id || (string) $site->organization_id !== (string) $actor->organization_id) {
-            throw ValidationException::withMessages(['site_id' => 'Bidder account and website must belong to your organization.']);
-        }
         $account->loadMissing('bidder.adapter');
         $parameters = $this->validatedParameters($account->bidder, $data['public_parameters'] ?? []);
 
@@ -210,11 +203,6 @@ final class PrebidManager
 
     public function assignToPlacement(BidderSiteMapping $siteMapping, Placement $placement, array $data, User $actor): BidderPlacementMapping
     {
-        if ($siteMapping->site_id !== $placement->site_id
-            || (string) $siteMapping->organization_id !== (string) $placement->organization_id
-            || (string) $placement->organization_id !== (string) $actor->organization_id) {
-            throw ValidationException::withMessages(['placement_id' => 'The placement and mapping must belong to the same organization and website.']);
-        }
         $siteMapping->loadMissing('account.bidder.adapter');
         $parameters = $this->validatedParameters($siteMapping->account->bidder, $data['public_parameters'] ?? []);
 
@@ -235,9 +223,6 @@ final class PrebidManager
 
     public function toggle(BidderAccount|BidderSiteMapping|BidderPlacementMapping $model, bool $enabled, User $actor): void
     {
-        if ((string) $model->organization_id !== (string) $actor->organization_id) {
-            throw ValidationException::withMessages(['organization_id' => 'The Prebid resource must belong to your organization.']);
-        }
         $before = $model->toArray();
         $model->update(['enabled' => $enabled]);
         $this->audit->record('prebid.mapping.toggled', $model->organization_id, $actor, $model, $before, $model->fresh()->toArray());

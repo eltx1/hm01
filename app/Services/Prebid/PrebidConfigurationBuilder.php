@@ -64,7 +64,6 @@ final class PrebidConfigurationBuilder
                     if (! $placementMapping
                         || (string) $siteMapping->organization_id !== (string) $site->organization_id
                         || (string) $placementMapping->organization_id !== (string) $site->organization_id
-                        || (string) $account?->organization_id !== (string) $site->organization_id
                         || ! $account?->enabled || ! $bidder?->enabled || ! $adapter?->enabled) {
                         return null;
                     }
