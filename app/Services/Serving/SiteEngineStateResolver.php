@@ -2,6 +2,7 @@
 
 namespace App\Services\Serving;
 
+use App\Enums\PrebidConfiguredMode;
 use App\Enums\PrebidDeliveryMode;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
@@ -50,27 +51,32 @@ final class SiteEngineStateResolver
             default => 'ENABLED',
         };
 
-        $prebidDeliveryMode = $site->serving_mode === ServingMode::HorusDirect
-            ? PrebidDeliveryMode::Standalone
-            : PrebidDeliveryMode::GamBridge;
+        // AUTO never reaches the browser. It is resolved here to one of the two
+        // concrete runtime delivery modes. A bridge requires a real, enabled,
+        // operational GAM connection; a legacy network-code fallback is not
+        // sufficient for Prebid-to-GAM setup/targeting.
+        $configuredPrebidMode = $site->prebid_delivery_mode ?? PrebidConfiguredMode::Auto;
+        $prebidBridgeAvailable = $gamEnabled && $connection !== null && $connection->is_enabled;
+        $prebidDeliveryMode = match ($configuredPrebidMode) {
+            PrebidConfiguredMode::GamBridge => PrebidDeliveryMode::GamBridge,
+            PrebidConfiguredMode::Standalone => PrebidDeliveryMode::Standalone,
+            PrebidConfiguredMode::Auto => $prebidBridgeAvailable
+                ? PrebidDeliveryMode::GamBridge
+                : PrebidDeliveryMode::Standalone,
+        };
+
         $prebidControlDisabled = $this->controls->disabledForSite('PREBID', $site->id);
-        $prebidModeSupported = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
-            || $gamRequired;
-        // Preserve the existing GAM bridge contract exactly: legacy network-code
-        // fallback can keep GAM placement delivery compatible, but Prebid-to-GAM
-        // configuration is still scoped to a real resolved GAM connection.
-        $prebidBridgeAvailable = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
-            || ($gamEnabled && $connection !== null && $connection->is_enabled);
+        $prebidModeSupported = $prebidDeliveryMode === PrebidDeliveryMode::Standalone || $gamRequired;
         $prebidEnabled = $masterServingEnabled
             && $prebidModeSupported
             && (bool) $site->prebid_enabled
             && ! $prebidControlDisabled
-            && $prebidBridgeAvailable;
+            && ($prebidDeliveryMode !== PrebidDeliveryMode::GamBridge || $prebidBridgeAvailable);
         $prebidReason = match (true) {
             ! $masterServingEnabled => 'MASTER_SERVING_DISABLED',
-            ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             ! $site->prebid_enabled => 'SITE_PREBID_DISABLED',
             $prebidControlDisabled => 'PREBID_CONTROL_DISABLED',
+            ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $prebidBridgeAvailable => 'GAM_BRIDGE_CONNECTION_REQUIRED',
             default => 'ENABLED',
         };
@@ -97,6 +103,7 @@ final class SiteEngineStateResolver
             gamEnabled: $gamEnabled,
             gamReason: $gamReason,
             prebidEnabled: $prebidEnabled,
+            prebidConfiguredMode: $configuredPrebidMode,
             prebidDeliveryMode: $prebidDeliveryMode,
             prebidReason: $prebidReason,
             directJsEnabled: $directJsEnabled,
