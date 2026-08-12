@@ -16,12 +16,38 @@ jobs:
         with:
           ref: task-17-universal-direct-js-demand-engine
           fetch-depth: 0
-      - name: Merge latest main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Merge latest main and preserve both loader hardenings
         run: |
+          set -euo pipefail
           git config user.name "Horus Media CI"
           git config user.email "ci@horusmedia.net"
           git fetch origin main
-          git merge --no-edit origin/main
+          if ! git merge --no-edit origin/main; then
+            git checkout --ours public/assets/hm-loader.js
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path('public/assets/hm-loader.js')
+          text = path.read_text()
+          old = """        state.elementSequence = Number(state.elementSequence || 0) + 1;
+          element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + state.elementSequence;
+          """
+          new = """        var sequence = Number(state.elementSequence);
+          if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
+          state.elementSequence = sequence + 1;
+          element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
+          """
+          if old not in text:
+              raise SystemExit('Task 17 element sequence marker missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+            git add public/assets/hm-loader.js
+            git commit --no-edit
+          fi
+          node --check public/assets/hm-loader.js
+          node --test tests/Browser/hm-loader-prebid-mode-hardening.test.js tests/Browser/hm-loader-direct-demand.test.js
           rm .github/workflows/task17-refresh-main.yml
           git add -A
           git commit -m "Task 17: remove temporary main refresh workflow"
