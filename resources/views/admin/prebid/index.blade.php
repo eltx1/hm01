@@ -2,43 +2,85 @@
 @section('title', $site->display_name.' Prebid')
 @section('heading', 'Prebid · '.$site->display_name)
 @section('content')
+@php
+    $configuredMode = $engineState->prebidConfiguredMode->value;
+    $resolvedMode = $engineState->prebidDeliveryMode->value;
+    $bridgeActionRequired = $configuredMode === 'GAM_BRIDGE' && $engineState->prebidReason === 'GAM_BRIDGE_CONNECTION_REQUIRED';
+@endphp
 <section class="hero">
     <div>
         <p class="eyebrow">Browser-side header bidding</p>
         <h2>{{ $site->primary_domain }}</h2>
-        <p>{{ $connection->type->value }} · network {{ $connection->network_code }} · publishers never create Prebid line items manually.</p>
+        <p>
+            Configured <strong>{{ $configuredMode }}</strong> · resolved <strong>{{ $resolvedMode }}</strong>
+            @if($connection && $resolvedMode === 'GAM_BRIDGE') · {{ $connection->type->value }} · network {{ $connection->network_code }} @endif
+        </p>
+        @if($configuredMode === 'AUTO')
+            <p class="muted">AUTO uses GAM_BRIDGE only when a real enabled GAM connection is eligible; otherwise it resolves to STANDALONE. The resolved value is published explicitly.</p>
+        @endif
+        @if($bridgeActionRequired)
+            <p class="error"><strong>ACTION REQUIRED:</strong> GAM_BRIDGE is explicitly selected but no eligible GAM connection is available. Horus will not silently switch this website to standalone delivery.</p>
+        @endif
     </div>
     <div class="status-row">
-        <span class="pill">{{ $settings->enabled && $site->prebid_enabled ? 'ENABLED' : 'DISABLED' }}</span>
+        <span class="pill">Prebid {{ $site->prebid_enabled ? 'ON' : 'OFF' }}</span>
+        <span class="pill">Resolved {{ $resolvedMode }}</span>
         <span class="pill">{{ $siteMappings->count() }} bidder mappings</span>
     </div>
 </section>
 
 <section class="detail-grid" style="margin-top:1rem">
 <article>
-    <p class="eyebrow">Selected GAM network</p>
-    <h3>Browser auction settings</h3>
+    <p class="eyebrow">Website Prebid control</p>
+    <h3>Mode and runtime profile</h3>
     <form class="form-stack" method="POST" action="{{ route('admin.sites.prebid.settings', $site) }}">@csrf @method('PUT')
-        <label>Prebid build
-            <select class="hm-input" name="prebid_build_id">
-                @foreach($builds as $build)<option value="{{ $build->id }}" @selected($settings->prebid_build_id === $build->id)>{{ $build->name }} · {{ $build->version }}</option>@endforeach
+        <label>Delivery mode
+            <select class="hm-input" name="delivery_mode" required>
+                @foreach(['AUTO','GAM_BRIDGE','STANDALONE'] as $mode)
+                    <option value="{{ $mode }}" @selected($configuredMode === $mode)>{{ $mode }}</option>
+                @endforeach
             </select>
         </label>
-        <label>Auction timeout ms<input class="hm-input" type="number" min="100" max="5000" name="auction_timeout_ms" value="{{ $settings->auction_timeout_ms }}" required></label>
-        <label>Price granularity
-            <select class="hm-input" name="price_granularity">@foreach(['low','medium','high','dense','auto','custom'] as $value)<option @selected($settings->price_granularity === $value)>{{ $value }}</option>@endforeach</select>
-        </label>
-        <label>Currency<input class="hm-input" name="currency" value="{{ $settings->currency }}" maxlength="3" required></label>
-        <label>Bidder sequence
-            <select class="hm-input" name="bidder_sequence"><option value="fixed" @selected($settings->bidder_sequence === 'fixed')>fixed</option><option value="random" @selected($settings->bidder_sequence === 'random')>random</option></select>
-        </label>
-        <label>Consent behavior JSON<textarea class="hm-input" rows="5" name="consent_json">{{ json_encode($settings->consent_behavior ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
-        <label>Minimum refresh seconds<input class="hm-input" type="number" min="30" max="3600" name="refresh_minimum_seconds" value="{{ data_get($settings->refresh_behavior, 'minimumIntervalSeconds', 30) }}" required></label>
-        <label><input type="hidden" name="enabled" value="0"><input type="checkbox" name="enabled" value="1" @checked($settings->enabled && $site->prebid_enabled)> Enable Prebid for this selected network and website</label>
-        <label><input type="hidden" name="lazy_loading" value="0"><input type="checkbox" name="lazy_loading" value="1" @checked(data_get($settings->lazy_loading, 'enabled', true))> Enable lazy loading</label>
-        <label><input type="hidden" name="refresh_enabled" value="0"><input type="checkbox" name="refresh_enabled" value="1" @checked(data_get($settings->refresh_behavior, 'enabled', true))> Enable refresh auctions</label>
-        <label><input type="hidden" name="bidder_timeout_reporting" value="0"><input type="checkbox" name="bidder_timeout_reporting" value="1" @checked($settings->bidder_timeout_reporting)> Local bidder-timeout diagnostics</label>
-        <label><input type="hidden" name="gam_fallback" value="0"><input type="checkbox" name="gam_fallback" value="1" @checked($settings->gam_fallback)> Always fall back to GAM</label>
+        <label><input type="hidden" name="enabled" value="0"><input type="checkbox" name="enabled" value="1" @checked($site->prebid_enabled)> Prebid Enabled</label>
+
+        @if($profileWritable)
+            <p class="muted">
+                Editing {{ $resolvedMode === 'STANDALONE' ? 'the site-owned standalone runtime profile' : 'the selected GAM connection runtime profile' }}.
+            </p>
+            <label>Prebid build
+                <select class="hm-input" name="prebid_build_id">
+                    <option value="">Use active/default build</option>
+                    @foreach($builds as $build)<option value="{{ $build->id }}" @selected($settings->prebid_build_id === $build->id)>{{ $build->name }} · {{ $build->version }}</option>@endforeach
+                </select>
+            </label>
+            <label>Auction timeout ms<input class="hm-input" type="number" min="100" max="5000" name="auction_timeout_ms" value="{{ $settings->auction_timeout_ms }}"></label>
+            <label>Price granularity
+                <select class="hm-input" name="price_granularity">@foreach(['low','medium','high','dense','auto','custom'] as $value)<option value="{{ $value }}" @selected($settings->price_granularity === $value)>{{ $value }}</option>@endforeach</select>
+            </label>
+            <label>Currency<input class="hm-input" name="currency" value="{{ $settings->currency }}" maxlength="3"></label>
+            <label>Bidder sequence
+                <select class="hm-input" name="bidder_sequence"><option value="fixed" @selected($settings->bidder_sequence === 'fixed')>fixed</option><option value="random" @selected($settings->bidder_sequence === 'random')>random</option></select>
+            </label>
+            <label>Consent behavior JSON<textarea class="hm-input" rows="5" name="consent_json">{{ json_encode($settings->consent_behavior ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
+            <label>Minimum refresh seconds<input class="hm-input" type="number" min="30" max="3600" name="refresh_minimum_seconds" value="{{ data_get($settings->refresh_behavior, 'minimumIntervalSeconds', 30) }}"></label>
+            <label><input type="hidden" name="lazy_loading" value="0"><input type="checkbox" name="lazy_loading" value="1" @checked(data_get($settings->lazy_loading, 'enabled', true))> Enable lazy loading</label>
+            <label><input type="hidden" name="refresh_enabled" value="0"><input type="checkbox" name="refresh_enabled" value="1" @checked(data_get($settings->refresh_behavior, 'enabled', true))> Enable refresh auctions</label>
+            <label><input type="hidden" name="bidder_timeout_reporting" value="0"><input type="checkbox" name="bidder_timeout_reporting" value="1" @checked($settings->bidder_timeout_reporting)> Local bidder-timeout diagnostics</label>
+            @if($resolvedMode === 'GAM_BRIDGE')
+                <label><input type="hidden" name="gam_fallback" value="0"><input type="checkbox" name="gam_fallback" value="1" @checked($settings->gam_fallback)> Continue to GAM when the Prebid auction has no usable bid</label>
+            @else
+                <input type="hidden" name="gam_fallback" value="0">
+                <div class="domain-card">
+                    <strong>Standalone render policy</strong>
+                    <p class="muted">Banner only · isolated sandboxed iframe · expired/stale render suppression · no top-window renderer capability · no GPT/GAM fallback.</p>
+                </div>
+            @endif
+        @else
+            <div class="domain-card">
+                <strong>GAM bridge profile unavailable</strong>
+                <p class="muted">Save the website mode or switch to AUTO/STANDALONE. GAM-specific runtime settings become editable after an eligible GAM connection is resolved.</p>
+            </div>
+        @endif
         <button class="hm-button-primary">Save and publish</button>
     </form>
 </article>
@@ -103,6 +145,7 @@
     @empty<p class="muted">No bidder is assigned to this website.</p>@endforelse
 </article>
 
+@if($setupPreview && $connection)
 <section class="detail-grid">
 <article>
     <p class="eyebrow">Centralized GAM automation</p>
@@ -113,7 +156,7 @@
         <span class="pill">{{ $setupPreview['existingObjects'] }} existing</span>
         <span class="pill">{{ $setupPreview['pendingObjects'] }} pending</span>
     </div>
-    <p class="muted">The plan creates or locates one advertiser, targeting keys and values, one order, price-bucket line items, one universal creative, and associations in the selected GAM network.</p>
+    <p class="muted">The existing GAM_BRIDGE setup remains dry-run capable, idempotent and audited. It creates only the normal Prebid targeting/order/line-item/creative objects in GAM.</p>
     <form class="inline-form" method="POST" action="{{ route('admin.gam.prebid.setup', $connection) }}">@csrf<input type="hidden" name="dry_run" value="1"><button class="hm-button-secondary">Create dry-run preview</button></form>
     <form class="form-stack danger-zone" method="POST" action="{{ route('admin.gam.prebid.setup', $connection) }}">@csrf
         <input type="hidden" name="dry_run" value="0">
@@ -134,4 +177,11 @@
     @empty<p class="muted">No setup runs yet.</p>@endforelse
 </article>
 </section>
+@else
+<article>
+    <p class="eyebrow">GAM bridge automation</p>
+    <h3>{{ $resolvedMode === 'STANDALONE' ? 'Not required for standalone delivery' : 'Action required' }}</h3>
+    <p class="muted">{{ $resolvedMode === 'STANDALONE' ? 'No GAM line items, creatives, targeting keys or remote mappings are required for this resolved mode.' : 'An eligible GAM connection is required before GAM setup can be previewed or executed.' }}</p>
+</article>
+@endif
 @endsection
