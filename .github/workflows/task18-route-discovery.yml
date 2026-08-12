@@ -17,4 +17,4 @@ jobs:
           php-version: '8.3'
           extensions: mbstring, sqlite3, pdo_sqlite, soap
       - run: composer install --prefer-dist --no-interaction --no-progress
-      - run: php artisan route:list --name=demand --columns=method,uri,name,action,middleware
+      - run: php artisan route:list --name=demand --json
