@@ -100,6 +100,11 @@ final class SiteMonetizationReadinessService
                 'serving_mode' => $site->serving_mode->value,
                 'site_status' => $site->status->value,
                 'engines' => $engineState->publicEngineState($connection?->network_code ?: ($engineState->gamRequired ? $site->current_gam_network_code : null)),
+                'prebid_control' => [
+                    'configured_mode' => $engineState->prebidConfiguredMode->value,
+                    'resolved_mode' => $engineState->prebidDeliveryMode->value,
+                    'reason' => $engineState->prebidReason,
+                ],
                 'resolved_gam_connection_id' => $connection?->id,
                 'resolved_gam_connection_name' => $connection?->name,
                 'gam_network_code' => $connection?->network_code,
@@ -174,14 +179,25 @@ final class SiteMonetizationReadinessService
         $dependency = $site->serving_mode === ServingMode::HorusDirect && $site->prebid_enabled
             ? MonetizationDependency::Critical
             : MonetizationDependency::Optional;
+        $baseDiagnostics = [
+            'configured_mode' => $engineState->prebidConfiguredMode->value,
+            'resolved_mode' => $engineState->prebidDeliveryMode->value,
+            'engine_reason' => $engineState->prebidReason,
+        ];
         if (! $site->prebid_enabled) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::NotConfigured, $dependency,
-                'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at);
+                'Header bidding is not enabled for this website.', lastUpdate: $site->updated_at,
+                diagnostics: $baseDiagnostics);
+        }
+        if (! $engineState->masterServingEnabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
+                'Header bidding is paused by the master ad-serving control.', lastUpdate: $site->updated_at,
+                diagnostics: $baseDiagnostics);
         }
         if ($this->controls->disabledForSite('PREBID', $site->id)) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::Paused, $dependency,
                 'Header bidding is temporarily paused by an operational control.', lastUpdate: $site->updated_at,
-                diagnostics: ['delivery_mode' => $engineState->prebidDeliveryMode->value]);
+                diagnostics: $baseDiagnostics);
         }
 
         $mappingCount = BidderSiteMapping::withoutGlobalScopes()
@@ -189,43 +205,56 @@ final class SiteMonetizationReadinessService
             ->whereHas('account', fn ($query) => $query->where('enabled', true))
             ->whereHas('placementMappings', fn ($query) => $query->where('enabled', true))
             ->count();
+        $baseDiagnostics['enabled_site_mappings'] = $mappingCount;
 
         if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
-            $build = PrebidBuild::query()->where('is_active', true)->latest('built_at')->first();
-            if (! $build || $mappingCount === 0) {
+            $settings = PrebidSetting::withoutGlobalScopes()->with('build')
+                ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
+                ->where('site_id', $site->id)
+                ->first();
+            $diagnostics = $baseDiagnostics + [
+                'settings_enabled' => (bool) $settings?->enabled,
+                'build' => $settings?->build?->version,
+                'gam_connection_id' => null,
+            ];
+            if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0 || ! $engineState->prebidEnabled) {
                 return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
-                    'Standalone Prebid is enabled but its browser build or placement mappings are incomplete.',
-                    'Horus Media must complete the standalone Prebid build and bidder mapping setup.', null, $build?->built_at ?? $site->updated_at,
-                    ['delivery_mode' => PrebidDeliveryMode::Standalone->value, 'build' => $build?->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => null]);
+                    'Standalone header bidding requires an enabled site profile, pinned browser build, and active bidder placement mappings.',
+                    'Horus Media must complete the standalone Prebid profile and mappings.', null, $settings?->updated_at ?? $site->updated_at,
+                    $diagnostics);
             }
 
-            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Ready, $dependency,
-                'Standalone Prebid configuration is ready without GAM; direct winning-bid rendering is activated by the dedicated browser-runtime rollout.',
-                lastUpdate: $build->built_at ?? $site->updated_at,
-                diagnostics: ['delivery_mode' => PrebidDeliveryMode::Standalone->value, 'build' => $build->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => null]);
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
+                'Header bidding is active in standalone mode without GAM.', lastUpdate: $settings->updated_at,
+                diagnostics: $diagnostics);
         }
 
         $connection = $engineState->gamConnection;
-        if ($connection === null) {
-            return $this->module('prebid', 'Header Bidding', MonetizationStatus::Degraded, $dependency,
-                'Header bidding is enabled in GAM bridge mode but display serving is not currently resolvable.', lastUpdate: $site->updated_at,
-                diagnostics: ['delivery_mode' => PrebidDeliveryMode::GamBridge->value]);
+        if ($connection === null || ! $engineState->prebidEnabled) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                'Header bidding is configured for the GAM bridge, but an eligible GAM connection is unavailable.',
+                'Restore GAM or choose STANDALONE/AUTO intentionally. Explicit GAM_BRIDGE never falls back silently.', null, $site->updated_at,
+                $baseDiagnostics + ['gam_connection_id' => $connection?->id]);
         }
 
-        // Read-only by design: do not call PrebidManager::settingsFor(), because it can create defaults.
         $settings = PrebidSetting::withoutGlobalScopes()->with('build')
+            ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
             ->where('gam_connection_id', $connection->id)->first();
-
+        $diagnostics = $baseDiagnostics + [
+            'settings_enabled' => (bool) $settings?->enabled,
+            'build' => $settings?->build?->version,
+            'gam_connection_id' => $connection->id,
+        ];
         if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
                 'Header bidding is enabled for this website but its managed GAM bridge setup is incomplete.',
                 'Horus Media must complete the managed header-bidding setup.', null, $settings?->updated_at,
-                ['delivery_mode' => PrebidDeliveryMode::GamBridge->value, 'settings_enabled' => (bool) $settings?->enabled, 'build' => $settings?->build?->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
+                $diagnostics);
         }
 
         return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
             'Header bidding is active and centrally managed through the GAM bridge.', lastUpdate: $settings->updated_at,
-            diagnostics: ['delivery_mode' => PrebidDeliveryMode::GamBridge->value, 'build' => $settings->build->version, 'enabled_site_mappings' => $mappingCount, 'gam_connection_id' => $connection->id]);
+            diagnostics: $diagnostics);
     }
 
     private function native(Site $site, ResolvedSiteEngineState $engineState): array
