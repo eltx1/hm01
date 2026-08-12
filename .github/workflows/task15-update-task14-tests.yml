@@ -1,0 +1,46 @@
+name: Task 15 Update Task 14 Expectations
+
+on:
+  push:
+    branches:
+      - task-15-standalone-prebid-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  update-expectations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-15-standalone-prebid-runtime
+          fetch-depth: 0
+      - name: Update standalone profile expectations
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/Feature/GamOptionalServingModelTest.php')
+          text = p.read_text()
+          old = """        $this->assertSame(0, PrebidSetting::withoutGlobalScopes()->count(), 'Standalone Prebid must not create GAM-scoped settings.');\n"""
+          new = """        $this->assertSame(1, PrebidSetting::withoutGlobalScopes()\n            ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)\n            ->where('site_id', $site->id)\n            ->whereNull('gam_connection_id')\n            ->count(), 'Standalone Prebid owns one site-scoped runtime profile.');\n        $this->assertSame(0, PrebidSetting::withoutGlobalScopes()\n            ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)\n            ->whereNotNull('gam_connection_id')\n            ->count(), 'Standalone Prebid must not create a GAM-scoped profile.');\n"""
+          if old not in text:
+              raise SystemExit('old standalone assertion not found')
+          text = text.replace(old, new, 1)
+          old_helper = """        $manager->assignToPlacement($siteMapping, $placement, [\n            'placement_id_value' => 'placement-'.$placement->code,\n            'enabled' => true,\n        ], $this->admin);\n"""
+          new_helper = old_helper + """\n        if ($site->serving_mode === ServingMode::HorusDirect) {\n            $manager->updateStandaloneSettings($site, [\n                'enabled' => true,\n                'auction_timeout_ms' => 1200,\n                'price_granularity' => 'medium',\n                'currency' => 'USD',\n                'bidder_sequence' => 'fixed',\n                'gam_fallback' => false,\n            ], $this->admin);\n        }\n"""
+          if old_helper not in text:
+              raise SystemExit('mapPrebid helper block not found')
+          p.write_text(text.replace(old_helper, new_helper, 1))
+          PY
+          php -l tests/Feature/GamOptionalServingModelTest.php
+          rm .github/workflows/task15-update-task14-tests.yml
+      - name: Commit updated expectations
+        run: |
+          set -euo pipefail
+          git config user.name "Horus Media CI"
+          git config user.email "ci@horusmedia.net"
+          git add -A
+          git commit -m "Task 15: update standalone serving regression expectations"
+          git push origin HEAD:task-15-standalone-prebid-runtime
