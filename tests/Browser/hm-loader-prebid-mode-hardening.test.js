@@ -7,11 +7,14 @@ const loaderSource = await readFile(new URL('../../public/assets/hm-loader.js', 
 test('standalone renderer is strictly gated to STANDALONE delivery mode', () => {
     const standaloneRequest = loaderSource.indexOf('function requestStandaloneEntry(config, entry)');
     const modeGate = loaderSource.indexOf("prebid.deliveryMode !== 'STANDALONE'", standaloneRequest);
-    const renderCall = loaderSource.indexOf('pbjs.renderAd(iframe.contentWindow.document, winner.adId)', standaloneRequest);
+    const renderDispatch = loaderSource.indexOf('standaloneRenderFrame(config, entry, pbjs, winner)', modeGate);
+    const renderHelper = loaderSource.indexOf('function standaloneRenderFrame(config, entry, pbjs, winner)');
+    const renderCall = loaderSource.indexOf('pbjs.renderAd(iframe.contentWindow.document, winner.adId)', renderHelper);
 
     assert.ok(standaloneRequest >= 0, 'Standalone request path must exist.');
     assert.ok(modeGate > standaloneRequest, 'Standalone request path must fail closed outside STANDALONE mode.');
-    assert.ok(renderCall > modeGate, 'Direct render must remain behind the standalone mode gate.');
+    assert.ok(renderDispatch > modeGate, 'Winner dispatch must remain behind the standalone mode gate.');
+    assert.ok(renderHelper >= 0 && renderCall > renderHelper, 'The isolated standalone helper must own renderAd.');
 });
 
 test('GAM bridge keeps targeting then GAM refresh behavior', () => {
