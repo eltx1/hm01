@@ -56,17 +56,22 @@ final class SiteEngineStateResolver
         $prebidControlDisabled = $this->controls->disabledForSite('PREBID', $site->id);
         $prebidModeSupported = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
             || $gamRequired;
+        // Preserve the existing GAM bridge contract exactly: legacy network-code
+        // fallback can keep GAM placement delivery compatible, but Prebid-to-GAM
+        // configuration is still scoped to a real resolved GAM connection.
+        $prebidBridgeAvailable = $prebidDeliveryMode === PrebidDeliveryMode::Standalone
+            || ($gamEnabled && $connection !== null && $connection->is_enabled);
         $prebidEnabled = $masterServingEnabled
             && $prebidModeSupported
             && (bool) $site->prebid_enabled
             && ! $prebidControlDisabled
-            && ($prebidDeliveryMode === PrebidDeliveryMode::Standalone || $gamEnabled);
+            && $prebidBridgeAvailable;
         $prebidReason = match (true) {
             ! $masterServingEnabled => 'MASTER_SERVING_DISABLED',
             ! $prebidModeSupported => 'UNSUPPORTED_SERVING_MODE',
             ! $site->prebid_enabled => 'SITE_PREBID_DISABLED',
             $prebidControlDisabled => 'PREBID_CONTROL_DISABLED',
-            $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $gamEnabled => 'GAM_BRIDGE_UNAVAILABLE',
+            $prebidDeliveryMode === PrebidDeliveryMode::GamBridge && ! $prebidBridgeAvailable => 'GAM_BRIDGE_CONNECTION_REQUIRED',
             default => 'ENABLED',
         };
 
