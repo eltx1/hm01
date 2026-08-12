@@ -16,22 +16,29 @@ test('permanent loader remains schema-v2 compatible during additive schema-v3 ro
 });
 
 test('GPT stays gated by physical GAM placement ownership rather than site-level GAM metadata', () => {
-    const partition = loaderSource.indexOf("var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath; });");
-    const noGamReturn = loaderSource.indexOf('if (!gamItems.length) return nativePromise', partition);
-    const loadGpt = loaderSource.indexOf('return loadGpt(config)', partition);
+    // Task 15 partitions all three renderer families explicitly. The decisive
+    // GAM invariant is still physical adUnitPath ownership, and the no-GAM
+    // branch completes standalone/native work before the first loadGpt call.
+    const standalonePartition = loaderSource.indexOf("var standaloneItems = items.filter(function (item) { return item.placement.renderer === 'PREBID_STANDALONE'; });");
+    const nativePartition = loaderSource.indexOf("var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath && item.placement.renderer !== 'PREBID_STANDALONE'; });", standalonePartition);
+    const gamPartition = loaderSource.indexOf('var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });', nativePartition);
+    const noGamReturn = loaderSource.indexOf('if (!gamItems.length) return Promise.all([nativePromise, standalonePromise])', gamPartition);
+    const loadGpt = loaderSource.indexOf('return loadGpt(config)', gamPartition);
 
-    assert.ok(partition >= 0, 'Loader must partition placements by adUnitPath.');
-    assert.ok(noGamReturn > partition, 'No-GAM placements must short-circuit before GPT initialization.');
+    assert.ok(standalonePartition >= 0, 'Loader must identify standalone Prebid placements explicitly.');
+    assert.ok(nativePartition > standalonePartition, 'Direct/native placements must remain outside the GAM partition.');
+    assert.ok(gamPartition > nativePartition, 'Loader must partition GAM placements by physical adUnitPath.');
+    assert.ok(noGamReturn > gamPartition, 'A page with no GAM-owned placements must short-circuit before GPT initialization.');
     assert.ok(loadGpt > noGamReturn, 'GPT must load only after confirming at least one GAM-owned placement.');
 });
 
 test('standalone Prebid is not silently routed through the legacy GAM bridge path', () => {
-    // Task 14 intentionally does not add direct winning-bid rendering. The
-    // bridge request path still works exclusively with GPT slot entries, while
-    // the schema-v3 builder keeps its legacy prebid.enabled flag false for
-    // STANDALONE. This source invariant prevents a premature implicit bridge.
+    // GAM bridge targeting remains confined to requestEntries/GPT. Standalone
+    // direct rendering is a separate function selected by renderer ownership.
     assert.match(loaderSource, /function requestEntries\(config, googletag, pubads, entries\)/);
     assert.match(loaderSource, /pbjs\.setTargetingForGPTAsync/);
     assert.match(loaderSource, /requestGam\(config, pubads, entries\)/);
-    assert.doesNotMatch(loaderSource, /renderAd\(document/);
+    assert.match(loaderSource, /function requestStandaloneEntry\(config, entry\)/);
+    assert.match(loaderSource, /pbjs\.renderAd\(iframe\.contentWindow\.document, winner\.adId\)/);
+    assert.doesNotMatch(loaderSource, /setTargetingForGPTAsync[^}]+requestStandaloneEntry/s);
 });
