@@ -112,7 +112,7 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame('NOT_REQUIRED_BY_SERVING_MODE', $payload['engines']['gam']['reason']);
         $this->assertTrue($payload['engines']['prebid']['enabled']);
         $this->assertSame(PrebidDeliveryMode::Standalone->value, $payload['engines']['prebid']['deliveryMode']);
-        $this->assertFalse($payload['prebidEnabled'], 'Legacy bridge flag must stay false until standalone rendering is implemented.');
+        $this->assertFalse($payload['prebidEnabled']);
         $this->assertSame(PrebidDeliveryMode::Standalone->value, $payload['prebid']['deliveryMode']);
         $this->assertSame('PREBID_STANDALONE', data_get($payload, 'placements.0.renderer'));
         $this->assertTrue(data_get($payload, 'placements.0.enabled'));
@@ -121,19 +121,19 @@ class GamOptionalServingModelTest extends TestCase
             ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
             ->where('site_id', $site->id)
             ->whereNull('gam_connection_id')
-            ->count(), 'Standalone Prebid owns one site-scoped runtime profile.');
+            ->count());
         $this->assertSame(0, PrebidSetting::withoutGlobalScopes()
             ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
             ->whereNotNull('gam_connection_id')
-            ->count(), 'Standalone Prebid must not create a GAM-scoped profile.');
+            ->count());
 
         $readiness = app(SiteMonetizationReadinessService::class)->admin($site->refresh());
         $display = collect($readiness['modules'])->firstWhere('key', 'display');
         $prebid = collect($readiness['modules'])->firstWhere('key', 'prebid');
         $this->assertSame(MonetizationStatus::NotConfigured->value, $display['status']);
         $this->assertSame('OPTIONAL', $display['dependency']);
-        $this->assertSame(MonetizationStatus::Ready->value, $prebid['status']);
-        $this->assertSame(PrebidDeliveryMode::Standalone->value, data_get($prebid, 'diagnostics.delivery_mode'));
+        $this->assertSame(MonetizationStatus::Active->value, $prebid['status']);
+        $this->assertSame(PrebidDeliveryMode::Standalone->value, data_get($prebid, 'diagnostics.resolved_mode'));
     }
 
     public function test_horus_direct_direct_js_and_standalone_prebid_can_use_independent_placements(): void
@@ -205,7 +205,6 @@ class GamOptionalServingModelTest extends TestCase
 
     public function test_engine_specific_controls_do_not_disable_unrelated_engines(): void
     {
-        // GAM off: Direct JS remains eligible on a GAM-mode site.
         $gamSite = $this->site(ServingMode::HorusGam, directJs: true);
         $directPlacement = $this->placement($gamSite, 'gam_off_direct');
         $this->mapDirectJs($gamSite, $directPlacement);
@@ -216,7 +215,6 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame('DIRECT_JS', data_get($gamOff, 'placements.0.renderer'));
         $this->assertNull(data_get($gamOff, 'placements.0.adUnitPath'));
 
-        // PREBID off: Direct JS remains eligible.
         $prebidOffSite = $this->site(ServingMode::HorusDirect, prebid: true, directJs: true);
         $prebidPlacement = $this->placement($prebidOffSite, 'prebid_off');
         $directPlacement = $this->placement($prebidOffSite, 'direct_survives');
@@ -228,7 +226,6 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertTrue($prebidOff['engines']['directJs']['enabled']);
         $this->assertSame('DIRECT_JS', collect($prebidOff['placements'])->firstWhere('code', 'direct_survives')['renderer']);
 
-        // DIRECT_JS off: standalone Prebid remains eligible and direct tags are removed from legacy payload.
         $directOffSite = $this->site(ServingMode::HorusDirect, prebid: true, directJs: true);
         $prebidPlacement = $this->placement($directOffSite, 'prebid_survives');
         $directPlacement = $this->placement($directOffSite, 'direct_off');
@@ -261,7 +258,6 @@ class GamOptionalServingModelTest extends TestCase
         $this->assertSame($first, $second);
         $this->assertSame(3, $first['schemaVersion']);
         $this->assertArrayHasKey('engines', $first);
-        // Schema-v2 compatibility fields remain during the rollout window.
         $this->assertArrayHasKey('gamNetworkCode', $first);
         $this->assertArrayHasKey('prebidEnabled', $first);
         $this->assertArrayHasKey('nativeDemandEnabled', $first);
