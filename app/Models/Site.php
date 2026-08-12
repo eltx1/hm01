@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PrebidConfiguredMode;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\Concerns\BelongsToOrganization;
@@ -18,13 +19,14 @@ class Site extends Model
 {
     use BelongsToOrganization, HasUlids, SoftDeletes;
 
-    protected $fillable = ['organization_id', 'publisher_id', 'public_key', 'display_name', 'primary_domain', 'language', 'content_category', 'country', 'main_traffic_countries', 'estimated_monthly_pageviews', 'estimated_monthly_users', 'current_monetization_providers', 'current_gam_network_code', 'current_adsense_status', 'current_adx_status', 'prebid_enabled', 'native_demand_enabled', 'default_revenue_share_percent', 'serving_mode', 'gam_connection_id', 'status', 'submitted_at', 'approved_at'];
+    protected $fillable = ['organization_id', 'publisher_id', 'public_key', 'display_name', 'primary_domain', 'language', 'content_category', 'country', 'main_traffic_countries', 'estimated_monthly_pageviews', 'estimated_monthly_users', 'current_monetization_providers', 'current_gam_network_code', 'current_adsense_status', 'current_adx_status', 'prebid_enabled', 'prebid_delivery_mode', 'native_demand_enabled', 'default_revenue_share_percent', 'serving_mode', 'gam_connection_id', 'status', 'submitted_at', 'approved_at'];
 
     protected static function booted(): void
     {
         static::creating(function (Site $site): void {
             $site->public_key ??= 'hm_'.Str::lower(Str::random(24));
             $site->serving_mode ??= ServingMode::HorusGam;
+            $site->prebid_delivery_mode ??= PrebidConfiguredMode::Auto;
             $site->status ??= SiteStatus::Draft;
         });
     }
@@ -33,9 +35,10 @@ class Site extends Model
     {
         return [
             'main_traffic_countries' => 'array', 'current_monetization_providers' => 'array',
-            'prebid_enabled' => 'boolean', 'native_demand_enabled' => 'boolean',
-            'default_revenue_share_percent' => 'decimal:2', 'serving_mode' => ServingMode::class,
-            'status' => SiteStatus::class, 'submitted_at' => 'datetime', 'approved_at' => 'datetime',
+            'prebid_enabled' => 'boolean', 'prebid_delivery_mode' => PrebidConfiguredMode::class,
+            'native_demand_enabled' => 'boolean', 'default_revenue_share_percent' => 'decimal:2',
+            'serving_mode' => ServingMode::class, 'status' => SiteStatus::class,
+            'submitted_at' => 'datetime', 'approved_at' => 'datetime',
         ];
     }
 
