@@ -10,6 +10,7 @@
         servicesEnabled: false,
         initialLoadDisabled: false,
         slots: {},
+        elementSequence: 0,
         refreshTimers: {},
         observer: null,
         navigationPatched: false,
@@ -708,7 +709,10 @@
         if (element.id) return element.id;
         var safeSite = String(config.siteKey).replace(/[^A-Za-z0-9_-]/g, '');
         var safePlacement = String(placement.code).replace(/[^A-Za-z0-9_-]/g, '');
-        element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + Object.keys(state.slots).length;
+        var sequence = Number(state.elementSequence);
+        if (!Number.isFinite(sequence) || sequence < 0) sequence = 0;
+        state.elementSequence = sequence + 1;
+        element.id = 'hm-' + safeSite + '-' + safePlacement + '-' + sequence;
         return element.id;
     }
 
@@ -1580,6 +1584,7 @@
             state.servicesEnabled = false;
             state.initialLoadDisabled = false;
             state.slots = {};
+            state.elementSequence = 0;
             state.refreshTimers = {};
             state.booting = null;
             state.script = null;
