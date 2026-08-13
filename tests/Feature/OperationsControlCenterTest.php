@@ -130,6 +130,7 @@ class OperationsControlCenterTest extends TestCase
         $this->seedIdentity();
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
         app(PlatformControlService::class)->set('PLATFORM', null, 'GAM', true, 'Global GAM maintenance window.', $admin);
+        $this->withoutExceptionHandling();
 
         $this->actingAs($admin)
             ->withSession(['two_factor_passed_at' => now()->timestamp])
