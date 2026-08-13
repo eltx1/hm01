@@ -16,6 +16,7 @@ if 'use App\\Models\\DemandAdsTxtRecord;' not in text:
 text = text.replace('$this->actingAs($this->admin)', '$this->adminSession()')
 text = text.replace("        $this->assertDatabaseHas('ads_txt_records', ['site_id' => $this->site->id, 'account_id' => '100']);", "        $this->assertTrue(DemandAdsTxtRecord::withoutGlobalScopes()\n            ->where('site_id', $this->site->id)\n            ->where('demand_account_id', $this->account->id)\n            ->where('publisher_account_id', '100')\n            ->where('status', 'ACTIVE')\n            ->exists());")
 text = text.replace("['scope_type' => 'GLOBAL', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]", "['scope_type' => 'PLATFORM', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]")
+text = text.replace("['event' => 'platform.control.changed']", "['event' => 'operations.control.changed']")
 old_isolation = '''        $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
         $this->assertStringContainsString('ISOLATED_IFRAME', $encoded);
         $this->assertStringContainsString('allow-scripts', $encoded);
