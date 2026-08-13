@@ -242,3 +242,11 @@ After changing a network, account, website mapping, placement, or widget, publis
 a new production static configuration. The existing Laravel scheduler and
 normal request lifecycle are sufficient; no Redis, Supervisor, WebSockets,
 Docker, or permanent worker is required.
+
+## Direct Demand compatibility note
+
+The historical Native/Alternative Demand domain is retained for compatibility,
+but the product surface is now Direct Demand. Existing native networks, accounts,
+widgets, ads.txt records, reports and history remain valid. Task 20 does not
+create a second native domain.
+

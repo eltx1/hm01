@@ -63,3 +63,12 @@ Direct Demand reuses the canonical Ads.txt Compliance Center and `DemandReportSe
 ## Static configuration and rollback
 
 Every delivery-affecting Admin mutation republishes affected active production configs using `SiteConfigPublisher`. Existing config version history, immutable payload checksums, static delivery outbox, and rollback behavior remain unchanged.
+
+## Task 20 pilot operations
+
+For ExoClick, import the exact provider-issued asynchronous tag and review the
+detected official script origin, `<ins>` container/class, public `data-zoneid`,
+and trusted serve action before approval. For Adsterra, import the actual tag
+received by the operator; do not create a network origin or zone from memory.
+Direct provider failure is placement-local and never steals a Prebid/GAM surface.
+

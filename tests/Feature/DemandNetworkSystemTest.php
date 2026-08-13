@@ -38,11 +38,12 @@ class DemandNetworkSystemTest extends TestCase
     {
         $this->seed(DemandNetworkSeeder::class);
 
-        $this->assertSame(7, DemandNetwork::query()->count());
+        $this->assertSame(8, DemandNetwork::query()->count());
         $this->assertDatabaseHas('demand_networks', ['code' => 'MGID', 'supports_direct_js' => true, 'supports_gam_creative' => true]);
         $this->assertDatabaseHas('demand_networks', ['code' => 'TABOOLA']);
         $this->assertDatabaseHas('demand_networks', ['code' => 'SPEAKOL']);
         $this->assertDatabaseHas('demand_networks', ['code' => 'OUTBRAIN']);
+        $this->assertDatabaseHas('demand_networks', ['code' => 'EXOCLICK', 'supports_direct_js' => true, 'supports_gam_creative' => false, 'supports_gam_line_item' => false]);
 
         [$account] = $this->approvedMgidMapping(DemandIntegrationMode::DirectJs);
         $connector = app(DemandConnectorManager::class)->for($account);

@@ -8,6 +8,7 @@
     "pubmaticBidAdapter",
     "ixBidAdapter",
     "tripleliftBidAdapter",
+    "onetagBidAdapter",
     "consentManagementTcf",
     "consentManagementGpp",
     "tcfControl",

@@ -120,3 +120,13 @@ Validation evidence for the substantive hardening head `7bc462b9caf69647c3839c39
 - **Static Edge #55 — run `31431595551`: SUCCESS** — production frontend build, deterministic static snapshot construction and static-delivery validation passed. PR deployment remains intentionally skipped; live deployment is not part of pull-request validation.
 
 The documentation-finalization commit must pass the same PR gates before merge. The release recommendation remains **READY WITH NON-BLOCKING FOLLOW-UPS** unless that final gate exposes a new material defect.
+
+## Task 20 release decision gate
+
+A GAM-less controlled pilot is blocked if standalone Prebid reaches GPT/GAM,
+Direct JS can execute arbitrary unreviewed top-window code, engine controls do
+not isolate paths, renderer ownership can double-render, tenant/static-config
+secrets leak, or the legacy GAM suite regresses. Production activation still
+requires real provider approvals/IDs, infrastructure evidence, reporting
+reconciliation, and human Operations/Finance sign-off.
+

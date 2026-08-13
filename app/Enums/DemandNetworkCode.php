@@ -8,6 +8,7 @@ enum DemandNetworkCode: string
     case Taboola = 'TABOOLA';
     case Speakol = 'SPEAKOL';
     case Outbrain = 'OUTBRAIN';
+    case ExoClick = 'EXOCLICK';
     case CustomNative = 'CUSTOM_NATIVE';
     case CustomDisplay = 'CUSTOM_DISPLAY';
     case CustomThirdPartyTag = 'CUSTOM_THIRD_PARTY_TAG';

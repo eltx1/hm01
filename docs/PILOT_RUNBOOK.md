@@ -72,3 +72,30 @@ End the pilot only after:
 
 The exit decision belongs to Horus Media operations and finance, not to the
 automated deployment job.
+
+## GAM-less and regression pilot profiles (Task 20)
+
+Use the smallest profile that proves the intended deployment; do not configure a
+fake GAM connection. All IDs below are deployment-time provider values and must
+never be copied from tests.
+
+- **PILOT A — Standalone Prebid only:** `HORUS_DIRECT`, GAM absent, one approved
+  banner placement owned by `PREBID_STANDALONE`. Verify no GPT request.
+- **PILOT B — Direct JS only:** `HORUS_DIRECT`, Prebid absent, one approved Direct
+  placement. Verify only approved provider scripts load.
+- **PILOT C — Standalone Prebid + Direct JS:** independent placements on one page.
+  Verify parallel startup and no global yield competition.
+- **PILOT D — GAM + Prebid GAM_BRIDGE:** regression profile for the established
+  GAM path. Verify GPT, targeting, GAM refresh and setup mappings.
+- **PILOT E — GAM + GAM_BRIDGE + Direct JS:** bridge placement remains GAM-owned
+  while Direct JS owns a separate non-GAM-managed placement.
+
+For OneTag, use the provider-issued `pubId` through the normal Prebid account
+workflow. For ExoClick, import the exact asynchronous tag and review the public
+zone/container values. For Adsterra, obtain and review the actual operator tag;
+do not infer a script host or zone.
+
+Stop immediately on secret exposure, cross-tenant access, same-container double
+render, consent/Click Guard bypass, unexpected GPT in a GAM-less profile, or an
+uncontrolled top-window third-party script.
+

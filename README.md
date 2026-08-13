@@ -170,3 +170,15 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 - [Pilot runbook](docs/PILOT_RUNBOOK.md)
 - [Security operations](docs/SECURITY_OPERATIONS.md)
 - [Roadmap](docs/ROADMAP.md)
+
+## GAM-less controlled pilot baseline (Task 20)
+
+The multi-engine program is now hardened for a controlled GAM-less pilot. The
+release-gated architecture is still one permanent Horus Loader with three
+independent engines: `GAM`, `Prebid (GAM_BRIDGE or STANDALONE)`, and `Direct JS`.
+`HORUS_DIRECT` may be production-healthy with standalone Prebid and/or Direct JS
+without a GAM connection. See `docs/PILOT_RUNBOOK.md` for PILOT A-E and provider
+activation gates. OneTag is an optional pinned Prebid adapter; ExoClick has a
+reviewed asynchronous Direct JS recipe; Adsterra remains operator-tag-driven
+through the generic reviewed importer rather than a guessed hard-coded recipe.
+
