@@ -133,7 +133,7 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->assertSame(1, collect($items)->firstWhere('key', 'publisher-reviews')['count']);
         $this->assertSame(1, collect($items)->firstWhere('key', 'site-reviews')['count']);
-        $this->assertLessThanOrEqual(15, $queries, 'Action Center must remain aggregate-only and avoid N+1 queries.');
+        $this->assertLessThanOrEqual(16, $queries, 'Action Center must remain aggregate-only; Task 19 adds one bounded monetization-health snapshot query.');
     }
 
     public function test_control_plane_templates_include_mobile_and_accessibility_primitives(): void
