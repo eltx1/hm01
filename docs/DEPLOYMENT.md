@@ -45,6 +45,11 @@ pass. Its `horus-media-release-<sha>` ZIP is provider-neutral.
 10. Configure the private static-delivery GitHub token reference, then complete
     `CLOUDFLARE_SETUP.md`. Cloudflare API credentials belong in GitHub Secrets,
     never on the web server.
+11. Leave THOTH disabled by default. Optionally configure
+    `THOTH_OPENAI_API_KEY` or `THOTH_GEMINI_API_KEY` in the private environment,
+    then select a model, run the real synthetic connection test, and enable it
+    from **Admin → Settings → THOTH Quality Advisor**. Never put AI credentials
+    in a release artifact or public/static configuration.
 
 Configure the equivalent of this cron command once per minute:
 

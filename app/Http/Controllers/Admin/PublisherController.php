@@ -4,10 +4,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\OrganizationType;
 use App\Http\Controllers\Controller;
-use App\Models\Organization;
 use App\Models\AuditLog;
+use App\Models\Organization;
 use App\Models\Publisher;
 use App\Models\PublisherStatement;
+use App\Models\ThothSetting;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Identity\SessionInvalidator;
 use App\Services\Reporting\UnifiedReportService;
@@ -16,7 +17,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class PublisherController extends Controller
@@ -49,6 +49,9 @@ class PublisherController extends Controller
             'sites' => fn ($query) => $query->with(['domains', 'gamConnection', 'servingSettings', 'siteConfig'])->latest(),
             'contracts' => fn ($query) => $query->latest(),
             'paymentProfile',
+            'qualityProfiles' => fn ($query) => $query->latest('version'),
+            'qualityReviewRuns' => fn ($query) => $query->latest()->limit(20),
+            'qualityDecisions' => fn ($query) => $query->latest()->limit(20),
         ]);
 
         $canViewFinance = $request->user()->hasPermission('finance.publisher.view')
@@ -63,6 +66,7 @@ class PublisherController extends Controller
             'auditEvents' => $request->user()->hasPermission('audit.view')
                 ? AuditLog::query()->where('organization_id', $publisher->organization_id)->latest()->limit(30)->get()
                 : collect(),
+            'thothSettings' => ThothSetting::current(),
         ]);
     }
 
@@ -105,23 +109,6 @@ class PublisherController extends Controller
         });
 
         return redirect()->route('admin.publishers.index');
-    }
-
-    public function review(Request $request, Publisher $publisher, AuditRecorder $audit): RedirectResponse
-    {
-        $data = $request->validate(['decision' => ['required', 'in:APPROVE,REJECT'], 'reason' => ['required', 'string', 'max:5000']]);
-        if ($data['decision'] === 'APPROVE' && ! $publisher->onboarding_submitted_at) {
-            throw ValidationException::withMessages(['decision' => 'The publisher must submit onboarding before review.']);
-        }
-        $status = $data['decision'] === 'APPROVE' ? 'ACTIVE' : 'SUSPENDED';
-        $before = $publisher->status->value;
-        DB::transaction(function () use ($publisher, $status): void {
-            $publisher->update(['status' => $status]);
-            $publisher->organization->update(['status' => $status]);
-        });
-        $audit->record('publisher.reviewed', $publisher->organization_id, $request->user(), $publisher, ['status' => $before], ['status' => $status], ['decision' => $data['decision'], 'reason' => $data['reason']]);
-
-        return back()->with('status', 'Publisher review recorded.');
     }
 
     private function validated(Request $request, ?Publisher $publisher = null): array

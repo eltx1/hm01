@@ -11,6 +11,7 @@ use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\Admin\OrganizationController;
 use App\Http\Controllers\Admin\PublisherController;
 use App\Http\Controllers\Admin\PublisherPaymentProfileController;
+use App\Http\Controllers\Admin\PublisherQualityReviewController;
 use App\Http\Controllers\Admin\RolePermissionController;
 use App\Http\Controllers\Admin\SiteConfigController;
 use App\Http\Controllers\Admin\SiteController as AdminSiteController;
@@ -93,7 +94,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/admin/publishers/{publisher}/edit', [PublisherController::class, 'edit'])->middleware('permission:publishers.manage')->name('admin.publishers.edit');
         Route::put('/admin/publishers/{publisher}', [PublisherController::class, 'update'])->middleware('permission:publishers.manage')->name('admin.publishers.update');
         Route::delete('/admin/publishers/{publisher}', [PublisherController::class, 'destroy'])->middleware('permission:publishers.manage')->name('admin.publishers.destroy');
-        Route::post('/admin/publishers/{publisher}/review', [PublisherController::class, 'review'])->middleware('permission:publishers.manage')->name('admin.publishers.review');
+        Route::post('/admin/publishers/{publisher}/review', [PublisherQualityReviewController::class, 'decide'])->middleware(['horus', 'permission:publisher_quality.review'])->name('admin.publishers.review');
+        Route::post('/admin/publishers/{publisher}/quality-profile', [PublisherQualityReviewController::class, 'profile'])->middleware(['horus', 'permission:publisher_quality.review'])->name('admin.publishers.quality-profile');
+        Route::post('/admin/publishers/{publisher}/quality-review', [PublisherQualityReviewController::class, 'run'])->middleware(['horus', 'permission:publisher_quality.ai.run', 'throttle:sensitive'])->name('admin.publishers.quality-review.run');
         Route::get('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'edit'])->middleware(['horus', 'permission:publisher_payments.manage'])->name('admin.publishers.payment-profile.edit');
         Route::put('/admin/publishers/{publisher}/payment-profile', [PublisherPaymentProfileController::class, 'update'])->middleware(['horus', 'permission:publisher_payments.manage'])->name('admin.publishers.payment-profile.update');
         Route::post('/admin/publishers/{publisher}/payment-profile/review', [PublisherPaymentProfileController::class, 'review'])->middleware(['horus', 'permission:finance.payment_profiles.verify'])->name('admin.publishers.payment-profile.review');

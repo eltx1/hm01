@@ -20,6 +20,11 @@ class IdentityAccessSeeder extends Seeder
         'organizations.manage' => ['Manage organizations', 'organizations'],
         'publishers.view' => ['View publishers', 'publishers'],
         'publishers.manage' => ['Manage publishers', 'publishers'],
+        'publisher_quality.review' => ['Record human Publisher quality decisions', 'publishers'],
+        'publisher_quality.ai.run' => ['Run THOTH Publisher quality advisories', 'publishers'],
+        'thoth.settings.view' => ['View THOTH AI settings and health', 'settings'],
+        'thoth.settings.manage' => ['Manage THOTH AI provider and runtime settings', 'settings'],
+        'thoth.credentials.manage' => ['Replace encrypted THOTH provider credentials', 'settings'],
         'advertisers.view' => ['View advertisers', 'advertisers'],
         'advertisers.manage' => ['Manage advertisers', 'advertisers'],
         'users.view' => ['View users', 'identity'],
@@ -161,6 +166,13 @@ class IdentityAccessSeeder extends Seeder
             RoleName::PartnerViewer => ['dashboard.partner.view', 'demand.view', 'demand.reports', 'support.tickets.view_own'],
             default => [],
         };
+
+        if ($role === RoleName::OperationsAdmin) {
+            $names = array_merge($names, ['publisher_quality.review', 'publisher_quality.ai.run', 'thoth.settings.view', 'thoth.settings.manage']);
+        }
+        if ($role === RoleName::AdOpsAdmin) {
+            $names = array_merge($names, ['publisher_quality.review', 'publisher_quality.ai.run', 'thoth.settings.view']);
+        }
 
         $names[] = 'notifications.view_own';
 
