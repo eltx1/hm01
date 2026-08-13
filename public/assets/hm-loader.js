@@ -1141,7 +1141,7 @@ function nativeDefinition(config, code) {
         var tag = candidate.tag || {};
         var recipe = tag.container || {};
         var elementName = String(recipe.element || 'div').toLowerCase();
-        if (['div', 'span', 'aside', 'section'].indexOf(elementName) === -1) elementName = 'div';
+        if (['div', 'span', 'aside', 'section', 'ins'].indexOf(elementName) === -1) elementName = 'div';
         var container = document.createElement(elementName);
         container.id = String(recipe.id || tag.containerId || (entry.element.id + '-direct')).replace(/[^A-Za-z0-9_:-]/g, '-');
         container.className = String(recipe.class || tag.containerClass || 'hm-direct-demand-container');
