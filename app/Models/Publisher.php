@@ -64,6 +64,21 @@ class Publisher extends Model
         return $this->hasMany(Site::class);
     }
 
+    public function qualityProfiles(): HasMany
+    {
+        return $this->hasMany(PublisherQualityProfile::class);
+    }
+
+    public function qualityReviewRuns(): HasMany
+    {
+        return $this->hasMany(PublisherQualityReviewRun::class);
+    }
+
+    public function qualityDecisions(): HasMany
+    {
+        return $this->hasMany(PublisherQualityDecision::class);
+    }
+
     public function sellerDeclarations(): HasMany
     {
         return $this->hasMany(SellerDeclaration::class);

@@ -71,6 +71,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Settings', [
                 $this->item('Global settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
+                $this->item('THOTH Quality Advisor', 'admin.thoth.settings', 'thoth.settings.view', ['admin.thoth.*']),
             ]),
             $this->group('Security & Audit', [
                 $this->item('Audit Log', 'admin.audit.index', 'audit.view', ['admin.audit.*']),

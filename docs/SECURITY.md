@@ -33,6 +33,15 @@
   and reserved addresses, limits response size and time, and does not follow redirects.
 - Site reviews, status changes, serving changes, revenue-share changes, manual
   verification, internal notes, and emergency pauses are audited.
+- THOTH provider keys are either environment-managed or stored with Laravel
+  authenticated encryption under `APP_KEY`; they are hidden from serialization,
+  HTML, logs, audit values, Publisher payloads, and static delivery artifacts.
+- THOTH treats verified-site HTML as untrusted data. Fetches reuse public-IP
+  validation, DNS pinning, redirect blocking, MIME/size/time limits, and static
+  text extraction; remote JavaScript is never executed or embedded in Admin.
+- AI providers receive a field allowlist and no tools, browsing, internal APIs,
+  serving controls, finance access, or write capability. Human Horus Admins are
+  the sole Publisher decision authority, protected by separate RBAC permissions.
 
 ## Required future controls
 

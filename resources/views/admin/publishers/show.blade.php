@@ -9,6 +9,7 @@
         ['label' => 'Contracts', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
         ['label' => 'Monetization', 'href' => '#monetization'],
         ['label' => 'Compliance', 'href' => '#compliance'],
+        ['label' => 'Quality Review', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
         ['label' => 'Reporting', 'href' => '#reporting', 'visible' => $reporting !== null],
         ['label' => 'Finance', 'href' => '#finance', 'visible' => $reporting !== null],
         ['label' => 'Users', 'href' => '#users', 'visible' => auth()->user()->hasPermission('users.view')],
@@ -45,6 +46,33 @@
         @empty<p class="muted">No websites are attached to this publisher.</p>@endforelse
     </div>
 </article>
+
+@if(auth()->user()->hasPermission('publisher_quality.review'))
+@php($qualityProfile = $publisher->qualityProfiles->first())
+<article id="quality-review" class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">THOTH · Human authority</p><h2>Publisher Quality Review</h2></div><x-status-badge :status="$thothSettings->enabled ? 'AI ENABLED' : 'AI DISABLED'" /></div>
+    <p class="muted">AI output is advisory evidence only. It never changes Publisher state, serving, or finance. Your signed human decision is authoritative.</p>
+    <details><summary>{{ $qualityProfile ? 'Create a new profile version' : 'Complete quality profile' }}</summary>
+    <form method="POST" action="{{ route('admin.publishers.quality-profile', $publisher) }}" class="form-grid safe-submit">@csrf
+        <label>Content categories (one or more)<select name="content_categories[]" multiple required>@foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)<option @selected(in_array($category, old('content_categories', $qualityProfile?->content_categories ?? [])))>{{ $category }}</option>@endforeach</select></label>
+        <label>Content description<textarea name="content_description" required>{{ old('content_description', $qualityProfile?->content_description) }}</textarea></label>
+        <label>Monthly pageviews<input type="number" name="monthly_pageviews" min="0" value="{{ old('monthly_pageviews', data_get($qualityProfile?->traffic_profile, 'monthly_pageviews')) }}"></label>
+        @foreach(['organic','social','direct','paid','other'] as $source)<label>{{ str($source)->headline() }} traffic %<input type="number" name="{{ $source }}_percent" min="0" max="100" value="{{ old($source.'_percent', data_get($qualityProfile?->traffic_profile, $source, $source === 'direct' ? 100 : 0)) }}" required></label>@endforeach
+        <label>Audience countries (ISO-2)<select name="audience_countries[]" multiple required>@foreach(['US','GB','CA','AU','AE','SA','EG','FR','DE','IN','OTHER'] as $country)<option @selected(in_array($country, old('audience_countries', $qualityProfile?->audience_countries ?? [])))>{{ $country }}</option>@endforeach</select></label>
+        @foreach(['desktop','mobile','tablet'] as $device)<label>{{ str($device)->headline() }} %<input type="number" name="{{ $device }}_percent" min="0" max="100" value="{{ old($device.'_percent', data_get($qualityProfile?->device_mix, $device, $device === 'desktop' ? 100 : 0)) }}" required></label>@endforeach
+        @foreach(['original_content','user_generated_content','ai_assisted_content','sensitive_content','has_privacy_policy','has_contact_details','has_cmp','prior_policy_incidents'] as $flag)<label><input type="checkbox" name="{{ $flag }}" value="1" @checked(old($flag, data_get($qualityProfile?->declarations, $flag, false)))> {{ str($flag)->replace('_', ' ')->headline() }}</label>@endforeach
+        <label>Monetization history<textarea name="monetization_history">{{ old('monetization_history', data_get($qualityProfile?->traffic_profile, 'monetization_history')) }}</textarea></label>
+        <label>Reviewer comments<textarea name="review_comments">{{ old('review_comments', $qualityProfile?->review_comments) }}</textarea></label><button>Save immutable profile version</button>
+    </form></details>
+    @if($qualityProfile)<p><strong>Current profile:</strong> version {{ $qualityProfile->version }} · {{ $qualityProfile->created_at }}</p>@endif
+    @if(auth()->user()->hasPermission('publisher_quality.ai.run'))<form method="POST" action="{{ route('admin.publishers.quality-review.run', $publisher) }}" class="inline safe-submit">@csrf<label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label><button @disabled(!$thothSettings->enabled || !$qualityProfile)>Run THOTH advisory</button></form>@endif
+    <h3>Advisory history</h3>
+    @forelse($publisher->qualityReviewRuns as $run)<div class="compact-row"><div><strong>AI ADVISORY RECOMMENDATION · {{ $run->provider }} · {{ $run->model }}</strong><p>{{ $run->result['recommended_decision'] ?? $run->error_code ?? 'Pending' }} · Risk {{ $run->result['risk_level'] ?? 'unknown' }} · confidence {{ isset($run->result['confidence']) ? $run->result['confidence'].'%' : 'n/a' }} · profile v{{ $run->profile?->version ?? '?' }} · {{ count($run->evidence_snapshot['website_evidence'] ?? []) }} public pages</p><p>{{ $run->result['summary'] ?? 'No advisory result.' }}</p>@foreach(($run->result['findings'] ?? []) as $finding)<p><strong>{{ $finding['severity'] }} · {{ $finding['code'] }}</strong> {{ $finding['explanation'] }} — Evidence: {{ $finding['evidence'] }}</p>@endforeach @if($run->result['positive_signals'] ?? [])<p><strong>Positive signals:</strong> {{ implode(' · ', $run->result['positive_signals']) }}</p>@endif @if($run->result['concerns'] ?? [])<p><strong>Concerns:</strong> {{ implode(' · ', $run->result['concerns']) }}</p>@endif @if($run->result['recommended_admin_checks'] ?? [])<p><strong>Recommended checks:</strong> {{ implode(' · ', $run->result['recommended_admin_checks']) }}</p>@endif @if($run->result['limitations'] ?? [])<p class="muted">Limitations: {{ implode(' · ', $run->result['limitations']) }}</p>@endif</div><x-status-badge :status="$run->status" /></div>@empty<p class="muted">No THOTH advisories have been requested.</p>@endforelse
+    <h3>Human final decision</h3>
+    <form method="POST" action="{{ route('admin.publishers.review', $publisher) }}" class="form-grid safe-submit">@csrf<label>Decision<select name="decision" required><option>APPROVE</option><option>NEEDS_INFORMATION</option><option>REJECT</option></select></label><label>Advisory reference<select name="review_run_id"><option value="">No AI reference</option>@foreach($publisher->qualityReviewRuns->where('status','COMPLETED') as $run)<option value="{{ $run->id }}">{{ $run->created_at }} · {{ $run->result['recommended_decision'] ?? '' }}</option>@endforeach</select></label><label>Required human reason<textarea name="reason" required maxlength="5000"></textarea></label><button>Record human decision</button></form>
+    @forelse($publisher->qualityDecisions as $decision)<div class="compact-row"><div><strong>{{ $decision->decision }}</strong><p>{{ $decision->reason }}</p></div><span class="muted">{{ $decision->created_at }}</span></div>@empty<p class="muted">No human quality decision recorded.</p>@endforelse
+</article>
+@endif
 
 @if(auth()->user()->hasPermission('contracts.view'))
 <article id="contracts" class="workspace-section">
