@@ -1,0 +1,68 @@
+name: Task20 Targeted
+
+on:
+  push:
+    branches:
+      - task-20-gam-less-pilot-production-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-20-gam-less-pilot-production-hardening
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci
+      - name: Materialize adversarial regressions
+        run: python3 tools/task20_validate.py
+      - name: Lint
+        run: |
+          php -l app/Services/Demand/ExoClickConnector.php
+          php -l tests/Feature/GamLessPilotReadinessTest.php
+          node --check public/assets/hm-loader.js
+      - name: Pilot and regression PHP matrix
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test \
+            tests/Feature/GamLessPilotReadinessTest.php \
+            tests/Feature/UniversalDirectDemandEngineTest.php \
+            tests/Feature/UnifiedMultiEngineServingControlCenterTest.php \
+            tests/Feature/GamOptionalServingModelTest.php \
+            tests/Feature/PrebidIntegrationTest.php \
+            tests/Feature/PrebidModeControlHardeningTest.php \
+            tests/Feature/DirectDemandAdminControlCenterTest.php \
+            tests/Feature/DirectCampaignSystemTest.php \
+            tests/Feature/ReportingFinancialSystemTest.php \
+            tests/Feature/SupplyChainComplianceTest.php \
+            tests/Feature/ProductionSecurityTest.php
+      - name: Full Loader browser matrix
+        run: npm run test:browser
+      - name: Build pinned Prebid and Vite assets
+        run: npm run build
+      - name: Migration fresh rollback and reapply
+        run: |
+          touch database/task20.sqlite
+          DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/task20.sqlite" php artisan migrate:fresh --seed --force
+          DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/task20.sqlite" php artisan migrate:rollback --step=1 --force
+          DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/task20.sqlite" php artisan migrate --force
+      - name: Commit validated permanent hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm tools/task20_validate.py .github/workflows/task20-targeted.yml
+          git add .github/workflows/production-release.yml tests/Browser/hm-loader-direct-demand.test.js
+          git commit -m "Task 20: add adversarial runtime and migration release gates"
+          git push origin HEAD:task-20-gam-less-pilot-production-hardening
