@@ -1,0 +1,27 @@
+name: Task20 Docs
+
+on:
+  push:
+    branches:
+      - task-20-gam-less-pilot-production-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-20-gam-less-pilot-production-hardening
+      - name: Update final pilot documentation
+        run: python3 tools/task20_docs.py
+      - name: Commit documentation and clean temporary files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm tools/task20_docs.py .github/workflows/task20-docs.yml
+          git add README.md docs/PRODUCT.md docs/ARCHITECTURE.md docs/PREBID_ARCHITECTURE.md docs/PREBID_OPERATIONS.md docs/DIRECT_DEMAND_ENGINE.md docs/DIRECT_DEMAND_OPERATIONS.md docs/NATIVE_NETWORKS.md docs/MONETIZATION_READINESS.md docs/PILOT_RUNBOOK.md docs/GO_LIVE_CHECKLIST.md docs/CONTROL_PLANE_LAUNCH_READINESS.md
+          git commit -m "Task 20: document GAM-less controlled pilot readiness"
+          git push origin HEAD:task-20-gam-less-pilot-production-hardening
