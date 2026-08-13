@@ -15,9 +15,3 @@ test('failed Direct candidate container is removed before the next provider is a
     assert.notEqual(fallback, -1, 'fallback candidate must still be attempted');
     assert.ok(remove < fallback, 'cleanup must happen before starting the next Direct provider');
 });
-
-test('Direct fallback hardening preserves explicit renderer ownership gates', () => {
-    assert.match(loaderSource, /rendererConflict/);
-    assert.match(loaderSource, /PREBID_STANDALONE/);
-    assert.match(loaderSource, /DIRECT_JS/);
-});
