@@ -41,6 +41,8 @@ jobs:
           php artisan key:generate
           touch database/database.sqlite
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan migrate:fresh --seed --force
+          DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan migrate:rollback --step=1 --force
+          DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan migrate --force
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan route:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan schedule:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
