@@ -13,6 +13,7 @@ use App\Models\PlatformControl;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Demand\ConfiguredDemandConnector;
 use App\Services\Operations\ExternalErrorSanitizer;
+use App\Services\Operations\OperationsOverviewService;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
@@ -144,6 +145,20 @@ class OperationsControlCenterTest extends TestCase
             ->assertSee('OFF · DISABLED')
             ->assertSee('Global GAM maintenance window.')
             ->assertSee($admin->name);
+    }
+
+    public function test_operations_overview_uses_persisted_preview_version_for_stale_configuration(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $site->siteConfig()->updateOrCreate([], [
+            'organization_id' => $site->organization_id,
+            'preview_version' => 2,
+            'production_version' => 1,
+        ]);
+
+        $this->assertSame(1, app(OperationsOverviewService::class)->snapshot()['stale_configuration']);
     }
 
     public function test_operations_and_audit_remain_internal_and_routes_use_web_csrf_group(): void
