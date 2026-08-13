@@ -66,6 +66,8 @@ The scheduled `monetization:health-check` observes active websites every fifteen
 
 The first observation seeds state silently. Notifications are emitted only when a stored state changes (healthy → broken or broken → healthy), using the existing notification dedupe system. Optional GAM on `HORUS_DIRECT` does not create an Action Center incident.
 
+Action Center remains aggregate-only. Task 19 adds one bounded snapshot query and the regression ceiling is fixed at 16 queries; the test still fails on unbounded/N+1 growth.
+
 ## Publisher boundary
 
 Publisher health remains product-safe:
@@ -75,3 +77,7 @@ Publisher health remains product-safe:
 - Direct Monetization.
 
 Provider identities, GAM network codes, bidder accounts, credentials, commercial terms and Admin reporting-source diagnostics remain internal.
+
+## Targeted validation
+
+The Task 19 targeted matrix covers no-GAM Prebid/Direct combinations, GAM Bridge plus an independent Direct JS surface, engine-specific pauses, master pause, production placement ownership, source-aware reporting, Action Center conditions, transition notification dedupe, and Publisher white-label output. Browser regression coverage explicitly boots standalone Prebid plus two Direct JS placements concurrently and asserts that no GPT/GAM script is loaded.
