@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\ConfigEnvironment;
 use App\Enums\DemandAccountScope;
 use App\Enums\DemandApprovalStatus;
 use App\Enums\DemandIntegrationMode;
@@ -15,8 +14,6 @@ use App\Enums\SiteStatus;
 use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
 use App\Models\DemandSite;
-use App\Models\GamConnection;
-use App\Models\Site;
 use App\Services\Demand\ConfiguredDemandConnector;
 use App\Services\Monetization\SiteMonetizationReadinessService;
 use Database\Seeders\DemandNetworkSeeder;
@@ -67,12 +64,11 @@ class PublisherMonetizationHealthTest extends TestCase
 
     public function test_readiness_uses_controlled_statuses_and_optional_modules_do_not_break_overall_health(): void
     {
-        $this->site->update(['serving_mode' => ServingMode::HorusGam]);
-        $this->site->servingSettings()->update(['serving_mode' => ServingMode::HorusGam]);
-        $this->site->gamAssignments()->create([
+        $this->site->update([
+            'serving_mode' => ServingMode::HorusGam,
             'gam_connection_id' => $this->gam->id,
-            'assigned_by' => $this->admin->id,
         ]);
+        $this->site->servingSettings()->update(['serving_mode' => ServingMode::HorusGam]);
 
         $result = app(SiteMonetizationReadinessService::class)->admin($this->site->fresh());
         $display = collect($result['modules'])->firstWhere('key', 'display');
@@ -107,8 +103,8 @@ class PublisherMonetizationHealthTest extends TestCase
     public function test_native_provider_is_white_labeled_for_publisher_but_visible_to_admin(): void
     {
         $this->site->update(['native_demand_enabled' => true]);
-        $network = DemandNetwork::create([
-            'code' => 'CUSTOM_NATIVE',
+        $network = DemandNetwork::query()->where('code', 'CUSTOM_NATIVE')->firstOrFail();
+        $network->update([
             'name' => 'INTERNAL PROVIDER ALPHA',
             'connector_class' => ConfiguredDemandConnector::class,
             'default_integration_mode' => DemandIntegrationMode::DirectJs,
@@ -155,8 +151,8 @@ class PublisherMonetizationHealthTest extends TestCase
     public function test_publisher_html_minimizes_internal_data_while_admin_site_360_shows_technical_truth(): void
     {
         $this->site->update(['native_demand_enabled' => true]);
-        $network = DemandNetwork::create([
-            'code' => 'CUSTOM_NATIVE',
+        $network = DemandNetwork::query()->where('code', 'CUSTOM_NATIVE')->firstOrFail();
+        $network->update([
             'name' => 'WHITE LABEL INTERNAL PROVIDER',
             'connector_class' => ConfiguredDemandConnector::class,
             'default_integration_mode' => DemandIntegrationMode::DirectJs,
