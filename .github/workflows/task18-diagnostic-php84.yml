@@ -1,0 +1,35 @@
+name: Task18 PHP84 Diagnostic
+
+'on':
+  push:
+    branches:
+      - task-18-direct-demand-admin-control-center
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-18-direct-demand-admin-control-center
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, sqlite3, pdo_sqlite, soap
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Capture first failure
+        shell: bash
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          set +e
+          php artisan test --stop-on-failure 2>&1 | tee task18-php84-first-failure.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task18-php84-first-failure
+          path: task18-php84-first-failure.log
+          retention-days: 1
