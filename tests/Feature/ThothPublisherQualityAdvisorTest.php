@@ -134,6 +134,15 @@ class ThothPublisherQualityAdvisorTest extends TestCase
         $this->assertTrue(PublisherQualityProfile::latest('version')->first()->declarations['original_content']);
     }
 
+    public function test_quality_profile_accepts_the_ui_fallback_audience_country(): void
+    {
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $payload = $this->profilePayload();
+        $payload['audience_countries'] = ['US', 'OTHER'];
+        $this->post(route('admin.publishers.quality-profile', $this->publisher), $payload)->assertSessionHasNoErrors();
+        $this->assertSame(['US', 'OTHER'], PublisherQualityProfile::firstOrFail()->audience_countries);
+    }
+
     public function test_ai_run_is_advisory_only_preserves_state_and_records_canonical_metadata(): void
     {
         $profile = $this->profile();

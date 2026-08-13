@@ -12,6 +12,7 @@ use App\Services\Thoth\PublisherQualityReviewService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 final class PublisherQualityReviewController extends Controller
@@ -21,7 +22,7 @@ final class PublisherQualityReviewController extends Controller
         $data = $request->validate([
             'content_categories' => ['required', 'array', 'min:1', 'max:20'], 'content_categories.*' => ['string', 'max:100'], 'content_description' => ['required', 'string', 'max:10000'],
             'monthly_pageviews' => ['nullable', 'integer', 'min:0', 'max:100000000000'], 'organic_percent' => ['required', 'integer', 'between:0,100'], 'social_percent' => ['required', 'integer', 'between:0,100'], 'direct_percent' => ['required', 'integer', 'between:0,100'], 'paid_percent' => ['required', 'integer', 'between:0,100'], 'other_percent' => ['required', 'integer', 'between:0,100'],
-            'audience_countries' => ['required', 'array', 'min:1', 'max:50'], 'audience_countries.*' => ['string', 'size:2'],
+            'audience_countries' => ['required', 'array', 'min:1', 'max:50'], 'audience_countries.*' => ['string', Rule::in(['US', 'GB', 'CA', 'AU', 'AE', 'SA', 'EG', 'FR', 'DE', 'IN', 'OTHER'])],
             'desktop_percent' => ['required', 'integer', 'between:0,100'], 'mobile_percent' => ['required', 'integer', 'between:0,100'], 'tablet_percent' => ['required', 'integer', 'between:0,100'],
             'original_content' => ['nullable', 'boolean'], 'user_generated_content' => ['nullable', 'boolean'], 'ai_assisted_content' => ['nullable', 'boolean'], 'sensitive_content' => ['nullable', 'boolean'], 'has_privacy_policy' => ['nullable', 'boolean'], 'has_contact_details' => ['nullable', 'boolean'], 'has_cmp' => ['nullable', 'boolean'], 'prior_policy_incidents' => ['nullable', 'boolean'], 'monetization_history' => ['nullable', 'string', 'max:5000'], 'review_comments' => ['nullable', 'string', 'max:10000'],
         ]);
