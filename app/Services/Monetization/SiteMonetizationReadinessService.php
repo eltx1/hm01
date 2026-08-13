@@ -34,6 +34,7 @@ final class SiteMonetizationReadinessService
         private readonly PlatformControlService $controls,
         private readonly AdsTxtComplianceService $adsTxt,
         private readonly RuntimePolicyResolver $runtimePolicies,
+        private readonly ReportingHealthService $reportingHealth,
     ) {}
 
     /**
@@ -128,7 +129,7 @@ final class SiteMonetizationReadinessService
             : MonetizationDependency::Optional;
 
         if (! $engineState->gamRequired) {
-            return $this->module('display', 'GAM / Display Monetization', MonetizationStatus::NotConfigured, $dependency,
+            return $this->module('display', 'Display Monetization', MonetizationStatus::NotConfigured, $dependency,
                 'GAM is optional for this serving mode and no GAM engine is required.', lastUpdate: $production?->published_at,
                 diagnostics: ['serving_mode' => $site->serving_mode->value, 'gam_reason' => $engineState->gamReason]);
         }
@@ -350,30 +351,27 @@ final class SiteMonetizationReadinessService
 
     private function reporting(Site $site): array
     {
-        $dimensionIds = ReportDimension::withoutGlobalScopes()->where('site_id', $site->id)->select('id');
-        $latest = DailyReport::withoutGlobalScopes()->with('connection')
-            ->whereIn('report_dimension_id', $dimensionIds)
-            ->latest('report_date')->latest('updated_at')->first();
+        $health = $this->reportingHealth->forSite($site);
+        $status = match ($health['status']) {
+            'ACTIVE' => MonetizationStatus::Active,
+            'DEGRADED' => MonetizationStatus::Degraded,
+            'NOT_CONFIGURED' => MonetizationStatus::NotConfigured,
+            default => MonetizationStatus::Pending,
+        };
 
-        if (! $latest) {
-            return $this->module('reporting', 'Reporting', MonetizationStatus::Pending, MonetizationDependency::Recommended,
-                'No persisted reporting data is available for this website yet.',
-                'Reporting will become healthy after the first successful data import.');
-        }
-
-        $lastSuccess = $latest->connection?->last_successful_import_at;
-        $stale = $latest->report_date->lt(now()->subDays(3)->startOfDay())
-            || ($lastSuccess !== null && $lastSuccess->lt(now()->subDays(3)));
-        $connectionError = in_array($latest->connection?->status?->value, ['ERROR', 'DISABLED'], true);
-        $status = ($stale || $connectionError) ? MonetizationStatus::Degraded : MonetizationStatus::Active;
-
-        return $this->module('reporting', 'Reporting', $status, MonetizationDependency::Recommended,
-            $status === MonetizationStatus::Active
-                ? 'Reporting data is arriving from persisted imports.'
-                : 'Reporting data is delayed or its persisted source health requires attention.',
-            $status === MonetizationStatus::Degraded ? 'Horus Media must review reporting source/import health.' : null,
-            null, $lastSuccess ?? $latest->updated_at,
-            ['connection_id' => $latest->report_source_connection_id, 'connection_name' => $latest->connection?->name, 'connection_status' => $latest->connection?->status?->value, 'last_report_date' => $latest->report_date->toDateString(), 'last_successful_import_at' => $this->timestamp($lastSuccess)]);
+        return $this->module(
+            'reporting',
+            'Reporting',
+            $status,
+            MonetizationDependency::Recommended,
+            $health['reason'],
+            in_array($health['status'], ['DEGRADED', 'PENDING'], true)
+                ? 'Horus Media must review the affected aggregated reporting source.'
+                : null,
+            null,
+            $health['last_update'],
+            ['sources' => $health['sources']],
+        );
     }
 
     private function clickGuard(Site $site): array
@@ -400,6 +398,27 @@ final class SiteMonetizationReadinessService
             return $this->module('overall', 'Monetization Overall', MonetizationStatus::Pending, MonetizationDependency::Critical,
                 'The website is not active yet; monetization readiness is still pending.',
                 'Complete website approval and activation.', $this->publisherRoute('publisher.sites.show', $site), $site->updated_at);
+        }
+
+        if ($site->serving_mode === ServingMode::HorusDirect) {
+            $engineModules = collect($modules)->whereIn('key', ['display', 'prebid', 'native']);
+            $engineAvailable = $engineModules->contains(fn (array $module): bool => in_array(
+                $module['status'],
+                [MonetizationStatus::Active->value, MonetizationStatus::Degraded->value],
+                true,
+            ));
+            if (! $engineAvailable) {
+                return $this->module(
+                    'overall',
+                    'Monetization Overall',
+                    MonetizationStatus::ActionRequired,
+                    MonetizationDependency::Critical,
+                    'No monetization engine is currently available for this GAM-optional website.',
+                    'Enable and repair standalone Header Bidding or Direct Monetization.',
+                    $this->publisherRoute('publisher.sites.show', $site),
+                    $site->updated_at,
+                );
+            }
         }
 
         $critical = collect($modules)->where('dependency', MonetizationDependency::Critical->value);

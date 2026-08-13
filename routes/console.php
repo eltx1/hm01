@@ -3,6 +3,7 @@
 use App\Models\Site;
 use App\Models\SyntheticProbeResult;
 use App\Services\Compliance\AdsTxtVerifier;
+use App\Services\Monetization\MonetizationHealthMonitor;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schedule;
@@ -57,9 +58,24 @@ Artisan::command('supply-chain:check {--site=}', function (AdsTxtVerifier $verif
         : Command::FAILURE;
 })->purpose('Safely verify publisher ads.txt 1.1 compliance and retain deduplicated history.');
 
+Artisan::command('monetization:health-check {--site=}', function (MonetizationHealthMonitor $monitor): int {
+    $sites = Site::withoutGlobalScopes()
+        ->where('status', 'ACTIVE')
+        ->when($this->option('site'), fn ($query, $id) => $query->whereKey($id))
+        ->get();
+    foreach ($sites as $site) {
+        $states = $monitor->observe($site);
+        $broken = collect($states)->where('status', 'BROKEN')->count();
+        $this->line($site->display_name.': '.($broken === 0 ? 'HEALTHY' : $broken.' condition(s) require attention'));
+    }
+
+    return Command::SUCCESS;
+})->purpose('Observe multi-engine monetization health and emit deduplicated state-transition notifications.');
+
 Schedule::command('operations:heartbeat scheduler')->everyMinute()->withoutOverlapping();
 Schedule::command('static-delivery:process')->everyMinute()->withoutOverlapping(10);
 Schedule::command('adtech:probe')->everyFifteenMinutes()->withoutOverlapping(10);
+Schedule::command('monetization:health-check')->everyFifteenMinutes()->withoutOverlapping(10);
 Schedule::command('supply-chain:check')->dailyAt('03:20')->withoutOverlapping(30);
 Schedule::command('support:sla-monitor')->everyFiveMinutes()->withoutOverlapping(10);
 Schedule::command('notifications:deliver-email')->everyFiveMinutes()->withoutOverlapping(10);
