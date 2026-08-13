@@ -1,0 +1,45 @@
+name: Task20 Materialize
+
+on:
+  push:
+    branches:
+      - task-20-gam-less-pilot-production-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task-20-gam-less-pilot-production-hardening
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply Task 20 hardening
+        run: python3 tools/task20_materialize.py
+      - name: Validate PHP and pinned Prebid build
+        run: |
+          php -l app/Enums/DemandNetworkCode.php
+          php -l app/Services/Demand/ExoClickConnector.php
+          php -l app/Services/Demand/DirectTagRecipeParser.php
+          php -l database/seeders/DemandNetworkSeeder.php
+          php -l database/seeders/PrebidSeeder.php
+          npm run build:prebid
+          grep -q 'onetag' public/assets/prebid/horus-prebid.js
+          node --check public/assets/hm-loader.js
+      - name: Commit product and generated Prebid assets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm tools/task20_materialize.py .github/workflows/task20-materialize.yml
+          git add app/Enums/DemandNetworkCode.php app/Services/Demand/ExoClickConnector.php app/Services/Demand/DirectTagRecipeParser.php config/demand.php database/seeders/DemandNetworkSeeder.php database/seeders/PrebidSeeder.php resources/prebid/horus-build.json public/assets/hm-loader.js public/assets/prebid/horus-prebid.js public/assets/prebid/horus-prebid.min.js public/assets/prebid/horus-prebid.sha256
+          git commit -m "Task 20: harden GAM-less pilot providers and Direct JS races"
+          git push origin HEAD:task-20-gam-less-pilot-production-hardening
