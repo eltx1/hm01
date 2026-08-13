@@ -162,6 +162,9 @@ Production publication follows the website lifecycle automatically:
   not one version per row.
 - Suspension, archive from active state, and emergency pause queue an urgent
   paused version. Emergency pause creates exactly one urgent version.
+- A platform-level `AD_SERVING`, `GAM`, `PREBID`, `DIRECT_JS`, or legacy
+  `NATIVE_DEMAND` disable republishes active production configurations with
+  `URGENT` priority. It never waits for the normal batching delay.
 - Manual Preview/Test/Production and rollback remain available as explicit
   operations. A non-active website can never generate an active payload.
 
@@ -182,6 +185,24 @@ independent of fallback GAM identity.
 The current schema-v2 contract remains supported. A later compatible schema may
 add explicit engine state while retaining legacy fields for deployed Loaders.
 Old immutable configurations must remain readable and rollback-safe.
+
+The global edge control artifact is a separate additive schema-v2 contract:
+
+```json
+{
+  "schemaVersion": 2,
+  "controls": {
+    "adServingDisabled": false,
+    "gamDisabled": false,
+    "prebidDisabled": false,
+    "directJsDisabled": false,
+    "nativeDemandDisabled": false
+  }
+}
+```
+
+`nativeDemandDisabled` is retained only as a legacy compatibility alias. New
+operational code uses `DIRECT_JS`.
 
 ## Public configuration shape
 

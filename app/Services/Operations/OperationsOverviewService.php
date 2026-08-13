@@ -74,7 +74,7 @@ final class OperationsOverviewService
     {
         return Site::withoutGlobalScopes()
             ->whereHas('siteConfig', function ($query): void {
-                $query->whereColumn('draft_version', '>', 'production_version');
+                $query->whereColumn('preview_version', '>', 'production_version');
             })
             ->count();
     }

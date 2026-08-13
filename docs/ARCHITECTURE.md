@@ -121,6 +121,13 @@ The static schema evolves compatibly: old deployed schema versions remain valid
 while newer versions may add explicit `engines` state. Publication, rollback,
 and cache behavior remain deterministic, and secrets never enter CDN payloads.
 
+The short-lived global control artifact independently represents the master
+`AD_SERVING` stop and the `GAM`, `PREBID`, and `DIRECT_JS` engine stops. Loader
+precedence is restrictive across platform, site, placement, GAM connection, and
+demand network controls. Platform engine disables enter the same static outbox
+with urgent priority and zero batching delay; normal publisher requests still
+never traverse Laravel.
+
 See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane

@@ -13,6 +13,7 @@ use App\Models\PlatformControl;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Demand\ConfiguredDemandConnector;
 use App\Services\Operations\ExternalErrorSanitizer;
+use App\Services\Operations\OperationsOverviewService;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
@@ -115,6 +116,49 @@ class OperationsControlCenterTest extends TestCase
             'current_password' => 'wrong-password',
             'impact_confirmation' => 'DISABLE PLATFORM AD SERVING',
         ])->assertSessionHasErrors('current_password');
+
+        $this->post(route('admin.operations.controls'), [
+            'scope_type' => 'PLATFORM',
+            'control_key' => 'GAM',
+            'is_disabled' => '1',
+            'reason' => 'Emergency GAM-only stop',
+            'current_password' => 'password',
+        ])->assertSessionHasErrors('impact_confirmation');
+    }
+
+    public function test_operations_center_shows_explicit_global_engine_states_with_evidence(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        app(PlatformControlService::class)->set('PLATFORM', null, 'GAM', true, 'Global GAM maintenance window.', $admin);
+        $this->withoutExceptionHandling();
+
+        $this->actingAs($admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.operations.index'))
+            ->assertOk()
+            ->assertSee('Global edge engine state')
+            ->assertSee('All Ad Serving')
+            ->assertSee('GAM')
+            ->assertSee('Prebid')
+            ->assertSee('Direct JS')
+            ->assertSee('OFF · DISABLED')
+            ->assertSee('Global GAM maintenance window.')
+            ->assertSee($admin->name);
+    }
+
+    public function test_operations_overview_uses_persisted_preview_version_for_stale_configuration(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $site->siteConfig()->updateOrCreate([], [
+            'organization_id' => $site->organization_id,
+            'preview_version' => 2,
+            'production_version' => 1,
+        ]);
+
+        $this->assertSame(1, app(OperationsOverviewService::class)->snapshot()['stale_configuration']);
     }
 
     public function test_operations_and_audit_remain_internal_and_routes_use_web_csrf_group(): void

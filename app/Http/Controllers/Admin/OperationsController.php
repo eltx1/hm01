@@ -42,6 +42,7 @@ class OperationsController extends Controller
         $latestProbes = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
         $failedJobs = DB::table('failed_jobs')->latest('failed_at')->limit(50)->get()->map(function ($job) use ($errors) {
             $job->safe_exception = $errors->sanitize($job->exception ?? null, 700);
+
             return $job;
         });
         $failedImports = ReportImportJob::withoutGlobalScopes()
@@ -53,6 +54,13 @@ class OperationsController extends Controller
             ->each(fn (ReportImportJob $job) => $job->setAttribute('safe_error', $errors->sanitize($job->error_message, 700)));
         $deliveryBatches = StaticDeliveryBatch::query()->latest()->limit(25)->get()
             ->each(fn (StaticDeliveryBatch $batch) => $batch->setAttribute('safe_error', $errors->sanitize($batch->error_message, 700)));
+        $globalControlRecords = PlatformControl::query()
+            ->with('actor')
+            ->where('scope_type', 'PLATFORM')
+            ->where('scope_id', 'GLOBAL')
+            ->whereIn('control_key', ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'])
+            ->get()
+            ->keyBy('control_key');
 
         return view('admin.operations.index', [
             'overview' => $overview->snapshot(),
@@ -62,6 +70,27 @@ class OperationsController extends Controller
             'failedImports' => $failedImports,
             'controls' => PlatformControl::query()->with('actor')->orderByDesc('changed_at')->limit(250)->get(),
             'allowedControls' => (array) config('operations.controls', []),
+            'globalEngineControls' => collect([
+                'AD_SERVING' => 'All Ad Serving',
+                'GAM' => 'GAM',
+                'PREBID' => 'Prebid',
+                'DIRECT_JS' => 'Direct JS',
+            ])->map(function (string $label, string $key) use ($globalControlRecords): array {
+                $record = $globalControlRecords->get($key);
+                if ($key === 'DIRECT_JS' && ! $record?->is_disabled) {
+                    $legacyRecord = $globalControlRecords->get('NATIVE_DEMAND');
+                    $record = $legacyRecord?->is_disabled ? $legacyRecord : $record;
+                }
+
+                return [
+                    'key' => $key,
+                    'label' => $label,
+                    'disabled' => (bool) $record?->is_disabled,
+                    'reason' => $record?->reason,
+                    'actor' => $record?->actor?->name,
+                    'changed_at' => $record?->changed_at,
+                ];
+            })->values(),
             'sites' => Site::withoutGlobalScopes()->orderBy('display_name')->limit(1000)->get(['id', 'display_name']),
             'placements' => Placement::withoutGlobalScopes()->orderBy('name')->limit(2000)->get(['id', 'name', 'site_id']),
             'gamConnections' => GamConnection::withoutGlobalScopes()->orderBy('name')->limit(500)->get(['id', 'name', 'type', 'health_status', 'is_enabled']),
@@ -100,12 +129,12 @@ class OperationsController extends Controller
             throw ValidationException::withMessages(['current_password' => 'The current password is incorrect.']);
         }
 
-        $isPlatformServingDisable = $data['scope_type'] === 'PLATFORM'
-            && $data['control_key'] === 'AD_SERVING'
-            && (bool) $data['is_disabled'];
-        if ($isPlatformServingDisable && ($data['impact_confirmation'] ?? '') !== 'DISABLE PLATFORM AD SERVING') {
+        $confirmation = $data['scope_type'] === 'PLATFORM' && (bool) $data['is_disabled']
+            ? $this->platformDisableConfirmation($data['control_key'])
+            : null;
+        if ($confirmation && ($data['impact_confirmation'] ?? '') !== $confirmation) {
             throw ValidationException::withMessages([
-                'impact_confirmation' => 'Type DISABLE PLATFORM AD SERVING to confirm the platform-wide serving impact.',
+                'impact_confirmation' => "Type {$confirmation} to confirm the platform-wide engine impact.",
             ]);
         }
 
@@ -120,7 +149,9 @@ class OperationsController extends Controller
 
         $changed = $control->wasRecentlyCreated || $control->wasChanged('is_disabled');
         if ($changed) {
-            $urgent = (bool) $data['is_disabled'] && $data['control_key'] === 'AD_SERVING';
+            $urgent = $data['scope_type'] === 'PLATFORM'
+                && (bool) $data['is_disabled']
+                && in_array($data['control_key'], ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'], true);
             $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request, $urgent);
         }
 
@@ -186,6 +217,17 @@ class OperationsController extends Controller
                 $urgent ? StaticDeliveryPriority::Urgent : StaticDeliveryPriority::Normal,
             );
         }
+    }
+
+    private function platformDisableConfirmation(string $control): ?string
+    {
+        return match ($control) {
+            'AD_SERVING' => 'DISABLE PLATFORM AD SERVING',
+            'GAM' => 'DISABLE PLATFORM GAM',
+            'PREBID' => 'DISABLE PLATFORM PREBID',
+            'DIRECT_JS', 'NATIVE_DEMAND' => 'DISABLE PLATFORM DIRECT JS',
+            default => null,
+        };
     }
 
     public function rollbackLoader(Request $request, LoaderReleaseManager $manager): RedirectResponse

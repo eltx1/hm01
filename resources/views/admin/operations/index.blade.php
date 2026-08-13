@@ -8,6 +8,27 @@
     <article><p class="eyebrow">GAM health issues</p><strong class="metric">{{ $overview['gam_unhealthy'] }}</strong><p class="muted">Enabled connections that are degraded, failed, or not yet verified.</p></article>
     <article><p class="eyebrow">Demand health issues</p><strong class="metric">{{ $overview['demand_unhealthy'] }}</strong><p class="muted">Enabled accounts lacking approval or a successful persisted sync.</p></article>
 </section>
+
+<section>
+    <h2>Global edge engine state</h2>
+    <p class="muted">The edge artifact enforces these controls before any engine initializes. All Ad Serving is the master switch; engine switches remain independent when the master is ON.</p>
+    <div class="metric-grid">
+        @foreach($globalEngineControls as $engineControl)
+            <article>
+                <p class="eyebrow">{{ $engineControl['label'] }}</p>
+                <strong class="metric">{{ $engineControl['disabled'] ? 'OFF · DISABLED' : 'ON' }}</strong>
+                <p class="muted">
+                    @if($engineControl['reason'])
+                        {{ $engineControl['reason'] }}<br>
+                        {{ $engineControl['actor'] ?: 'system' }} · {{ $engineControl['changed_at'] }}
+                    @else
+                        No disabling override recorded.
+                    @endif
+                </p>
+            </article>
+        @endforeach
+    </div>
+</section>
 <section class="metric-grid">
     <article><p class="eyebrow">Failed report imports</p><strong class="metric">{{ $overview['failed_report_imports'] }}</strong></article>
     <article><p class="eyebrow">Paused / disabled sites</p><strong class="metric">{{ $overview['paused_or_disabled_sites'] }}</strong></article>
@@ -78,8 +99,8 @@
             <label>Control<select name="control_key" id="control-key" required></select></label>
             <label>Requested state<select name="is_disabled" id="control-state"><option value="1">Disabled / emergency pause</option><option value="0">Enabled / resume</option></select></label>
             <div id="platform-impact" hidden>
-                <p><strong>High impact:</strong> platform-wide AD_SERVING disable stops Horus ad serving for every affected site until explicitly re-enabled.</p>
-                <label>Enhanced confirmation<input name="impact_confirmation" placeholder="DISABLE PLATFORM AD SERVING" autocomplete="off"></label>
+                <p><strong>High impact:</strong> a platform-wide engine disable is published urgently to the static edge and remains active until explicitly re-enabled.</p>
+                <label>Enhanced confirmation<input name="impact_confirmation" id="impact-confirmation" placeholder="DISABLE PLATFORM AD SERVING" autocomplete="off"></label>
             </div>
             <label>Reason<textarea name="reason" required minlength="8" maxlength="2000" placeholder="Why this operational transition is required"></textarea></label>
             <label>Current password<input type="password" name="current_password" required autocomplete="current-password"></label>
@@ -146,6 +167,14 @@ $controlTargets = [
     const key = document.getElementById('control-key');
     const state = document.getElementById('control-state');
     const impact = document.getElementById('platform-impact');
+    const impactConfirmation = document.getElementById('impact-confirmation');
+    const platformConfirmations = {
+        AD_SERVING: 'DISABLE PLATFORM AD SERVING',
+        GAM: 'DISABLE PLATFORM GAM',
+        PREBID: 'DISABLE PLATFORM PREBID',
+        DIRECT_JS: 'DISABLE PLATFORM DIRECT JS',
+        NATIVE_DEMAND: 'DISABLE PLATFORM DIRECT JS',
+    };
 
     const refresh = () => {
         const selectedScope = scope.value;
@@ -165,7 +194,12 @@ $controlTargets = [
         refreshImpact();
     };
     const refreshImpact = () => {
-        impact.hidden = !(scope.value === 'PLATFORM' && key.value === 'AD_SERVING' && state.value === '1');
+        const confirmation = scope.value === 'PLATFORM' && state.value === '1'
+            ? platformConfirmations[key.value]
+            : null;
+        impact.hidden = !confirmation;
+        impactConfirmation.required = Boolean(confirmation);
+        impactConfirmation.placeholder = confirmation || '';
     };
     scope.addEventListener('change', refresh);
     target.addEventListener('change', () => scopeId.value = target.value);
