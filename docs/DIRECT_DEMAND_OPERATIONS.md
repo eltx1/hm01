@@ -8,7 +8,9 @@ Horus Admin uses the existing Demand domain and routes under **Monetization → 
 
 The control center covers network policy, account configuration, website mappings, placement mappings, tags/widgets, operational health, reporting, and links into the canonical Ads.txt Compliance Center.
 
-Publisher users do not receive these Admin routes. Publisher-facing monetization health remains white-label and exposes no provider credentials, confidential account identifiers, or commercial terms.
+All Direct Demand Admin routes require the normal authenticated/active/verified Admin session, a current Admin 2FA session, the Horus-administrator boundary, and the existing granular `demand.view` / `demand.manage` permissions. A Publisher permission grant therefore never turns an `/admin/demand` route into a Publisher route.
+
+Publisher users do not receive these Admin workflows. Publisher-facing monetization health remains white-label as **Direct Monetization** and exposes no provider credentials, confidential account identifiers, internal provider names, or commercial terms. Exact ads.txt records remain visible where technically required by the canonical compliance workflow.
 
 ## Operational precedence
 
