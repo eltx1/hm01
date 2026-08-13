@@ -45,7 +45,7 @@ class IdentityAccessSeeder extends Seeder
         'configs.view' => ['Preview static advertising configurations', 'inventory'],
         'configs.manage' => ['Manage loader and GPT configuration settings', 'inventory'],
         'configs.publish' => ['Publish and roll back static advertising configurations', 'inventory'],
-        'demand.view' => ['View native and alternative demand networks', 'demand'],
+        'demand.view' => ['View Direct Demand networks and reporting', 'demand'],
         'demand.manage' => ['Manage demand connectors, accounts, websites, placements, and widgets', 'demand'],
         'demand.test' => ['Test and synchronize approved demand accounts', 'demand'],
         'demand.deploy' => ['Deploy and control demand objects in Google Ad Manager', 'demand'],

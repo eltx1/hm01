@@ -1,28 +1,28 @@
 @extends('layouts.admin')
-@section('title', $site->display_name.' Native demand')
-@section('heading', 'Native demand · '.$site->display_name)
+@section('title', $site->display_name.' Direct Demand')
+@section('heading', 'Direct Demand · '.$site->display_name)
 @section('content')
 <section class="hero">
     <div>
         <p class="eyebrow">Website-controlled activation</p>
         <h2>{{ $site->primary_domain }}</h2>
-        <p>Horus Loader reads this website’s static configuration. Adding, disabling, or reordering a native connector never changes publisher installation code.</p>
+        <p>Horus Loader reads this website’s static configuration. Adding, disabling, or reordering a Direct Demand connector never changes publisher installation code.</p>
     </div>
     <div>
         <div class="status-row">
-            <span class="pill">{{ $site->native_demand_enabled ? 'NATIVE ENABLED' : 'NATIVE DISABLED' }}</span>
+            <span class="pill">{{ $site->native_demand_enabled ? 'DIRECT DEMAND ENABLED' : 'DIRECT DEMAND DISABLED' }}</span>
             <span class="pill">{{ $mappings->count() }} account mappings</span>
         </div>
         <form method="POST" action="{{ route('admin.sites.demand.status', $site) }}">@csrf @method('PATCH')
             <input type="hidden" name="enabled" value="{{ $site->native_demand_enabled ? 0 : 1 }}">
-            <button class="hm-button-secondary">{{ $site->native_demand_enabled ? 'Disable website native demand' : 'Enable website native demand' }}</button>
+            <button class="hm-button-secondary">{{ $site->native_demand_enabled ? 'Disable website Direct Demand' : 'Enable website Direct Demand' }}</button>
         </form>
     </div>
 </section>
 
 <article>
     <p class="eyebrow">Assign account</p>
-    <h3>Add native demand to this website</h3>
+    <h3>Assign Direct Demand account to this website</h3>
     @forelse($accounts as $account)
     <form class="form-grid domain-card" method="POST" action="{{ route('admin.sites.demand.assign', [$site, $account]) }}">@csrf
         <label>Account<strong>{{ $account->name }} · {{ $account->network->code->value }}</strong></label>
@@ -50,6 +50,7 @@
             <span class="pill">{{ $mapping->is_enabled ? 'enabled' : 'disabled' }}</span>
             <span class="pill">{{ $mapping->sync_status->value }}</span>
         </div>
+        <form method="POST" action="{{ route('admin.sites.demand.mappings.enabled', [$site, $mapping]) }}">@csrf @method('PATCH')<input type="hidden" name="enabled" value="{{ $mapping->is_enabled ? 0 : 1 }}"><button class="hm-button-secondary">{{ $mapping->is_enabled ? 'Disable website mapping' : 'Enable website mapping' }}</button></form>
     </div>
 
     <form class="form-grid" method="POST" action="{{ route('admin.sites.demand.mappings.update', [$site, $mapping]) }}">@csrf @method('PUT')
@@ -84,7 +85,7 @@
             <form class="form-stack danger-zone" method="POST" action="{{ route('admin.sites.demand.gam.deploy', [$site, $mapping]) }}">@csrf
                 <input type="hidden" name="dry_run" value="0">
                 <label><input type="checkbox" name="confirm_external_writes" value="1" required> Confirm external GAM writes</label>
-                <button class="hm-button-primary">Deploy native GAM objects</button>
+                <button class="hm-button-primary">Deploy GAM-managed Direct Demand objects</button>
             </form>
         </article>
         <article>
@@ -128,6 +129,7 @@
                 <div><button class="hm-button-secondary">Save placement</button></div>
             </form>
             <div class="status-row">
+                <form method="POST" action="{{ route('admin.sites.demand.placements.enabled', [$site, $demandPlacement]) }}">@csrf @method('PATCH')<input type="hidden" name="enabled" value="{{ $demandPlacement->is_enabled ? 0 : 1 }}"><button class="hm-button-secondary">{{ $demandPlacement->is_enabled ? 'Disable local mapping' : 'Enable local mapping' }}</button></form>
                 <form method="POST" action="{{ route('admin.sites.demand.placements.sync', [$site, $demandPlacement]) }}">@csrf<input type="hidden" name="dry_run" value="0"><button class="hm-button-secondary">Synchronize provider placement</button></form>
                 <form method="POST" action="{{ route('admin.sites.demand.placements.status', [$site, $demandPlacement]) }}">@csrf<input type="hidden" name="enabled" value="{{ $demandPlacement->is_enabled ? 0 : 1 }}"><button class="hm-button-secondary">{{ $demandPlacement->is_enabled ? 'Pause' : 'Activate' }}</button></form>
             </div>
@@ -136,8 +138,10 @@
                 <label>Remote widget ID<input class="hm-input" name="remote_widget_id"></label>
                 <label>Widget code<input class="hm-input" name="widget_code"></label>
                 <label>Mode<select class="hm-input" name="integration_mode"><option value="">Inherited</option>@foreach($modes as $mode)<option value="{{ $mode->value }}">{{ $mode->value }}</option>@endforeach</select></label>
-                <label>Approval<select class="hm-input" name="approval_status">@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($status->value === 'APPROVED')>{{ $status->value }}</option>@endforeach</select></label>
-                <label class="full">Widget configuration JSON<textarea class="hm-input" rows="3" name="configuration_json" placeholder='{"script_url":"https://allowlisted.example/widget.js","container_id":"widget-123"}'>{}</textarea></label>
+                <label>Approval<select class="hm-input" name="approval_status">@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($status->value === 'NOT_SUBMITTED')>{{ $status->value }}</option>@endforeach</select></label>
+                <label class="full">Provider-issued public tag<textarea class="hm-input" rows="6" name="direct_tag_template" placeholder="Paste the provider-issued public tag. Structured providers are parsed; Custom Third Party tags require isolated CSP origins."></textarea></label>
+                <label class="full">Widget configuration JSON<textarea class="hm-input" rows="3" name="configuration_json" placeholder='{"isolation_allowed_origins":["https://provider.example"]}'>{}</textarea></label>
+                <label class="full"><input type="hidden" name="tag_review_approved" value="0"><input type="checkbox" name="tag_review_approved" value="1"> I reviewed the detected public scripts/container/warnings and approve this tag for production when Approval is set to APPROVED.</label>
                 <input type="hidden" name="is_enabled" value="1">
                 <div><button class="hm-button-secondary">Save widget</button></div>
             </form>
@@ -146,6 +150,6 @@
     @endforeach
 </article>
 @empty
-<article><p class="muted">No native demand account is assigned to this website.</p></article>
+<article><p class="muted">No Direct Demand account is assigned to this website.</p></article>
 @endforelse
 @endsection

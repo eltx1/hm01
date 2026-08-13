@@ -446,6 +446,26 @@ final class DemandAccountService
         return $result;
     }
 
+    public function setSiteEnabled(DemandSite $site, bool $enabled, User $actor): DemandSite
+    {
+        $before = (bool) $site->is_enabled;
+        $site->update(['is_enabled' => $enabled, 'updated_by' => $actor->id]);
+        $this->audit->record('demand.site.enabled_changed', $site->organization_id, $actor, $site,
+            ['is_enabled' => $before], ['is_enabled' => $enabled]);
+
+        return $site->refresh();
+    }
+
+    public function setPlacementMappingEnabled(DemandPlacement $placement, bool $enabled, User $actor): DemandPlacement
+    {
+        $before = (bool) $placement->is_enabled;
+        $placement->update(['is_enabled' => $enabled, 'updated_by' => $actor->id]);
+        $this->audit->record('demand.placement.enabled_changed', $placement->organization_id, $actor, $placement,
+            ['is_enabled' => $before], ['is_enabled' => $enabled]);
+
+        return $placement->refresh();
+    }
+
     public function setPlacementEnabled(DemandPlacement $placement, bool $enabled, User $actor): DemandResult
     {
         $placement->loadMissing('demandSite.account.network');

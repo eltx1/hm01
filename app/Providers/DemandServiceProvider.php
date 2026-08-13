@@ -10,9 +10,11 @@ class DemandServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa'])->group(function (): void {
+        Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa', 'horus'])->group(function (): void {
             Route::get('/admin/demand', [DemandNetworkController::class, 'index'])
                 ->middleware('permission:demand.view')->name('admin.demand.index');
+            Route::patch('/admin/demand/master', [DemandNetworkController::class, 'toggleMaster'])
+                ->middleware('permission:demand.manage')->name('admin.demand.master');
             Route::get('/admin/sites/{site}/demand', [DemandNetworkController::class, 'site'])
                 ->middleware('permission:demand.view')->name('admin.sites.demand.index');
             Route::patch('/admin/sites/{site}/demand/status', [DemandNetworkController::class, 'toggleSiteNative'])
@@ -22,6 +24,10 @@ class DemandServiceProvider extends ServiceProvider
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.store');
             Route::put('/admin/demand/accounts/{demandAccount}', [DemandNetworkController::class, 'updateAccount'])
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.update');
+            Route::patch('/admin/demand/accounts/{demandAccount}/enabled', [DemandNetworkController::class, 'toggleAccount'])
+                ->middleware('permission:demand.manage')->name('admin.demand.accounts.enabled');
+            Route::post('/admin/demand/accounts/{demandAccount}/tags/preview', [DemandNetworkController::class, 'tagPreview'])
+                ->middleware('permission:demand.manage')->name('admin.demand.tags.preview');
             Route::post('/admin/demand/accounts/{demandAccount}/credentials', [DemandNetworkController::class, 'storeCredential'])
                 ->middleware('permission:demand.manage')->name('admin.demand.credentials.store');
             Route::post('/admin/demand/accounts/{demandAccount}/test', [DemandNetworkController::class, 'testAccount'])
@@ -30,11 +36,17 @@ class DemandServiceProvider extends ServiceProvider
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.review');
             Route::patch('/admin/demand/networks/{demandNetwork}', [DemandNetworkController::class, 'toggleNetwork'])
                 ->middleware('permission:demand.manage')->name('admin.demand.networks.toggle');
+            Route::put('/admin/demand/networks/{demandNetwork}/settings', [DemandNetworkController::class, 'updateNetwork'])
+                ->middleware('permission:demand.manage')->name('admin.demand.networks.settings');
+            Route::patch('/admin/demand/networks/{demandNetwork}/direct-js', [DemandNetworkController::class, 'toggleNetworkRuntime'])
+                ->middleware('permission:demand.manage')->name('admin.demand.networks.direct-js');
 
             Route::post('/admin/sites/{site}/demand/accounts/{demandAccount}', [DemandNetworkController::class, 'assignSite'])
                 ->middleware('permission:demand.manage')->name('admin.sites.demand.assign');
             Route::put('/admin/sites/{site}/demand/mappings/{demandSite}', [DemandNetworkController::class, 'updateSite'])
                 ->middleware('permission:demand.manage')->name('admin.sites.demand.mappings.update');
+            Route::patch('/admin/sites/{site}/demand/mappings/{demandSite}/enabled', [DemandNetworkController::class, 'toggleSiteMapping'])
+                ->middleware('permission:demand.manage')->name('admin.sites.demand.mappings.enabled');
             Route::post('/admin/sites/{site}/demand/mappings/{demandSite}/sync', [DemandNetworkController::class, 'syncSite'])
                 ->middleware('permission:demand.test')->name('admin.sites.demand.mappings.sync');
             Route::post('/admin/sites/{site}/demand/mappings/{demandSite}/status', [DemandNetworkController::class, 'refreshSiteStatus'])
@@ -46,6 +58,8 @@ class DemandServiceProvider extends ServiceProvider
                 ->middleware('permission:demand.manage')->name('admin.sites.demand.placements.assign');
             Route::put('/admin/sites/{site}/demand/placements/{demandPlacement}', [DemandNetworkController::class, 'updatePlacement'])
                 ->middleware('permission:demand.manage')->name('admin.sites.demand.placements.update');
+            Route::patch('/admin/sites/{site}/demand/placements/{demandPlacement}/enabled', [DemandNetworkController::class, 'togglePlacementMapping'])
+                ->middleware('permission:demand.manage')->name('admin.sites.demand.placements.enabled');
             Route::post('/admin/sites/{site}/demand/placements/{demandPlacement}/widgets', [DemandNetworkController::class, 'storeWidget'])
                 ->middleware('permission:demand.manage')->name('admin.sites.demand.widgets.store');
             Route::post('/admin/sites/{site}/demand/placements/{demandPlacement}/sync', [DemandNetworkController::class, 'syncPlacement'])

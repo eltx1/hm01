@@ -1,21 +1,31 @@
 @extends('layouts.admin')
-@section('title', 'Native demand networks')
-@section('heading', 'Native & alternative demand')
+@section('title', 'Direct Demand')
+@section('heading', 'Direct Demand')
 @section('content')
 <section class="hero">
     <div>
-        <p class="eyebrow">Optional demand layer</p>
-        <h2>HORUS_GAM remains primary</h2>
-        <p>Enable direct JavaScript or GAM-managed native demand without changing publisher installation code. Credentials remain private and never enter static configuration.</p>
+        <p class="eyebrow">Independent direct monetization engine</p>
+        <h2>Networks, tags, health and reporting</h2>
+        <p>Operate Direct JS demand independently from GAM and Prebid without changing publisher installation code. Credentials remain server-side and public tags must pass structured review or isolated Custom Third Party validation.</p>
     </div>
     <div class="status-row">
         <span class="pill">{{ $networks->where('is_enabled', true)->count() }} connectors enabled</span>
         <span class="pill">{{ $accounts->total() }} accounts</span>
+        <span class="pill">MASTER {{ $directDemandMasterEnabled ? 'ON' : 'OFF' }}</span>
     </div>
+    <form class="form-stack" method="POST" action="{{ route('admin.demand.master') }}">@csrf @method('PATCH')
+        <input type="hidden" name="enabled" value="{{ $directDemandMasterEnabled ? 0 : 1 }}">
+        <label>Change reason<input class="hm-input" name="reason" required minlength="5" placeholder="Operational reason for master change"></label>
+        <button class="hm-button-primary">{{ $directDemandMasterEnabled ? 'Pause Direct Demand master' : 'Enable Direct Demand master' }}</button>
+    </form>
 </section>
 
-<article>
-    <div class="section-heading"><div><p class="eyebrow">Connector registry</p><h2>Available networks</h2></div></div>
+<div class="status-row" style="margin:1rem 0">
+    <a class="pill" href="#networks">Networks</a><a class="pill" href="#accounts">Accounts</a><a class="pill" href="#reports">Reports</a><a class="pill" href="{{ route('admin.sites.index') }}">Websites / Placements</a><a class="pill" href="{{ route('admin.compliance.ads-txt.index') }}">Ads.txt</a>
+</div>
+
+<article id="networks">
+    <div class="section-heading"><div><p class="eyebrow">Connector registry</p><h2>Networks and runtime health</h2></div></div>
     <div class="detail-grid">
         @foreach($networks as $network)
         <div class="domain-card">
@@ -24,10 +34,22 @@
                 <span class="pill">{{ $network->code->value }}</span>
                 <span class="pill">{{ $network->is_enabled ? 'ENABLED' : 'DISABLED' }}</span>
             </div>
-            <p class="muted">{{ implode(' · ', $network->capabilities ?? []) }}</p>
+            <p class="muted">Direct JS: {{ $network->supports_direct_js ? 'supported' : 'off' }} · formats: {{ implode(', ', data_get($network->capabilities, 'supported_formats', [])) ?: 'provider-defined' }} · health: {{ data_get($network->metadata, 'operational_health', 'UNKNOWN') }}</p>
             <form method="POST" action="{{ route('admin.demand.networks.toggle', $network) }}">@csrf @method('PATCH')
                 <input type="hidden" name="is_enabled" value="{{ $network->is_enabled ? 0 : 1 }}">
                 <button class="hm-button-secondary">{{ $network->is_enabled ? 'Disable connector' : 'Enable connector' }}</button>
+            </form>
+            <form class="form-stack" method="POST" action="{{ route('admin.demand.networks.settings', $network) }}">@csrf @method('PUT')
+                <label><input type="hidden" name="supports_direct_js" value="0"><input type="checkbox" name="supports_direct_js" value="1" @checked($network->supports_direct_js)> Supports Direct JS</label>
+                <label>Formats<select class="hm-input" name="supported_formats[]" multiple>@foreach(['DISPLAY','NATIVE','VIDEO','OUTSTREAM'] as $format)<option value="{{ $format }}" @selected(in_array($format, data_get($network->capabilities, 'supported_formats', []), true))>{{ $format }}</option>@endforeach</select></label>
+                <label>Integration modes<select class="hm-input" name="integration_modes[]" multiple>@foreach($modes as $mode)<option value="{{ $mode->value }}" @selected(in_array($mode->value, data_get($network->capabilities, 'integration_modes', []), true))>{{ $mode->value }}</option>@endforeach</select></label>
+                <label>Approved script origins<textarea class="hm-input" rows="3" name="script_origins[]">{{ implode("
+", $network->script_origins ?? []) }}</textarea></label>
+                <label>Health<select class="hm-input" name="operational_health">@foreach(['HEALTHY','DEGRADED','FAILED','UNKNOWN'] as $health)<option @selected(data_get($network->metadata, 'operational_health', 'UNKNOWN') === $health)>{{ $health }}</option>@endforeach</select></label>
+                <button class="hm-button-secondary">Save network policy</button>
+            </form>
+            <form class="form-stack" method="POST" action="{{ route('admin.demand.networks.direct-js', $network) }}">@csrf @method('PATCH')
+                <input type="hidden" name="enabled" value="1"><label>Runtime reason<input class="hm-input" name="reason" required minlength="5" value="Resume Direct Demand network runtime"></label><button class="hm-button-secondary">Ensure runtime ON</button>
             </form>
         </div>
         @endforeach
@@ -61,6 +83,9 @@
             <select class="hm-input" name="approval_status">@foreach($statuses as $status)<option value="{{ $status->value }}">{{ $status->value }}</option>@endforeach</select>
         </label>
         <label>Account / publisher identifier<input class="hm-input" name="account_identifier" placeholder="Provider-issued public account ID"></label>
+        <label>Reporting method<select class="hm-input" name="reporting_method"><option>API</option><option>CSV</option></select></label>
+        <label>Default render timeout ms<input class="hm-input" type="number" min="500" max="10000" name="default_render_timeout_ms" value="2500"></label>
+        <label>Approved script origin<input class="hm-input" type="url" name="approved_script_origins[]" placeholder="https://provider.example"></label>
         <label>Revenue share %<input class="hm-input" type="number" step="0.001" min="0" max="100" name="revenue_share_percent" value="0" required></label>
         <label>Fallback priority<input class="hm-input" type="number" min="0" max="10000" name="fallback_priority" value="100" required></label>
         <label>Non-secret configuration JSON<textarea class="hm-input" rows="9" name="configuration_json" placeholder='{"script_url":"https://approved.example/widget.js","ads_txt_records":[]}'>{}</textarea></label>
@@ -79,8 +104,8 @@
 </article>
 </section>
 
-<article>
-    <div class="section-heading"><div><p class="eyebrow">Accounts</p><h2>Network accounts and reporting</h2></div></div>
+<article id="accounts">
+    <div class="section-heading"><div><p class="eyebrow">Accounts</p><h2>Accounts, tags and health</h2></div></div>
     @forelse($accounts as $account)
     <div class="domain-card">
         <div class="section-heading">
@@ -97,12 +122,23 @@
             </div>
         </div>
 
+        <div class="status-row">
+            <form method="POST" action="{{ route('admin.demand.accounts.enabled', $account) }}">@csrf @method('PATCH')<input type="hidden" name="enabled" value="{{ $account->is_enabled ? 0 : 1 }}"><button class="hm-button-secondary">{{ $account->is_enabled ? 'Disable account' : 'Enable account' }}</button></form>
+        </div>
+        <form class="form-stack" method="POST" action="{{ route('admin.demand.tags.preview', $account) }}" target="_blank">@csrf
+            <label>Paste provider-issued public tag for safe preview<textarea class="hm-input" rows="4" name="tag" required placeholder="Paste public provider tag. Nothing is executed in Admin."></textarea></label>
+            <button class="hm-button-secondary">Parse and review tag</button>
+        </form>
+
         <form class="form-grid" method="POST" action="{{ route('admin.demand.accounts.update', $account) }}">@csrf @method('PUT')
             <label>Name<input class="hm-input" name="name" value="{{ $account->name }}" required></label>
             <label>Scope<select class="hm-input" name="scope">@foreach($scopes as $scope)<option value="{{ $scope->value }}" @selected($account->scope === $scope)>{{ $scope->value }}</option>@endforeach</select></label>
             <label>Mode<select class="hm-input" name="integration_mode">@foreach($modes as $mode)<option value="{{ $mode->value }}" @selected($account->integration_mode === $mode)>{{ $mode->value }}</option>@endforeach</select></label>
             <label>Approval<select class="hm-input" name="approval_status">@foreach($statuses as $status)<option value="{{ $status->value }}" @selected($account->approval_status === $status)>{{ $status->value }}</option>@endforeach</select></label>
             <label>Account ID<input class="hm-input" name="account_identifier" value="{{ $account->account_identifier }}"></label>
+            <label>Reporting method<select class="hm-input" name="reporting_method"><option @selected(data_get($account->configuration, 'reporting_method', 'API') === 'API')>API</option><option @selected(data_get($account->configuration, 'reporting_method') === 'CSV')>CSV</option></select></label>
+            <label>Default render timeout ms<input class="hm-input" type="number" min="500" max="10000" name="default_render_timeout_ms" value="{{ data_get($account->configuration, 'render_timeout_ms', 2500) }}"></label>
+            <label>Approved script origin<input class="hm-input" type="url" name="approved_script_origins[]" value="{{ data_get($account->configuration, 'allowed_script_origins.0') }}"></label>
             <label>Revenue share %<input class="hm-input" type="number" step="0.001" min="0" max="100" name="revenue_share_percent" value="{{ $account->revenue_share_percent }}"></label>
             <label>Fallback priority<input class="hm-input" type="number" name="fallback_priority" value="{{ $account->fallback_priority }}"></label>
             <label class="full">Non-secret configuration JSON<textarea class="hm-input" rows="7" name="configuration_json">{{ json_encode($account->configuration ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
@@ -134,7 +170,7 @@
             </div>
         </section>
 
-        <section class="detail-grid">
+        <section class="detail-grid" id="reports">
             <form class="form-stack" method="POST" action="{{ route('admin.demand.reports.api', $account) }}">@csrf
                 <h4>API report</h4>
                 <label>From<input class="hm-input" type="date" name="from" required></label>

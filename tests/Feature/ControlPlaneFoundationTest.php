@@ -85,7 +85,7 @@ class ControlPlaneFoundationTest extends TestCase
         $this->actingAs($admin)->withSession($session)->get(route('admin.publishers.show', $publisher))
             ->assertOk()->assertSee('Publisher 360')->assertSee($site->display_name)->assertSee('Compliance');
         $this->get(route('admin.sites.show', $site))
-            ->assertOk()->assertSee('Site 360')->assertSee('One permanent loader')->assertSee('Native demand')->assertSee('Configuration');
+            ->assertOk()->assertSee('Site 360')->assertSee('One permanent loader')->assertSee('Direct Demand')->assertSee('Configuration');
 
         $this->actingAs($publisherUser)->get(route('admin.publishers.show', $publisher))->assertForbidden();
         $this->get(route('admin.sites.show', $site))->assertForbidden();

@@ -48,7 +48,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Monetization', [
                 $this->item('Direct campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
-                $this->item('Native demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
+                $this->item('Direct Demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
             ]),
             $this->group('Supply Chain & Compliance', [
                 $this->item('Ads.txt', 'admin.compliance.ads-txt.index', 'supply_chain.ads_txt.view', ['admin.compliance.ads-txt.*']),
