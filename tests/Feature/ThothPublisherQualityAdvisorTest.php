@@ -52,6 +52,16 @@ class ThothPublisherQualityAdvisorTest extends TestCase
         $this->assertSame('gpt-5-mini', config('thoth.default_models.OPENAI'));
     }
 
+    public function test_singleton_settings_keep_canonical_id_after_auto_increment_has_advanced(): void
+    {
+        $transient = ThothSetting::create(['enabled' => true, 'active_provider' => 'GEMINI', 'timeout_seconds' => 10, 'max_output_tokens' => 900]);
+        $transient->delete();
+        $settings = ThothSetting::current();
+        $this->assertSame(1, $settings->id);
+        $this->assertFalse($settings->enabled);
+        $this->assertSame(1, ThothSetting::query()->count());
+    }
+
     public function test_settings_are_horus_only_and_publisher_users_cannot_access_them_or_run_ai(): void
     {
         $publisherUser = $this->makeUser($this->publisher->organization, RoleName::PublisherAdmin);

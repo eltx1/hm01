@@ -15,6 +15,15 @@ class ThothSetting extends Model
 
     public static function current(): self
     {
-        return static::query()->firstOrCreate(['id' => 1], ['enabled' => false, 'active_provider' => config('thoth.default_provider'), 'timeout_seconds' => config('thoth.timeout_seconds'), 'max_output_tokens' => config('thoth.max_output_tokens')]);
+        $settings = static::query()->find(1);
+        if ($settings) {
+            return $settings;
+        }
+
+        $settings = new static;
+        $settings->forceFill(['id' => 1, 'enabled' => false, 'active_provider' => config('thoth.default_provider'), 'timeout_seconds' => config('thoth.timeout_seconds'), 'max_output_tokens' => config('thoth.max_output_tokens')]);
+        $settings->save();
+
+        return $settings;
     }
 }
