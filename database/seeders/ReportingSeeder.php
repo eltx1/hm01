@@ -19,7 +19,10 @@ class ReportingSeeder extends Seeder
                     'name' => $definition['name'],
                     'is_primary' => (bool) ($definition['primary'] ?? false),
                     'is_enabled' => true,
-                    'capabilities' => $definition['capabilities'] ?? [],
+                    'capabilities' => array_values(array_unique(array_merge(
+                        $definition['capabilities'] ?? [],
+                        collect($definition['finalized_methods'] ?? [])->map(fn (string $method): string => 'FINALIZED_'.$method)->all(),
+                    ))),
                     'metadata' => ['seeded' => true],
                 ],
             );

@@ -55,6 +55,12 @@ class RunReportingImports extends Command
         $connections = ReportSourceConnection::withoutGlobalScopes()
             ->where('is_enabled', true)
             ->where('status', '!=', 'DISABLED')
+            ->where(function ($query): void {
+                $query->whereDoesntHave('financialBindings')
+                    ->orWhereHas('financialBindings', fn ($binding) => $binding
+                        ->where('is_enabled', true)
+                        ->where('reporting_method', 'API'));
+            })
             ->when($this->option('connection'), fn ($query, $id) => $query->whereKey($id))
             ->with('source')
             ->get();

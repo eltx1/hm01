@@ -124,6 +124,7 @@ class ReportingController extends Controller
             'from' => ['required', 'date'],
             'to' => ['required', 'date', 'after_or_equal:from'],
             'external_report_id' => ['nullable', 'string', 'max:255'],
+            'manual_reason' => ['required', 'string', 'min:12', 'max:10000'],
         ]);
         $rows = json_decode($data['rows_json'], true, 512, JSON_THROW_ON_ERROR);
         $job = $imports->importRows(
@@ -136,6 +137,7 @@ class ReportingController extends Controller
             $request->user(),
             $data['external_report_id'] ?? null,
             importType: 'MANUAL',
+            manualReason: $data['manual_reason'],
         );
 
         return back()->with($job->status->value === 'COMPLETED' ? 'status' : 'error', "Manual import {$job->status->value}.");

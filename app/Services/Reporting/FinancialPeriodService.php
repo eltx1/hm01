@@ -26,6 +26,7 @@ final class FinancialPeriodService
     public function __construct(
         private readonly PublisherStatementService $statements,
         private readonly AuditRecorder $audit,
+        private readonly MonetizationFinancialReadinessService $monetizationReadiness,
     ) {}
 
     public function periodFor(CarbonInterface|string $date, string $currency, ?string $organizationId = null): FinancialPeriod
@@ -66,6 +67,12 @@ final class FinancialPeriodService
         $finalizedRows = DailyReport::withoutGlobalScopes()
             ->where('financial_period_id', $period->id)
             ->where('finality', ReportFinality::Finalized->value)
+            ->where('settlement_eligible', true)
+            ->count();
+        $ineligibleFinalizedRows = DailyReport::withoutGlobalScopes()
+            ->where('financial_period_id', $period->id)
+            ->where('finality', ReportFinality::Finalized->value)
+            ->where('settlement_eligible', false)
             ->count();
         $nonFinalRows = DailyReport::withoutGlobalScopes()
             ->where('financial_period_id', $period->id)
@@ -109,8 +116,11 @@ final class FinancialPeriodService
             ->where('currency', '!=', $period->currency)
             ->count();
 
+        $monetizationBlockers = $this->monetizationReadiness->blockersForPeriod($period);
+
         $counts = compact(
             'finalizedRows',
+            'ineligibleFinalizedRows',
             'nonFinalRows',
             'failedImports',
             'activeImports',
@@ -128,6 +138,20 @@ final class FinancialPeriodService
         }
         if ($nonFinalRows > 0) {
             $blockers[] = ['code' => 'NON_FINAL_REPORTING', 'message' => 'Estimated or otherwise non-final daily rows remain.', 'count' => $nonFinalRows];
+        }
+        if ($ineligibleFinalizedRows > 0) {
+            $blockers[] = ['code' => 'SETTLEMENT_INELIGIBLE_FINALIZED_ROWS', 'message' => 'Finalized-labelled rows exist whose source is not eligible for financial settlement.', 'count' => $ineligibleFinalizedRows];
+        }
+        if ($monetizationBlockers->isNotEmpty()) {
+            $blockers[] = [
+                'code' => 'MONETIZATION_SOURCE_COVERAGE',
+                'message' => 'Active production monetization accounts have missing, stale, failed, estimate-only, or unreconciled financial coverage.',
+                'count' => $monetizationBlockers->count(),
+                'subjects' => $monetizationBlockers->all(),
+            ];
+            $counts['monetizationCoverageBlockers'] = $monetizationBlockers->count();
+        } else {
+            $counts['monetizationCoverageBlockers'] = 0;
         }
         if ($failedImports > 0) {
             $blockers[] = ['code' => 'FAILED_IMPORTS', 'message' => 'Failed report imports remain unresolved.', 'count' => $failedImports];
@@ -199,6 +223,7 @@ final class FinancialPeriodService
                 ->with('dimension')
                 ->where('financial_period_id', $period->id)
                 ->where('finality', ReportFinality::Finalized->value)
+                ->where('settlement_eligible', true)
                 ->get();
 
             foreach ($daily->groupBy(fn (DailyReport $report) => $report->report_source_connection_id.'|'.$report->report_dimension_id
@@ -222,6 +247,7 @@ final class FinancialPeriodService
                         'organization_id' => $first->organization_id,
                         'period_key' => $period->period_key,
                         'currency' => $period->currency,
+                        'settlement_eligible' => true,
                         'revenue_rule_version_id' => $first->revenue_rule_version_id,
                         'snapshot_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)),
                     ]),

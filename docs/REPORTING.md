@@ -6,6 +6,23 @@ Horus GAM is the primary reporting source. Optional MCM partner GAM and publishe
 
 The Laravel control plane stores aggregated rows only. It never receives ad requests and never stores impression-level, bid-request, visitor, or browser telemetry. Transfer files are private, bounded, checksummed, and processed outside the public web root.
 
+### Monetization financial-source binding
+
+Every production `DemandAccount` and `BidderAccount` has an explicit, auditable binding to the canonical `ReportSource` and, when applicable, `ReportSourceConnection`. The binding declares the method (`API`, `CSV`, `MANUAL`, or `ESTIMATE`), currency, timezone, effective state, and whether that exact provider/method combination is capable of finalized settlement data. ExoClick and OneTag are first-class source codes. A future provider without an implemented source uses `CUSTOM_CSV`; operators must not guess API contracts.
+
+The canonical financial sequence is:
+
+```text
+monetization account -> financial source binding -> import -> reconciliation
+-> settlement-eligible finalized row -> revenue share -> statement -> payout
+```
+
+**BID PRICE ≠ REALIZED REVENUE.** Browser auction CPM is diagnostic auction data, not proof that the provider realized or will pay that revenue.
+
+**ESTIMATED DATA ≠ PAYOUT-ELIGIBLE FINALIZED DATA.** `PREBID_ESTIMATES` is permanently estimate-only. A finalized label requested by a caller cannot make that source settlement eligible; the import boundary downgrades it to estimated and records a machine-readable reason.
+
+API finality requires a real configured connector. ExoClick may use the existing operator-configured demand report path only when the approved HTTPS base and report path exist. OneTag API remains not configured until a real supported connector is implemented. CSV data passes the existing private-file, checksum, normalization, idempotency, reconciliation, and close pipeline. Manual provider data requires Finance permission, a specific reason, an explicit manual-capable binding, and audit evidence; normal revenue adjustments remain a separate controlled workflow.
+
 ## Reporting grain
 
 The unified ledger supports hourly estimates, finalized daily rows, and immutable monthly closing snapshots. Rows are keyed by source connection, date or hour, normalized dimension hash, and revision.
@@ -17,7 +34,7 @@ Supported aggregate metrics are ad requests, matched requests, unfilled requests
 ## Import lifecycle
 
 1. Cron discovers active report source connections.
-2. Hourly imports are estimated and daily imports are finalized.
+2. Hourly imports are estimated; daily imports become finalized only when the bound source and actual import method are settlement eligible.
 3. The source connector returns a bounded aggregate report.
 4. CSV and manual imports pass through the same normalization pipeline.
 5. A checksum and deterministic idempotency key prevent duplicate imports.
@@ -70,6 +87,16 @@ Every import creates a reconciliation record containing source totals, stored to
 A financial period is opened automatically by the first import for a currency. Closing locks the period, aggregates finalized daily rows into monthly snapshots, generates publisher statements, records approved adjustments, stores totals and a snapshot hash, and marks the period closed.
 
 Once closed, imports, revenue rules, or adjustments cannot rewrite that period automatically. The monthly rows and statements carry hashes for traceability.
+
+Normal close also checks active production Demand and Bidder accounts relevant to the currency and period. Missing bindings, estimate-only methods, stale/failed imports, currency mismatch, absent period coverage, or unresolved reconciliation block normal close. The existing permissioned, reasoned, audited Finance override remains the only exception path. Even an override cannot convert ineligible rows into a payable statement: monthly aggregation and statement generation select only `settlement_eligible` finalized rows.
+
+## Adding a provider
+
+1. Add a canonical source code only when the provider is actually supported; otherwise select `CUSTOM_CSV`.
+2. Bind the `DemandAccount` or `BidderAccount` to that canonical source and connection.
+3. Declare the real method and currency. Keep credentials in the existing encrypted/server-side credential reference system; binding metadata is non-secret.
+4. Mark API finality capable only after a real connector and operator configuration exist. Never invent endpoints, parameters, fields, credentials, or publisher IDs.
+5. Send all API, CSV, or controlled manual data through `ReportImportService` and reconciliation. Never add provider-specific financial tables or browser telemetry.
 
 ## Publisher statements and payments
 

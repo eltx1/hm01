@@ -18,6 +18,7 @@ class ReportImportJob extends Model
     protected $fillable = [
         'organization_id', 'report_source_connection_id', 'financial_period_id', 'import_type',
         'granularity', 'finality', 'status', 'period_start', 'period_end', 'external_report_id',
+        'settlement_eligible', 'settlement_ineligibility_reason',
         'idempotency_key', 'checksum', 'attempt_count', 'row_count', 'inserted_count',
         'updated_count', 'duplicate_count', 'source_totals', 'normalized_totals', 'warnings',
         'error_message', 'started_at', 'completed_at', 'next_retry_at', 'created_by',
@@ -28,6 +29,7 @@ class ReportImportJob extends Model
         return [
             'granularity' => ReportGranularity::class,
             'finality' => ReportFinality::class,
+            'settlement_eligible' => 'boolean',
             'status' => ReportImportStatus::class,
             'period_start' => 'datetime',
             'period_end' => 'datetime',

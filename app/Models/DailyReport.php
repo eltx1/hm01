@@ -16,7 +16,7 @@ class DailyReport extends Model
 
     protected function casts(): array
     {
-        return ['report_date' => 'date', 'finality' => ReportFinality::class];
+        return ['report_date' => 'date', 'finality' => ReportFinality::class, 'settlement_eligible' => 'boolean'];
     }
 
     public function connection(): BelongsTo { return $this->belongsTo(ReportSourceConnection::class, 'report_source_connection_id'); }

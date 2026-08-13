@@ -46,4 +46,9 @@ class ReportSourceConnection extends Model
     {
         return $this->hasMany(ReportError::class);
     }
+
+    public function financialBindings(): HasMany
+    {
+        return $this->hasMany(MonetizationFinancialBinding::class, 'report_source_connection_id');
+    }
 }

@@ -13,6 +13,11 @@ class MonthlyReport extends Model
 
     protected $guarded = [];
 
+    protected function casts(): array
+    {
+        return ['settlement_eligible' => 'boolean'];
+    }
+
     public function connection(): BelongsTo { return $this->belongsTo(ReportSourceConnection::class, 'report_source_connection_id'); }
     public function period(): BelongsTo { return $this->belongsTo(FinancialPeriod::class, 'financial_period_id'); }
     public function dimension(): BelongsTo { return $this->belongsTo(ReportDimension::class, 'report_dimension_id'); }

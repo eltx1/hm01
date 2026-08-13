@@ -107,6 +107,8 @@
 <article id="accounts">
     <div class="section-heading"><div><p class="eyebrow">Accounts</p><h2>Accounts, tags and health</h2></div></div>
     @forelse($accounts as $account)
+    @php($financial = data_get($financialStatuses, $account->id))
+    @php($binding = data_get($financial, 'binding'))
     <div class="domain-card">
         <div class="section-heading">
             <div>
@@ -115,12 +117,37 @@
                 <span class="pill">{{ $account->approval_status->value }}</span>
                 <span class="pill">{{ $account->integration_mode->value }}</span>
                 <span class="pill">{{ $account->is_enabled ? 'enabled' : 'disabled' }}</span>
+                <span class="pill">FINANCE {{ data_get($financial, 'status', 'NOT_CONFIGURED') }}</span>
             </div>
             <div class="status-row">
                 <span class="pill">{{ data_get($summaries, $account->id.'.impressions', 0) }} impressions</span>
                 <span class="pill">{{ data_get($summaries, $account->id.'.clicks', 0) }} clicks</span>
             </div>
         </div>
+
+        <section class="detail-grid">
+            <div>
+                <p class="eyebrow">Provider financial source of truth</p>
+                <h4>{{ $binding?->source?->name ?? 'Not configured' }}</h4>
+                <p class="muted">
+                    Method {{ $binding?->reporting_method?->value ?? '—' }} · currency {{ $binding?->currency ?? '—' }} ·
+                    finality {{ $binding?->is_finalized_capable ? 'CAPABLE' : 'NOT CAPABLE' }} ·
+                    last successful {{ data_get($financial, 'last_successful_import_at') ?? 'never' }} ·
+                    last finalized {{ data_get($financial, 'last_finalized_data_at') ?? 'never' }} ·
+                    reconciliation {{ data_get($financial, 'reconciliation_status') ?? 'not run' }}
+                </p>
+                @foreach(data_get($financial, 'reasons', []) as $reason)<p class="error"><strong>{{ $reason['code'] }}</strong>: {{ $reason['message'] }}</p>@endforeach
+            </div>
+            <form class="form-stack" method="POST" action="{{ route('admin.demand.accounts.financial-source', $account) }}">@csrf @method('PUT')
+                <label>Financial source<select class="hm-input" name="report_source_id" required>@foreach($reportSources as $source)<option value="{{ $source->id }}" @selected($binding?->report_source_id === $source->id)>{{ $source->name }} · {{ $source->code->value }}</option>@endforeach</select></label>
+                <label>Reporting method<select class="hm-input" name="reporting_method" required>@foreach($financialMethods as $method)<option value="{{ $method->value }}" @selected($binding?->reporting_method === $method)>{{ $method->value }}</option>@endforeach</select></label>
+                <label>Currency<input class="hm-input" name="currency" maxlength="3" value="{{ $binding?->currency ?? data_get($account->configuration, 'currency', 'USD') }}" required></label>
+                <label>Timezone<input class="hm-input" name="timezone" value="{{ $binding?->timezone ?? 'UTC' }}" required></label>
+                <label>Non-secret reporting metadata JSON<textarea class="hm-input" name="configuration_json" rows="3">{{ json_encode($binding?->configuration ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
+                <label><input type="hidden" name="is_enabled" value="0"><input type="checkbox" name="is_enabled" value="1" @checked($binding?->is_enabled ?? true)> Financial binding enabled</label>
+                <button class="hm-button-secondary">Save financial source</button>
+            </form>
+        </section>
 
         <div class="status-row">
             <form method="POST" action="{{ route('admin.demand.accounts.enabled', $account) }}">@csrf @method('PATCH')<input type="hidden" name="enabled" value="{{ $account->is_enabled ? 0 : 1 }}"><button class="hm-button-secondary">{{ $account->is_enabled ? 'Disable account' : 'Enable account' }}</button></form>

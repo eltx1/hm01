@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\DemandAccountScope;
 use App\Enums\DemandApprovalStatus;
 use App\Enums\DemandIntegrationMode;
+use App\Enums\FinancialReportingMethod;
 use App\Enums\OrganizationType;
 use App\Http\Controllers\Controller;
 use App\Models\DemandAccount;
@@ -14,18 +15,21 @@ use App\Models\DemandSite;
 use App\Models\Organization;
 use App\Models\Placement;
 use App\Models\Publisher;
+use App\Models\ReportSource;
 use App\Models\Site;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Demand\DemandAccountService;
-use App\Services\Demand\DemandGamDeploymentService;
 use App\Services\Demand\DemandConnectorManager;
+use App\Services\Demand\DemandGamDeploymentService;
 use App\Services\Demand\DemandReportService;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Operations\PlatformControlService;
-use App\Services\Audit\AuditRecorder;
-use Illuminate\Support\Facades\DB;
+use App\Services\Reporting\MonetizationFinancialBindingService;
+use App\Services\Reporting\MonetizationFinancialReadinessService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -33,7 +37,7 @@ use JsonException;
 
 class DemandNetworkController extends Controller
 {
-    public function index(DemandReportService $reports): View
+    public function index(DemandReportService $reports, MonetizationFinancialReadinessService $financialReadiness): View
     {
         $accounts = DemandAccount::withoutGlobalScopes()
             ->with(['network', 'publisher', 'sites.site', 'credentials'])
@@ -49,6 +53,9 @@ class DemandNetworkController extends Controller
             'modes' => DemandIntegrationMode::cases(),
             'statuses' => DemandApprovalStatus::cases(),
             'summaries' => $accounts->getCollection()->mapWithKeys(fn ($account) => [$account->id => $reports->summary($account)]),
+            'financialStatuses' => $accounts->getCollection()->mapWithKeys(fn ($account) => [$account->id => $financialReadiness->status($account)]),
+            'reportSources' => ReportSource::query()->where('is_enabled', true)->orderBy('name')->get(),
+            'financialMethods' => FinancialReportingMethod::cases(),
             'directDemandMasterEnabled' => ! app(PlatformControlService::class)->disabled('PLATFORM', null, 'DIRECT_JS'),
         ]);
     }
@@ -231,6 +238,33 @@ class DemandNetworkController extends Controller
         $this->publishAccountSites($demandAccount, $request, app(SiteConfigPublisher::class));
 
         return back()->with('status', 'Demand account updated and affected static configurations published.');
+    }
+
+    public function updateFinancialSource(
+        Request $request,
+        DemandAccount $demandAccount,
+        MonetizationFinancialBindingService $bindings,
+    ): RedirectResponse {
+        $data = $request->validate([
+            'report_source_id' => ['required', 'ulid', 'exists:report_sources,id'],
+            'reporting_method' => ['required', Rule::enum(FinancialReportingMethod::class)],
+            'currency' => ['required', 'string', 'size:3'],
+            'timezone' => ['required', 'timezone'],
+            'is_enabled' => ['required', 'boolean'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $bindings->bind(
+            $demandAccount,
+            ReportSource::query()->findOrFail($data['report_source_id']),
+            FinancialReportingMethod::from($data['reporting_method']),
+            $data['currency'],
+            $data['timezone'],
+            $request->user(),
+            isset($data['configuration_json']) ? (array) json_decode($data['configuration_json'], true, 512, JSON_THROW_ON_ERROR) : [],
+            (bool) $data['is_enabled'],
+        );
+
+        return back()->with('status', 'Canonical financial source binding updated.');
     }
 
     public function storeCredential(Request $request, DemandAccount $demandAccount, DemandAccountService $service): RedirectResponse
