@@ -17,6 +17,7 @@ use App\Observers\ReconciliationRunObserver;
 use App\Services\ControlPlane\ActionCenter;
 use App\Services\ControlPlane\Actions\FinanceActions;
 use App\Services\ControlPlane\Actions\IntegrationActions;
+use App\Services\ControlPlane\Actions\MonetizationActions;
 use App\Services\ControlPlane\Actions\PublisherActions;
 use App\Services\ControlPlane\Actions\ReviewActions;
 use App\Services\ControlPlane\Actions\SupportActions;
@@ -43,6 +44,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->tag([
             ReviewActions::class,
             IntegrationActions::class,
+            MonetizationActions::class,
             FinanceActions::class,
             SupportActions::class,
             PublisherActions::class,
