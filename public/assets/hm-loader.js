@@ -164,11 +164,63 @@
     function fetchGlobalControl(script, force) {
         var url = configBase(script) + '/_global/control.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
         return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
-            .then(function (response) { return response && response.ok ? response.json() : {}; })
+            .then(function (response) {
+                if (!response || !response.ok) return {};
+                return response.json().then(function (payload) {
+                    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return failClosedControls();
+                    if (!Object.prototype.hasOwnProperty.call(payload, 'controls')) return {};
+                    return normalizeControls(payload.controls);
+                }).catch(function () { return failClosedControls(); });
+            })
             .catch(function () { return {}; })
-            .then(function (payload) {
-                return payload && payload.controls ? payload.controls : {};
-            });
+            .then(function (controls) { return controls || {}; });
+    }
+
+    function failClosedControls() {
+        return {
+            adServingDisabled: true,
+            gamDisabled: true,
+            prebidDisabled: true,
+            directJsDisabled: true,
+            directDemandDisabled: true,
+            nativeDemandDisabled: true
+        };
+    }
+
+    function controlFlag(controls, key) {
+        if (!Object.prototype.hasOwnProperty.call(controls, key)) return false;
+        // Public control artifacts are boolean contracts. Any present value that
+        // is not the literal false is treated as disabled so malformed data can
+        // never turn an operational kill switch back on.
+        return controls[key] !== false;
+    }
+
+    function normalizeControls(controls) {
+        if (!controls || typeof controls !== 'object' || Array.isArray(controls)) return failClosedControls();
+        var legacyNative = controlFlag(controls, 'nativeDemandDisabled');
+        var legacyDirect = controlFlag(controls, 'directDemandDisabled');
+        var direct = controlFlag(controls, 'directJsDisabled') || legacyDirect || legacyNative;
+        return {
+            adServingDisabled: controlFlag(controls, 'adServingDisabled'),
+            gamDisabled: controlFlag(controls, 'gamDisabled'),
+            prebidDisabled: controlFlag(controls, 'prebidDisabled'),
+            directJsDisabled: direct,
+            directDemandDisabled: direct || legacyDirect,
+            nativeDemandDisabled: direct || legacyNative
+        };
+    }
+
+    function mergeControls(siteControls, globalControls) {
+        var site = normalizeControls(siteControls || {});
+        var global = normalizeControls(globalControls || {});
+        return {
+            adServingDisabled: site.adServingDisabled || global.adServingDisabled,
+            gamDisabled: site.gamDisabled || global.gamDisabled,
+            prebidDisabled: site.prebidDisabled || global.prebidDisabled,
+            directJsDisabled: site.directJsDisabled || global.directJsDisabled,
+            directDemandDisabled: site.directDemandDisabled || global.directDemandDisabled,
+            nativeDemandDisabled: site.nativeDemandDisabled || global.nativeDemandDisabled
+        };
     }
 
 
@@ -591,7 +643,7 @@
     }
 
     function loadGpt(config) {
-        if (!canRequestAds(config)) return Promise.resolve(null);
+        if (!gamServingAllowed(config)) return Promise.resolve(null);
         var googletag = ensureGoogletagQueue();
         if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
         if (state.gptPromise) return state.gptPromise;
@@ -658,7 +710,7 @@
     }
 
     function loadPrebid(config) {
-        if (!canRequestAds(config)) return Promise.resolve(null);
+        if (!prebidServingAllowed(config)) return Promise.resolve(null);
         var selected = config.prebid || {};
         if (!selected.enabled || !selected.build || !selected.build.url) return Promise.resolve(null);
         var pbjs = ensurePrebidQueue();
@@ -830,15 +882,15 @@ function nativeDefinition(config, code) {
     }
 
     function requestGam(config, pubads, entries) {
-        if (!canRequestAds(config) || !entries.length || !pubads || !pubads.refresh) return;
+        if (!gamServingAllowed(config) || !entries.length || !pubads || !pubads.refresh) return;
         pubads.refresh(entries.map(function (entry) { return entry.slot; }));
         entries.forEach(function (entry) { entry.element.setAttribute('data-hm-status', 'requested'); });
     }
 
     function requestEntries(config, googletag, pubads, entries) {
-        if (!canRequestAds(config) || !entries.length) return Promise.resolve([]);
+        if (!gamServingAllowed(config) || !entries.length) return Promise.resolve([]);
         var prebid = config.prebid || {};
-        if (!prebid.enabled) {
+        if (!prebid.enabled || !prebidServingAllowed(config)) {
             requestGam(config, pubads, entries);
             return Promise.resolve(entries);
         }
@@ -851,14 +903,22 @@ function nativeDefinition(config, code) {
         }
 
         return loadPrebid(config).then(function (pbjs) {
-            if (!pbjs || !canRequestAds(config)) return [];
+            if (!pbjs || !prebidServingAllowed(config)) {
+                if (fallback) requestGam(config, pubads, entries);
+                return entries;
+            }
             return new Promise(function (resolve) {
                 var finished = false;
                 var timeout = Math.max(100, Number(prebid.auction && prebid.auction.timeoutMs || 1200));
                 function complete(timedOut) {
                     if (finished) return;
                     finished = true;
-                    if (!canRequestAds(config)) { resolve([]); return; }
+                    if (!gamServingAllowed(config)) { resolve([]); return; }
+                    if (!prebidServingAllowed(config)) {
+                        if (fallback) requestGam(config, pubads, entries);
+                        resolve(entries);
+                        return;
+                    }
                     try {
                         var codes = adUnits.map(function (adUnit) { return adUnit.code; });
                         if (pbjs.setTargetingForGPTAsync) pbjs.setTargetingForGPTAsync(codes);
@@ -875,7 +935,11 @@ function nativeDefinition(config, code) {
 
                 window.setTimeout(function () { complete(true); }, timeout + 100);
                 pbjs.que.push(function () {
-                    if (!canRequestAds(config)) { resolve([]); return; }
+                    if (!prebidServingAllowed(config)) {
+                        if (fallback) requestGam(config, pubads, entries);
+                        resolve(entries);
+                        return;
+                    }
                     try {
                         configurePrebid(config, pbjs);
                         var codes = adUnits.map(function (adUnit) { return adUnit.code; });
@@ -895,7 +959,7 @@ function nativeDefinition(config, code) {
         }).catch(function (error) {
             log(config, 'Prebid unavailable; continuing with GAM', error);
             entries.forEach(function (entry) { entry.element.setAttribute('data-hm-prebid', 'failed'); });
-            if (fallback && canRequestAds(config)) requestGam(config, pubads, entries);
+            if (fallback && gamServingAllowed(config)) requestGam(config, pubads, entries);
             return entries;
         });
     }
@@ -913,7 +977,7 @@ function nativeDefinition(config, code) {
     }
 
     function standaloneRenderFrame(config, entry, pbjs, winner) {
-        if (!canRequestAds(config) || !entry || !winner || !winner.adId) return false;
+        if (!prebidServingAllowed(config) || !entry || !winner || !winner.adId) return false;
         var key = entry.element.id;
         var previous = state.standaloneEntries[key];
         var iframe = document.createElement('iframe');
@@ -966,7 +1030,7 @@ function nativeDefinition(config, code) {
     }
 
     function requestStandaloneEntry(config, entry) {
-        if (!canRequestAds(config) || !entry) return Promise.resolve(false);
+        if (!prebidServingAllowed(config) || !entry) return Promise.resolve(false);
         var prebid = config.prebid || {};
         if (!prebid.enabled || prebid.deliveryMode !== 'STANDALONE' || !prebid.directRender || prebid.directRender.implemented !== true) {
             return Promise.resolve(false);
@@ -981,14 +1045,14 @@ function nativeDefinition(config, code) {
         }
 
         state.standaloneAuctions[key] = loadPrebid(config).then(function (pbjs) {
-            if (!pbjs || !canRequestAds(config)) return false;
+            if (!pbjs || !prebidServingAllowed(config)) return false;
             return new Promise(function (resolve) {
                 var finished = false;
                 var timeout = Math.max(100, Math.min(5000, Number(prebid.auction && prebid.auction.timeoutMs || 1200)));
                 function complete(status, bids, auctionId) {
                     if (finished) return;
                     finished = true;
-                    if (!canRequestAds(config)) { resolve(false); return; }
+                    if (!prebidServingAllowed(config)) { resolve(false); return; }
                     try {
                         var winners = pbjs.getHighestCpmBids ? pbjs.getHighestCpmBids(key) : [];
                         var winner = Array.isArray(winners) ? winners[0] : null;
@@ -1011,7 +1075,7 @@ function nativeDefinition(config, code) {
 
                 var timer = window.setTimeout(function () { complete('timeout', null, null); }, timeout + 100);
                 pbjs.que.push(function () {
-                    if (!canRequestAds(config)) { window.clearTimeout(timer); resolve(false); return; }
+                    if (!prebidServingAllowed(config)) { window.clearTimeout(timer); resolve(false); return; }
                     try {
                         configurePrebid(config, pbjs);
                         if (pbjs.removeAdUnit) pbjs.removeAdUnit([key]);
@@ -1051,7 +1115,7 @@ function nativeDefinition(config, code) {
     }
 
     function scheduleStandaloneRefresh(config, entry) {
-        if (!canRequestAds(config)) return;
+        if (!prebidServingAllowed(config)) return;
         var refresh = entry.placement.refresh || {};
         var behavior = config.prebid && config.prebid.delivery && config.prebid.delivery.refreshBehavior || {};
         if (behavior.enabled === false) return;
@@ -1062,7 +1126,7 @@ function nativeDefinition(config, code) {
         var key = entry.element.id;
         if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
         state.refreshTimers[key] = window.setInterval(function () {
-            if (!canRequestAds(config)) {
+            if (!prebidServingAllowed(config)) {
                 window.clearInterval(state.refreshTimers[key]);
                 delete state.refreshTimers[key];
                 return;
@@ -1081,6 +1145,7 @@ function nativeDefinition(config, code) {
     }
 
     function runStandaloneEntry(config, entry) {
+        if (!prebidServingAllowed(config)) return Promise.resolve(false);
         var key = ensureElementId(entry.element, config, entry.placement);
         if (entry.element.getAttribute('data-hm-standalone-started') === '1') return Promise.resolve(state.standaloneEntries[key] || false);
         entry.element.setAttribute('data-hm-defined', '1');
@@ -1183,6 +1248,7 @@ function nativeDefinition(config, code) {
     }
 
     function loadDirectScript(config, candidate, spec) {
+        if (!directJsServingAllowed(config)) return Promise.reject(new Error('blocked'));
         spec = spec || {};
         var url = String(spec.url || '');
         if (!url) return Promise.reject(new Error('missing-script-url'));
@@ -1227,13 +1293,14 @@ function nativeDefinition(config, code) {
     function loadDirectScripts(config, candidate) {
         return directScriptSpecs(candidate.tag || {}).reduce(function (promise, spec) {
             return promise.then(function () {
-                if (!canRequestAds(config)) throw new Error('blocked');
+                if (!directJsServingAllowed(config)) throw new Error('blocked');
                 return loadDirectScript(config, candidate, spec);
             });
         }, Promise.resolve());
     }
 
     function runDirectInitialization(config, candidate, container) {
+        if (!directJsServingAllowed(config)) return false;
         var init = candidate.tag && candidate.tag.initialization || { type: 'NONE', parameters: {} };
         var type = String(init.type || 'NONE').toUpperCase();
         var parameters = init.parameters || {};
@@ -1265,7 +1332,7 @@ function nativeDefinition(config, code) {
             if (!state.directTaboolaFlushScheduled) {
                 state.directTaboolaFlushScheduled = true;
                 Promise.resolve().then(function () {
-                    if (window._taboola && window._taboola.push) window._taboola.push({ flush: true });
+                    if (directJsServingAllowed(config) && window._taboola && window._taboola.push) window._taboola.push({ flush: true });
                     state.directTaboolaFlushScheduled = false;
                 });
             }
@@ -1277,7 +1344,7 @@ function nativeDefinition(config, code) {
     function renderIsolatedDirect(config, entry, candidate) {
         var tag = candidate.tag || {};
         var isolation = tag.isolation || {};
-        if (!canRequestAds(config) || String(tag.executionMode || '') !== 'ISOLATED_IFRAME') return Promise.resolve(false);
+        if (!directJsServingAllowed(config) || String(tag.executionMode || '') !== 'ISOLATED_IFRAME') return Promise.resolve(false);
         if (!isolation.html || !isolation.csp || !Array.isArray(isolation.sandbox) || isolation.sandbox.length !== 1 || isolation.sandbox[0] !== 'allow-scripts') return Promise.resolve(false);
         var iframe = document.createElement('iframe');
         iframe.title = 'Advertisement';
@@ -1292,7 +1359,7 @@ function nativeDefinition(config, code) {
             var timeout = directRenderPolicy(tag).timeoutMs;
             var timer = window.setTimeout(function () { if (!settled) { settled = true; resolve(false); } }, timeout);
             iframe.onload = function () {
-                if (settled || !canRequestAds(config)) return;
+                if (settled || !directJsServingAllowed(config)) return;
                 settled = true; window.clearTimeout(timer); resolve(true);
             };
             iframe.onerror = function () { if (!settled) { settled = true; window.clearTimeout(timer); resolve(false); } };
@@ -1301,6 +1368,7 @@ function nativeDefinition(config, code) {
     }
 
     function renderHouse(config, entry) {
+        if (!directJsServingAllowed(config)) return false;
         var house = entry.native && entry.native.house;
         if (!house || !house.html) {
             entry.element.setAttribute('data-hm-native', 'exhausted');
@@ -1318,7 +1386,7 @@ function nativeDefinition(config, code) {
     }
 
     function runNativeFallback(config, entry) {
-        if (!canRequestAds(config) || !entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
+        if (!directJsServingAllowed(config) || !entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
         var key = entry.element.id || ensureElementId(entry.element, config, entry.placement);
         if (state.nativeRendered[key]) return Promise.resolve(true);
         if (state.nativeAttempts[key]) return state.nativeAttempts[key];
@@ -1326,7 +1394,7 @@ function nativeDefinition(config, code) {
         var candidates = directCandidates(config, entry);
         state.nativeAttempts[key] = new Promise(function (resolve) {
             function tryCandidate(index) {
-                if (!canRequestAds(config)) { resolve(false); return; }
+                if (!directJsServingAllowed(config)) { resolve(false); return; }
                 if (index >= candidates.length) { resolve(renderHouse(config, entry)); return; }
 
                 var candidate = candidates[index];
@@ -1347,7 +1415,7 @@ function nativeDefinition(config, code) {
                 }
 
                 function rendered() {
-                    if (settled || !canRequestAds(config)) return;
+                    if (settled || !directJsServingAllowed(config)) return;
                     settled = true;
                     state.nativeRendered[key] = candidate.network;
                     entry.element.setAttribute('data-hm-native', String(candidate.network));
@@ -1365,7 +1433,7 @@ function nativeDefinition(config, code) {
 
                 container = directContainer(entry, candidate);
                 loadDirectScripts(config, candidate).then(function () {
-                    if (!canRequestAds(config)) { failed('blocked'); return; }
+                    if (!directJsServingAllowed(config)) { failed('blocked'); return; }
                     if (!runDirectInitialization(config, candidate, container)) { failed('initialization-failed'); return; }
                     var timeout = directRenderPolicy(tag).timeoutMs;
                     window.setTimeout(function () {
@@ -1387,7 +1455,7 @@ function nativeDefinition(config, code) {
         if (state.gamFallbackInstalled || !pubads || !pubads.addEventListener) return;
         state.gamFallbackInstalled = true;
         pubads.addEventListener('slotRenderEnded', function (event) {
-            if (!canRequestAds(config)) return;
+            if (!gamServingAllowed(config) || !directJsServingAllowed(config)) return;
             var entry = null;
             Object.keys(state.slots).some(function (key) {
                 if (state.slots[key].slot === event.slot) {
@@ -1409,9 +1477,15 @@ function nativeDefinition(config, code) {
 
     function defineItems(config, items) {
         if (!canRequestAds(config) || !items.length) return Promise.resolve([]);
-        var standaloneItems = items.filter(function (item) { return item.placement.renderer === 'PREBID_STANDALONE'; });
-        var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath && item.placement.renderer !== 'PREBID_STANDALONE'; });
-        var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });
+        var standaloneItems = prebidServingAllowed(config)
+            ? items.filter(function (item) { return item.placement.renderer === 'PREBID_STANDALONE'; })
+            : [];
+        var nativeOnly = directJsServingAllowed(config)
+            ? items.filter(function (item) { return !item.placement.adUnitPath && item.placement.renderer !== 'PREBID_STANDALONE'; })
+            : [];
+        var gamItems = gamServingAllowed(config)
+            ? items.filter(function (item) { return Boolean(item.placement.adUnitPath); })
+            : [];
 
         standaloneItems.forEach(function (item) { ensureElementId(item.element, config, item.placement); });
         var standalonePromise = Promise.all(standaloneItems.map(function (item) { return runStandaloneEntry(config, item); }));
@@ -1424,10 +1498,10 @@ function nativeDefinition(config, code) {
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
 
         return loadGpt(config).then(function (googletag) {
-            if (!googletag || !canRequestAds(config)) return [];
+            if (!googletag || !gamServingAllowed(config)) return Promise.all([nativePromise, standalonePromise]).then(function () { return nativeOnly.concat(standaloneItems); });
             return new Promise(function (resolve) {
                 googletag.cmd.push(function () {
-                    if (!canRequestAds(config)) { resolve(nativeOnly.concat(standaloneItems)); return; }
+                    if (!gamServingAllowed(config)) { resolve(nativeOnly.concat(standaloneItems)); return; }
                     try {
                         var pubads = googletag.pubads();
                         var privacy = state.privacyDecision || {};
@@ -1471,6 +1545,7 @@ function nativeDefinition(config, code) {
 
                         var defined = [];
                         gamItems.forEach(function (item) {
+                            if (!gamServingAllowed(config)) return;
                             var placement = item.placement;
                             var element = item.element;
                             var elementId = ensureElementId(element, config, placement);
@@ -1557,7 +1632,7 @@ function nativeDefinition(config, code) {
     }
 
     function scheduleRefresh(config, googletag, pubads, entry) {
-        if (!canRequestAds(config)) return;
+        if (!gamServingAllowed(config)) return;
         var refresh = entry.placement.refresh || {};
         var prebidRefresh = config.prebid && config.prebid.delivery && config.prebid.delivery.refreshBehavior || {};
         if (prebidRefresh.enabled === false) return;
@@ -1568,7 +1643,7 @@ function nativeDefinition(config, code) {
         var key = entry.element.id;
         if (state.refreshTimers[key]) window.clearInterval(state.refreshTimers[key]);
         state.refreshTimers[key] = window.setInterval(function () {
-            if (!canRequestAds(config)) {
+            if (!gamServingAllowed(config)) {
                 window.clearInterval(state.refreshTimers[key]);
                 delete state.refreshTimers[key];
                 return;
@@ -1581,7 +1656,7 @@ function nativeDefinition(config, code) {
             }
             entry.refreshCount += 1;
             googletag.cmd.push(function () {
-                if (canRequestAds(config)) requestEntries(config, googletag, pubads, [entry]);
+                if (gamServingAllowed(config)) requestEntries(config, googletag, pubads, [entry]);
             });
         }, interval * 1000);
     }
@@ -1610,8 +1685,32 @@ function nativeDefinition(config, code) {
         log(config, 'Diagnostics', window.__HM_DIAGNOSTICS__);
     }
 
+    function liveConfig(config) {
+        if (state.config && (!config || !config.siteKey || state.config.siteKey === config.siteKey)) return state.config;
+        return config || null;
+    }
+
+    function effectiveControls(config) {
+        var selected = liveConfig(config);
+        if (!selected) return failClosedControls();
+        var raw = Object.prototype.hasOwnProperty.call(selected, 'controls') ? selected.controls : {};
+        return normalizeControls(raw);
+    }
+
     function servingDisabled(config) {
-        return Boolean(config && config.controls && config.controls.adServingDisabled);
+        return effectiveControls(config).adServingDisabled;
+    }
+
+    function gamServingAllowed(config) {
+        return canRequestAds(config) && !effectiveControls(config).gamDisabled;
+    }
+
+    function prebidServingAllowed(config) {
+        return canRequestAds(config) && !effectiveControls(config).prebidDisabled;
+    }
+
+    function directJsServingAllowed(config) {
+        return canRequestAds(config) && !effectiveControls(config).directJsDisabled;
     }
 
     function scan(config) {
@@ -1675,13 +1774,13 @@ function nativeDefinition(config, code) {
         if (state.booting && !options.force) return state.booting;
 
         state.booting = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
-            if (globalControls.adServingDisabled) {
+            if (normalizeControls(globalControls).adServingDisabled) {
                 state.config = { siteKey: siteKey, status: 'paused', controls: globalControls };
                 log(state.config, 'Global advertising kill switch is active');
                 return null;
             }
             return fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
-                config.controls = Object.assign({}, config.controls || {}, globalControls || {});
+                config.controls = mergeControls(config.controls || {}, globalControls || {});
                 return resolvePrivacy(config).then(function () { return config; });
             });
         }).then(function (config) {

@@ -15,6 +15,10 @@ Admin Site 360 exposes one **Serving Control Center** with:
 
 The controls reuse `PlatformControlService` and the existing Operations control endpoint. Site-scoped changes therefore keep the existing password/reason requirement, audit event, static production republish and permanent publisher Loader code.
 
+Operations Center also exposes four explicit global edge states: **All Ad Serving**, **GAM**, **Prebid**, and **Direct JS**. Each state is shown as `ON` or `OFF · DISABLED`, with the persisted reason, actor, and timestamp. Disabling any platform engine requires an engine-specific typed confirmation in addition to the current password and reason.
+
+Platform engine disables use `URGENT` static-delivery priority. Their outbox items are immediately available and bypass `static-delivery.batch_delay_seconds`, including future normal batching windows such as thirty minutes. This priority is durable data on the outbox and batch, so later batching work must preserve the urgent bypass and emergency deployment reserve.
+
 ## Engine independence
 
 `AD_SERVING` remains the master stop. Engine controls are independent:

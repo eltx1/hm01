@@ -37,7 +37,7 @@ reported publication before an edge deployment was proven.
 transaction. It does no file or network I/O. The once-per-minute scheduler:
 
 1. selects due outbox items and keeps only the newest site/environment item;
-2. groups normal changes while urgent pauses bypass the delay;
+2. groups normal changes while urgent pauses and platform engine kill switches bypass the delay;
 3. enforces monthly deployment and file safety budgets;
 4. builds a complete deterministic snapshot with bounded immutable retention;
 5. commits the managed paths to `edge-delivery` through a least-privilege GitHub

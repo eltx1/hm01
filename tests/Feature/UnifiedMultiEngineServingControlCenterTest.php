@@ -40,9 +40,13 @@ class UnifiedMultiEngineServingControlCenterTest extends TestCase
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private $admin;
+
     private $horus;
+
     private $gam;
+
     private $publisherUser;
+
     private $publisher;
 
     protected function setUp(): void
@@ -145,6 +149,43 @@ class UnifiedMultiEngineServingControlCenterTest extends TestCase
         $this->assertFalse(data_get($payload, 'engines.prebid.enabled'));
         $this->assertFalse(data_get($payload, 'engines.directJs.enabled'));
         $this->assertSame('PAUSED', data_get(app(SiteMonetizationReadinessService::class)->admin($site->refresh()), 'overall.status'));
+    }
+
+    public function test_platform_engine_controls_are_independent_and_master_precedence_is_deterministic(): void
+    {
+        $controls = app(PlatformControlService::class);
+        $gamSite = $this->site(ServingMode::HorusGam, false, true);
+        $this->mapDirectJs($gamSite, $this->placement($gamSite, 'global_direct_survives_gam', gamEligible: false));
+
+        $controls->set('PLATFORM', null, 'GAM', true, 'Task 23 global GAM isolation.', $this->admin);
+        $gamOff = $this->config($gamSite->refresh());
+        $this->assertFalse(data_get($gamOff, 'engines.gam.enabled'));
+        $this->assertTrue(data_get($gamOff, 'engines.directJs.enabled'));
+        $this->assertSame('active', $gamOff['status']);
+        $controls->set('PLATFORM', null, 'GAM', false, 'Task 23 global GAM resume.', $this->admin);
+
+        $directSite = $this->site(ServingMode::HorusDirect, true, true);
+        $this->mapPrebid($directSite, $this->placement($directSite, 'global_prebid_surface'), standalone: true);
+        $this->mapDirectJs($directSite, $this->placement($directSite, 'global_direct_surface'));
+
+        $controls->set('PLATFORM', null, 'PREBID', true, 'Task 23 global Prebid isolation.', $this->admin);
+        $prebidOff = $this->config($directSite->refresh());
+        $this->assertFalse(data_get($prebidOff, 'engines.prebid.enabled'));
+        $this->assertTrue(data_get($prebidOff, 'engines.directJs.enabled'));
+        $controls->set('PLATFORM', null, 'PREBID', false, 'Task 23 global Prebid resume.', $this->admin);
+
+        $controls->set('PLATFORM', null, 'DIRECT_JS', true, 'Task 23 global Direct JS isolation.', $this->admin);
+        $directOff = $this->config($directSite->refresh());
+        $this->assertTrue(data_get($directOff, 'engines.prebid.enabled'));
+        $this->assertFalse(data_get($directOff, 'engines.directJs.enabled'));
+        $controls->set('PLATFORM', null, 'DIRECT_JS', false, 'Task 23 global Direct JS resume.', $this->admin);
+
+        $controls->set('PLATFORM', null, 'AD_SERVING', true, 'Task 23 global master stop.', $this->admin);
+        $masterOff = $this->config($directSite->refresh());
+        $this->assertSame('paused', $masterOff['status']);
+        $this->assertFalse(data_get($masterOff, 'engines.gam.enabled'));
+        $this->assertFalse(data_get($masterOff, 'engines.prebid.enabled'));
+        $this->assertFalse(data_get($masterOff, 'engines.directJs.enabled'));
     }
 
     public function test_site_360_uses_published_renderer_matrix_and_publisher_output_is_white_labelled(): void

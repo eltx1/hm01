@@ -7,12 +7,17 @@ use App\Enums\ConfigVersionStatus;
 use App\Enums\GamConnectionType;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
+use App\Enums\SiteStatus;
+use App\Enums\StaticDeliveryPriority;
 use App\Enums\StaticDeliveryStatus;
 use App\Models\AuditLog;
-use App\Models\StaticDeliveryItem;
 use App\Models\SellerDeclaration;
-use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
+use App\Models\StaticDeliveryBatch;
+use App\Models\StaticDeliveryItem;
+use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Operations\PlatformControlService;
 use App\Services\StaticDelivery\CanonicalJson;
+use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
@@ -20,10 +25,9 @@ use App\Services\StaticDelivery\PublicPayloadGuard;
 use App\Services\StaticDelivery\StaticDeliveryManager;
 use App\Services\StaticDelivery\StaticDeliverySnapshotBuilder;
 use App\Services\StaticDelivery\StaticPathGuard;
-use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
@@ -35,6 +39,7 @@ class StaticDeliveryTest extends TestCase
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private FakeStaticDeliveryDriver $driver;
+
     private string $dist;
 
     protected function setUp(): void
@@ -136,7 +141,7 @@ class StaticDeliveryTest extends TestCase
     {
         config(['static-delivery.local_root' => $this->dist]);
         $snapshot = new StaticDeliverySnapshot(['configs/test.json' => "{}\n"], str_repeat('a', 64), 3, false);
-        app(LocalFilesystemStaticDeliveryDriver::class)->deliver($snapshot, new \App\Models\StaticDeliveryBatch);
+        app(LocalFilesystemStaticDeliveryDriver::class)->deliver($snapshot, new StaticDeliveryBatch);
         $this->assertFileExists($this->dist.'/configs/test.json');
 
         $this->expectException(StaticDeliveryException::class);
@@ -158,6 +163,72 @@ class StaticDeliveryTest extends TestCase
         config(['static-delivery.file_budget.hard_limit' => 1]);
         $this->expectException(StaticDeliveryException::class);
         app(StaticDeliverySnapshotBuilder::class)->build();
+    }
+
+    public function test_global_control_artifact_is_complete_backward_compatible_and_deterministic(): void
+    {
+        [, $admin] = $this->siteWithPrimaryHorus();
+        $controls = app(PlatformControlService::class);
+        $controls->set('PLATFORM', null, 'GAM', true, 'Task 23 global GAM stop.', $admin);
+        $controls->set('PLATFORM', null, 'PREBID', false, 'Task 23 global Prebid enabled.', $admin);
+        $controls->set('PLATFORM', null, 'DIRECT_JS', true, 'Task 23 global Direct JS stop.', $admin);
+        $controls->set('PLATFORM', null, 'NATIVE_DEMAND', false, 'Task 23 legacy native compatibility.', $admin);
+
+        $first = app(StaticDeliverySnapshotBuilder::class)->build();
+        $second = app(StaticDeliverySnapshotBuilder::class)->build();
+        $artifact = json_decode($first->files['configs/_global/control.json'], true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertSame(2, $artifact['schemaVersion']);
+        $this->assertSame([
+            'adServingDisabled' => false,
+            'directJsDisabled' => true,
+            'gamDisabled' => true,
+            'nativeDemandDisabled' => false,
+            'prebidDisabled' => false,
+        ], $artifact['controls']);
+        $this->assertSame($first->files['configs/_global/control.json'], $second->files['configs/_global/control.json']);
+        $this->assertSame($first->manifestHash, $second->manifestHash);
+
+        $controls->set('PLATFORM', null, 'DIRECT_JS', false, 'Task 23 global Direct JS enabled.', $admin);
+        $controls->set('PLATFORM', null, 'NATIVE_DEMAND', true, 'Task 23 legacy native stop.', $admin);
+        $legacyArtifact = json_decode(
+            app(StaticDeliverySnapshotBuilder::class)->build()->files['configs/_global/control.json'],
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+        $this->assertTrue($legacyArtifact['controls']['directJsDisabled']);
+        $this->assertTrue($legacyArtifact['controls']['nativeDemandDisabled']);
+    }
+
+    public function test_platform_engine_kills_bypass_any_normal_batching_window(): void
+    {
+        config(['static-delivery.batch_delay_seconds' => 1800]);
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $site->update(['status' => SiteStatus::Active]);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
+        $session = ['two_factor_passed_at' => now()->timestamp];
+
+        foreach ([
+            'GAM' => 'DISABLE PLATFORM GAM',
+            'PREBID' => 'DISABLE PLATFORM PREBID',
+            'DIRECT_JS' => 'DISABLE PLATFORM DIRECT JS',
+        ] as $control => $confirmation) {
+            $this->actingAs($admin)->withSession($session)->post(route('admin.operations.controls'), [
+                'scope_type' => 'PLATFORM',
+                'control_key' => $control,
+                'is_disabled' => '1',
+                'reason' => "Task 23 urgent {$control} safety stop.",
+                'current_password' => 'password',
+                'impact_confirmation' => $confirmation,
+            ])->assertSessionHasNoErrors();
+
+            $item = StaticDeliveryItem::withoutGlobalScopes()
+                ->where('site_id', $site->id)
+                ->latest('created_at')
+                ->firstOrFail();
+            $this->assertSame(StaticDeliveryPriority::Urgent, $item->priority);
+            $this->assertTrue($item->available_at->lessThanOrEqualTo(now()));
+        }
     }
 
     public function test_site_key_path_traversal_is_rejected(): void

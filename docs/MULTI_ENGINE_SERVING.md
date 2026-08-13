@@ -27,6 +27,20 @@ Valid states include all three engines enabled, standalone Prebid plus Direct JS
 
 `SiteEngineStateResolver` is the central source of effective engine state. Controllers, readiness, and static configuration must consume that result rather than duplicate serving eligibility rules.
 
+## Global edge engine controls
+
+Task 23 completes the first-class global edge contract. `configs/_global/control.json` publishes independent boolean controls for `adServingDisabled`, `gamDisabled`, `prebidDisabled`, and `directJsDisabled`. The legacy `nativeDemandDisabled` field remains present for deployed Loader and rollback compatibility; either legacy Direct-Demand field disables the `DIRECT_JS` runtime.
+
+The permanent Loader fetches this short-lived static artifact before the site manifest. It combines global and site controls with restrictive OR semantics, never last-write-wins semantics. Therefore a platform `false` cannot overwrite a site or placement-derived `true`. A successfully fetched but malformed control object fails closed; an unavailable artifact retains the established static-runtime availability behavior.
+
+`AD_SERVING` is the master stop. Engine-specific controls are otherwise independent:
+
+- GAM OFF prevents GPT insertion, slot creation, GAM requests, refresh, and GAM-bridge delivery, without stopping standalone Prebid or independent Direct JS;
+- PREBID OFF prevents Prebid insertion and both standalone/GAM-bridge auctions; a GAM-owned placement may use its configured safe GAM fallback;
+- DIRECT_JS OFF prevents provider scripts, containers, initialization, and Direct-JS fallback while GAM and Prebid remain eligible.
+
+Every asynchronous callback, refresh timer, and SPA rescan rechecks the newest effective runtime controls. A control refresh can therefore stop later requests even when the original page boot used an older configuration object.
+
 ## Fixed runtime and deployment invariants
 
 The architecture continues to require:

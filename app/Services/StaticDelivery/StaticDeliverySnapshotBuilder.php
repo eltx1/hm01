@@ -4,12 +4,12 @@ namespace App\Services\StaticDelivery;
 
 use App\Models\ConfigVersion;
 use App\Models\PlatformControl;
+use App\Models\SyntheticProbeResult;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Carbon;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
-use App\Models\SyntheticProbeResult;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 
 final class StaticDeliverySnapshotBuilder
 {
@@ -18,8 +18,7 @@ final class StaticDeliverySnapshotBuilder
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
         private readonly SupplyChainArtifactBuilder $supplyChain,
-    ) {
-    }
+    ) {}
 
     public function build(): StaticDeliverySnapshot
     {
@@ -90,7 +89,7 @@ final class StaticDeliverySnapshotBuilder
             }
         }
         if (count($files) > $hardLimit) {
-            throw new StaticDeliveryException('FILE_BUDGET_EXCEEDED', "Static snapshot has ".count($files)." files; configured hard limit is {$hardLimit}.");
+            throw new StaticDeliveryException('FILE_BUDGET_EXCEEDED', 'Static snapshot has '.count($files)." files; configured hard limit is {$hardLimit}.");
         }
 
         return new StaticDeliverySnapshot(
@@ -126,14 +125,18 @@ final class StaticDeliverySnapshotBuilder
         $records = PlatformControl::query()->where('scope_type', 'PLATFORM')->get()->keyBy('control_key');
         $changedAt = $records->max('changed_at');
         $timestamp = $changedAt ? Carbon::parse($changedAt)->utc() : Carbon::createFromTimestampUTC(0);
+        $legacyNativeDisabled = (bool) $records->get('NATIVE_DEMAND')?->is_disabled;
 
         return [
+            'schemaVersion' => 2,
             'version' => $timestamp->getTimestampMs(),
             'generatedAt' => $timestamp->toIso8601String(),
             'controls' => [
                 'adServingDisabled' => (bool) $records->get('AD_SERVING')?->is_disabled,
+                'gamDisabled' => (bool) $records->get('GAM')?->is_disabled,
                 'prebidDisabled' => (bool) $records->get('PREBID')?->is_disabled,
-                'nativeDemandDisabled' => (bool) $records->get('NATIVE_DEMAND')?->is_disabled,
+                'directJsDisabled' => (bool) $records->get('DIRECT_JS')?->is_disabled || $legacyNativeDisabled,
+                'nativeDemandDisabled' => $legacyNativeDisabled,
             ],
         ];
     }
@@ -153,6 +156,7 @@ final class StaticDeliverySnapshotBuilder
     private function deliveryHealth(): array
     {
         $latest = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
+
         return [
             'schemaVersion' => 1,
             'status' => $latest->isNotEmpty() && $latest->every(fn ($probe) => $probe->status === 'PASS') ? 'healthy' : 'unknown',

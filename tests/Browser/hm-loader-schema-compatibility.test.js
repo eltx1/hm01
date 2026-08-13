@@ -19,9 +19,9 @@ test('GPT stays gated by physical GAM placement ownership rather than site-level
     // Task 15 partitions all three renderer families explicitly. The decisive
     // GAM invariant is still physical adUnitPath ownership, and the no-GAM
     // branch completes standalone/native work before the first loadGpt call.
-    const standalonePartition = loaderSource.indexOf("var standaloneItems = items.filter(function (item) { return item.placement.renderer === 'PREBID_STANDALONE'; });");
-    const nativePartition = loaderSource.indexOf("var nativeOnly = items.filter(function (item) { return !item.placement.adUnitPath && item.placement.renderer !== 'PREBID_STANDALONE'; });", standalonePartition);
-    const gamPartition = loaderSource.indexOf('var gamItems = items.filter(function (item) { return Boolean(item.placement.adUnitPath); });', nativePartition);
+    const standalonePartition = loaderSource.indexOf('var standaloneItems = prebidServingAllowed(config)');
+    const nativePartition = loaderSource.indexOf('var nativeOnly = directJsServingAllowed(config)', standalonePartition);
+    const gamPartition = loaderSource.indexOf('var gamItems = gamServingAllowed(config)', nativePartition);
     const noGamReturn = loaderSource.indexOf('if (!gamItems.length) return Promise.all([nativePromise, standalonePromise])', gamPartition);
     const loadGpt = loaderSource.indexOf('return loadGpt(config)', gamPartition);
 
