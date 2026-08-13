@@ -6,6 +6,7 @@ use App\Enums\DemandIntegrationMode;
 use App\Enums\DemandNetworkCode;
 use App\Models\DemandNetwork;
 use App\Services\Demand\ConfiguredDemandConnector;
+use App\Services\Demand\ExoClickConnector;
 use App\Services\Demand\MgidConnector;
 use App\Services\Demand\OutbrainConnector;
 use App\Services\Demand\SpeakolConnector;
@@ -56,6 +57,16 @@ class DemandNetworkSeeder extends Seeder
                 'supports_gam_line_item' => true,
                 'supports_api' => true,
                 'capabilities' => ['site_mapping', 'placement_mapping', 'ads_txt', 'api_placeholder', 'csv_reports'],
+            ],
+            DemandNetworkCode::ExoClick->value => [
+                'name' => 'ExoClick',
+                'connector_class' => ExoClickConnector::class,
+                'default_integration_mode' => DemandIntegrationMode::DirectJs,
+                'supports_direct_js' => true,
+                'supports_gam_creative' => false,
+                'supports_gam_line_item' => false,
+                'supports_api' => false,
+                'capabilities' => ['placement_mapping', 'configured_tag', 'csv_reports'],
             ],
             DemandNetworkCode::CustomNative->value => [
                 'name' => 'Custom Native',

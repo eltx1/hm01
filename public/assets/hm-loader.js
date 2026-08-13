@@ -1248,6 +1248,12 @@ function nativeDefinition(config, code) {
             window.OBR.extern.researchWidget();
             return true;
         }
+        if (type === 'EXOCLICK_SERVE') {
+            window.AdProvider = window.AdProvider || [];
+            if (!window.AdProvider || typeof window.AdProvider.push !== 'function') return false;
+            window.AdProvider.push({ serve: {} });
+            return true;
+        }
         if (type === 'TABOOLA_QUEUE') {
             var containerId = String(parameters.container || container && container.id || '');
             if (!containerId || !parameters.mode || !parameters.placement || !parameters.target_type) return false;
@@ -1331,6 +1337,9 @@ function nativeDefinition(config, code) {
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
+                    if (container && container.parentNode && container.parentNode.removeChild) {
+                        container.parentNode.removeChild(container);
+                    }
                     entry.element.setAttribute('data-hm-native-last-error', String(reason || 'no-fill'));
                     entry.element.setAttribute('data-hm-direct-last-error', String(reason || 'no-fill'));
                     log(config, 'Direct Demand candidate failed', candidate.network, reason);

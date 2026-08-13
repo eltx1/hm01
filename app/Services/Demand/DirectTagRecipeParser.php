@@ -173,7 +173,7 @@ final class DirectTagRecipeParser
     {
         $ids = [];
         foreach ($containers as $container) {
-            foreach (['id', 'data-widget-id', 'data-zone-id', 'data-placement-id'] as $key) {
+            foreach (['id', 'data-widget-id', 'data-zone-id', 'data-zoneid', 'data-placement-id'] as $key) {
                 $value = $key === 'id' ? ($container['id'] ?? null) : data_get($container, 'attributes.'.$key);
                 if (is_string($value) && $value !== '') {
                     $ids[] = $value;
