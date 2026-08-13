@@ -149,3 +149,19 @@ are prepared before upload. Cron invokes the scheduler; scheduled database queue
 work drains with stop-when-empty. These constraints preserve compatibility with
 Hostinger while also supporting Apache, nginx, VPS, managed cloud, and other
 standards-compliant PHP/MySQL hosts.
+
+## Task 20 final serving topology
+
+```text
+Horus Loader
+├── GAM -> GPT -> selected GAM connection
+├── Prebid -> STANDALONE direct banner render | GAM_BRIDGE -> GPT/GAM
+└── Direct JS -> reviewed structured provider recipe | isolated custom iframe
+```
+
+The Loader does not load GPT when no GAM-owned placement exists, does not load
+Prebid when no Prebid placement is active, and does not load a Direct provider
+script when no Direct placement is active. Shared Direct provider scripts are
+deduplicated while independent placements initialize independently. Renderer
+ownership remains per physical placement and conflicts fail closed.
+

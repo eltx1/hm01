@@ -151,3 +151,13 @@ duplicate objects.
   it must not invent a GAM dependency for standalone Prebid.
 - No Prebid Server is present.
 - No raw browser auction, impression, or click telemetry is sent to Laravel.
+
+## Task 20 pilot adapter baseline
+
+The pinned Prebid.js build remains version `11.14.0` and now includes the
+optional `onetagBidAdapter`. OneTag uses the normal bidder -> account -> site ->
+placement mapping workflow and requires an operator/provider-supplied `pubId`;
+Horus seeds no publisher identifier. Standalone rendering remains banner-only
+and does not load GPT/GAM. GAM Bridge remains unchanged and GAM remains the
+final decision point for bridge demand.
+

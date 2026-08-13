@@ -103,3 +103,13 @@ healthy scheduler and SMTP, a test publisher site, controlled monetization,
 reconciled reporting, and operations/finance sign-off.
 
 See GO_LIVE_CHECKLIST.md and PILOT_RUNBOOK.md for the evidence gates.
+
+## Task 20 controlled-pilot product state
+
+The supported pilot combinations are: standalone Prebid only; Direct JS only;
+standalone Prebid plus Direct JS on different placements; GAM plus Prebid
+`GAM_BRIDGE`; and GAM plus bridge Prebid plus an independent Direct JS placement.
+No combination introduces a Prebid-vs-Direct global auction or automatic
+waterfall. `AD_SERVING` stops all engines; GAM, PREBID and DIRECT_JS controls
+isolate only their own paths.
+

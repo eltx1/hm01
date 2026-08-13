@@ -82,3 +82,15 @@ Go only when Gates 0–3 are complete and Gate 4 has an owner and a rollback pla
 Start with one publisher and one controlled campaign. Stop immediately on
 credential exposure, cross-tenant access, incorrect public configuration,
 unreconciled GAM writes, unexplained reporting variance, or failed rollback.
+
+## Task 20 GAM-less pilot gate
+
+Before enabling a GAM-less site, require: production static config checksum;
+`HORUS_DIRECT`; at least one healthy standalone-Prebid or Direct-JS placement;
+zero renderer conflicts; privacy and Click Guard gates verified; no GPT request
+for pure no-GAM profiles; provider account/site/placement approvals; canonical
+ads.txt where required; source-aware aggregated reporting configured; rollback
+validated; and Operations sign-off. The production-release workflow now executes
+migration fresh, rollback of the latest migration, and reapply before the full
+PHP suite and release archive validation.
+

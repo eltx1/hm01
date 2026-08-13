@@ -170,3 +170,22 @@ Direct Demand does not create parallel compliance or reporting systems.
 ## Formats
 
 The recipe carries explicit format and size capabilities. Display and existing native/widget integrations are supported when the provider tag is representable by the structured lifecycle. Outstream/video may be enabled only for a provider recipe whose browser behavior is known to be safe with the same isolation/ownership rules. Unknown video/native renderer semantics fail closed rather than being labeled supported optimistically.
+
+## Task 20 provider-readiness additions
+
+ExoClick asynchronous banner tags are representable as a trusted structured
+recipe: approved external loader, provider-issued `<ins>` container/class,
+`data-zoneid`, and the documented `AdProvider.push({serve:{}})` queue action.
+Horus never invents the zone ID or provider class. Unapproved origins or altered
+inline actions are rejected.
+
+Adsterra remains on the generic paste -> parse -> review path because the public
+provider guidance instructs publishers to copy the account-issued script and
+does not establish one invariant public tag host/schema suitable for hard-coded
+trust. If a supplied tag cannot be represented structurally, it must use the
+existing isolated Custom Third Party mode or fail closed.
+
+Task 20 also removes a failed Direct candidate's container before trying the
+next provider, preventing a late provider render from coexisting with a winning
+fallback container.
+

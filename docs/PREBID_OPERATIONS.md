@@ -67,3 +67,12 @@ tests, build assets, verify the SHA-256 file, and deploy the complete release.
 
 See `MULTI_ENGINE_SERVING.md` and `PREBID_ARCHITECTURE.md` for the authoritative
 engine and renderer contracts.
+
+## Task 20 OneTag operations
+
+OneTag is available, not mandatory. Create/enable the OneTag bidder account only
+after receiving the public `pubId` from OneTag, map it through the existing
+Prebid controls, preview the resulting static configuration, and verify reporting
+through an approved aggregated provider import. Missing required public values
+fail closed; credentials are never published.
+

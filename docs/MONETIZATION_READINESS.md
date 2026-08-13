@@ -66,3 +66,12 @@ Publisher output contains only product-level status, reason, dependency level, l
 Admin Site 360 receives the same core calculation plus technical diagnostics such as serving-engine state, resolved GAM connection identity/health when applicable, inventory counts, static delivery status, managed Prebid build/mapping counts, Native provider/account labels, compliance counts, and persisted reporting-source health. Credentials and secrets are never included.
 
 White-labeling is limited to product UI. It does not change required ads.txt/sellers.json/schain information, required ad attribution, or network traffic routing.
+
+## Task 20 pilot readiness
+
+A `HORUS_DIRECT` site can be overall ACTIVE with healthy standalone Prebid,
+healthy Direct Monetization, or both; optional GAM is `NOT_CONFIGURED`, not an
+error. A GAM-required site still requires a healthy GAM path. Pilot readiness
+also requires renderer-conflict safety, approved tag recipes, source-aware
+aggregated reporting, no secret leakage, and successful release validation.
+
