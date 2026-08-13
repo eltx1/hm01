@@ -21,7 +21,7 @@
 </section>
 
 <div class="status-row" style="margin:1rem 0">
-    <a class="pill" href="#networks">Networks</a><a class="pill" href="#accounts">Accounts</a><a class="pill" href="#reports">Reports</a><a class="pill" href="{{ route('admin.sites.index') }}">Websites / Placements</a><a class="pill" href="{{ route('admin.supply-chain.ads-txt.index') }}">Ads.txt</a>
+    <a class="pill" href="#networks">Networks</a><a class="pill" href="#accounts">Accounts</a><a class="pill" href="#reports">Reports</a><a class="pill" href="{{ route('admin.sites.index') }}">Websites / Placements</a><a class="pill" href="{{ route('admin.compliance.ads-txt.index') }}">Ads.txt</a>
 </div>
 
 <article id="networks">

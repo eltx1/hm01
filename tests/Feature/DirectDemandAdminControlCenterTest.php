@@ -14,6 +14,7 @@ use App\Enums\SiteStatus;
 use App\Models\AuditLog;
 use App\Models\ConfigVersion;
 use App\Models\DemandAccount;
+use App\Models\DemandAdsTxtRecord;
 use App\Models\DemandNetwork;
 use App\Models\DemandWidget;
 use App\Services\Demand\DemandAccountService;
@@ -89,17 +90,17 @@ final class DirectDemandAdminControlCenterTest extends TestCase
     public function test_admin_demand_control_center_is_horus_only(): void
     {
         $this->actingAs($this->publisherUser)->get(route('admin.demand.index'))->assertForbidden();
-        $this->actingAs($this->admin)->get(route('admin.demand.index'))->assertOk()->assertSee('Direct Demand');
+        $this->adminSession()->get(route('admin.demand.index'))->assertOk()->assertSee('Direct Demand');
     }
 
     public function test_master_network_account_site_and_placement_toggles_are_audited_and_publish_static_config(): void
     {
-        $this->actingAs($this->admin);
+        $this->adminSession();
         $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
 
         $this->patch(route('admin.demand.master'), ['enabled' => 0, 'reason' => 'Task 18 master maintenance'])->assertRedirect();
-        $this->assertDatabaseHas('platform_controls', ['scope_type' => 'GLOBAL', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]);
-        $this->assertDatabaseHas('audit_logs', ['event' => 'platform.control.changed']);
+        $this->assertDatabaseHas('platform_controls', ['scope_type' => 'PLATFORM', 'control_key' => 'DIRECT_JS', 'is_disabled' => true]);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'operations.control.changed']);
 
         $this->patch(route('admin.demand.networks.toggle', $this->account->network), ['is_enabled' => 0])->assertRedirect();
         $this->assertFalse($this->account->network->fresh()->is_enabled);
@@ -126,7 +127,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
 
     public function test_network_policy_updates_formats_origins_and_runtime_control_without_horus_origin(): void
     {
-        $this->actingAs($this->admin);
+        $this->adminSession();
         $network = $this->account->network;
         $this->put(route('admin.demand.networks.settings', $network), [
             'supports_direct_js' => 1,
@@ -156,10 +157,10 @@ final class DirectDemandAdminControlCenterTest extends TestCase
     public function test_tenant_isolation_rejects_cross_site_mapping_mutations(): void
     {
         $other = $this->makeSiteFor($this->publisher, $this->publisherUser, ['display_name' => 'Other Site', 'primary_domain' => 'other.example']);
-        $this->actingAs($this->admin)
+        $this->adminSession()
             ->patch(route('admin.sites.demand.mappings.enabled', [$other, $this->demandSite]), ['enabled' => 0])
             ->assertNotFound();
-        $this->actingAs($this->admin)
+        $this->adminSession()
             ->patch(route('admin.sites.demand.placements.enabled', [$other, $this->demandPlacement]), ['enabled' => 0])
             ->assertNotFound();
     }
@@ -173,7 +174,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $tag = '<div id="mgid-zone" class="mgbox" data-type="_mgwidget" data-widget-id="101"></div>'
             .'<script async src="https://jsc.mgid.com/example/loader.js"></script>'
             .'<script>window._mgq = window._mgq || []; window._mgq.push(["_mgc.load"]);</script>';
-        $response = $this->actingAs($this->admin)->post(route('admin.demand.tags.preview', $this->account), ['tag' => $tag]);
+        $response = $this->adminSession()->post(route('admin.demand.tags.preview', $this->account), ['tag' => $tag]);
         $response->assertOk()->assertSee('STRUCTURED SAFE')->assertSee('MGID_QUEUE_LOAD')->assertDontSee('MGID_SECRET_TOKEN');
         $this->assertStringNotContainsString('<script>window._mgq', $response->getContent());
     }
@@ -184,7 +185,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
             .'<script async src="https://jsc.mgid.com/example/loader.js"></script>'
             .'<script>window.top.location="https://evil.example";</script>';
 
-        $this->actingAs($this->admin)->post(route('admin.sites.demand.widgets.store', [$this->site, $this->demandPlacement]), [
+        $this->adminSession()->post(route('admin.sites.demand.widgets.store', [$this->site, $this->demandPlacement]), [
             'name' => 'Unsafe widget', 'integration_mode' => 'DIRECT_JS', 'approval_status' => 'APPROVED',
             'is_enabled' => 1, 'tag_review_approved' => 1, 'direct_tag_template' => $tag, 'configuration_json' => '{}',
         ])->assertSessionHasErrors('direct_tag_template');
@@ -212,7 +213,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         ], $this->admin);
         $tag = '<div id="custom-zone"></div><script src="https://ads.example.com/public.js"></script><script>window.providerQueue=window.providerQueue||[];</script>';
 
-        $this->actingAs($this->admin)->post(route('admin.sites.demand.widgets.store', [$this->site, $customPlacement]), [
+        $this->adminSession()->post(route('admin.sites.demand.widgets.store', [$this->site, $customPlacement]), [
             'name' => 'Missing isolation', 'integration_mode' => 'DIRECT_JS', 'approval_status' => 'APPROVED', 'is_enabled' => 1,
             'tag_review_approved' => 1, 'direct_tag_template' => $tag, 'configuration_json' => '{}',
         ])->assertSessionHasErrors('configuration_json');
@@ -226,16 +227,23 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $widget = DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $customPlacement->id)->where('name', 'Isolated widget')->firstOrFail();
         $this->assertSame('APPROVED', $widget->approval_status->value);
         $payload = app(SiteConfigurationBuilder::class)->build($this->site->refresh(), ConfigEnvironment::Production, 1801);
-        $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
-        $this->assertStringContainsString('ISOLATED_IFRAME', $encoded);
-        $this->assertStringContainsString('allow-scripts', $encoded);
-        $this->assertStringNotContainsString('allow-same-origin', $encoded);
+        $customCandidate = collect(data_get($payload, 'directDemand.placements.header_banner.candidates', []))
+            ->firstWhere('network', 'CUSTOM_THIRD_PARTY_TAG');
+        $this->assertSame('ISOLATED_IFRAME', data_get($customCandidate, 'tag.executionMode'));
+        $this->assertSame(['allow-scripts'], data_get($customCandidate, 'tag.isolation.sandbox'));
+        $this->assertStringNotContainsString('allow-same-origin', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
+        $this->assertStringNotContainsString('allow-top-navigation', json_encode(data_get($customCandidate, 'tag.isolation'), JSON_THROW_ON_ERROR));
     }
 
     public function test_ads_txt_and_reporting_reuse_existing_canonical_services(): void
     {
-        $this->actingAs($this->admin)->post(route('admin.sites.demand.ads_txt', [$this->site, $this->demandSite]))->assertRedirect();
-        $this->assertDatabaseHas('ads_txt_records', ['site_id' => $this->site->id, 'account_id' => '100']);
+        $this->adminSession()->post(route('admin.sites.demand.ads_txt', [$this->site, $this->demandSite]))->assertRedirect();
+        $this->assertTrue(DemandAdsTxtRecord::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('demand_account_id', $this->account->id)
+            ->where('publisher_account_id', '100')
+            ->where('status', 'ACTIVE')
+            ->exists());
 
         $csv = "date,site,placement,impressions,clicks,revenue\n2026-08-12,direct-control.example,header_banner,100,5,7.25\n";
         $this->post(route('admin.demand.reports.csv', $this->account), [
@@ -281,7 +289,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertTrue(data_get($firstPayload, 'engines.gam.enabled'));
         $this->assertFalse(data_get($firstPayload, 'engines.prebid.enabled'));
 
-        $this->actingAs($this->admin)->patch(route('admin.sites.demand.placements.enabled', [$this->site, $this->demandPlacement]), ['enabled' => 0])->assertRedirect();
+        $this->adminSession()->patch(route('admin.sites.demand.placements.enabled', [$this->site, $this->demandPlacement]), ['enabled' => 0])->assertRedirect();
         $latest = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->latest('version')->firstOrFail();
         $this->assertTrue(data_get($latest->payload, 'engines.gam.enabled'));
         $this->assertFalse(data_get($latest->payload, 'engines.prebid.enabled'));
@@ -291,6 +299,14 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertTrue(data_get($rollback->payload, 'engines.gam.enabled'));
         $this->assertFalse(data_get($rollback->payload, 'engines.prebid.enabled'));
         $this->assertSame($gam->id, $gam->fresh()->id);
+    }
+
+    private function adminSession(): static
+    {
+        $this->actingAs($this->admin);
+        $this->withSession(['two_factor_passed_at' => now()->timestamp]);
+
+        return $this;
     }
 
     private function approvedMgid($site, $placement): array
