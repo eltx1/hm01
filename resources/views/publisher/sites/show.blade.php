@@ -49,6 +49,8 @@
 </article>
 @endif
 
+@include('admin.sites.serving-control-center')
+
 <section id="serving" class="detail-grid workspace-section">
     <article>
         <p class="eyebrow">Publisher installation</p><h2>One permanent loader</h2>
