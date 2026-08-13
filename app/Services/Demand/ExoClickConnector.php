@@ -52,6 +52,11 @@ final class ExoClickConnector extends AbstractDemandConnector
             throw new RuntimeException('ExoClick asynchronous banner tags require an <ins> container with provider-issued data-zoneid.');
         }
 
+        $providerClass = trim((string) ($container['class'] ?? ''));
+        if ($providerClass === '' || $providerClass === 'hm-direct-demand-container') {
+            throw new RuntimeException('ExoClick asynchronous banner tags require the provider-issued container class.');
+        }
+
         $inline = (array) ($parsed['inlineCode'] ?? []);
         if ($inline === []) {
             throw new RuntimeException('ExoClick asynchronous tags require the documented AdProvider serve queue action.');
