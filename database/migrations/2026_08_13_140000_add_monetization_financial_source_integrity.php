@@ -35,7 +35,11 @@ return new class extends Migration
             $table->string('subject_type', 32);
             $table->string('subject_id', 64);
             $table->foreignUlid('report_source_id')->constrained('report_sources')->restrictOnDelete();
-            $table->foreignUlid('report_source_connection_id')->nullable()->constrained('report_source_connections')->nullOnDelete();
+            $table->ulid('report_source_connection_id')->nullable();
+            $table->foreign('report_source_connection_id', 'mfb_report_connection_fk')
+                ->references('id')
+                ->on('report_source_connections')
+                ->nullOnDelete();
             $table->string('reporting_method', 16);
             $table->string('currency', 3);
             $table->string('timezone', 64)->default('UTC');
