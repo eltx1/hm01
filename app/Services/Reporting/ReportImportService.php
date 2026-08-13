@@ -2,7 +2,6 @@
 
 namespace App\Services\Reporting;
 
-use App\Enums\FinancialPeriodStatus;
 use App\Enums\ReportConnectionStatus;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
@@ -35,6 +34,7 @@ final class ReportImportService
         private readonly FinancialPeriodService $periods,
         private readonly ReportSourceManager $sources,
         private readonly ReconciliationService $reconciliation,
+        private readonly FinancialSettlementEligibilityService $settlementEligibility,
         private readonly AuditRecorder $audit,
     ) {
     }
@@ -86,6 +86,8 @@ final class ReportImportService
                     'import_type' => 'API',
                     'granularity' => $granularity,
                     'finality' => $finality,
+                    'settlement_eligible' => false,
+                    'settlement_ineligibility_reason' => 'FETCH_FAILED',
                     'status' => ReportImportStatus::Failed,
                     'period_start' => $from,
                     'period_end' => $to,
@@ -112,17 +114,28 @@ final class ReportImportService
         ?User $actor = null,
         ?string $externalReportId = null,
         ?string $checksum = null,
-        string $importType = 'MANUAL',
+        string $importType = 'SYSTEM',
         array $sourceTotals = [],
+        ?string $manualReason = null,
     ): ReportImportJob {
         $connection->loadMissing('source');
+        if ($importType === 'MANUAL') {
+            if (! $actor || ! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.adjustments.create')) {
+                abort(403);
+            }
+            if (mb_strlen(trim((string) $manualReason)) < 12) {
+                throw ValidationException::withMessages(['manual_reason' => 'A specific Finance reason of at least 12 characters is required for a manual import.']);
+            }
+        }
+        $settlement = $this->settlementEligibility->forImport($connection, $finality, $importType, $from, $to);
+        $effectiveFinality = $settlement['eligible'] ? $finality : ReportFinality::Estimated;
         $normalizedInputHash = hash('sha256', json_encode($this->stable($rows), JSON_THROW_ON_ERROR));
         $checksum ??= $normalizedInputHash;
         $idempotencyKey = hash('sha256', implode('|', [
             $connection->id,
             $importType,
             $granularity->value,
-            $finality->value,
+            $effectiveFinality->value,
             $from->toIso8601String(),
             $to->toIso8601String(),
             $externalReportId ?: $checksum,
@@ -138,7 +151,9 @@ final class ReportImportService
             'report_source_connection_id' => $connection->id,
             'import_type' => $importType,
             'granularity' => $granularity,
-            'finality' => $finality,
+            'finality' => $effectiveFinality,
+            'settlement_eligible' => $settlement['eligible'],
+            'settlement_ineligibility_reason' => $settlement['reason'],
             'status' => ReportImportStatus::Processing,
             'period_start' => $from,
             'period_end' => $to,
@@ -153,7 +168,7 @@ final class ReportImportService
 
         try {
             $result = DB::transaction(function () use (
-                $connection, $rows, $granularity, $finality, $job, $actor, $sourceTotals, $importType
+                $connection, $rows, $granularity, $finality, $effectiveFinality, $job, $actor, $sourceTotals, $importType, $settlement, $manualReason
             ): array {
                 $inserted = 0;
                 $updated = 0;
@@ -169,6 +184,11 @@ final class ReportImportService
                     if (! $row['date']) {
                         throw ValidationException::withMessages([
                             "rows.{$index}.date" => 'Every report row requires a valid date.',
+                        ]);
+                    }
+                    if ($settlement['eligible'] && strtoupper($row['currency']) !== strtoupper($connection->currency)) {
+                        throw ValidationException::withMessages([
+                            "rows.{$index}.currency" => 'A settlement-eligible row must match the canonical financial connection currency.',
                         ]);
                     }
 
@@ -199,18 +219,20 @@ final class ReportImportService
                         'date' => $row['date'],
                         'hour' => $row['hour'],
                         'dimension' => $dimension->dimension_hash,
+                        'finality' => $effectiveFinality->value,
+                        'settlement_eligible' => $settlement['eligible'],
                         'metrics' => $this->metricPayload($metrics),
                     ], JSON_THROW_ON_ERROR));
 
                     if ($granularity === ReportGranularity::Hourly) {
                         [$wasInserted, $wasChanged] = $this->upsertHourly(
                             $connection, $job, $period, $dimension->id, $organizationId,
-                            $metrics, $finality, $rule->id, $sourceRowHash,
+                            $metrics, $effectiveFinality, $settlement['eligible'], $rule->id, $sourceRowHash,
                         );
                     } else {
                         [$wasInserted, $wasChanged] = $this->upsertDaily(
                             $connection, $job, $period, $dimension->id, $organizationId,
-                            $metrics, $finality, $rule->id, $sourceRowHash,
+                            $metrics, $effectiveFinality, $settlement['eligible'], $rule->id, $sourceRowHash,
                         );
                     }
 
@@ -227,7 +249,7 @@ final class ReportImportService
                         $this->upsertAdvertiserReport(
                             $connection, $job, $dimension->id, $organizationId,
                             $dimension->advertiser_id, $dimension->campaign_id,
-                            $metrics, $finality, $sourceRowHash,
+                            $metrics, $effectiveFinality, $sourceRowHash,
                         );
                     }
                 }
@@ -241,14 +263,17 @@ final class ReportImportService
                     'updated_count' => $updated,
                     'duplicate_count' => $duplicates,
                     'normalized_totals' => $totals,
-                    'warnings' => $warnings ?: null,
+                    'warnings' => array_values(array_merge($warnings, $settlement['eligible'] ? [] : [[
+                        'code' => 'SETTLEMENT_INELIGIBLE_SOURCE',
+                        'reason' => $settlement['reason'],
+                    ]])),
                     'completed_at' => now(),
                 ]);
 
                 $connection->update([
                     'status' => ReportConnectionStatus::Active,
                     'last_successful_import_at' => now(),
-                    'last_finalized_import_at' => $finality === ReportFinality::Finalized ? now() : $connection->last_finalized_import_at,
+                    'last_finalized_import_at' => $settlement['eligible'] ? now() : $connection->last_finalized_import_at,
                     'last_error' => null,
                 ]);
 
@@ -261,7 +286,10 @@ final class ReportImportService
                         newValues: [
                             'source' => $connection->source->code->value,
                             'granularity' => $granularity->value,
-                            'finality' => $finality->value,
+                            'requested_finality' => $finality->value,
+                            'effective_finality' => $effectiveFinality->value,
+                            'settlement_eligible' => $settlement['eligible'],
+                            'manual_reason' => $importType === 'MANUAL' ? trim((string) $manualReason) : null,
                             'rows' => count($rows),
                             'inserted' => $inserted,
                             'updated' => $updated,
@@ -281,6 +309,8 @@ final class ReportImportService
             $closed = collect($exception->errors())->keys()->contains('period');
             $job->update([
                 'status' => $closed ? ReportImportStatus::BlockedClosedPeriod : ReportImportStatus::Failed,
+                'settlement_eligible' => false,
+                'settlement_ineligibility_reason' => $closed ? 'CLOSED_PERIOD' : 'IMPORT_VALIDATION_FAILED',
                 'error_message' => $exception->getMessage(),
                 'completed_at' => now(),
             ]);
@@ -289,6 +319,8 @@ final class ReportImportService
         } catch (Throwable $exception) {
             $job->update([
                 'status' => ReportImportStatus::Failed,
+                'settlement_eligible' => false,
+                'settlement_ineligibility_reason' => 'IMPORT_FAILED',
                 'error_message' => $exception->getMessage(),
                 'next_retry_at' => now()->addMinutes((int) config('reporting.retry_delay_minutes', 30)),
                 'completed_at' => now(),
@@ -371,6 +403,7 @@ final class ReportImportService
         ?string $organizationId,
         array $metrics,
         ReportFinality $finality,
+        bool $settlementEligible,
         ?string $ruleVersionId,
         string $sourceRowHash,
     ): array {
@@ -392,6 +425,7 @@ final class ReportImportService
                 'report_import_job_id' => $job->id,
                 'financial_period_id' => $period->id,
                 'finality' => $finality,
+                'settlement_eligible' => $settlementEligible,
                 'currency' => $metrics['currency'],
                 'revenue_rule_version_id' => $ruleVersionId,
                 'source_row_hash' => $sourceRowHash,
@@ -410,6 +444,7 @@ final class ReportImportService
         ?string $organizationId,
         array $metrics,
         ReportFinality $finality,
+        bool $settlementEligible,
         ?string $ruleVersionId,
         string $sourceRowHash,
     ): array {
@@ -430,6 +465,7 @@ final class ReportImportService
                 'report_import_job_id' => $job->id,
                 'financial_period_id' => $period->id,
                 'finality' => $finality,
+                'settlement_eligible' => $settlementEligible,
                 'currency' => $metrics['currency'],
                 'revenue_rule_version_id' => $ruleVersionId,
                 'source_row_hash' => $sourceRowHash,

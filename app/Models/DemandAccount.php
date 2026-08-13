@@ -56,6 +56,7 @@ class DemandAccount extends Model
     public function sites(): HasMany { return $this->hasMany(DemandSite::class); }
     public function adsTxtRecords(): HasMany { return $this->hasMany(DemandAdsTxtRecord::class); }
     public function reportImports(): HasMany { return $this->hasMany(DemandReportImport::class); }
+    public function financialBinding(): \Illuminate\Database\Eloquent\Relations\HasOne { return $this->hasOne(MonetizationFinancialBinding::class, 'subject_id')->where('subject_type', 'DEMAND_ACCOUNT'); }
     public function remoteObjects(): HasMany { return $this->hasMany(DemandRemoteObject::class); }
     public function syncLogs(): HasMany { return $this->hasMany(DemandSyncLog::class); }
     public function errors(): HasMany { return $this->hasMany(DemandError::class); }

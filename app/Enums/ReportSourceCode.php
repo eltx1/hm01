@@ -12,6 +12,8 @@ enum ReportSourceCode: string
     case Taboola = 'TABOOLA';
     case Speakol = 'SPEAKOL';
     case Outbrain = 'OUTBRAIN';
+    case ExoClick = 'EXOCLICK';
+    case OneTag = 'ONETAG';
     case CustomCsv = 'CUSTOM_CSV';
     case ManualAdjustment = 'MANUAL_ADJUSTMENT';
 }

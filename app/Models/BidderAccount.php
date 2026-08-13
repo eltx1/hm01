@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class BidderAccount extends Model
 {
@@ -21,4 +22,5 @@ class BidderAccount extends Model
 
     public function bidder(): BelongsTo { return $this->belongsTo(PrebidBidder::class, 'prebid_bidder_id'); }
     public function siteMappings(): HasMany { return $this->hasMany(BidderSiteMapping::class); }
+    public function financialBinding(): HasOne { return $this->hasOne(MonetizationFinancialBinding::class, 'subject_id')->where('subject_type', 'BIDDER_ACCOUNT'); }
 }

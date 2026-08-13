@@ -31,6 +31,7 @@ final class ReportSourceManager
             ReportSourceCode::Taboola,
             ReportSourceCode::Speakol,
             ReportSourceCode::Outbrain => $this->native,
+            ReportSourceCode::ExoClick => $this->native,
             default => $this->passthrough,
         };
     }

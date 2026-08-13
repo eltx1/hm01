@@ -17,6 +17,8 @@ class PrebidServiceProvider extends ServiceProvider
                 ->middleware('permission:inventory.manage')->name('admin.sites.prebid.settings');
             Route::post('/admin/prebid/accounts', [PrebidController::class, 'storeAccount'])
                 ->middleware('permission:inventory.manage')->name('admin.prebid.accounts.store');
+            Route::put('/admin/prebid/accounts/{bidderAccount}/financial-source', [PrebidController::class, 'updateFinancialSource'])
+                ->middleware(['horus', 'permission:reporting.sources.manage'])->name('admin.prebid.accounts.financial-source');
             Route::post('/admin/sites/{site}/prebid/accounts/{bidderAccount}', [PrebidController::class, 'assignSite'])
                 ->middleware('permission:inventory.manage')->name('admin.sites.prebid.accounts.assign');
             Route::post('/admin/sites/{site}/prebid/mappings/{bidderSiteMapping}/placements/{placement}', [PrebidController::class, 'assignPlacement'])

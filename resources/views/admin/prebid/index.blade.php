@@ -70,9 +70,28 @@
 <article>
     <div class="section-heading"><div><p class="eyebrow">Website assignment</p><h2>Assign accounts centrally</h2></div></div>
     @forelse($accounts as $account)
+    @php($financial = data_get($financialStatuses, $account->id))
+    @php($binding = data_get($financial, 'binding'))
     <div class="domain-card">
-        <div><strong>{{ $account->name }}</strong> <span class="pill">{{ $account->bidder->code }}</span> <span class="pill">{{ $account->enabled ? 'enabled' : 'disabled' }}</span></div>
+        <div><strong>{{ $account->name }}</strong> <span class="pill">{{ $account->bidder->code }}</span> <span class="pill">{{ $account->enabled ? 'enabled' : 'disabled' }}</span> <span class="pill">FINANCE {{ data_get($financial, 'status', 'NOT_CONFIGURED') }}</span></div>
         <p class="muted">Publisher ID: {{ $account->publisher_id ?: 'configured in public parameters' }}</p>
+        <div class="detail-grid">
+            <div>
+                <p class="eyebrow">Provider financial source of truth</p>
+                <p>{{ $binding?->source?->name ?? 'Not configured' }} · {{ $binding?->reporting_method?->value ?? '—' }} · {{ $binding?->currency ?? '—' }}</p>
+                <p class="muted">Finality {{ $binding?->is_finalized_capable ? 'CAPABLE' : 'NOT CAPABLE' }} · last successful {{ data_get($financial, 'last_successful_import_at') ?? 'never' }} · last finalized {{ data_get($financial, 'last_finalized_data_at') ?? 'never' }} · reconciliation {{ data_get($financial, 'reconciliation_status') ?? 'not run' }}</p>
+                @foreach(data_get($financial, 'reasons', []) as $reason)<p class="error"><strong>{{ $reason['code'] }}</strong>: {{ $reason['message'] }}</p>@endforeach
+            </div>
+            <form class="form-stack" method="POST" action="{{ route('admin.prebid.accounts.financial-source', $account) }}">@csrf @method('PUT')
+                <label>Financial source<select class="hm-input" name="report_source_id" required>@foreach($reportSources as $source)<option value="{{ $source->id }}" @selected($binding?->report_source_id === $source->id)>{{ $source->name }} · {{ $source->code->value }}</option>@endforeach</select></label>
+                <label>Reporting method<select class="hm-input" name="reporting_method" required>@foreach($financialMethods as $method)<option value="{{ $method->value }}" @selected($binding?->reporting_method === $method)>{{ $method->value }}</option>@endforeach</select></label>
+                <label>Currency<input class="hm-input" name="currency" maxlength="3" value="{{ $binding?->currency ?? $settings->currency ?? 'USD' }}" required></label>
+                <label>Timezone<input class="hm-input" name="timezone" value="{{ $binding?->timezone ?? 'UTC' }}" required></label>
+                <label>Non-secret reporting metadata JSON<textarea class="hm-input" rows="3" name="configuration_json">{{ json_encode($binding?->configuration ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</textarea></label>
+                <label><input type="hidden" name="is_enabled" value="0"><input type="checkbox" name="is_enabled" value="1" @checked($binding?->is_enabled ?? true)> Financial binding enabled</label>
+                <button class="hm-button-secondary">Save financial source</button>
+            </form>
+        </div>
         <form class="form-grid" method="POST" action="{{ route('admin.sites.prebid.accounts.assign', [$site, $account]) }}">@csrf
             <label>Sequence<input class="hm-input" type="number" min="0" max="1000" name="sequence" value="0"></label>
             <label class="full">Website public parameters JSON<textarea class="hm-input" rows="2" name="public_parameters_json">{}</textarea></label>

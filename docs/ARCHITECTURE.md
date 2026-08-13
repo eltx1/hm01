@@ -165,3 +165,6 @@ script when no Direct placement is active. Shared Direct provider scripts are
 deduplicated while independent placements initialize independently. Renderer
 ownership remains per physical placement and conflicts fail closed.
 
+## Financial truth boundary
+
+Serving capability does not imply financial reporting coverage. Demand and Bidder accounts bind to the existing canonical reporting ledger through an explicit provider source and reporting method. Browser bid prices and `PREBID_ESTIMATES` remain estimates; they cannot satisfy financial close or produce payable Publisher earnings. Provider API, approved CSV, or controlled Finance manual data must pass through the existing import, normalization, checksum, reconciliation, and finality pipeline. No raw browser auction telemetry enters Laravel.

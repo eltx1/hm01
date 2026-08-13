@@ -104,6 +104,8 @@ GAM-connection settings untouched for bridge mode.
 Only public serving parameters enter the CDN payload. Credentials, API tokens,
 private commercial values, and GAM credential references remain server-side.
 
+Bidder serving configuration and bidder financial truth are deliberately separate. A `BidderAccount` may bind to a canonical provider API when one is genuinely implemented, an approved provider CSV, or estimate-only reporting during testing. OneTag is a first-class `ONETAG` report source with approved CSV/manual finality; no OneTag API contract is assumed. `PREBID_ESTIMATES`, live bid CPM, and browser auction results never become payout-eligible revenue. Raw auctions remain browser-side and no financial-source feature introduces a bid, impression, or telemetry endpoint in Laravel.
+
 ## Custom Prebid builds
 
 `scripts/build-prebid.mjs` posts the pinned module manifest at
@@ -160,4 +162,3 @@ placement mapping workflow and requires an operator/provider-supplied `pubId`;
 Horus seeds no publisher identifier. Standalone rendering remains banner-only
 and does not load GPT/GAM. GAM Bridge remains unchanged and GAM remains the
 final decision point for bridge demand.
-

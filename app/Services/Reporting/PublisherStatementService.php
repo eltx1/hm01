@@ -31,6 +31,7 @@ final class PublisherStatementService
         $rows = MonthlyReport::withoutGlobalScopes()
             ->with(['dimension.site', 'connection.source'])
             ->where('financial_period_id', $period->id)
+            ->where('settlement_eligible', true)
             ->whereHas('dimension', fn ($query) => $query->where('publisher_id', $publisher->id))
             ->get();
 

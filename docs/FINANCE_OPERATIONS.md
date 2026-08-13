@@ -101,6 +101,10 @@ Normal close is blocked by:
 - pending/running/warning/failed reconciliation;
 - pending revenue adjustments; or
 - reporting/adjustment currency that differs from the period currency.
+- active production Demand/Bidder accounts whose canonical financial source is missing, estimate-only, stale, failed, currency-mismatched, uncovered for the period, or unreconciled; or
+- finalized-labelled rows whose source is not settlement eligible.
+
+The close override remains permissioned, reasoned, and audited. It may allow an exceptional operational close, but it never changes row eligibility: only settlement-eligible finalized rows flow into monthly snapshots, Publisher statements, and payouts.
 
 Readiness evidence is persisted. Override requires
 `finance.periods.override`, a specific reason, and audit. The cron command's

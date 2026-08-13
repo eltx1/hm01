@@ -24,6 +24,8 @@ class DemandServiceProvider extends ServiceProvider
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.store');
             Route::put('/admin/demand/accounts/{demandAccount}', [DemandNetworkController::class, 'updateAccount'])
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.update');
+            Route::put('/admin/demand/accounts/{demandAccount}/financial-source', [DemandNetworkController::class, 'updateFinancialSource'])
+                ->middleware('permission:reporting.sources.manage')->name('admin.demand.accounts.financial-source');
             Route::patch('/admin/demand/accounts/{demandAccount}/enabled', [DemandNetworkController::class, 'toggleAccount'])
                 ->middleware('permission:demand.manage')->name('admin.demand.accounts.enabled');
             Route::post('/admin/demand/accounts/{demandAccount}/tags/preview', [DemandNetworkController::class, 'tagPreview'])

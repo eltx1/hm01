@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\FinancialReportingMethod;
 use App\Enums\PrebidConfiguredMode;
 use App\Enums\PrebidDeliveryMode;
 use App\Http\Controllers\Controller;
@@ -14,12 +15,15 @@ use App\Models\PrebidBidder;
 use App\Models\PrebidBuild;
 use App\Models\PrebidSetupRun;
 use App\Models\PrebidSetting;
+use App\Models\ReportSource;
 use App\Models\Site;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Operations\PlatformControlService;
 use App\Services\Prebid\PrebidGamSetupService;
 use App\Services\Prebid\PrebidManager;
+use App\Services\Reporting\MonetizationFinancialBindingService;
+use App\Services\Reporting\MonetizationFinancialReadinessService;
 use App\Services\Serving\SiteEngineStateResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -35,6 +39,7 @@ class PrebidController extends Controller
         PrebidManager $manager,
         PrebidGamSetupService $setup,
         SiteEngineStateResolver $engines,
+        MonetizationFinancialReadinessService $financialReadiness,
     ): View {
         $engineState = $engines->resolve($site);
         $connection = $engineState->gamConnection;
@@ -58,6 +63,11 @@ class PrebidController extends Controller
             ->with(['account.bidder.adapter', 'placementMappings.placement'])
             ->orderBy('sequence')
             ->get();
+        $accounts = BidderAccount::withoutGlobalScopes()
+            ->with(['bidder.adapter', 'financialBinding.source', 'financialBinding.connection'])
+            ->where('organization_id', auth()->user()->organization_id)
+            ->orderBy('name')
+            ->get();
 
         return view('admin.prebid.index', [
             'site' => $site->load('placements'),
@@ -66,13 +76,43 @@ class PrebidController extends Controller
             'settings' => $settings,
             'builds' => PrebidBuild::query()->orderByDesc('built_at')->get(),
             'bidders' => PrebidBidder::withoutGlobalScopes()->with('adapter')->where('enabled', true)->orderBy('sort_order')->get(),
-            'accounts' => BidderAccount::withoutGlobalScopes()->with('bidder.adapter')->where('organization_id', auth()->user()->organization_id)->orderBy('name')->get(),
+            'accounts' => $accounts,
+            'financialStatuses' => $accounts->mapWithKeys(fn ($account) => [$account->id => $financialReadiness->status($account)]),
+            'reportSources' => ReportSource::query()->where('is_enabled', true)->orderBy('name')->get(),
+            'financialMethods' => FinancialReportingMethod::cases(),
             'siteMappings' => $siteMappings,
             'setupPreview' => $connection && $engineState->prebidDeliveryMode === PrebidDeliveryMode::GamBridge ? $setup->preview($connection) : null,
             'setupRuns' => $connection && $engineState->prebidDeliveryMode === PrebidDeliveryMode::GamBridge
                 ? PrebidSetupRun::withoutGlobalScopes()->where('gam_connection_id', $connection->id)->latest()->limit(10)->get()
                 : collect(),
         ]);
+    }
+
+    public function updateFinancialSource(
+        Request $request,
+        BidderAccount $bidderAccount,
+        MonetizationFinancialBindingService $bindings,
+    ): RedirectResponse {
+        $data = $request->validate([
+            'report_source_id' => ['required', 'ulid', 'exists:report_sources,id'],
+            'reporting_method' => ['required', Rule::enum(FinancialReportingMethod::class)],
+            'currency' => ['required', 'string', 'size:3'],
+            'timezone' => ['required', 'timezone'],
+            'is_enabled' => ['required', 'boolean'],
+            'configuration_json' => ['nullable', 'json'],
+        ]);
+        $bindings->bind(
+            $bidderAccount,
+            ReportSource::query()->findOrFail($data['report_source_id']),
+            FinancialReportingMethod::from($data['reporting_method']),
+            $data['currency'],
+            $data['timezone'],
+            $request->user(),
+            isset($data['configuration_json']) ? (array) json_decode($data['configuration_json'], true, 512, JSON_THROW_ON_ERROR) : [],
+            (bool) $data['is_enabled'],
+        );
+
+        return back()->with('status', 'Bidder canonical financial source binding updated.');
     }
 
     public function updateSettings(

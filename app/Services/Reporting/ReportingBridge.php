@@ -44,7 +44,10 @@ final class ReportingBridge
 
     public function connectionForDemand(DemandAccount $account, ?User $actor = null): ReportSourceConnection
     {
-        $account->loadMissing('network');
+        $account->loadMissing(['network', 'financialBinding.connection']);
+        if ($account->financialBinding?->is_enabled && $account->financialBinding->connection?->is_enabled) {
+            return $account->financialBinding->connection;
+        }
         $sourceCode = ReportSourceCode::tryFrom($account->network->code->value) ?? ReportSourceCode::CustomCsv;
 
         return $this->connection(
