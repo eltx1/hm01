@@ -128,6 +128,14 @@ demand network controls. Platform engine disables enter the same static outbox
 with urgent priority and zero batching delay; normal publisher requests still
 never traverse Laravel.
 
+The only privacy-specific exception is an explicit, Admin-initiated, one-shot
+diagnostic. The Admin opens an authorized publisher hostname with a short-lived,
+single-use token. Only that page load may post a small, schema-constrained set of
+non-personal CMP/runtime facts to Laravel with credentials omitted. The raw token
+is hashed at rest, the result is site and hostname scoped, and evidence becomes
+stale. Normal Loader boot performs no diagnostic POST and keeps the permanent
+no-browser-telemetry boundary. See [Privacy readiness](PRIVACY_READINESS.md).
+
 See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane

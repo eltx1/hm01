@@ -80,6 +80,14 @@ class AppServiceProvider extends ServiceProvider
             Limit::perHour(30)->by($request->ip()),
         ]);
         RateLimiter::for('sensitive', fn (Request $request) => Limit::perMinute(10)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()));
+        RateLimiter::for('privacy-diagnostic-run', fn (Request $request) => [
+            Limit::perMinute(3)->by(($request->user()?->id ?: 'guest').'|'.(is_object($request->route('site')) ? $request->route('site')->getKey() : (string) $request->route('site'))),
+            Limit::perHour(20)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),
+        ]);
+        RateLimiter::for('privacy-diagnostic-report', fn (Request $request) => [
+            Limit::perMinute(10)->by(strtolower((string) parse_url((string) $request->header('Origin'), PHP_URL_HOST))),
+            Limit::perHour(120)->by($request->ip()),
+        ]);
         RateLimiter::for('ads-txt-verification', fn (Request $request) => [
             Limit::perMinute(2)->by(($request->user()?->id ?: 'guest').'|'.(is_object($request->route('site')) ? $request->route('site')->getKey() : (string) $request->route('site')).'|'.$request->ip()),
             Limit::perHour(20)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),

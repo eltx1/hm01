@@ -29,8 +29,8 @@ final class SiteConfigurationBuilder
         private readonly PlatformControlService $controls,
         private readonly SupplyChainInvariantService $supplyChain,
         private readonly SupplyChainObjectValidator $supplyChainValidator,
-    ) {
-    }
+        private readonly RuntimePolicyResolver $runtimePolicies,
+    ) {}
 
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
     {
@@ -170,12 +170,14 @@ final class SiteConfigurationBuilder
                     'autoRefresh' => ['heavyAds' => true],
                 ], $config->gpt_settings ?? []),
             ],
-            'privacy' => array_replace_recursive([
-                'mode' => 'AUTO',
-                'cmp' => ['tcfVersion' => '2.3', 'gppVersion' => '1.1', 'timeoutMs' => 1200, 'actionOnTimeout' => 'LIMITED_ADS'],
-                'signals' => ['gpc' => true, 'coppa' => false, 'underAgeOfConsent' => false],
-                'requireConsentBeforeAds' => true,
-            ], $config->privacy_settings ?? []),
+            'privacy' => $this->runtimePolicies->privacy($config->privacy_settings),
+            // This endpoint is inert unless an Admin-issued one-shot token is
+            // explicitly supplied. Normal Loader boot never calls Laravel.
+            'privacyDiagnostics' => [
+                'endpoint' => (string) config('privacy.diagnostic_endpoint'),
+                'controlPlaneOrigin' => $this->origin((string) config('privacy.diagnostic_endpoint')),
+                'explicitOnly' => true,
+            ],
             ...($publicSchain['nodes'] === [] ? [] : ['supplyChain' => ['schain' => $publicSchain]]),
             'observability' => array_replace_recursive([
                 'runtimeTelemetry' => false,
@@ -390,5 +392,14 @@ final class SiteConfigurationBuilder
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function origin(string $url): string
+    {
+        $scheme = (string) parse_url($url, PHP_URL_SCHEME);
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        $port = parse_url($url, PHP_URL_PORT);
+
+        return $scheme && $host ? $scheme.'://'.$host.($port ? ':'.$port : '') : '';
     }
 }

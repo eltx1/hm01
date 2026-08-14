@@ -57,6 +57,9 @@ Evidence: security-header scan, backup ID, restore timestamp, and access-review 
 - [ ] Pause and rollback are tested using a non-critical site.
 - [ ] Browser Network evidence shows zero requests to app.horusmedia.net across load, refresh, and SPA navigation.
 - [ ] Prebid is enabled only after bidder consent, IDs, timeout, and GAM setup are reviewed.
+- [ ] Privacy Readiness shows CONFIGURED separately from current LIVE_VERIFIED evidence.
+- [ ] Required TCF/GPP APIs respond on the authorized production hostname and the active Prebid build/config contains the required privacy modules and controls.
+- [ ] Where the runtime policy explicitly requires Google CMP evidence, an Admin has recorded current operator verification; a CMP ID alone is not accepted as proof.
 - [ ] Native fallback is tested for script failure, timeout, and no-render cases.
 
 Evidence: site key, config checksum, browser/network captures, GAM test report,
@@ -93,4 +96,3 @@ ads.txt where required; source-aware aggregated reporting configured; rollback
 validated; and Operations sign-off. The production-release workflow now executes
 migration fresh, rollback of the latest migration, and reapply before the full
 PHP suite and release archive validation.
-
