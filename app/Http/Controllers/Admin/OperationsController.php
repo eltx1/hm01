@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\StaticDeliveryManualOutcome;
 use App\Enums\StaticDeliveryPriority;
 use App\Enums\StaticDeliveryStatus;
 use App\Http\Controllers\Controller;
@@ -23,7 +24,9 @@ use App\Services\Operations\ExternalErrorSanitizer;
 use App\Services\Operations\LoaderReleaseManager;
 use App\Services\Operations\OperationsOverviewService;
 use App\Services\Operations\PlatformControlService;
+use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use App\Services\StaticDelivery\StaticDeliveryManager;
+use App\Services\StaticDelivery\StaticDeliveryOperationsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -35,8 +38,11 @@ use Illuminate\View\View;
 
 class OperationsController extends Controller
 {
-    public function index(OperationsOverviewService $overview, ExternalErrorSanitizer $errors): View
-    {
+    public function index(
+        OperationsOverviewService $overview,
+        StaticDeliveryOperationsService $deliveryOperations,
+        ExternalErrorSanitizer $errors,
+    ): View {
         $heartbeat = SystemHeartbeat::query()->find('scheduler');
         $staleAfter = (int) config('operations.heartbeat_stale_after_seconds', 180);
         $latestProbes = SyntheticProbeResult::withoutGlobalScopes()->latest('observed_at')->limit(100)->get()->unique('site_id')->values();
@@ -52,7 +58,8 @@ class OperationsController extends Controller
             ->limit(50)
             ->get()
             ->each(fn (ReportImportJob $job) => $job->setAttribute('safe_error', $errors->sanitize($job->error_message, 700)));
-        $deliveryBatches = StaticDeliveryBatch::query()->latest()->limit(25)->get()
+        $staticDelivery = $deliveryOperations->snapshot();
+        $staticDelivery['recent']
             ->each(fn (StaticDeliveryBatch $batch) => $batch->setAttribute('safe_error', $errors->sanitize($batch->error_message, 700)));
         $globalControlRecords = PlatformControl::query()
             ->with('actor')
@@ -96,15 +103,8 @@ class OperationsController extends Controller
             'gamConnections' => GamConnection::withoutGlobalScopes()->orderBy('name')->limit(500)->get(['id', 'name', 'type', 'health_status', 'is_enabled']),
             'demandNetworks' => DemandNetwork::query()->orderBy('name')->get(['id', 'name', 'code', 'is_enabled']),
             'loaderReleases' => LoaderRelease::query()->latest('published_at')->get(),
-            'deliveryBatches' => $deliveryBatches,
-            'latestDelivery' => StaticDeliveryBatch::query()->where('status', StaticDeliveryStatus::Deployed->value)->latest('deployed_at')->first(),
-            'pendingDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])->count(),
-            'failedDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->where('status', StaticDeliveryStatus::Failed->value)->count(),
+            'staticDelivery' => $staticDelivery,
             'urgentDeliveries' => StaticDeliveryItem::withoutGlobalScopes()->where('priority', 'URGENT')->whereNotIn('status', [StaticDeliveryStatus::Deployed->value, StaticDeliveryStatus::Superseded->value])->count(),
-            'deliveryBudgetUsed' => StaticDeliveryBatch::query()->where('created_at', '>=', now()->startOfMonth())->whereIn('status', [StaticDeliveryStatus::Uploading->value, StaticDeliveryStatus::Deployed->value])->count(),
-            'deliveryBudget' => (int) config('static-delivery.monthly_deployment_budget', 450),
-            'deliveryFileWarning' => (int) config('static-delivery.file_budget.warning_threshold', 18000),
-            'deliveryFileLimit' => (int) config('static-delivery.file_budget.hard_limit', 20000),
             'latestProbes' => $latestProbes,
             'pilotReady' => $latestProbes->isNotEmpty()
                 && $latestProbes->every(fn ($probe) => $probe->status === 'PASS' && $probe->observed_at->gte(now()->subMinutes(30)))
@@ -185,7 +185,11 @@ class OperationsController extends Controller
             'current_password' => ['required', 'current_password'],
             'reason' => ['required', 'string', 'min:8', 'max:1000'],
         ]);
-        $manager->retry($staticDeliveryBatch);
+        try {
+            $manager->retry($staticDeliveryBatch);
+        } catch (StaticDeliveryException $exception) {
+            return back()->with('error', 'Static delivery retry could not proceed: '.$exception->category.'.');
+        }
         $audit->record('static.delivery.retry.requested', $request->user()->organization_id, $request->user(), $staticDeliveryBatch, newValues: [
             'batch_id' => $staticDeliveryBatch->id,
             'manifest_hash' => $staticDeliveryBatch->manifest_hash,
@@ -193,6 +197,44 @@ class OperationsController extends Controller
         ]);
 
         return back()->with('status', 'Static delivery retry scheduled and audited.');
+    }
+
+    public function deployStaticDeliveryNow(Request $request, StaticDeliveryManager $manager): RedirectResponse
+    {
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'min:8', 'max:1000'],
+            'current_password' => ['required', 'current_password'],
+            'confirm_deploy' => ['required', 'accepted'],
+        ]);
+
+        try {
+            $result = $manager->deployPendingNow($request->user(), $data['reason']);
+        } catch (StaticDeliveryException $exception) {
+            return back()->with('error', 'Deploy Now could not proceed: '.$exception->category.'.');
+        }
+
+        if ($result->outcome === StaticDeliveryManualOutcome::NoPending) {
+            return back()->with('status', 'No pending static changes to deploy.');
+        }
+        if ($result->outcome === StaticDeliveryManualOutcome::Busy) {
+            return back()->with('error', 'Static delivery is already in progress. No duplicate deployment was started.');
+        }
+
+        $batch = $result->batch;
+        if (! $batch) {
+            return back()->with('status', 'No pending static changes to deploy.');
+        }
+        if ($batch->is_deduplicated) {
+            return back()->with('status', 'Pending changes matched the confirmed manifest; no redundant remote deployment was created.');
+        }
+        if ($batch->status === StaticDeliveryStatus::Deployed) {
+            return back()->with('status', 'Pending static changes were deployed successfully.');
+        }
+        if ($batch->status === StaticDeliveryStatus::Uploading) {
+            return back()->with('status', 'Pending static changes were submitted through the existing delivery pipeline and await confirmation.');
+        }
+
+        return back()->with('error', 'Deploy Now created a protected batch, but delivery requires attention: '.($batch->error_code ?: $batch->status->value).'.');
     }
 
     private function republishAffectedSites(string $scopeType, ?string $scopeId, SiteConfigPublisher $publisher, Request $request, bool $urgent = false): void

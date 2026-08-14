@@ -3,31 +3,107 @@
 namespace App\Services\StaticDelivery;
 
 use App\Enums\ConfigVersionStatus;
+use App\Enums\StaticDeliveryManualOutcome;
 use App\Enums\StaticDeliveryPriority;
 use App\Enums\StaticDeliveryStatus;
 use App\Models\ConfigVersion;
 use App\Models\StaticDeliveryBatch;
 use App\Models\StaticDeliveryItem;
+use App\Models\User;
+use App\Services\Audit\AuditRecorder;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryStatusProbeInterface;
+use App\Services\StaticDelivery\Data\StaticDeliveryManualResult;
 use App\Services\StaticDelivery\Data\StaticDeliveryResult;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use App\Services\Audit\AuditRecorder;
 use Throwable;
 
 final class StaticDeliveryManager
 {
+    public const PROCESS_LOCK = 'static-delivery:process';
+
     public function __construct(
         private readonly StaticDeliveryDriverInterface $driver,
         private readonly StaticDeliverySnapshotBuilder $snapshots,
         private readonly AuditRecorder $audit,
-    ) {
-    }
+    ) {}
 
     public function processPending(): ?StaticDeliveryBatch
     {
-        $batch = DB::transaction(function (): ?StaticDeliveryBatch {
+        $lock = Cache::lock(self::PROCESS_LOCK, max(30, (int) config('static-delivery.process_lock_seconds', 180)));
+        if (! $lock->get()) {
+            return null;
+        }
+
+        try {
+            return $this->processPendingLocked();
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function deployPendingNow(User $actor, string $reason): StaticDeliveryManualResult
+    {
+        $lock = Cache::lock(self::PROCESS_LOCK, max(30, (int) config('static-delivery.process_lock_seconds', 180)));
+        if (! $lock->get()) {
+            $this->auditManualDeployment($actor, $reason, StaticDeliveryManualOutcome::Busy);
+
+            return new StaticDeliveryManualResult(StaticDeliveryManualOutcome::Busy);
+        }
+
+        try {
+            $itemIds = DB::transaction(function () {
+                $items = StaticDeliveryItem::withoutGlobalScopes()
+                    ->where('status', StaticDeliveryStatus::Pending->value)
+                    ->where('priority', StaticDeliveryPriority::Normal->value)
+                    ->lockForUpdate()
+                    ->get(['id']);
+                if ($items->isNotEmpty()) {
+                    StaticDeliveryItem::withoutGlobalScopes()->whereIn('id', $items->pluck('id'))
+                        ->update(['available_at' => now()->utc()]);
+                }
+
+                return $items->pluck('id')->all();
+            });
+
+            $hasEligibleWork = StaticDeliveryItem::withoutGlobalScopes()
+                ->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])
+                ->where('available_at', '<=', now())
+                ->exists();
+            if ($itemIds === [] && ! $hasEligibleWork) {
+                $this->auditManualDeployment($actor, $reason, StaticDeliveryManualOutcome::NoPending);
+
+                return new StaticDeliveryManualResult(StaticDeliveryManualOutcome::NoPending);
+            }
+
+            $batch = $this->processPendingLocked($actor, 'MANUAL');
+            $this->auditManualDeployment($actor, $reason, StaticDeliveryManualOutcome::Processed, $batch, count($itemIds));
+
+            return new StaticDeliveryManualResult(
+                StaticDeliveryManualOutcome::Processed,
+                $batch?->refresh(),
+                count($itemIds),
+            );
+        } catch (Throwable $exception) {
+            $this->audit->record('static.delivery.deploy_now.requested', $actor->organization_id, $actor, metadata: [
+                'reason' => $reason,
+                'outcome' => 'ERROR',
+                'error_code' => $exception instanceof StaticDeliveryException ? $exception->category : 'DELIVERY_ERROR',
+            ]);
+
+            throw $exception;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function processPendingLocked(
+        ?User $batchActor = null,
+        string $trigger = 'SCHEDULED',
+    ): ?StaticDeliveryBatch {
+        $batch = DB::transaction(function () use ($batchActor, $trigger): ?StaticDeliveryBatch {
             $items = StaticDeliveryItem::withoutGlobalScopes()
                 ->with('configVersion:id,version')
                 ->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])
@@ -35,7 +111,6 @@ final class StaticDeliveryManager
                 ->orderByRaw("CASE WHEN priority = 'URGENT' THEN 0 ELSE 1 END")
                 ->orderBy('created_at')
                 ->lockForUpdate()
-                ->limit(max(1, (int) config('static-delivery.batch_size', 250)))
                 ->get();
             if ($items->isEmpty()) {
                 return null;
@@ -44,7 +119,26 @@ final class StaticDeliveryManager
             $selected = $items->groupBy(fn (StaticDeliveryItem $item) => $item->site_id.'|'.$item->environment->value)
                 ->map(fn ($group) => $group->sortByDesc(fn (StaticDeliveryItem $item) => $item->configVersion->version)->first());
             $selectedIds = $selected->pluck('id');
-            $supersededIds = $items->pluck('id')->diff($selectedIds);
+            $selectedVersions = $selected->mapWithKeys(fn (StaticDeliveryItem $item) => [
+                $item->site_id.'|'.$item->environment->value => $item->configVersion->version,
+            ]);
+            $obsoleteOutstandingIds = StaticDeliveryItem::withoutGlobalScopes()
+                ->with('configVersion:id,version')
+                ->whereIn('status', [StaticDeliveryStatus::Pending->value, StaticDeliveryStatus::RetryScheduled->value])
+                ->lockForUpdate()
+                ->get()
+                ->filter(function (StaticDeliveryItem $item) use ($selectedVersions): bool {
+                    $selectedVersion = $selectedVersions->get($item->site_id.'|'.$item->environment->value);
+
+                    return $selectedVersion !== null && $item->configVersion->version < $selectedVersion;
+                })
+                ->pluck('id');
+            $supersededIds = $items->pluck('id')
+                ->diff($selectedIds)
+                ->merge($obsoleteOutstandingIds)
+                ->diff($selectedIds)
+                ->unique()
+                ->values();
             if ($supersededIds->isNotEmpty()) {
                 $supersededVersionIds = StaticDeliveryItem::withoutGlobalScopes()->whereIn('id', $supersededIds)->pluck('config_version_id');
                 StaticDeliveryItem::withoutGlobalScopes()->whereIn('id', $supersededIds)
@@ -55,13 +149,15 @@ final class StaticDeliveryManager
 
             $priority = $selected->contains(fn (StaticDeliveryItem $item) => $item->priority === StaticDeliveryPriority::Urgent)
                 ? StaticDeliveryPriority::Urgent : StaticDeliveryPriority::Normal;
-            $this->assertDeploymentBudget($priority);
             $batch = StaticDeliveryBatch::create([
                 'status' => StaticDeliveryStatus::Batching,
                 'priority' => $priority,
+                'trigger' => $trigger === 'MANUAL'
+                    ? 'MANUAL'
+                    : ($priority === StaticDeliveryPriority::Urgent ? 'URGENT' : 'SCHEDULED'),
                 'driver' => $this->driver->name(),
                 'item_count' => $selected->count(),
-                'created_by' => $selected->pluck('created_by')->filter()->first(),
+                'created_by' => $batchActor?->id ?? $selected->pluck('created_by')->filter()->first(),
                 'started_at' => now(),
             ]);
             StaticDeliveryItem::withoutGlobalScopes()->whereIn('id', $selectedIds)->update([
@@ -78,7 +174,7 @@ final class StaticDeliveryManager
         }
 
         try {
-            $snapshot = $this->snapshots->build();
+            $snapshot = $this->snapshots->build($batch->items()->pluck('config_version_id')->all());
             $batch->update([
                 'manifest_hash' => $snapshot->manifestHash,
                 'file_count' => count($snapshot->files),
@@ -90,6 +186,7 @@ final class StaticDeliveryManager
                 ->where('status', StaticDeliveryStatus::Deployed->value)
                 ->latest('deployed_at')->first();
             if ($duplicate) {
+                $batch->update(['is_deduplicated' => true]);
                 $this->confirm($batch, new StaticDeliveryResult(
                     remoteId: (string) $duplicate->remote_deployment_id,
                     remoteUrl: $duplicate->remote_url,
@@ -100,26 +197,48 @@ final class StaticDeliveryManager
                 return $batch->refresh();
             }
 
+            $this->assertDeploymentBudget($batch->priority);
             $batch->items()->update(['status' => StaticDeliveryStatus::Uploading->value]);
-            $batch->update(['status' => StaticDeliveryStatus::Uploading, 'attempts' => $batch->attempts + 1]);
+            $batch->update([
+                'status' => StaticDeliveryStatus::Uploading,
+                'attempts' => $batch->attempts + 1,
+                'submitted_at' => now(),
+            ]);
             $result = $this->driver->deliver($snapshot, $batch->refresh());
             $batch->update([
                 'remote_deployment_id' => $result->remoteId,
                 'remote_url' => $result->remoteUrl,
                 'provider_metadata' => $this->sanitizeMetadata($result->metadata),
-                'submitted_at' => now(),
             ]);
             if ($result->confirmedDeployed) {
                 $this->confirm($batch, $result);
             }
         } catch (Throwable $exception) {
-            $this->fail($batch, $exception);
+            if ($exception instanceof StaticDeliveryException && $exception->category === 'DEPLOYMENT_BUDGET_EXHAUSTED') {
+                $this->deferForBudget($batch, $exception);
+            } else {
+                $this->fail($batch, $exception);
+            }
         }
 
         return $batch->refresh();
     }
 
     public function reconcileUploading(): int
+    {
+        $lock = Cache::lock(self::PROCESS_LOCK, max(30, (int) config('static-delivery.process_lock_seconds', 180)));
+        if (! $lock->get()) {
+            return 0;
+        }
+
+        try {
+            return $this->reconcileUploadingLocked();
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function reconcileUploadingLocked(): int
     {
         if (! $this->driver instanceof StaticDeliveryStatusProbeInterface) {
             return 0;
@@ -143,6 +262,20 @@ final class StaticDeliveryManager
     }
 
     public function retry(StaticDeliveryBatch $batch): void
+    {
+        $lock = Cache::lock(self::PROCESS_LOCK, max(30, (int) config('static-delivery.process_lock_seconds', 180)));
+        if (! $lock->get()) {
+            throw new StaticDeliveryException('DELIVERY_BUSY', 'Static delivery is already being processed.');
+        }
+
+        try {
+            $this->retryLocked($batch);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function retryLocked(StaticDeliveryBatch $batch): void
     {
         if (! in_array($batch->status, [StaticDeliveryStatus::Failed, StaticDeliveryStatus::RetryScheduled], true)) {
             throw new StaticDeliveryException('BATCH_NOT_RETRYABLE', 'Only failed or scheduled batches can be retried.');
@@ -234,12 +367,39 @@ final class StaticDeliveryManager
         ]);
     }
 
+    private function deferForBudget(StaticDeliveryBatch $batch, StaticDeliveryException $exception): void
+    {
+        $nextMonth = now()->utc()->addMonthNoOverflow()->startOfMonth();
+        DB::transaction(function () use ($batch, $exception, $nextMonth): void {
+            $batch->update([
+                'status' => StaticDeliveryStatus::RetryScheduled,
+                'error_code' => $exception->category,
+                'error_message' => mb_substr($exception->getMessage(), 0, 1000),
+                'next_retry_at' => $nextMonth,
+            ]);
+            $batch->items()->update([
+                'status' => StaticDeliveryStatus::RetryScheduled->value,
+                'available_at' => $nextMonth,
+            ]);
+        });
+        $fresh = $batch->refresh();
+        $this->audit->record('static.delivery.budget_deferred', null, $fresh->creator, $fresh, newValues: [
+            'batch_id' => $fresh->id,
+            'manifest_hash' => $fresh->manifest_hash,
+            'error_code' => $fresh->error_code,
+            'next_retry_at' => $fresh->next_retry_at?->toIso8601String(),
+        ]);
+    }
+
     private function assertDeploymentBudget(StaticDeliveryPriority $priority): void
     {
         $budget = max(1, (int) config('static-delivery.monthly_deployment_budget', 450));
         $reserve = min($budget, max(0, (int) config('static-delivery.emergency_reserve', 25)));
-        $used = StaticDeliveryBatch::query()->where('created_at', '>=', now()->startOfMonth())
-            ->whereIn('status', [StaticDeliveryStatus::Uploading->value, StaticDeliveryStatus::Deployed->value])->count();
+        $used = StaticDeliveryBatch::query()
+            ->where('created_at', '>=', now()->startOfMonth())
+            ->whereNotNull('submitted_at')
+            ->where('is_deduplicated', false)
+            ->count();
         $allowed = $priority === StaticDeliveryPriority::Urgent ? $budget : $budget - $reserve;
         if ($used >= $allowed) {
             throw new StaticDeliveryException('DEPLOYMENT_BUDGET_EXHAUSTED', 'Configured monthly static deployment safety budget is exhausted.');
@@ -250,5 +410,24 @@ final class StaticDeliveryManager
     private function sanitizeMetadata(array $metadata): array
     {
         return collect($metadata)->only(['delivery_commit', 'workflow_run_id', 'manifest_hash', 'deduplicated_from_batch'])->all();
+    }
+
+    private function auditManualDeployment(
+        User $actor,
+        string $reason,
+        StaticDeliveryManualOutcome $outcome,
+        ?StaticDeliveryBatch $batch = null,
+        int $acceleratedItems = 0,
+    ): void {
+        $this->audit->record('static.delivery.deploy_now.requested', $actor->organization_id, $actor, $batch, newValues: [
+            'reason' => $reason,
+            'outcome' => $outcome->value,
+            'accelerated_items' => $acceleratedItems,
+            'batch_id' => $batch?->id,
+            'batch_status' => $batch?->status->value,
+            'priority' => $batch?->priority->value,
+            'manifest_hash' => $batch?->manifest_hash,
+            'deduplicated' => (bool) $batch?->is_deduplicated,
+        ]);
     }
 }

@@ -25,6 +25,7 @@ Evidence: release commit, workflow run, artifact ID, ZIP checksum, owner.
 - [ ] storage/ and bootstrap/cache/ are writable; no Hostinger CDN document root is required.
 - [ ] SMTP delivery works for invitations, password reset, and operational alerts.
 - [ ] The once-per-minute scheduler is installed and healthy.
+- [ ] Static delivery uses 30-minute UTC normal boundaries and the production database cache lock store is healthy.
 - [ ] CDN cache and CORS headers match CLOUDFLARE_SETUP.md.
 - [ ] GitHub Pages workflow has least-privilege Cloudflare Secrets and the control plane uses a private token reference.
 
@@ -51,6 +52,8 @@ Evidence: security-header scan, backup ID, restore timestamp, and access-review 
 - [ ] Network permissions and root ad unit configuration are validated.
 - [ ] A test website has an authorized domain and one test placement.
 - [ ] Its production batch is confirmed DEPLOYED with manifest hash, workflow run, and Pages evidence.
+- [ ] Operations → Static Delivery shows budget/reserve, last remote evidence, snapshot limits, and the next normal boundary.
+- [ ] Deploy Now with an empty queue is verified as an audited no-op, while an emergency pause is verified as immediate URGENT work.
 - [ ] The permanent loader works on the authorized hostname.
 - [ ] GPT requests reach the selected GAM network directly from the browser.
 - [ ] House-ad testing proves slot rendering and empty-slot behavior.

@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\StaticDelivery\PublicPayloadGuard;
+use App\Services\StaticDelivery\StaticDeliveryWindow;
 use App\Services\StaticDelivery\StaticPathGuard;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -27,8 +28,8 @@ final class SiteConfigPublisher
         private readonly CanonicalJson $canonicalJson,
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
-    ) {
-    }
+        private readonly StaticDeliveryWindow $deliveryWindow,
+    ) {}
 
     public function preview(Site $site, ConfigEnvironment $environment): array
     {
@@ -144,7 +145,9 @@ final class SiteConfigPublisher
             'file_path' => $path,
             'created_by' => $actor->id,
         ]);
-        $delay = $priority === StaticDeliveryPriority::Urgent ? 0 : max(0, (int) config('static-delivery.batch_delay_seconds', 300));
+        $availableAt = $priority === StaticDeliveryPriority::Urgent
+            ? now()->utc()
+            : $this->deliveryWindow->nextNormalBoundary();
         StaticDeliveryItem::withoutGlobalScopes()->create([
             'organization_id' => $site->organization_id,
             'site_id' => $site->id,
@@ -153,7 +156,7 @@ final class SiteConfigPublisher
             'status' => StaticDeliveryStatus::Pending,
             'priority' => $priority,
             'checksum' => $checksum,
-            'available_at' => now()->addSeconds($delay),
+            'available_at' => $availableAt,
             'created_by' => $actor->id,
         ]);
 
@@ -191,5 +194,4 @@ final class SiteConfigPublisher
 
         return ((int) $query->max('version')) + 1;
     }
-
 }

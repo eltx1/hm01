@@ -30,6 +30,9 @@ class OperationsServiceProvider extends ServiceProvider
             Route::post('/admin/operations/static-delivery/{staticDeliveryBatch}/retry', [OperationsController::class, 'retryStaticDelivery'])
                 ->middleware(['permission:operations.manage', 'throttle:sensitive'])
                 ->name('admin.operations.static-delivery.retry');
+            Route::post('/admin/operations/static-delivery/deploy-now', [OperationsController::class, 'deployStaticDeliveryNow'])
+                ->middleware(['permission:operations.manage', 'throttle:sensitive'])
+                ->name('admin.operations.static-delivery.deploy-now');
 
             Route::get('/admin/security/audit-log', [AuditLogController::class, 'index'])
                 ->middleware('permission:audit.view')

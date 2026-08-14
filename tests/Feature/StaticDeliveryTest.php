@@ -23,9 +23,13 @@ use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use App\Services\StaticDelivery\PublicPayloadGuard;
 use App\Services\StaticDelivery\StaticDeliveryManager;
+use App\Services\StaticDelivery\StaticDeliveryOperationsService;
 use App\Services\StaticDelivery\StaticDeliverySnapshotBuilder;
+use App\Services\StaticDelivery\StaticDeliveryWindow;
 use App\Services\StaticDelivery\StaticPathGuard;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Tests\Concerns\InteractsWithGam;
@@ -46,7 +50,7 @@ class StaticDeliveryTest extends TestCase
     {
         parent::setUp();
         config([
-            'static-delivery.batch_delay_seconds' => 0,
+            'static-delivery.normal_batch_interval_minutes' => 0,
             'static-delivery.retention_per_environment' => 2,
             'static-delivery.monthly_deployment_budget' => 20,
             'static-delivery.emergency_reserve' => 2,
@@ -60,6 +64,7 @@ class StaticDeliveryTest extends TestCase
 
     protected function tearDown(): void
     {
+        CarbonImmutable::setTestNow();
         File::deleteDirectory($this->dist);
         parent::tearDown();
     }
@@ -126,7 +131,7 @@ class StaticDeliveryTest extends TestCase
 
     public function test_emergency_pause_is_urgent_and_ready_without_batch_delay(): void
     {
-        config(['static-delivery.batch_delay_seconds' => 900]);
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
         [$site, $admin] = $this->siteWithPrimaryHorus();
         $version = app(SiteConfigPublisher::class)->pauseImmediately($site, $admin);
         $item = $version->deliveryItem;
@@ -202,7 +207,7 @@ class StaticDeliveryTest extends TestCase
 
     public function test_platform_engine_kills_bypass_any_normal_batching_window(): void
     {
-        config(['static-delivery.batch_delay_seconds' => 1800]);
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
         [$site, $admin] = $this->siteWithPrimaryHorus();
         $site->update(['status' => SiteStatus::Active]);
         $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
@@ -273,6 +278,365 @@ class StaticDeliveryTest extends TestCase
         $this->assertStringContainsString("/sellers.json\n", $files['_headers']);
         $this->assertStringContainsString('Content-Type: application/json; charset=utf-8', $files['_headers']);
         $this->assertArrayHasKey('health/delivery.json', $files);
+    }
+
+    public function test_normal_batch_boundary_is_deterministic_in_utc(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        $window = app(StaticDeliveryWindow::class);
+
+        foreach (['10:01:00', '10:10:00', '10:29:59'] as $time) {
+            $this->assertSame(
+                '2026-08-14 10:30:00',
+                $window->nextNormalBoundary(CarbonImmutable::parse("2026-08-14 {$time}", 'UTC'))->format('Y-m-d H:i:s'),
+            );
+        }
+        $this->assertSame('2026-08-14 11:00:00', $window->nextNormalBoundary(CarbonImmutable::parse('2026-08-14 10:30:00', 'UTC'))->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-14 11:00:00', $window->nextNormalBoundary(CarbonImmutable::parse('2026-08-14 10:31:00', 'UTC'))->format('Y-m-d H:i:s'));
+    }
+
+    public function test_same_window_changes_coalesce_and_only_newest_site_version_is_selected(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        CarbonImmutable::setTestNow('2026-08-14 10:01:00 UTC');
+        [$first, $admin] = $this->siteWithPrimaryHorus();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $second = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $publisher = app(SiteConfigPublisher::class);
+        $old = $publisher->publish($first, ConfigEnvironment::Production, $admin);
+        CarbonImmutable::setTestNow('2026-08-14 10:10:00 UTC');
+        $latest = $publisher->publish($first->refresh(), ConfigEnvironment::Production, $admin);
+        CarbonImmutable::setTestNow('2026-08-14 10:29:00 UTC');
+        $other = $publisher->publish($second, ConfigEnvironment::Production, $admin);
+
+        $this->assertSame(1, StaticDeliveryItem::withoutGlobalScopes()->get()->pluck('available_at')->map->format('H:i:s')->unique()->count());
+        $this->assertSame('10:30:00', $other->deliveryItem->available_at->format('H:i:s'));
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+
+        CarbonImmutable::setTestNow('2026-08-14 10:30:00 UTC');
+        $batch = app(StaticDeliveryManager::class)->processPending();
+        $this->assertSame(2, $batch->item_count);
+        $this->assertSame(ConfigVersionStatus::Superseded, $old->refresh()->status);
+        $this->assertSame(ConfigVersionStatus::Deployed, $latest->refresh()->status);
+        $this->assertSame(ConfigVersionStatus::Deployed, $other->refresh()->status);
+        $this->assertCount(1, $this->driver->snapshots);
+        CarbonImmutable::setTestNow();
+    }
+
+    public function test_change_after_half_hour_waits_for_the_next_boundary(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        CarbonImmutable::setTestNow('2026-08-14 10:31:00 UTC');
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $version = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $this->assertSame('11:00:00', $version->deliveryItem->available_at->format('H:i:s'));
+
+        CarbonImmutable::setTestNow('2026-08-14 10:59:59 UTC');
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        CarbonImmutable::setTestNow('2026-08-14 11:00:00 UTC');
+        $this->assertSame(StaticDeliveryStatus::Deployed, app(StaticDeliveryManager::class)->processPending()->status);
+        CarbonImmutable::setTestNow();
+    }
+
+    public function test_delayed_scheduler_does_not_publish_a_later_normal_window_early(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        CarbonImmutable::setTestNow('2026-08-14 10:01:00 UTC');
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $publisher = app(SiteConfigPublisher::class);
+        $first = $publisher->publish($site, ConfigEnvironment::Production, $admin);
+        CarbonImmutable::setTestNow('2026-08-14 10:31:00 UTC');
+        $later = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $admin);
+
+        CarbonImmutable::setTestNow('2026-08-14 10:32:00 UTC');
+        $firstBatch = app(StaticDeliveryManager::class)->processPending();
+        $current = json_decode(
+            $this->driver->snapshots[0]->files["configs/{$site->public_key}/production.json"],
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(1, $current['configVersion']);
+        $this->assertSame(ConfigVersionStatus::Deployed, $first->refresh()->status);
+        $this->assertSame(ConfigVersionStatus::PendingDelivery, $later->refresh()->status);
+        $this->assertSame(StaticDeliveryStatus::Pending, $later->deliveryItem->refresh()->status);
+        $this->assertSame(1, $firstBatch->item_count);
+
+        CarbonImmutable::setTestNow('2026-08-14 11:00:00 UTC');
+        $secondBatch = app(StaticDeliveryManager::class)->processPending();
+        $this->assertSame(ConfigVersionStatus::Deployed, $later->refresh()->status);
+        $this->assertSame(StaticDeliveryStatus::Deployed, $secondBatch->status);
+    }
+
+    public function test_urgent_newer_version_supersedes_an_older_future_normal_item(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        CarbonImmutable::setTestNow('2026-08-14 10:01:00 UTC');
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $normal = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        CarbonImmutable::setTestNow('2026-08-14 10:02:00 UTC');
+        $urgent = app(SiteConfigPublisher::class)->pauseImmediately($site->refresh(), $admin);
+
+        $batch = app(StaticDeliveryManager::class)->processPending();
+        $this->assertSame(StaticDeliveryPriority::Urgent, $batch->priority);
+        $this->assertSame(ConfigVersionStatus::Superseded, $normal->refresh()->status);
+        $this->assertSame(StaticDeliveryStatus::Superseded, $normal->deliveryItem->refresh()->status);
+        $this->assertSame(ConfigVersionStatus::Deployed, $urgent->refresh()->status);
+        CarbonImmutable::setTestNow('2026-08-14 10:30:00 UTC');
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        $this->assertCount(1, $this->driver->snapshots);
+    }
+
+    public function test_no_pending_work_creates_no_batch_remote_submission_or_budget_use(): void
+    {
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        $this->assertDatabaseCount('static_delivery_batches', 0);
+        $this->assertSame([], $this->driver->snapshots);
+        $this->assertSame(0, app(StaticDeliveryOperationsService::class)->snapshot()['budget']['used']);
+    }
+
+    public function test_identical_manifest_records_deduplication_without_remote_or_budget_use(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $manifest = app(StaticDeliverySnapshotBuilder::class)->build()->manifestHash;
+        $original = StaticDeliveryBatch::create([
+            'status' => StaticDeliveryStatus::Deployed,
+            'priority' => StaticDeliveryPriority::Normal,
+            'driver' => 'fake-cloudflare',
+            'manifest_hash' => $manifest,
+            'remote_deployment_id' => 'confirmed-original',
+            'deployed_at' => now()->subMinute(),
+        ]);
+
+        $batch = app(StaticDeliveryManager::class)->processPending();
+
+        $this->assertTrue($batch->is_deduplicated);
+        $this->assertNull($batch->submitted_at);
+        $this->assertSame($original->id, $batch->provider_metadata['deduplicated_from_batch']);
+        $this->assertSame([], $this->driver->snapshots);
+        $this->assertSame(0, app(StaticDeliveryOperationsService::class)->snapshot()['budget']['used']);
+    }
+
+    public function test_deploy_now_accelerates_pending_normal_work_through_the_manager(): void
+    {
+        config(['static-delivery.normal_batch_interval_minutes' => 30]);
+        CarbonImmutable::setTestNow('2026-08-14 10:01:00 UTC');
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $version = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $this->assertTrue($version->deliveryItem->available_at->isFuture());
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Publish approved launch changes now.'))
+            ->assertRedirect()
+            ->assertSessionHas('status');
+
+        $batch = StaticDeliveryBatch::firstOrFail();
+        $this->assertSame(StaticDeliveryStatus::Deployed, $batch->status);
+        $this->assertSame(StaticDeliveryPriority::Normal, $batch->priority);
+        $this->assertSame('MANUAL', $batch->trigger);
+        $this->assertSame($admin->id, $batch->created_by);
+        $this->assertSame(ConfigVersionStatus::Deployed, $version->refresh()->status);
+        $this->assertCount(1, $this->driver->snapshots);
+        CarbonImmutable::setTestNow();
+    }
+
+    public function test_deploy_now_with_nothing_pending_is_clean_audited_no_op(): void
+    {
+        [, $admin] = $this->siteWithPrimaryHorus();
+        $reason = 'Verify that the pending queue is empty.';
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload($reason))
+            ->assertSessionHas('status', 'No pending static changes to deploy.');
+
+        $this->assertDatabaseCount('static_delivery_batches', 0);
+        $this->assertSame([], $this->driver->snapshots);
+        $audit = AuditLog::query()->where('event', 'static.delivery.deploy_now.requested')->firstOrFail();
+        $this->assertSame('NO_PENDING', $audit->new_values['outcome']);
+        $this->assertSame($reason, $audit->new_values['reason']);
+    }
+
+    public function test_deploy_now_cannot_bypass_normal_budget_but_urgent_can_use_reserve(): void
+    {
+        config([
+            'static-delivery.monthly_deployment_budget' => 2,
+            'static-delivery.emergency_reserve' => 1,
+        ]);
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        StaticDeliveryBatch::create([
+            'status' => StaticDeliveryStatus::Deployed,
+            'priority' => StaticDeliveryPriority::Normal,
+            'driver' => 'fake-cloudflare',
+            'submitted_at' => now()->subMinute(),
+            'deployed_at' => now()->subMinute(),
+            'remote_deployment_id' => 'normal-budget-used',
+        ]);
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Accelerate normal work without reserve bypass.'))
+            ->assertSessionHas('error');
+        $blocked = StaticDeliveryBatch::query()->whereNotNull('error_code')->firstOrFail();
+        $this->assertSame('DEPLOYMENT_BUDGET_EXHAUSTED', $blocked->error_code);
+        $this->assertSame(StaticDeliveryStatus::RetryScheduled, $blocked->status);
+        $this->assertSame([], $this->driver->snapshots);
+
+        $blocked->items()->update(['status' => StaticDeliveryStatus::Superseded->value]);
+        $urgentVersion = app(SiteConfigPublisher::class)->publishUrgent($site->refresh(), ConfigEnvironment::Production, $admin);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Process the existing genuine urgent safety item.'))
+            ->assertSessionHas('status');
+        $urgentBatch = StaticDeliveryBatch::query()->where('priority', StaticDeliveryPriority::Urgent->value)->firstOrFail();
+        $this->assertSame(StaticDeliveryPriority::Urgent, $urgentBatch->priority);
+        $this->assertSame(StaticDeliveryStatus::Deployed, $urgentBatch->status);
+        $this->assertSame(ConfigVersionStatus::Deployed, $urgentVersion->refresh()->status);
+        $this->assertCount(1, $this->driver->snapshots);
+    }
+
+    public function test_double_click_and_process_lock_cannot_duplicate_remote_deployment(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $session = ['two_factor_passed_at' => now()->timestamp];
+        $payload = $this->deployNowPayload('Operator intentionally publishes the pending change.');
+
+        $held = Cache::lock(StaticDeliveryManager::PROCESS_LOCK, 60);
+        $this->assertTrue($held->get());
+        $this->actingAs($admin)->withSession($session)->post(route('admin.operations.static-delivery.deploy-now'), $payload)
+            ->assertSessionHas('error');
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        $this->assertDatabaseCount('static_delivery_batches', 0);
+        $held->release();
+
+        $this->actingAs($admin)->withSession($session)->post(route('admin.operations.static-delivery.deploy-now'), $payload)
+            ->assertSessionHas('status');
+        $this->actingAs($admin)->withSession($session)->post(route('admin.operations.static-delivery.deploy-now'), $payload)
+            ->assertSessionHas('status', 'No pending static changes to deploy.');
+        $this->assertDatabaseCount('static_delivery_batches', 1);
+        $this->assertCount(1, $this->driver->snapshots);
+        $this->assertSame(3, AuditLog::query()->where('event', 'static.delivery.deploy_now.requested')->count());
+    }
+
+    public function test_deploy_now_preserves_secret_and_checksum_guards(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $secretVersion = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $secretVersion->update(['payload' => array_merge($secretVersion->payload, ['api_key' => 'must-never-publish'])]);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Validate public payload guard during manual deploy.'));
+        $this->assertSame('SECRET_KEY_REJECTED', StaticDeliveryBatch::query()->latest()->value('error_code'));
+        $this->assertSame([], $this->driver->snapshots);
+
+        StaticDeliveryItem::withoutGlobalScopes()->where('config_version_id', $secretVersion->id)->update(['status' => StaticDeliveryStatus::Superseded->value]);
+        config(['static-delivery.retention_per_environment' => 1]);
+        $checksumVersion = app(SiteConfigPublisher::class)->publish($site->refresh(), ConfigEnvironment::Production, $admin);
+        $checksumVersion->update(['payload' => array_merge($checksumVersion->payload, ['status' => 'tampered'])]);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Validate checksum guard during manual deploy.'));
+        $this->assertTrue(StaticDeliveryBatch::query()->where('error_code', 'CHECKSUM_MISMATCH')->exists());
+        $this->assertSame([], $this->driver->snapshots);
+    }
+
+    public function test_static_delivery_ui_and_deploy_now_are_internal_and_permission_guarded(): void
+    {
+        $this->seedIdentity();
+        $horus = $this->makeOrganization(OrganizationType::HorusMedia);
+        $operationsAdmin = $this->makeUser($horus, RoleName::OperationsAdmin);
+        $viewOnly = $this->makeUser($horus, RoleName::AdOpsAdmin);
+        $publisher = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $session = ['two_factor_passed_at' => now()->timestamp];
+
+        $this->actingAs($operationsAdmin)->withSession($session)->get(route('admin.operations.index'))
+            ->assertOk()
+            ->assertSee('Static Delivery')
+            ->assertSee('Deploy Pending Changes Now')
+            ->assertSee('Monthly deployment budget')
+            ->assertSee('Current snapshot evidence');
+        $this->actingAs($viewOnly)->withSession($session)->get(route('admin.operations.index'))
+            ->assertOk()
+            ->assertDontSee('I confirm this will process currently pending NORMAL static changes');
+        $this->actingAs($viewOnly)->withSession($session)->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('View-only user cannot publish changes.'))
+            ->assertForbidden();
+        $this->actingAs($publisher)->withSession($session)->post(route('admin.operations.static-delivery.deploy-now'), $this->deployNowPayload('Publisher cannot publish static edge changes.'))
+            ->assertForbidden();
+    }
+
+    public function test_manual_deploy_requires_confirmation_password_reason_and_audits_actor(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $session = ['two_factor_passed_at' => now()->timestamp];
+        $route = route('admin.operations.static-delivery.deploy-now');
+
+        $this->actingAs($admin)->withSession($session)->post($route, [])->assertSessionHasErrors(['reason', 'current_password', 'confirm_deploy']);
+        $this->actingAs($admin)->withSession($session)->post($route, $this->deployNowPayload('Audited deployment reason.', ['confirm_deploy' => null]))->assertSessionHasErrors('confirm_deploy');
+        $this->actingAs($admin)->withSession($session)->post($route, $this->deployNowPayload('Audited deployment reason.', ['current_password' => 'wrong']))->assertSessionHasErrors('current_password');
+        $this->actingAs($admin)->withSession($session)->post($route, $this->deployNowPayload('Audited deployment reason.'))->assertSessionHasNoErrors();
+
+        $audit = AuditLog::query()->where('event', 'static.delivery.deploy_now.requested')->firstOrFail();
+        $this->assertSame($admin->id, $audit->actor_id);
+        $this->assertSame('Audited deployment reason.', $audit->new_values['reason']);
+        $this->assertSame('PROCESSED', $audit->new_values['outcome']);
+    }
+
+    public function test_operations_snapshot_surfaces_persisted_budget_file_retry_and_overdue_warnings(): void
+    {
+        config([
+            'static-delivery.normal_batch_interval_minutes' => 30,
+            'static-delivery.monthly_deployment_budget' => 4,
+            'static-delivery.emergency_reserve' => 1,
+            'static-delivery.budget_warning_threshold' => 2,
+            'static-delivery.file_budget.warning_threshold' => 10,
+            'static-delivery.file_budget.hard_limit' => 20,
+            'static-delivery.pending_stale_grace_minutes' => 5,
+        ]);
+        CarbonImmutable::setTestNow('2026-08-14 10:01:00 UTC');
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        foreach (range(1, 4) as $index) {
+            StaticDeliveryBatch::create([
+                'status' => StaticDeliveryStatus::Deployed,
+                'priority' => $index > 3 ? StaticDeliveryPriority::Urgent : StaticDeliveryPriority::Normal,
+                'driver' => 'fake-cloudflare',
+                'manifest_hash' => str_repeat((string) $index, 64),
+                'file_count' => $index === 4 ? 10 : 1,
+                'total_bytes' => $index === 4 ? 4096 : 128,
+                'submitted_at' => now()->addSeconds($index),
+                'deployed_at' => now()->addSeconds($index),
+                'remote_deployment_id' => 'remote-'.$index,
+            ]);
+        }
+        StaticDeliveryBatch::create([
+            'status' => StaticDeliveryStatus::RetryScheduled,
+            'priority' => StaticDeliveryPriority::Normal,
+            'driver' => 'fake-cloudflare',
+            'error_code' => 'FAKE_RETRY',
+            'next_retry_at' => now()->addMinutes(5),
+        ]);
+        CarbonImmutable::setTestNow('2026-08-14 10:36:00 UTC');
+
+        $snapshot = app(StaticDeliveryOperationsService::class)->snapshot();
+        $codes = collect($snapshot['warnings'])->pluck('code')->all();
+        $this->assertSame(4, $snapshot['budget']['used']);
+        $this->assertSame(0, $snapshot['budget']['normal_remaining']);
+        $this->assertSame(1, $snapshot['budget']['emergency_consumed']);
+        $this->assertSame(10, $snapshot['snapshot']['file_count']);
+        $this->assertContains('NORMAL_BUDGET_EXHAUSTED', $codes);
+        $this->assertContains('EMERGENCY_RESERVE_CONSUMED', $codes);
+        $this->assertContains('STATIC_FILE_BUDGET_APPROACHING', $codes);
+        $this->assertContains('STATIC_DELIVERY_FAILURE', $codes);
+        $this->assertContains('STATIC_DELIVERY_OVERDUE', $codes);
+        CarbonImmutable::setTestNow();
+    }
+
+    /** @param array<string, mixed> $overrides */
+    private function deployNowPayload(string $reason, array $overrides = []): array
+    {
+        return array_merge([
+            'reason' => $reason,
+            'current_password' => 'password',
+            'confirm_deploy' => '1',
+        ], $overrides);
     }
 
     private function siteWithPrimaryHorus(): array

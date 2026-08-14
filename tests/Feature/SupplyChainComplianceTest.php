@@ -47,7 +47,7 @@ class SupplyChainComplianceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['static-delivery.batch_delay_seconds' => 0]);
+        config(['static-delivery.normal_batch_interval_minutes' => 0]);
         $this->seedIdentity();
         $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');
         $this->admin = $this->makeUser($horus, RoleName::SuperAdmin);

@@ -104,9 +104,14 @@ execution remain governed by the go-live and finance gates.
 ## Configuration publication
 
 The application records immutable public configuration and an outbox item in one
-database transaction. A scheduled batch builds a deterministic snapshot, commits
-only public files to a sanitized delivery branch, and dispatches a Wrangler Pages
-deployment. Publication is marked deployed only after CI confirms Cloudflare.
+database transaction. Normal work becomes eligible at the next deterministic UTC
+half-hour boundary; the every-minute scheduler coalesces all due work into one
+locked deterministic snapshot. Urgent safety changes remain immediately eligible.
+The Admin-only Deploy Now control accelerates pending normal items through this
+same manager and budget, never through a controller-to-Cloudflare call. With no
+pending work, it is an audited no-op. The manager commits only public files to a
+sanitized delivery branch and dispatches a Wrangler Pages deployment. Publication
+is marked deployed only after CI confirms Cloudflare.
 The loader resolves the immutable snapshot through a short-lived manifest with a
 compatibility alias fallback. No publisher browser request reaches Laravel.
 
@@ -125,7 +130,7 @@ The short-lived global control artifact independently represents the master
 `AD_SERVING` stop and the `GAM`, `PREBID`, and `DIRECT_JS` engine stops. Loader
 precedence is restrictive across platform, site, placement, GAM connection, and
 demand network controls. Platform engine disables enter the same static outbox
-with urgent priority and zero batching delay; normal publisher requests still
+with urgent priority and immediate eligibility; normal publisher requests still
 never traverse Laravel.
 
 The only privacy-specific exception is an explicit, Admin-initiated, one-shot
