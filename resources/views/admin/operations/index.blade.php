@@ -60,23 +60,62 @@
     </tbody></table></div>
 </section>
 
-<section class="metric-grid">
-    <article><p class="eyebrow">Edge deployment</p><strong class="metric">{{ $latestDelivery ? 'DEPLOYED' : 'NONE' }}</strong><p class="muted">{{ $latestDelivery?->deployed_at ?: 'No confirmed Pages deployment' }} · {{ $latestDelivery?->file_count ?? 0 }}/{{ $deliveryFileLimit }} files @if(($latestDelivery?->file_count ?? 0) >= $deliveryFileWarning) · WARNING @endif</p></article>
-    <article><p class="eyebrow">Pending delivery</p><strong class="metric">{{ $pendingDeliveries }}</strong><p class="muted">Batched by the scheduler.</p></article>
-    <article><p class="eyebrow">Failed delivery</p><strong class="metric">{{ $failedDeliveries }}</strong><p class="muted">Only the deduplicated static-delivery workflow can be retried here.</p></article>
-    <article><p class="eyebrow">Monthly safety budget</p><strong class="metric">{{ max(0, $deliveryBudget - $deliveryBudgetUsed) }}</strong><p class="muted">{{ $deliveryBudgetUsed }} used of {{ $deliveryBudget }} · {{ $urgentDeliveries }} urgent</p></article>
-</section>
 <section>
-    <h2>Cloudflare Pages static delivery</h2>
-    <p class="muted">A batch is marked deployed only after delivery confirmation. The snapshot manifest is deduplicated; this is the only retry exposed in Operations.</p>
-    <div class="table-wrap"><table><thead><tr><th>Batch / operation</th><th>Status / attempts</th><th>Latest error</th><th>Latest attempt / retryability</th><th>Action</th></tr></thead><tbody>
-    @forelse($deliveryBatches as $batch)
+    <h2>Static Delivery</h2>
+    <p class="muted">NORMAL changes publish at the next deterministic UTC half-hour boundary. URGENT safety work is immediately eligible. Deploy Now only accelerates currently pending NORMAL work through the same validated, budgeted pipeline.</p>
+    @if($staticDelivery['warnings'])
+        @foreach($staticDelivery['warnings'] as $warning)
+            <p><strong>{{ $warning['code'] }}</strong> · {{ $warning['message'] }}</p>
+        @endforeach
+    @endif
+    <h3>Current state</h3>
+    <div class="metric-grid">
+        <article><p class="eyebrow">Current delivery status</p><strong class="metric">{{ $staticDelivery['current']['status'] }}</strong><p class="muted">{{ $urgentDeliveries }} unresolved urgent item(s)</p></article>
+        <article><p class="eyebrow">Pending changes</p><strong class="metric">{{ $staticDelivery['current']['pending_count'] }}</strong><p class="muted">Oldest: {{ $staticDelivery['current']['oldest_pending_at'] ?: 'None' }}</p></article>
+        <article><p class="eyebrow">Next normal batch · UTC</p><strong class="metric">{{ $staticDelivery['current']['next_normal_batch_at'] }}</strong><p class="muted">Scheduler checks every minute; eligibility remains boundary-based.</p></article>
+        <article><p class="eyebrow">Current manifest</p><strong class="metric">{{ $staticDelivery['current']['manifest_hash'] ? substr($staticDelivery['current']['manifest_hash'], 0, 12) : 'NONE' }}</strong><p class="muted"><code>{{ $staticDelivery['current']['manifest_hash'] ?: 'No confirmed manifest' }}</code></p></article>
+        <article><p class="eyebrow">Last successful deployment</p><strong class="metric">{{ $staticDelivery['current']['last_successful']?->deployed_at ?: 'NONE' }}</strong><p class="muted">{{ $staticDelivery['current']['last_successful']?->is_deduplicated ? 'Manifest deduplicated without remote quota use' : 'Confirmed delivery evidence' }}</p></article>
+        <article><p class="eyebrow">Last remote deployment</p><strong class="metric">{{ $staticDelivery['current']['last_remote']?->remote_deployment_id ?: 'NONE' }}</strong><p class="muted">{{ $staticDelivery['current']['last_remote']?->deployed_at ?: 'No confirmed remote deployment' }}</p></article>
+    </div>
+
+    <h3>Monthly deployment budget</h3>
+    <div class="metric-grid">
+        <article><p class="eyebrow">Used remote deployments</p><strong class="metric">{{ $staticDelivery['budget']['used'] }}</strong><p class="muted">Manifest-only deduplication is excluded.</p></article>
+        <article><p class="eyebrow">Normal budget</p><strong class="metric">{{ $staticDelivery['budget']['normal_budget'] }}</strong><p class="muted">{{ $staticDelivery['budget']['normal_remaining'] }} remaining · {{ $staticDelivery['budget']['state'] }}</p></article>
+        <article><p class="eyebrow">Emergency reserve</p><strong class="metric">{{ $staticDelivery['budget']['emergency_remaining'] }}/{{ $staticDelivery['budget']['emergency_reserve'] }}</strong><p class="muted">{{ $staticDelivery['budget']['emergency_consumed'] }} consumed by urgent capacity.</p></article>
+        <article><p class="eyebrow">Total configured budget</p><strong class="metric">{{ $staticDelivery['budget']['total'] }}</strong><p class="muted">Straight-line month projection from persisted submissions: {{ $staticDelivery['budget']['projected'] }}</p></article>
+    </div>
+
+    <h3>Current snapshot evidence</h3>
+    <div class="metric-grid">
+        <article><p class="eyebrow">Files</p><strong class="metric">{{ $staticDelivery['snapshot']['file_count'] }}</strong><p class="muted">Warning {{ $staticDelivery['snapshot']['warning_threshold'] }} · hard limit {{ $staticDelivery['snapshot']['hard_limit'] }} · {{ $staticDelivery['snapshot']['near_limit'] ? 'NEAR LIMIT' : 'WITHIN LIMIT' }}</p></article>
+        <article><p class="eyebrow">Approximate persisted size</p><strong class="metric">{{ number_format($staticDelivery['snapshot']['total_bytes'] / 1024, 1) }} KiB</strong><p class="muted">From the latest confirmed batch; no invented infrastructure metrics.</p></article>
+    </div>
+
+    @if(auth()->user()->hasPermission('operations.manage'))
+    <article>
+        <h3>Deploy Pending Changes Now</h3>
+        <p class="muted">Accelerates pending NORMAL work only. It does not force an identical redeploy, use emergency reserve as normal capacity, or bypass validation, checksums, secret guards, locking, or budget enforcement.</p>
+        <form method="POST" action="{{ route('admin.operations.static-delivery.deploy-now') }}" class="safe-submit">@csrf
+            <label>Operational reason<textarea name="reason" required minlength="8" maxlength="1000" placeholder="Why pending normal changes must publish before their scheduled boundary"></textarea></label>
+            <label>Current password<input type="password" name="current_password" required autocomplete="current-password"></label>
+            <label><input type="checkbox" name="confirm_deploy" value="1" required> I confirm this will process currently pending NORMAL static changes through the existing delivery pipeline.</label>
+            <button type="submit">Deploy Pending Changes Now</button>
+        </form>
+    </article>
+    @endif
+
+    <h3>Recent deployments</h3>
+    <p class="muted">A batch is marked deployed only after confirmation. Identical manifests retain deduplication evidence without a redundant GitHub commit or Cloudflare deployment.</p>
+    <div class="table-wrap"><table><thead><tr><th>Batch / status</th><th>Priority / trigger</th><th>Snapshot</th><th>Remote evidence</th><th>Actor / timestamps</th><th>Error / action</th></tr></thead><tbody>
+    @forelse($staticDelivery['recent'] as $batch)
         <tr>
-            <td><code>{{ $batch->id }}</code><br><span class="muted">static configuration publication · {{ $batch->item_count }} items · {{ $batch->file_count }} files</span></td>
-            <td>{{ str_replace('_', ' ', $batch->status->value) }}<br><span class="muted">{{ $batch->attempts }} attempts · {{ $batch->error_code ?: 'no error code' }}</span></td>
-            <td>{{ $batch->safe_error ?: '—' }}</td>
-            <td>{{ $batch->submitted_at ?: $batch->created_at }}<br><span class="muted">@if(in_array($batch->status->value, ['FAILED', 'RETRY_SCHEDULED'], true))Retry-safe static snapshot workflow @elseResolved / not retryable from current state @endif @if($batch->next_retry_at) · next {{ $batch->next_retry_at }} @endif</span></td>
-            <td>@if(in_array($batch->status->value, ['FAILED', 'RETRY_SCHEDULED'], true))
+            <td><code>{{ $batch->id }}</code><br>{{ $batch->status->value }} @if($batch->is_deduplicated) · DEDUPLICATED @endif<br><span class="muted">{{ $batch->attempts }} attempt(s)</span></td>
+            <td>{{ $batch->priority->value }}<br><span class="muted">{{ $batch->trigger }}</span></td>
+            <td>{{ $batch->item_count }} item(s) · {{ $batch->file_count }} file(s)<br><code>{{ $batch->manifest_hash ?: 'manifest pending' }}</code></td>
+            <td>{{ $batch->remote_deployment_id ?: 'No remote ID' }}<br><span class="muted">{{ $batch->is_deduplicated ? 'Reused confirmed manifest evidence' : ($batch->submitted_at ? 'Remote submission recorded' : 'No remote submission') }}</span></td>
+            <td>{{ $batch->creator?->name ?: 'system' }}<br><span class="muted">created {{ $batch->created_at }}<br>deployed {{ $batch->deployed_at ?: '—' }}</span></td>
+            <td>{{ $batch->error_code ?: '—' }}<br><span class="muted">{{ $batch->safe_error ?: 'No error' }} @if($batch->next_retry_at) · next {{ $batch->next_retry_at }} @endif</span><br>@if(in_array($batch->status->value, ['FAILED', 'RETRY_SCHEDULED'], true))
                 <form class="inline safe-submit" method="POST" action="{{ route('admin.operations.static-delivery.retry', $batch) }}">@csrf
                     <input name="reason" required minlength="8" placeholder="Retry reason">
                     <input type="password" name="current_password" required placeholder="Password" autocomplete="current-password">
@@ -84,7 +123,7 @@
                 </form>
             @else<span class="muted">No action</span>@endif</td>
         </tr>
-    @empty<tr><td colspan="5">No static delivery batches yet.</td></tr>@endforelse
+    @empty<tr><td colspan="6">No static delivery batches yet.</td></tr>@endforelse
     </tbody></table></div>
 </section>
 

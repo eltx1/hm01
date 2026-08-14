@@ -22,7 +22,7 @@ class ClickGuardConfigurationTest extends TestCase
     {
         parent::setUp();
         $this->seedIdentity();
-        config(['static-delivery.batch_delay_seconds' => 0]);
+        config(['static-delivery.normal_batch_interval_minutes' => 0]);
     }
 
     public function test_default_public_configuration_is_disabled_and_safe(): void

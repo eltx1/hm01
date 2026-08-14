@@ -14,7 +14,7 @@ class StaticDeliveryBatch extends Model
     use HasUlids;
 
     protected $fillable = [
-        'status', 'priority', 'driver', 'manifest_hash', 'item_count', 'file_count',
+        'status', 'priority', 'trigger', 'driver', 'manifest_hash', 'is_deduplicated', 'item_count', 'file_count',
         'total_bytes', 'attempts', 'remote_deployment_id', 'remote_url',
         'provider_metadata', 'error_code', 'error_message', 'started_at',
         'submitted_at', 'deployed_at', 'next_retry_at', 'created_by',
@@ -25,6 +25,7 @@ class StaticDeliveryBatch extends Model
         return [
             'status' => StaticDeliveryStatus::class,
             'priority' => StaticDeliveryPriority::class,
+            'is_deduplicated' => 'boolean',
             'provider_metadata' => 'array',
             'started_at' => 'datetime',
             'submitted_at' => 'datetime',
@@ -33,6 +34,13 @@ class StaticDeliveryBatch extends Model
         ];
     }
 
-    public function items(): HasMany { return $this->hasMany(StaticDeliveryItem::class, 'batch_id'); }
-    public function creator(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
+    public function items(): HasMany
+    {
+        return $this->hasMany(StaticDeliveryItem::class, 'batch_id');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 }

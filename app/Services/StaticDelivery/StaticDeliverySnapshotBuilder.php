@@ -2,6 +2,7 @@
 
 namespace App\Services\StaticDelivery;
 
+use App\Enums\ConfigVersionStatus;
 use App\Models\ConfigVersion;
 use App\Models\PlatformControl;
 use App\Models\SyntheticProbeResult;
@@ -20,7 +21,8 @@ final class StaticDeliverySnapshotBuilder
         private readonly SupplyChainArtifactBuilder $supplyChain,
     ) {}
 
-    public function build(): StaticDeliverySnapshot
+    /** @param list<string>|null $selectedPendingVersionIds */
+    public function build(?array $selectedPendingVersionIds = null): StaticDeliverySnapshot
     {
         $files = array_merge($this->baseAssets(), $this->supplyChain->files());
         $generatedAt = $this->snapshotTimestamp();
@@ -28,7 +30,28 @@ final class StaticDeliverySnapshotBuilder
         $versions = ConfigVersion::withoutGlobalScopes()
             ->with('site:id,public_key')
             ->orderBy('site_id')->orderBy('environment')->orderByDesc('version')
-            ->get()
+            ->get();
+        if ($selectedPendingVersionIds !== null) {
+            $confirmedStatuses = [
+                ConfigVersionStatus::Deployed,
+                ConfigVersionStatus::Published,
+                ConfigVersionStatus::RolledBack,
+            ];
+            $effectiveCeilings = $versions
+                ->filter(fn (ConfigVersion $version) => in_array($version->status, $confirmedStatuses, true))
+                ->groupBy(fn (ConfigVersion $version) => $version->site_id.'|'.$version->environment->value)
+                ->map(fn (Collection $group) => (int) $group->max('version'));
+            $versions->whereIn('id', $selectedPendingVersionIds)->each(function (ConfigVersion $version) use ($effectiveCeilings): void {
+                $key = $version->site_id.'|'.$version->environment->value;
+                $effectiveCeilings->put($key, max((int) $effectiveCeilings->get($key, 0), $version->version));
+            });
+            $versions = $versions->filter(function (ConfigVersion $version) use ($effectiveCeilings): bool {
+                $ceiling = $effectiveCeilings->get($version->site_id.'|'.$version->environment->value);
+
+                return $ceiling !== null && $version->version <= $ceiling;
+            });
+        }
+        $versions = $versions
             ->groupBy(fn (ConfigVersion $version) => $version->site_id.'|'.$version->environment->value);
 
         $siteManifests = [];

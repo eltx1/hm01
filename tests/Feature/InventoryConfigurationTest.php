@@ -9,15 +9,15 @@ use App\Enums\PlacementStatus;
 use App\Enums\PlacementType;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
-use App\Models\GamRemoteObject;
 use App\Models\AdFormat;
-use Database\Seeders\AdFormatSeeder;
+use App\Models\GamRemoteObject;
 use App\Services\Gam\GamConnectionService;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\StaticDelivery\StaticDeliveryManager;
+use Database\Seeders\AdFormatSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -41,7 +41,7 @@ class InventoryConfigurationTest extends TestCase
         config([
             'horus.cdn_url' => 'https://cdn.horusmedia.net',
             'static-delivery.local_root' => $this->staticRoot,
-            'static-delivery.batch_delay_seconds' => 0,
+            'static-delivery.normal_batch_interval_minutes' => 0,
         ]);
     }
 
