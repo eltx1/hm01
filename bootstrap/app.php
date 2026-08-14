@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureAdministratorTwoFactor;
 use App\Http\Middleware\EnsureDashboardAccess;
 use App\Http\Middleware\EnsureHorusAdministrator;
 use App\Http\Middleware\EnsurePermission;
+use App\Http\Middleware\EnsurePublisherApplicant;
 use App\Http\Middleware\SecureResponseHeaders;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -28,6 +29,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'dashboard.access' => EnsureDashboardAccess::class,
             'horus' => EnsureHorusAdministrator::class,
             'permission' => EnsurePermission::class,
+            'publisher.applicant' => EnsurePublisherApplicant::class,
         ]);
         $middleware->redirectGuestsTo(fn () => route('login'));
     })

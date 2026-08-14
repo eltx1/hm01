@@ -43,6 +43,13 @@ scheduler heartbeat.
 - [ ] A restore drill succeeded on an isolated database.
 - [ ] Contract files and private storage are included in backup scope.
 - [ ] Retention, access review, incident owner, and escalation path are documented.
+- [ ] If public Publisher registration is enabled, SMTP verification, public
+      registration/submission throttles, applicant-only authorization, duplicate
+      domain handling, Admin review permissions, and decision notifications are
+      verified in production.
+- [ ] A public application approval test proves that Publisher access begins only
+      after Admin approval and that zero Sites, static publications, or serving
+      activations are created by the approval transaction.
 
 Evidence: security-header scan, backup ID, restore timestamp, and access-review record.
 

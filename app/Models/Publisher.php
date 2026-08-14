@@ -69,6 +69,11 @@ class Publisher extends Model
         return $this->hasMany(PublisherQualityProfile::class);
     }
 
+    public function application(): HasOne
+    {
+        return $this->hasOne(PublisherApplication::class);
+    }
+
     public function qualityReviewRuns(): HasMany
     {
         return $this->hasMany(PublisherQualityReviewRun::class);

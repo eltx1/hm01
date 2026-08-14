@@ -13,6 +13,11 @@
   from repository templates.
 - Active user and active organization state are required at login and on every
   authenticated request.
+- Public Publisher applicants are the single explicit pre-activation exception:
+  the same Laravel identity may authenticate only when a same-user,
+  same-organization application exists. Applicant middleware exposes no
+  operational Control Plane route, role, finance, site, GAM, Prebid, Direct JS,
+  provider, Admin, or cross-tenant access.
 - Publisher and advertiser account models apply organization global scopes.
 - Invitations accept only roles valid for the destination organization type.
 - Password reset and suspension revoke database sessions; login successes and
@@ -42,6 +47,10 @@
 - AI providers receive a field allowlist and no tools, browsing, internal APIs,
   serving controls, finance access, or write capability. Human Horus Admins are
   the sole Publisher decision authority, protected by separate RBAC permissions.
+- Public application transitions, submitted revisions, decisions, and
+  information requests are append-oriented and audited. Domain claims and row
+  locks prevent duplicate applications and duplicate approval handoffs. Public
+  registration and application writes use dedicated rate limits.
 
 ## Required future controls
 

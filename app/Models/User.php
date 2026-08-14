@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\AccountStatus;
 use App\Enums\OrganizationType;
 use App\Enums\UserStatus;
 use Database\Factories\UserFactory;
@@ -13,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -105,9 +107,39 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(NotificationPreference::class);
     }
 
+    public function publisherApplication(): HasOne
+    {
+        return $this->hasOne(PublisherApplication::class, 'applicant_user_id');
+    }
+
     public function isActive(): bool
     {
         return $this->status === UserStatus::Active && $this->organization?->isActive() && ! $this->isLocked();
+    }
+
+    public function isPublisherApplicant(): bool
+    {
+        if ($this->status !== UserStatus::Active || $this->isLocked()) {
+            return false;
+        }
+        $organization = $this->organization;
+        if ($organization?->type !== OrganizationType::Publisher
+            || ! in_array($organization->status, [AccountStatus::Pending, AccountStatus::Active], true)) {
+            return false;
+        }
+
+        $application = $this->relationLoaded('publisherApplication')
+            ? $this->publisherApplication
+            : $this->publisherApplication()->first();
+
+        return $application !== null
+            && $application->organization_id === $this->organization_id
+            && $application->applicant_user_id === $this->id;
+    }
+
+    public function canAuthenticate(): bool
+    {
+        return ! $this->isLocked() && ($this->isActive() || $this->isPublisherApplicant());
     }
 
     public function isLocked(): bool

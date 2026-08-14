@@ -25,7 +25,10 @@ product prerequisite.
 The control plane is implemented across identity, publisher onboarding,
 inventory, GAM, browser delivery, Prebid, native demand, direct sales,
 aggregated reporting, reconciliation, revenue shares, statements, invoices,
-and payment records. The multi-engine architecture contract additionally permits
+payment records, and public Publisher applications. Public signup creates an
+application-only identity and pending canonical Publisher account; it never
+means automatic Publisher approval, website approval, or ad serving. The
+multi-engine architecture contract additionally permits
 GAM-less Horus-managed sites and establishes standalone Prebid and independent
 Direct JS as supported engine contexts. Full standalone Prebid winner rendering
 is delivered incrementally by dedicated runtime work rather than being emulated
@@ -40,6 +43,12 @@ Organizations are typed as HORUS_MEDIA, PUBLISHER, ADVERTISER, or PARTNER.
 Users belong to one organization and receive one or more system roles. Publisher
 and advertiser records carry white-label presentation fields, while Horus-only
 internal notes are never rendered to tenant users.
+
+Public applicants are a constrained state of the same identity model. Their
+pending Organization is not made active merely to permit authentication. They
+can access only the application portal until an authorized Horus Admin approves
+the explicit application lifecycle and atomically grants the existing Publisher
+role and onboarding access.
 
 ## Serving modes
 
@@ -112,4 +121,3 @@ standalone Prebid plus Direct JS on different placements; GAM plus Prebid
 No combination introduces a Prebid-vs-Direct global auction or automatic
 waterfall. `AD_SERVING` stops all engines; GAM, PREBID and DIRECT_JS controls
 isolate only their own paths.
-

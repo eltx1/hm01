@@ -33,6 +33,11 @@ class Organization extends Model
         return $this->hasOne(Publisher::class);
     }
 
+    public function publisherApplication(): HasOne
+    {
+        return $this->hasOne(PublisherApplication::class);
+    }
+
     public function advertiser(): HasOne
     {
         return $this->hasOne(Advertiser::class);

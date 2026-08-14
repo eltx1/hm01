@@ -9,6 +9,27 @@ review, operational status controls, revenue-share controls, and append-oriented
 history. It does not call GAM, Prebid bidders, native networks, or another
 advertising API.
 
+## Public application handoff
+
+The optional public application flow is a gate before this seven-step process,
+not a replacement for it:
+
+```mermaid
+flowchart LR
+    A["Public application"] --> B["Publisher approval"]
+    B --> C["Seven-step onboarding"]
+    C --> D["Website review"]
+    D --> E["Separate production activation"]
+```
+
+An applicant has no onboarding permission or Publisher role while its
+Organization remains `PENDING`. Admin approval atomically activates the existing
+canonical account and assigns `PUBLISHER_ADMIN`, then sends that user to step 1.
+No Site is created from the application domain. The domain is only application
+and quality-review evidence until the user deliberately creates a website in
+step 4. Existing Admin-created Publishers and invitation users bypass the public
+application flow and remain backward compatible.
+
 ## Seven-step onboarding
 
 1. Company and primary contact details.
