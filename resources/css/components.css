@@ -1,0 +1,354 @@
+.brand-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    object-fit: contain;
+}
+
+.brand-image-fallback {
+    display: inline-grid;
+    place-items: center;
+    aspect-ratio: 1;
+    min-width: 2.5rem;
+    border: 1px solid var(--hm-line-gold);
+    border-radius: 50%;
+    background: var(--hm-bg-gold);
+    color: var(--hm-ink);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+}
+
+.brand-full-logo {
+    width: clamp(8.5rem, 24vw, 11.5rem);
+    margin-inline: auto;
+    filter: drop-shadow(var(--hm-shadow-gold));
+}
+
+.brand-emblem,
+.brand-header-emblem {
+    aspect-ratio: 1;
+    filter: drop-shadow(0 9px 24px color-mix(in srgb, var(--hm-gold) 18%, transparent));
+}
+
+.brand-product-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    color: var(--hm-white);
+}
+
+.brand-product-mark {
+    flex: 0 0 auto;
+    width: 3rem;
+    max-height: 3rem;
+    aspect-ratio: 1;
+}
+
+.brand-product-lockup-tenant .brand-product-mark {
+    width: 3.25rem;
+    aspect-ratio: auto;
+}
+
+.brand-product-copy {
+    display: grid;
+    min-width: 0;
+}
+
+.brand-product-copy strong {
+    overflow: hidden;
+    font-size: 1.05rem;
+    line-height: 1.1;
+    letter-spacing: -0.035em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.brand-product-copy small {
+    margin-top: 0.35rem;
+    overflow: hidden;
+    color: var(--hm-muted-2);
+    font-size: 0.58rem;
+    font-weight: 750;
+    letter-spacing: 0.12em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.sidebar-brand {
+    max-width: 100%;
+}
+
+.mobile-product-lockup {
+    display: none;
+}
+
+.auth-page {
+    min-height: 100vh;
+}
+
+.auth-shell {
+    display: grid;
+    grid-template-columns: minmax(20rem, 0.9fr) minmax(24rem, 1.1fr);
+    min-height: 100vh;
+}
+
+.auth-context {
+    position: relative;
+    display: grid;
+    align-content: center;
+    overflow: hidden;
+    border-right: 1px solid var(--hm-line);
+    padding: clamp(2rem, 6vw, 6rem);
+    background:
+        radial-gradient(circle at 68% 30%, color-mix(in srgb, var(--hm-royal) 32%, transparent), transparent 22rem),
+        linear-gradient(145deg, color-mix(in srgb, var(--hm-navy) 68%, transparent), color-mix(in srgb, var(--hm-night) 94%, transparent));
+}
+
+.auth-context::before {
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(var(--hm-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--hm-line) 1px, transparent 1px);
+    background-size: 4.5rem 4.5rem;
+    content: '';
+    mask-image: linear-gradient(to bottom, transparent, black 18%, black 82%, transparent);
+    opacity: 0.24;
+    pointer-events: none;
+}
+
+.auth-context::after {
+    position: absolute;
+    top: -13rem;
+    right: -13rem;
+    width: 30rem;
+    height: 30rem;
+    border: 1px solid var(--hm-line-gold);
+    border-radius: 50%;
+    box-shadow: inset 0 0 80px color-mix(in srgb, var(--hm-gold) 6%, transparent);
+    content: '';
+    pointer-events: none;
+}
+
+.auth-context-content {
+    position: relative;
+    z-index: 1;
+    max-width: 37rem;
+}
+
+.auth-context-emblem {
+    width: clamp(6rem, 11vw, 8rem);
+    margin-bottom: 2rem;
+}
+
+.auth-context h2 {
+    max-width: 12ch;
+    margin: 0 0 1.5rem;
+    font-size: clamp(2.5rem, 5vw, 4.8rem);
+    line-height: 0.96;
+    letter-spacing: -0.06em;
+}
+
+.auth-context h2 span {
+    display: block;
+    color: var(--hm-gold-highlight);
+}
+
+.auth-context-lead {
+    max-width: 37rem;
+    color: var(--hm-muted);
+    font-size: clamp(1rem, 1.5vw, 1.15rem);
+    line-height: 1.75;
+}
+
+.auth-context-points {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.auth-context-points li {
+    border-left: 1px solid var(--hm-line-gold);
+    padding-left: 0.8rem;
+    color: var(--hm-muted);
+    font-size: 0.78rem;
+}
+
+.auth-context-points strong {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--hm-white);
+    font-size: 0.9rem;
+}
+
+.auth-workspace {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    min-width: 0;
+    padding: clamp(1rem, 5vw, 4rem);
+}
+
+.auth-card {
+    width: min(100%, 31rem);
+    padding: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+.auth-card-brand {
+    display: block;
+    width: fit-content;
+    margin: 0 auto 1.25rem;
+    border-radius: var(--hm-radius-md);
+}
+
+.auth-card > .eyebrow {
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.auth-card h1 {
+    margin-bottom: 1rem;
+}
+
+.auth-product-note {
+    width: min(100%, 31rem);
+    margin: 1rem 0 0;
+    color: var(--hm-muted-2);
+    font-size: 0.72rem;
+    text-align: center;
+}
+
+.applicant-brand .brand-product-mark {
+    width: 2.8rem;
+}
+
+.onboarding-brand-foundation {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--hm-line-gold);
+    border-radius: var(--hm-radius-lg);
+    padding: 1rem 1.25rem;
+    background: var(--hm-bg-card);
+}
+
+.onboarding-brand-logo {
+    width: 5.25rem;
+    margin: 0;
+}
+
+.onboarding-brand-foundation p {
+    margin: 0.25rem 0 0;
+    color: var(--hm-muted);
+}
+
+.statement-brand-logo {
+    width: 5rem;
+    margin: 0 0 1rem;
+}
+
+.brand-document-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+    border-bottom: 3px solid var(--hm-gold);
+    padding-bottom: 1.25rem;
+}
+
+.brand-document-identity .brand-full-logo {
+    width: 6rem;
+    margin: 0;
+    filter: none;
+}
+
+.brand-document-meta {
+    color: var(--hm-ink);
+    line-height: 1.6;
+    text-align: right;
+}
+
+@media (max-width: 960px) {
+    .auth-shell {
+        grid-template-columns: minmax(17rem, 0.75fr) minmax(23rem, 1.25fr);
+    }
+
+    .auth-context {
+        padding: 2rem;
+    }
+
+    .auth-context-points {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 800px) {
+    .mobile-product-lockup {
+        display: inline-flex;
+    }
+
+    .mobile-product-lockup .brand-product-mark {
+        width: 2.6rem;
+        max-height: 2.6rem;
+    }
+
+    .auth-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-context {
+        display: none;
+    }
+
+    .auth-workspace {
+        min-height: 100vh;
+        padding: 1rem;
+    }
+
+    .auth-card {
+        padding: clamp(1.25rem, 6vw, 2rem);
+    }
+
+    .brand-document-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .brand-document-meta {
+        text-align: left;
+    }
+}
+
+@media (max-width: 430px) {
+    .auth-workspace {
+        padding: 0.75rem;
+    }
+
+    .brand-full-logo {
+        width: 8rem;
+    }
+
+    .onboarding-brand-foundation {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .applicant-topbar .brand-product-copy small {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .brand-product-lockup,
+    .auth-card {
+        scroll-behavior: auto;
+        transition: none;
+    }
+}

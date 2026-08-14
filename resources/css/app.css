@@ -1,4 +1,5 @@
 @import './brand-tokens.css';
+@import './components.css';
 @import url('https://fonts.bunny.net/css?family=inter:400,500,600,700,800');
 
 :root {
@@ -12,10 +13,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; background: var(--hm-bg-page); }
 a { color: inherit; text-decoration: none; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--hm-gold-highlight); outline-offset: 3px; }
 .admin-shell { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
 .sidebar { position: sticky; top: 0; display: flex; flex-direction: column; border-right: 1px solid var(--hm-line); padding: 2rem 1.25rem; height: 100vh; overflow-y: auto; background: rgba(5, 11, 30, .94); backdrop-filter: blur(18px); z-index: 30; }
-.brand { display: block; font-size: 1.45rem; font-weight: 700; letter-spacing: -.03em; }
-.brand-logo { width: 2rem; height: 2rem; object-fit: contain; vertical-align: middle; margin-right: .6rem; }
 .eyebrow { color: var(--hm-muted); font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .control-navigation { display: grid; gap: 1.35rem; margin-top: 2rem; }
 .navigation-group, .navigation-links { display: grid; gap: .3rem; }
@@ -38,15 +38,12 @@ h1 { margin: .25rem 0 2rem; font-size: clamp(1.8rem, 3vw, 2.7rem); }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1rem; }
 article { border: 1px solid var(--hm-line); border-radius: 1rem; padding: 1.4rem; background: var(--hm-glass); }
 article h3 { margin: .4rem 0; }
-.auth-page { display: grid; place-items: center; padding: 1rem; }
-.auth-card { width: min(100%, 460px); padding: clamp(1.5rem, 5vw, 2.5rem); }
 .applicant-shell { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; min-height: 100vh; }
 .applicant-topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid var(--hm-line); }
 .applicant-topbar > div:last-child { display: flex; align-items: center; gap: 1rem; color: var(--hm-muted); }
 .applicant-content { padding: 2rem 0 4rem; }
 .lifecycle-boundaries { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1rem 0; }
 .lifecycle-boundaries article { display: grid; gap: .4rem; padding: 1rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); background: var(--hm-glass); }
-.auth-brand { color: var(--hm-gold-highlight); font-size: 1.45rem; font-weight: 800; }
 .form-stack { display: grid; gap: 1rem; }
 .form-stack label { display: grid; gap: .45rem; color: var(--hm-muted); }
 .hm-input { padding: .8rem .9rem; }
@@ -99,7 +96,7 @@ dd { margin: 0; }
 .summary-grid span { color: var(--hm-muted); }
 .workspace-tabs { display: flex; gap: .5rem; margin: 0 0 1.25rem; padding: .45rem; overflow-x: auto; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); background: rgba(5, 11, 30, .58); scrollbar-width: thin; }
 .workspace-tabs a { flex: 0 0 auto; border-radius: var(--hm-radius-pill); color: var(--hm-muted); padding: .6rem .9rem; white-space: nowrap; }
-.workspace-tabs a:hover, .workspace-tabs a:focus-visible { color: var(--hm-gold-highlight); background: rgba(241, 183, 51, .08); outline: none; }
+.workspace-tabs a:hover, .workspace-tabs a:focus-visible { color: var(--hm-gold-highlight); background: rgba(241, 183, 51, .08); }
 .status-badge { display: inline-flex; align-items: center; width: fit-content; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-pill); padding: .38rem .68rem; font-size: .74rem; font-weight: 750; letter-spacing: .025em; }
 .status-badge-success { border-color: rgba(77, 214, 151, .35); color: #8ff0be; background: rgba(29, 148, 96, .12); }
 .status-badge-warning { border-color: var(--hm-line-gold); color: var(--hm-gold-highlight); background: rgba(241, 183, 51, .1); }

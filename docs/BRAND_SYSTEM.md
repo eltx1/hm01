@@ -22,6 +22,23 @@ Approved source package:
 
 The owner-provided logo must be used without redrawing, recoloring, simplifying, stretching, cropping, or replacing it with an unrelated icon.
 
+### Canonical Control Plane assets
+
+Task 28 established the exact owner-controlled binaries from the approved paths on `horusmedia.net` and preserved them byte-for-byte under one repository location:
+
+| Role | Canonical repository path | SHA-256 |
+| --- | --- | --- |
+| Full official logo | `public/assets/brand/horusmedia-logo-official.png` | `4c239a11a95dcf240fbcf65f7ccf1c3d1ff324d71bd9b2d602f4f6b53457ec07` |
+| Primary emblem | `public/assets/brand/horusmedia-emblem.png` | `b0d56cdde7b0c2fb1ece237a08a142030be686ffbdf44cd49c1e76ad504c38c6` |
+| Compact header emblem | `public/assets/brand/horusmedia-emblem-header.png` | `5f2ec6f697f1c4113e0c1633fe716c109830ff360ce09477ef6ee6ea174a24bf` |
+| Hero emblem | `public/assets/brand/horusmedia-emblem-hero.png` | `b0d56cdde7b0c2fb1ece237a08a142030be686ffbdf44cd49c1e76ad504c38c6` |
+| Social image | `public/assets/brand/horusmedia-social.jpg` | `698f30f63d14a62cbc8a319cfc62d9364a999c73e6b4f63d8307814e8a27bf8e` |
+| Browser icon | `public/assets/brand/favicon.png` | `8160724053fd4d831a49695b273a880b5b877f62e66a08d9e6cf300417d11aba` |
+
+`App\Support\Branding\OfficialBrandAssets` is the machine-readable manifest for path, dimensions, provenance hash, and cache version. Official asset URLs include a content-derived query version; the Control Plane does not route these images through the ad-serving CDN.
+
+The obsolete zero-byte `public/favicon.ico` placeholder was removed. Every application shell declares the canonical PNG favicon and Apple touch icon explicitly.
+
 ## Core palette
 
 ```css
@@ -115,6 +132,27 @@ Use the official assets as follows:
 - Reports and statements: full logo on first page; compact emblem on following pages.
 - Email templates: full logo with dark-background-safe spacing.
 
+Reusable rendering lives in `resources/views/components/brand/`:
+
+- `<x-brand.full-logo>` for guest authentication, onboarding, email, and first-page financial identity;
+- `<x-brand.emblem>` and `<x-brand.header-emblem>` for official Horus surfaces;
+- `<x-brand.product-lockup>` for the authenticated shell and deterministic tenant precedence;
+- `<x-brand.favicons>` for document-head references;
+- `<x-brand.document-header>` for Horus-issued printable financial documents.
+
+Every image component preserves intrinsic dimensions and `object-fit: contain`, supplies meaningful alternative text, and renders an accessible text fallback if its binary is unavailable.
+
+### White-label precedence
+
+Brand selection is deterministic and resolved only from the current authenticated user:
+
+1. Public authentication, public Publisher application, and Horus staff workspaces always use official Horus Media assets.
+2. An authenticated Publisher or Advertiser workspace uses its own Organization logo only when that organization explicitly configured a logo and the file exists.
+3. A tenant without a usable custom logo receives the official Horus emblem with the tenant workspace name and `Powered by Horus Media` descriptor.
+4. No route, component, or view accepts another tenant identifier as branding input; organization-scoped pages cannot leak another tenant logo.
+
+This precedence does not change Organization upload, validation, storage, or audit behavior.
+
 Minimum clear space around the emblem should equal at least 12% of its displayed width.
 
 Do not:
@@ -205,6 +243,19 @@ resources/css/components.css
 resources/css/app.css
 resources/views/components/brand/
 resources/views/layouts/
+public/assets/brand/
+```
+
+The implemented shared layer is:
+
+```text
+app/Support/Branding/OfficialBrandAssets.php
+app/Support/Branding/BrandIdentityResolver.php
+resources/css/brand-tokens.css
+resources/css/components.css
+resources/css/app.css
+resources/views/components/brand/
+resources/views/emails/layouts/horus.blade.php
 public/assets/brand/
 ```
 
