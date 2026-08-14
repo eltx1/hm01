@@ -2,6 +2,10 @@
 @section('title', 'Publisher onboarding')
 @section('heading', 'Publisher onboarding')
 @section('content')
+<section class="onboarding-brand-foundation" aria-label="Horus Media Publisher onboarding">
+    <x-brand.full-logo class="onboarding-brand-logo" />
+    <div><p class="eyebrow">Horus Media Publisher workspace</p><strong>Build the operational foundation before any website can serve ads.</strong><p>Publisher approval, website approval, and production monetization remain separate controlled stages.</p></div>
+</section>
 <ol class="wizard-steps">@foreach([1=>'Company',2=>'Payment',3=>'Contract',4=>'Website',5=>'Verification',6=>'Placements',7=>'Submit'] as $number=>$label)<li class="{{ $number === $step ? 'active' : ($number < $publisher->onboarding_step ? 'complete' : '') }}"><a href="{{ route('publisher.onboarding.show', $number) }}"><span>{{ $number }}</span>{{ $label }}</a></li>@endforeach</ol>
 <article class="wizard-card"><form method="POST" action="{{ route('publisher.onboarding.update', $step) }}" class="form-grid">@csrf @method('PUT')
 @if($step === 1)

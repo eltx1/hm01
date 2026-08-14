@@ -4,7 +4,7 @@
 @section('content')
 @include('publisher.finance._tabs')
 <section class="hero">
-    <div><p class="eyebrow">{{ $statement->statement_number }}</p><h2>{{ $statement->period->period_key }} · {{ $statement->currency }}</h2><p>Finalized {{ $statement->finalized_at?->toDateString() ?: '—' }} · Status {{ $statement->status->value }}</p></div>
+    <div><x-brand.full-logo class="statement-brand-logo" /><p class="eyebrow">{{ $statement->statement_number }}</p><h2>{{ $statement->period->period_key }} · {{ $statement->currency }}</h2><p>Finalized {{ $statement->finalized_at?->toDateString() ?: '—' }} · Status {{ $statement->status->value }}</p></div>
     <a class="hm-button-primary button-link" href="{{ route('publisher.finance.statements.csv', $statement) }}">Download safe CSV</a>
 </section>
 <section class="metric-grid">

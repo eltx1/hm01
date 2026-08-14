@@ -5,16 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @php($brand = auth()->user()?->organization)
+    @php($brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user()))
+    @php($isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia)
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
     @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
-    <title>@yield('title', 'Dashboard') · {{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</title>
+    <title>@yield('title', 'Dashboard') · {{ $brandIdentity->name }}</title>
+    <x-brand.favicons />
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body @if($brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
+<body @if(! $isHorusWorkspace && $brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
-            <a class="brand" href="/">@if($brand?->logo_path)<img class="brand-logo" src="{{ Storage::disk('public')->url($brand->logo_path) }}" alt="{{ $brand?->name }} logo">@endif{{ $brand?->dashboard_title ?: $brand?->name ?: 'Horus Media' }}</a>
+            <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
             <p class="eyebrow">Ad Network Control Plane</p>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
@@ -27,6 +30,7 @@
         <main>
             <header class="topbar">
                 <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
+                <x-brand.product-lockup context="workspace" variant="header" :href="url('/')" :compact="true" class="mobile-product-lockup" />
                 <div class="topbar-title">
                     <p class="eyebrow">app.horusmedia.net</p>
                     <h1>@yield('heading', 'Dashboard')</h1>
