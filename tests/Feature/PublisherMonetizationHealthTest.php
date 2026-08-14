@@ -29,9 +29,13 @@ class PublisherMonetizationHealthTest extends TestCase
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private $admin;
+
     private $publisherUser;
+
     private $publisher;
+
     private $site;
+
     private $gam;
 
     protected function setUp(): void
@@ -75,6 +79,7 @@ class PublisherMonetizationHealthTest extends TestCase
         $this->assertSame(MonetizationStatus::Active->value, $display['status']);
         $this->assertSame(MonetizationStatus::Active->value, $result['overall']['status']);
         $this->assertSame('NOT_CONFIGURED', collect($result['modules'])->firstWhere('key', 'prebid')['status']);
+        $this->assertSame('PENDING', collect($result['modules'])->firstWhere('key', 'privacy')['status']);
     }
 
     public function test_direct_native_only_makes_native_critical_and_paused_serving_is_never_healthy(): void

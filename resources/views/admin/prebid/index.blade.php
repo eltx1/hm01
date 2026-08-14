@@ -64,6 +64,20 @@
     <div class="status-row" style="margin-top:1rem">
         @foreach($bidders as $bidder)<a class="pill" href="{{ $bidder->adapter->documentation_url }}" target="_blank" rel="noopener">{{ $bidder->code }}</a>@endforeach
     </div>
+    <details style="margin-top:1rem"><summary>Provider privacy capability evidence</summary>
+        <p class="muted">Record only current operator or official evidence. Horus never guesses bidder support.</p>
+        @foreach($bidders as $bidder)
+        <form class="form-stack domain-card" method="POST" action="{{ route('admin.prebid.bidders.privacy', $bidder) }}">@csrf @method('PUT')
+            <strong>{{ $bidder->display_name }}</strong>
+            @foreach(['tcf' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED'], 'gpp' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED'], 'gpc' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED'], 'consent_before_request' => ['UNKNOWN','REQUIRED','NOT_REQUIRED'], 'storage' => ['UNKNOWN','REQUIRED','NOT_REQUIRED'], 'user_sync' => ['UNKNOWN','REQUIRED','NOT_REQUIRED']] as $field => $values)
+                <label>{{ str($field)->replace('_', ' ')->headline() }}<select class="hm-input" name="{{ $field }}">@foreach($values as $value)<option @selected(data_get($bidder->privacy_capabilities, $field, 'UNKNOWN') === $value)>{{ $value }}</option>@endforeach</select></label>
+            @endforeach
+            <label>Official/operator evidence URL<input class="hm-input" type="url" name="evidence_url" value="{{ data_get($bidder->privacy_capabilities, 'evidence_url') }}"></label>
+            <label>Verified at<input class="hm-input" type="date" name="verified_at" value="{{ data_get($bidder->privacy_capabilities, 'verified_at') }}"></label>
+            <button class="hm-button-secondary">Save privacy evidence</button>
+        </form>
+        @endforeach
+    </details>
 </article>
 </section>
 

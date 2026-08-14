@@ -13,16 +13,14 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\BidderSiteMapping;
 use App\Models\ConfigVersion;
-use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\GamConnection;
-use App\Models\PrebidBuild;
 use App\Models\PrebidSetting;
-use App\Models\ReportDimension;
 use App\Models\Site;
 use App\Services\Compliance\AdsTxtComplianceService;
 use App\Services\Inventory\RuntimePolicyResolver;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Privacy\PrivacyReadinessService;
 use App\Services\Serving\ResolvedSiteEngineState;
 use App\Services\Serving\SiteEngineStateResolver;
 use DateTimeInterface;
@@ -35,6 +33,7 @@ final class SiteMonetizationReadinessService
         private readonly AdsTxtComplianceService $adsTxt,
         private readonly RuntimePolicyResolver $runtimePolicies,
         private readonly ReportingHealthService $reportingHealth,
+        private readonly PrivacyReadinessService $privacyReadiness,
     ) {}
 
     /**
@@ -254,6 +253,7 @@ final class SiteMonetizationReadinessService
             : MonetizationDependency::Optional;
         if (! $site->native_demand_enabled) {
             $critical = $site->serving_mode === ServingMode::DirectNativeOnly;
+
             return $this->module('native', 'Direct Monetization', $critical ? MonetizationStatus::ActionRequired : MonetizationStatus::NotConfigured,
                 $critical ? MonetizationDependency::Critical : $dependency,
                 $critical ? 'Direct monetization is required by the current serving mode but is not enabled.' : 'Direct monetization is not configured for this website.',
@@ -310,16 +310,33 @@ final class SiteMonetizationReadinessService
 
     private function privacy(Site $site): array
     {
-        $privacy = $this->runtimePolicies->privacy($site->siteConfig?->privacy_settings);
+        $privacy = $this->privacyReadiness->admin($site);
+        $liveState = data_get($privacy, 'overall.live_state');
+        $hasActionableFinding = collect($privacy['findings'] ?? [])->contains(
+            fn (array $finding): bool => $finding['code'] !== 'LIVE_PRIVACY_PROBE_MISSING'
+                && in_array($finding['status'], ['WARNING', 'BLOCKED', 'STALE'], true),
+        );
+        $status = match (data_get($privacy, 'overall.status')) {
+            'READY' => MonetizationStatus::Ready,
+            'BLOCKED' => MonetizationStatus::ActionRequired,
+            'STALE' => MonetizationStatus::Degraded,
+            'WARNING' => $hasActionableFinding ? MonetizationStatus::Degraded : MonetizationStatus::Pending,
+            default => MonetizationStatus::Pending,
+        };
 
-        return $this->module('privacy', 'Consent / Privacy', MonetizationStatus::Ready, MonetizationDependency::Recommended,
-            'Consent and privacy behavior is configured operationally. This status is not a legal certification.',
+        return $this->module('privacy', 'Consent / Privacy', $status, MonetizationDependency::Recommended,
+            $liveState === 'LIVE_VERIFIED'
+                ? 'Privacy configuration has current one-shot live evidence. This is not a legal certification.'
+                : 'Privacy is configured but is not currently live verified. This is not a legal certification.',
+            $status === MonetizationStatus::Ready ? null : ($hasActionableFinding
+                ? 'Review the actionable Privacy Readiness findings.'
+                : 'Run an explicit live privacy test to add current browser evidence.'),
             lastUpdate: $site->siteConfig?->updated_at ?? $site->updated_at,
             diagnostics: [
-                'mode' => data_get($privacy, 'mode'),
-                'require_consent_before_ads' => (bool) data_get($privacy, 'requireConsentBeforeAds', false),
-                'tcf_version' => data_get($privacy, 'cmp.tcfVersion'),
-                'gpp_version' => data_get($privacy, 'cmp.gppVersion'),
+                'readiness_status' => data_get($privacy, 'overall.status'),
+                'configuration_state' => data_get($privacy, 'overall.configuration_state'),
+                'live_state' => $liveState,
+                'last_verified' => data_get($privacy, 'last_verified'),
             ]);
     }
 

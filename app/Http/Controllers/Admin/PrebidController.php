@@ -13,8 +13,8 @@ use App\Models\GamConnection;
 use App\Models\Placement;
 use App\Models\PrebidBidder;
 use App\Models\PrebidBuild;
-use App\Models\PrebidSetupRun;
 use App\Models\PrebidSetting;
+use App\Models\PrebidSetupRun;
 use App\Models\ReportSource;
 use App\Models\Site;
 use App\Services\Audit\AuditRecorder;
@@ -245,6 +245,25 @@ class PrebidController extends Controller
         $manager->addAccount(PrebidBidder::withoutGlobalScopes()->findOrFail($data['prebid_bidder_id']), $data, $request->user());
 
         return back()->with('status', 'Bidder account saved.');
+    }
+
+    public function updateBidderPrivacy(Request $request, PrebidBidder $prebidBidder, AuditRecorder $audit): RedirectResponse
+    {
+        $data = $request->validate([
+            'tcf' => ['required', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'gpp' => ['required', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'gpc' => ['required', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'consent_before_request' => ['required', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'storage' => ['required', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'user_sync' => ['required', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'evidence_url' => ['nullable', 'url:https', 'max:1000'],
+            'verified_at' => ['nullable', 'date', 'before_or_equal:today'],
+        ]);
+        $before = (array) $prebidBidder->privacy_capabilities;
+        $prebidBidder->update(['privacy_capabilities' => $data]);
+        $audit->record('prebid.bidder_privacy_capabilities.updated', $request->user()->organization_id, $request->user(), $prebidBidder, $before, $data);
+
+        return back()->with('status', 'Bidder privacy capability evidence updated. UNKNOWN values remain explicit and are not inferred.');
     }
 
     public function assignSite(

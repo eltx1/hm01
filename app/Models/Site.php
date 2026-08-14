@@ -62,6 +62,9 @@ class Site extends Model
     public function demandSites(): HasMany { return $this->hasMany(DemandSite::class); }
     public function bidderSiteMappings(): HasMany { return $this->hasMany(BidderSiteMapping::class); }
     public function syntheticProbeResults(): HasMany { return $this->hasMany(SyntheticProbeResult::class); }
+    public function privacyDiagnosticTokens(): HasMany { return $this->hasMany(PrivacyDiagnosticToken::class); }
+    public function privacyDiagnosticEvidence(): HasMany { return $this->hasMany(PrivacyDiagnosticEvidence::class); }
+    public function googleCmpEvidence(): HasMany { return $this->hasMany(GoogleCmpEvidence::class); }
     public function sellerDeclarations(): HasMany { return $this->hasMany(SellerDeclaration::class); }
     public function supplyChainChecks(): HasMany { return $this->hasMany(SupplyChainCheck::class); }
 

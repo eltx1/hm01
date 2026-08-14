@@ -41,6 +41,7 @@
 </section>
 
 @include('publisher.monetization.site-health')
+@include('publisher.privacy-readiness')
 
 @if(auth()->user()->hasPermission('inventory.view'))
 <article id="inventory" class="workspace-section">
@@ -147,6 +148,7 @@
 </section>
 
 @include('publisher.monetization.site-health')
+@include('publisher.privacy-readiness')
 
 @if(auth()->user()->hasPermission('publisher.ads_txt.view'))<p><a class="hm-button-secondary button-link" href="{{ route('publisher.ads-txt.index') }}">Open Ads.txt &amp; Compliance</a></p>@endif
 <section class="detail-grid">

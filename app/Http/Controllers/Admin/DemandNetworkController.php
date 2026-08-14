@@ -128,6 +128,14 @@ class DemandNetworkController extends Controller
             'script_origins' => ['nullable', 'array', 'max:20'],
             'script_origins.*' => ['url:https', 'max:500'],
             'operational_health' => ['nullable', Rule::in(['HEALTHY', 'DEGRADED', 'FAILED', 'UNKNOWN'])],
+            'privacy_tcf' => ['nullable', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'privacy_gpp' => ['nullable', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'privacy_gpc' => ['nullable', Rule::in(['UNKNOWN', 'SUPPORTED', 'NOT_SUPPORTED'])],
+            'privacy_consent_before_request' => ['nullable', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'privacy_storage' => ['nullable', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'privacy_user_sync' => ['nullable', Rule::in(['UNKNOWN', 'REQUIRED', 'NOT_REQUIRED'])],
+            'privacy_evidence_url' => ['nullable', 'url:https', 'max:1000'],
+            'privacy_verified_at' => ['nullable', 'date', 'before_or_equal:today'],
         ]);
         $origins = collect($data['script_origins'] ?? [])->map(fn ($value) => strtolower(rtrim((string) $value, '/')))->unique()->values();
         foreach ($origins as $origin) {
@@ -136,16 +144,27 @@ class DemandNetworkController extends Controller
                 throw ValidationException::withMessages(['script_origins' => 'Provider script origins cannot use the Horus control-plane origin.']);
             }
         }
-        $before = $demandNetwork->only(['supports_direct_js', 'script_origins', 'capabilities', 'metadata']);
+        $before = $demandNetwork->only(['supports_direct_js', 'script_origins', 'capabilities', 'privacy_capabilities', 'metadata']);
         $capabilities = array_replace((array) $demandNetwork->capabilities, [
             'supported_formats' => array_values(array_unique($data['supported_formats'] ?? [])),
             'integration_modes' => array_values(array_unique($data['integration_modes'] ?? [])),
         ]);
         $metadata = array_replace((array) $demandNetwork->metadata, ['operational_health' => $data['operational_health'] ?? 'UNKNOWN']);
+        $privacyCapabilities = [
+            'tcf' => $data['privacy_tcf'] ?? data_get($demandNetwork->privacy_capabilities, 'tcf', 'UNKNOWN'),
+            'gpp' => $data['privacy_gpp'] ?? data_get($demandNetwork->privacy_capabilities, 'gpp', 'UNKNOWN'),
+            'gpc' => $data['privacy_gpc'] ?? data_get($demandNetwork->privacy_capabilities, 'gpc', 'UNKNOWN'),
+            'consent_before_request' => $data['privacy_consent_before_request'] ?? data_get($demandNetwork->privacy_capabilities, 'consent_before_request', 'UNKNOWN'),
+            'storage' => $data['privacy_storage'] ?? data_get($demandNetwork->privacy_capabilities, 'storage', 'UNKNOWN'),
+            'user_sync' => $data['privacy_user_sync'] ?? data_get($demandNetwork->privacy_capabilities, 'user_sync', 'UNKNOWN'),
+            'evidence_url' => array_key_exists('privacy_evidence_url', $data) ? $data['privacy_evidence_url'] : data_get($demandNetwork->privacy_capabilities, 'evidence_url'),
+            'verified_at' => array_key_exists('privacy_verified_at', $data) ? $data['privacy_verified_at'] : data_get($demandNetwork->privacy_capabilities, 'verified_at'),
+        ];
         $demandNetwork->update([
             'supports_direct_js' => (bool) $data['supports_direct_js'],
             'script_origins' => $origins->all(),
             'capabilities' => $capabilities,
+            'privacy_capabilities' => $privacyCapabilities,
             'metadata' => $metadata,
         ]);
         $audit->record('demand.network.updated', $request->user()->organization_id, $request->user(), $demandNetwork,

@@ -28,6 +28,8 @@
         standaloneObservers: {},
         privacyPromise: null,
         privacyDecision: null,
+        privacyDiagnostic: null,
+        adInitializationStarted: false,
         rewardedListenersInstalled: false,
         clickGuard: null
     };
@@ -91,6 +93,103 @@
 
     function currentHostname() {
         return String(window.location && window.location.hostname || '').toLowerCase().replace(/\.$/, '');
+    }
+
+    function capturePrivacyDiagnostic(script) {
+        if (state.privacyDiagnostic) return state.privacyDiagnostic;
+        var token = scriptData(script, 'privacyDiagnosticToken');
+        try {
+            var pageUrl = new URL(window.location.href);
+            token = token || pageUrl.searchParams.get('hm_privacy_diagnostic');
+            if (pageUrl.searchParams.has('hm_privacy_diagnostic')) {
+                pageUrl.searchParams.delete('hm_privacy_diagnostic');
+                if (window.history && typeof window.history.replaceState === 'function') {
+                    window.history.replaceState(window.history.state || null, '', pageUrl.href);
+                }
+            }
+        } catch (error) {
+            token = token || null;
+        }
+        token = String(token || '');
+        if (!/^[A-Za-z0-9_-]{32,160}$/.test(token)) return null;
+        state.privacyDiagnostic = { token: token, sent: false };
+        return state.privacyDiagnostic;
+    }
+
+    function privacyDiagnosticEndpoint(config) {
+        var settings = config && config.privacyDiagnostics || {};
+        if (settings.explicitOnly !== true || !settings.endpoint || !settings.controlPlaneOrigin) return null;
+        try {
+            var endpoint = new URL(settings.endpoint);
+            var allowedOrigin = new URL(settings.controlPlaneOrigin);
+            if (endpoint.protocol !== 'https:' || endpoint.origin !== allowedOrigin.origin) return null;
+            return endpoint.href;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function sanitizedPrivacyDiagnostic(config, diagnostic) {
+        var privacy = config.privacy || {};
+        var cmp = privacy.cmp || {};
+        var decision = state.privacyDecision || {};
+        var prebid = config.prebid || {};
+        var auction = prebid.auction || {};
+        var modules = prebid.build && Array.isArray(prebid.build.modules) ? prebid.build.modules : [];
+        return {
+            loaderVersion: VERSION,
+            configVersion: Number(config.configVersion || 0),
+            hostname: currentHostname(),
+            timestamp: new Date().toISOString(),
+            tcf: {
+                detected: decision.tcfDetected === true,
+                responded: decision.tcfResponded === true,
+                cmpId: Number.isInteger(decision.tcfCmpId) ? decision.tcfCmpId : null,
+                eventStatus: decision.tcfEventStatus || null
+            },
+            gpp: {
+                detected: decision.gppDetected === true,
+                responded: decision.gppResponded === true,
+                applicableSections: Array.isArray(decision.gppApplicableSections)
+                    ? decision.gppApplicableSections.filter(function (section) { return Number.isInteger(Number(section)); }).map(Number).slice(0, 20)
+                    : []
+            },
+            gpcDetected: decision.gpc === true,
+            configuredTimeoutAction: String(cmp.actionOnTimeout || 'LIMITED_ADS').toUpperCase(),
+            prebid: {
+                modulesPresent: modules.filter(function (module) { return /^[A-Za-z0-9_-]{1,64}$/.test(String(module)); }).map(String).slice(0, 40),
+                consentConfigured: Boolean(auction.consent && Object.keys(auction.consent).length),
+                storageControlConfigured: Boolean(auction.storageControl && auction.storageControl.enforcement),
+                activityControlsConfigured: Boolean(auction.allowActivities && Object.keys(auction.allowActivities).length)
+            },
+            privacyGateRespected: Boolean(state.privacyDecision) && state.adInitializationStarted !== true
+        };
+    }
+
+    function reportPrivacyDiagnostic(config, diagnostic) {
+        if (!diagnostic || diagnostic.sent) return Promise.resolve();
+        var endpoint = privacyDiagnosticEndpoint(config);
+        if (!endpoint) return Promise.resolve();
+        diagnostic.sent = true;
+        var request = window.fetch(endpoint, {
+            method: 'POST',
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'no-store',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Horus-Diagnostic-Token': diagnostic.token
+            },
+            body: JSON.stringify(sanitizedPrivacyDiagnostic(config, diagnostic))
+        }).then(function (response) {
+            if (!response || !response.ok) throw new Error('Privacy diagnostic was not accepted');
+        }).catch(function (error) {
+            log(config, 'Explicit privacy diagnostic failed', error);
+        });
+        return Promise.race([
+            request,
+            new Promise(function (resolve) { window.setTimeout(resolve, 2500); })
+        ]);
     }
 
     function hostAllowed(hostname, allowed) {
@@ -666,7 +765,12 @@
             var settled = false;
             var tcfDone = false;
             var gppDone = false;
-            var decision = { tcf: null, gpp: null, gpc: Boolean(window.navigator && window.navigator.globalPrivacyControl), limitedAds: false, blocked: false };
+            var decision = {
+                tcf: null, gpp: null,
+                tcfDetected: typeof window.__tcfapi === 'function', tcfResponded: false, tcfCmpId: null, tcfEventStatus: null,
+                gppDetected: typeof window.__gpp === 'function', gppResponded: false, gppApplicableSections: [],
+                gpc: Boolean(window.navigator && window.navigator.globalPrivacyControl), limitedAds: false, blocked: false
+            };
             function finish() {
                 if (settled || pending > 0) return;
                 settled = true;
@@ -681,6 +785,11 @@
                 try {
                     window.__tcfapi('addEventListener', 2, function (tcData, success) {
                         if (tcfDone || settled) return;
+                        if (success && tcData) {
+                            decision.tcfResponded = true;
+                            decision.tcfEventStatus = typeof tcData.eventStatus === 'string' ? tcData.eventStatus.slice(0, 64) : null;
+                            decision.tcfCmpId = Number.isInteger(Number(tcData.cmpId)) ? Number(tcData.cmpId) : null;
+                        }
                         if (!success || !tcData || ['tcloaded', 'useractioncomplete'].indexOf(tcData.eventStatus) === -1) return;
                         tcfDone = true; decision.tcf = tcData; pending -= 1; finish();
                     });
@@ -691,7 +800,13 @@
                 try {
                     window.__gpp('ping', function (data, success) {
                         if (gppDone || settled) return;
-                        gppDone = true; if (success !== false) decision.gpp = data || {}; pending -= 1; finish();
+                        gppDone = true;
+                        if (success !== false) {
+                            decision.gpp = data || {};
+                            decision.gppResponded = true;
+                            decision.gppApplicableSections = Array.isArray(data && data.applicableSections) ? data.applicableSections.slice(0, 20) : [];
+                        }
+                        pending -= 1; finish();
                     });
                 } catch (error) { gppDone = true; pending -= 1; }
             }
@@ -847,7 +962,7 @@ function nativeDefinition(config, code) {
         var prebidConfig = {
             bidderSequence: auction.bidderSequence || 'fixed',
             priceGranularity: auction.priceGranularity || 'medium',
-            storageControl: { enforce: true },
+            storageControl: auction.storageControl || { enforcement: 'strict' },
             allowActivities: auction.allowActivities || {}
         };
         var standalone = config.prebid && config.prebid.deliveryMode === 'STANDALONE';
@@ -1714,6 +1829,7 @@ function nativeDefinition(config, code) {
     }
 
     function scan(config) {
+        state.adInitializationStarted = true;
         if (!canRequestAds(config)) return Promise.resolve([]);
         discoverClickGuardIframes(config);
         return defineItems(config, eligibleElements(config)).then(function (defined) {
@@ -1769,6 +1885,7 @@ function nativeDefinition(config, code) {
     function boot(options) {
         options = options || {};
         var script = options.script || findScript();
+        var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
         if (!siteKey || !window.fetch) return Promise.resolve([]);
         if (state.booting && !options.force) return state.booting;
@@ -1790,6 +1907,7 @@ function nativeDefinition(config, code) {
                 log(config, 'Hostname rejected', currentHostname());
                 return [];
             }
+            return reportPrivacyDiagnostic(config, diagnostic).then(function () {
             if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
                 log(config, 'Advertising is disabled; no advertising calls were made');
                 return [];
@@ -1806,6 +1924,7 @@ function nativeDefinition(config, code) {
             if (maybeDelegateRelease(config, script)) return [];
             installSpaSupport();
             return scan(config);
+            });
         }).catch(function (error) {
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
@@ -1831,6 +1950,10 @@ function nativeDefinition(config, code) {
             state.config = null;
             state.gptPromise = null;
             state.prebidPromise = null;
+            state.privacyPromise = null;
+            state.privacyDecision = null;
+            state.privacyDiagnostic = null;
+            state.adInitializationStarted = false;
             state.servicesEnabled = false;
             state.initialLoadDisabled = false;
             state.slots = {};

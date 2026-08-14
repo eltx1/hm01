@@ -13,9 +13,7 @@ use App\Models\Site;
 
 final class PrebidConfigurationBuilder
 {
-    public function __construct(private readonly PrebidManager $manager)
-    {
-    }
+    public function __construct(private readonly PrebidManager $manager) {}
 
     public function build(
         Site $site,
@@ -119,6 +117,7 @@ final class PrebidConfigurationBuilder
                 'version' => $build?->version,
                 'url' => $build ? rtrim((string) config('prebid.cdn_url'), '/').'/'.ltrim($build->minified_path, '/') : null,
                 'checksum' => $build?->checksum,
+                'modules' => array_values((array) $build?->modules),
             ],
             'auction' => [
                 'timeoutMs' => (int) $context['auction_timeout_ms'],
@@ -131,6 +130,7 @@ final class PrebidConfigurationBuilder
                     'syncUser' => ['default' => false],
                     'transmitPreciseGeo' => ['default' => false],
                 ],
+                'storageControl' => ['enforcement' => 'strict'],
                 'ortb2' => ['site' => ['domain' => $site->primary_domain, 'publisher' => ['id' => $site->public_key]]],
             ],
             'delivery' => [

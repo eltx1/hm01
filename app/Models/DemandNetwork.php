@@ -15,7 +15,7 @@ class DemandNetwork extends Model
     protected $fillable = [
         'code', 'name', 'connector_class', 'default_integration_mode', 'is_enabled',
         'supports_direct_js', 'supports_gam_creative', 'supports_gam_line_item',
-        'supports_api', 'script_origins', 'capabilities', 'metadata',
+        'supports_api', 'script_origins', 'capabilities', 'privacy_capabilities', 'metadata',
     ];
 
     protected function casts(): array
@@ -30,6 +30,7 @@ class DemandNetwork extends Model
             'supports_api' => 'boolean',
             'script_origins' => 'array',
             'capabilities' => 'array',
+            'privacy_capabilities' => 'array',
             'metadata' => 'array',
         ];
     }

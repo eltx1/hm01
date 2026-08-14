@@ -46,6 +46,13 @@
                 <label>Approved script origins<textarea class="hm-input" rows="3" name="script_origins[]">{{ implode("
 ", $network->script_origins ?? []) }}</textarea></label>
                 <label>Health<select class="hm-input" name="operational_health">@foreach(['HEALTHY','DEGRADED','FAILED','UNKNOWN'] as $health)<option @selected(data_get($network->metadata, 'operational_health', 'UNKNOWN') === $health)>{{ $health }}</option>@endforeach</select></label>
+                <details><summary>Privacy capability evidence</summary>
+                    <p class="muted">Use UNKNOWN until current operator or official evidence exists.</p>
+                    @foreach(['tcf' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED'], 'gpp' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED'], 'gpc' => ['UNKNOWN','SUPPORTED','NOT_SUPPORTED']] as $field => $values)<label>{{ strtoupper($field) }}<select class="hm-input" name="privacy_{{ $field }}">@foreach($values as $value)<option @selected(data_get($network->privacy_capabilities, $field, 'UNKNOWN') === $value)>{{ $value }}</option>@endforeach</select></label>@endforeach
+                    @foreach(['consent_before_request','storage','user_sync'] as $field)<label>{{ str($field)->replace('_', ' ')->headline() }}<select class="hm-input" name="privacy_{{ $field }}">@foreach(['UNKNOWN','REQUIRED','NOT_REQUIRED'] as $value)<option @selected(data_get($network->privacy_capabilities, $field, 'UNKNOWN') === $value)>{{ $value }}</option>@endforeach</select></label>@endforeach
+                    <label>Official/operator evidence URL<input class="hm-input" type="url" name="privacy_evidence_url" value="{{ data_get($network->privacy_capabilities, 'evidence_url') }}"></label>
+                    <label>Verified at<input class="hm-input" type="date" name="privacy_verified_at" value="{{ data_get($network->privacy_capabilities, 'verified_at') }}"></label>
+                </details>
                 <button class="hm-button-secondary">Save network policy</button>
             </form>
             <form class="form-stack" method="POST" action="{{ route('admin.demand.networks.direct-js', $network) }}">@csrf @method('PATCH')

@@ -12,6 +12,9 @@ final class RuntimePolicyResolver
             'cmp' => [
                 'tcfVersion' => '2.3',
                 'gppVersion' => '1.1',
+                'tcfRequired' => false,
+                'gppRequired' => false,
+                'googleCmpEvidenceRequired' => false,
                 'timeoutMs' => 1200,
                 'actionOnTimeout' => 'LIMITED_ADS',
             ],

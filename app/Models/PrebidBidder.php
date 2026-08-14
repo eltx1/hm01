@@ -11,11 +11,11 @@ class PrebidBidder extends Model
 {
     use HasUlids;
 
-    protected $fillable = ['organization_id', 'prebid_adapter_id', 'code', 'display_name', 'default_public_parameters', 'enabled', 'sort_order'];
+    protected $fillable = ['organization_id', 'prebid_adapter_id', 'code', 'display_name', 'default_public_parameters', 'privacy_capabilities', 'enabled', 'sort_order'];
 
     protected function casts(): array
     {
-        return ['default_public_parameters' => 'array', 'enabled' => 'boolean'];
+        return ['default_public_parameters' => 'array', 'privacy_capabilities' => 'array', 'enabled' => 'boolean'];
     }
 
     public function adapter(): BelongsTo { return $this->belongsTo(PrebidAdapter::class, 'prebid_adapter_id'); }
