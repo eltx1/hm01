@@ -30,7 +30,7 @@ class AuthenticatedSessionController extends Controller
             $reason = 'invalid_credentials';
         } elseif ($user->isLocked()) {
             $reason = 'account_locked';
-        } elseif (! $user->isActive()) {
+        } elseif (! $user->canAuthenticate()) {
             $reason = 'account_inactive';
         }
 
@@ -65,7 +65,11 @@ class AuthenticatedSessionController extends Controller
         $this->recordLogin($request, $user, true, null, $email);
         $audit->record('auth.login.succeeded', $user->organization_id, $user);
 
-        return redirect()->intended(route('dashboard'));
+        if (! $user->isActive()) {
+            return redirect()->to($this->destination($user));
+        }
+
+        return redirect()->intended($this->destination($user));
     }
 
     public function destroy(Request $request, AuditRecorder $audit): RedirectResponse
@@ -92,5 +96,21 @@ class AuthenticatedSessionController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024),
         ]);
+    }
+
+    private function destination(User $user): string
+    {
+        if (! $user->isActive()) {
+            return $user->hasVerifiedEmail()
+                ? route('publisher-application.show')
+                : route('verification.notice');
+        }
+
+        $application = $user->publisherApplication()->with('publisher')->first();
+        if ($application?->approved_at && ! $application->publisher?->onboarding_submitted_at) {
+            return route('publisher.onboarding.show', 1);
+        }
+
+        return route('dashboard');
     }
 }

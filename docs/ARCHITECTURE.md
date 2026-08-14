@@ -145,6 +145,30 @@ See [ADR 0001](adr/0001-cloudflare-pages-static-delivery.md).
 
 ## Publisher onboarding control plane
 
+Public Publisher acquisition precedes, but does not replace, this control plane.
+The public route creates a pending canonical Organization, Publisher, and User,
+plus a separate `PublisherApplication`. The applicant authenticates through the
+existing Laravel guard but reaches only an application-specific middleware
+boundary. The normal `active` middleware still protects every operational route.
+
+~~~mermaid
+flowchart TD
+    A["Public registration"] --> B["Pending canonical account + application-only access"]
+    B --> C["Verified, submitted application"]
+    C --> D["Horus Admin decision"]
+    D -->|Approved| E["Existing Publisher onboarding"]
+    D -->|More information| B
+    D -->|Rejected| F["Status-only access"]
+    E --> G["Separate website review and serving activation"]
+~~~
+
+Submitted application revisions and lifecycle events are append-only. Task 24
+quality-profile versions are reused as application evidence, and THOTH remains
+advisory. Approval uses a locked idempotent handoff to activate the existing
+Publisher relationship and assign its default role. It creates no website,
+serving configuration, provider connection, or static-delivery work. See
+[Public Publisher Applications](PUBLIC_PUBLISHER_APPLICATIONS.md).
+
 The implemented module stores publisher commercial terms, encrypted payment
 profiles, private contract documents, websites, authorized domains, verification
 attempts, reviews, internal notes, status history, serving settings, and serving

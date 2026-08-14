@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Services\Audit\AuditRecorder;
+use App\Services\PublisherApplications\PublisherApplicationService;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -16,7 +17,7 @@ class EmailVerificationController extends Controller
         return view('auth.verify-email');
     }
 
-    public function verify(EmailVerificationRequest $request, AuditRecorder $audit): RedirectResponse
+    public function verify(EmailVerificationRequest $request, AuditRecorder $audit, PublisherApplicationService $applications): RedirectResponse
     {
         $wasVerified = $request->user()->hasVerifiedEmail();
         $request->fulfill();
@@ -25,7 +26,9 @@ class EmailVerificationController extends Controller
             $audit->record('auth.email.verified', $request->user()->organization_id, $request->user());
         }
 
-        return redirect()->route('dashboard');
+        $application = $applications->emailVerified($request->user());
+
+        return redirect()->route($application ? 'publisher-application.show' : 'dashboard');
     }
 
     public function send(Request $request): RedirectResponse

@@ -10,5 +10,6 @@
     <label class="check"><input type="checkbox" name="remember"> Keep me signed in</label>
     <button class="hm-button-primary" type="submit">Sign in</button>
     <a class="text-link" href="{{ route('password.request') }}">Forgot password?</a>
+    @if(config('publisher-applications.public_registration_enabled'))<a class="text-link" href="{{ route('publisher-registration.create') }}">Apply as a Publisher</a>@endif
 </form>
 @endsection

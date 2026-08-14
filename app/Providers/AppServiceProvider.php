@@ -79,6 +79,18 @@ class AppServiceProvider extends ServiceProvider
             Limit::perMinute(5)->by(str($request->input('email'))->lower().'|'.$request->ip()),
             Limit::perHour(30)->by($request->ip()),
         ]);
+        RateLimiter::for('publisher-registration', fn (Request $request) => [
+            Limit::perMinute(3)->by(str($request->input('email'))->lower()->trim().'|'.$request->ip()),
+            Limit::perHour(10)->by($request->ip()),
+        ]);
+        RateLimiter::for('publisher-application-write', fn (Request $request) => [
+            Limit::perMinute(10)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),
+            Limit::perHour(60)->by($request->user()?->id ?: $request->ip()),
+        ]);
+        RateLimiter::for('publisher-application-submit', fn (Request $request) => [
+            Limit::perMinute(2)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()),
+            Limit::perHour(5)->by($request->user()?->id ?: $request->ip()),
+        ]);
         RateLimiter::for('sensitive', fn (Request $request) => Limit::perMinute(10)->by(($request->user()?->id ?: 'guest').'|'.$request->ip()));
         RateLimiter::for('privacy-diagnostic-run', fn (Request $request) => [
             Limit::perMinute(3)->by(($request->user()?->id ?: 'guest').'|'.(is_object($request->route('site')) ? $request->route('site')->getKey() : (string) $request->route('site'))),

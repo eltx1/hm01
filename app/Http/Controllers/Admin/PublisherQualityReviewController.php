@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Publisher;
 use App\Models\PublisherQualityDecision;
@@ -52,6 +53,9 @@ final class PublisherQualityReviewController extends Controller
 
     public function decide(Request $request, Publisher $publisher, AuditRecorder $audit): RedirectResponse
     {
+        if ($publisher->application()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['decision' => 'THOTH is advisory only. Use the Publisher Applications workflow for the application decision.']);
+        }
         $data = $request->validate(['decision' => ['required', 'in:APPROVE,REJECT,NEEDS_INFORMATION'], 'reason' => ['required', 'string', 'max:5000'], 'review_run_id' => ['nullable', 'ulid', 'exists:publisher_quality_review_runs,id']]);
         if ($data['decision'] === 'APPROVE' && ! $publisher->onboarding_submitted_at) {
             throw ValidationException::withMessages(['decision' => 'The publisher must submit onboarding before approval.']);

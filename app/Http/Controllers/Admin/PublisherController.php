@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\OrganizationType;
+use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Organization;
@@ -17,6 +18,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class PublisherController extends Controller
@@ -87,6 +89,9 @@ class PublisherController extends Controller
     public function update(Request $request, Publisher $publisher, AuditRecorder $audit, SupplyChainInvariantService $identities): RedirectResponse
     {
         $data = $this->validated($request, $publisher);
+        if ($publisher->application()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['publisher' => 'Use the Publisher Applications workflow while this public application is pending a final decision.']);
+        }
         $businessDomain = array_key_exists('business_domain', $data) ? $data['business_domain'] : $publisher->business_domain;
         $data = array_merge($data, $identities->publisherIdentityAttributes($publisher, $businessDomain));
         $before = $publisher->only(['legal_name', 'display_name', 'business_domain', 'supply_chain_review_status', 'supply_chain_reviewed_at', 'supply_chain_reviewed_by', 'status', 'billing_email', 'dashboard_title', 'primary_color', 'internal_notes']);
@@ -101,6 +106,9 @@ class PublisherController extends Controller
 
     public function destroy(Request $request, Publisher $publisher, SessionInvalidator $sessions, AuditRecorder $audit): RedirectResponse
     {
+        if ($publisher->application()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['publisher' => 'A pending public application must reach an explicit lifecycle decision before its canonical Publisher can be deleted.']);
+        }
         $publisher->organization->users()->each(fn ($user) => $sessions->invalidate($user));
         $audit->record('publisher.deleted', $publisher->organization_id, $request->user(), $publisher, oldValues: $publisher->only(['legal_name', 'display_name']));
         DB::transaction(function () use ($publisher): void {

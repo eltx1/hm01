@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>@yield('title', 'Publisher Application') · Horus Media</title>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body>
+    <div class="applicant-shell">
+        <header class="applicant-topbar">
+            <div><a class="brand" href="{{ route('publisher-application.show') }}">Horus Media</a><p class="eyebrow">Publisher Application</p></div>
+            <div><span>{{ auth()->user()->email }}</span><form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button">Sign out</button></form></div>
+        </header>
+        <main class="applicant-content">
+            @if(session('status'))<div class="notice" role="status">{{ session('status') }}</div>@endif
+            @if(session('error'))<div class="notice error" role="alert">{{ session('error') }}</div>@endif
+            @if($errors->any())<div class="notice error" role="alert"><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+            @yield('content')
+        </main>
+    </div>
+</body>
+</html>

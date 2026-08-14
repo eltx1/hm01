@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\OrganizationType;
+use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Services\Audit\AuditRecorder;
@@ -40,8 +41,12 @@ class OrganizationController extends Controller
 
     public function update(Request $request, Organization $organization, AuditRecorder $audit): RedirectResponse
     {
+        $data = $this->validated($request, $organization);
+        if ($organization->publisherApplication()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['organization' => 'Use the Publisher Applications workflow while this public application is pending a final decision.']);
+        }
         $before = $organization->only(['name', 'slug', 'type', 'status', 'support_email', 'internal_notes']);
-        $organization->update($this->validated($request, $organization));
+        $organization->update($data);
         $audit->record('organization.updated', $organization->id, $request->user(), $organization, $before, $organization->only(array_keys($before)));
 
         return back()->with('status', 'Organization updated.');
@@ -50,6 +55,9 @@ class OrganizationController extends Controller
     public function destroy(Request $request, Organization $organization, SessionInvalidator $sessions, AuditRecorder $audit): RedirectResponse
     {
         abort_if($organization->type === OrganizationType::HorusMedia || $organization->id === $request->user()->organization_id, 422, 'The Horus or current organization cannot be deleted.');
+        if ($organization->publisherApplication()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['organization' => 'A pending public application must reach an explicit lifecycle decision before its canonical organization can be deleted.']);
+        }
         $organization->users()->each(fn ($user) => $sessions->invalidate($user));
         $audit->record('organization.deleted', $organization->id, $request->user(), $organization, oldValues: $organization->only(['name', 'type']));
         $organization->delete();

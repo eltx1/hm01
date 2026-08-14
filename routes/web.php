@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\GamConnectionController;
 use App\Http\Controllers\Admin\ImpersonationController;
 use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\Admin\OrganizationController;
+use App\Http\Controllers\Admin\PublisherApplicationController as AdminPublisherApplicationController;
 use App\Http\Controllers\Admin\PublisherController;
 use App\Http\Controllers\Admin\PublisherPaymentProfileController;
 use App\Http\Controllers\Admin\PublisherQualityReviewController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\Auth\InvitationController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Auth\PublicPublisherRegistrationController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\BrandingController;
 use App\Http\Controllers\DashboardController;
@@ -27,6 +29,7 @@ use App\Http\Controllers\Publisher\ContractController as PublisherContractContro
 use App\Http\Controllers\Publisher\OnboardingController;
 use App\Http\Controllers\Publisher\SiteController as PublisherSiteController;
 use App\Http\Controllers\Publisher\SiteVerificationController;
+use App\Http\Controllers\PublisherApplicationController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function (): void {
@@ -40,13 +43,25 @@ Route::middleware('guest')->group(function (): void {
     Route::post('/invitations/{token}', [InvitationController::class, 'accept'])->name('invitations.accept');
     Route::get('/two-factor/challenge', [TwoFactorController::class, 'challenge'])->name('two-factor.challenge');
     Route::post('/two-factor/challenge', [TwoFactorController::class, 'verifyChallenge'])->middleware('throttle:6,1')->name('two-factor.verify');
+    Route::get('/register/publisher', [PublicPublisherRegistrationController::class, 'create'])->name('publisher-registration.create');
+    Route::post('/register/publisher', [PublicPublisherRegistrationController::class, 'store'])->middleware('throttle:publisher-registration')->name('publisher-registration.store');
 });
 
-Route::middleware(['auth', 'active'])->group(function (): void {
+Route::middleware('auth')->group(function (): void {
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
     Route::get('/verify-email', [EmailVerificationController::class, 'notice'])->name('verification.notice');
     Route::get('/verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])->middleware('signed')->name('verification.verify');
     Route::post('/email/verification-notification', [EmailVerificationController::class, 'send'])->middleware('throttle:6,1')->name('verification.send');
+
+    Route::middleware('publisher.applicant')->group(function (): void {
+        Route::get('/publisher-application', [PublisherApplicationController::class, 'show'])->name('publisher-application.show');
+        Route::put('/publisher-application', [PublisherApplicationController::class, 'update'])->middleware('throttle:publisher-application-write')->name('publisher-application.update');
+        Route::post('/publisher-application/submit', [PublisherApplicationController::class, 'submit'])->middleware('throttle:publisher-application-submit')->name('publisher-application.submit');
+        Route::post('/publisher-application/withdraw', [PublisherApplicationController::class, 'withdraw'])->middleware('throttle:publisher-application-write')->name('publisher-application.withdraw');
+    });
+});
+
+Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/two-factor/setup', [TwoFactorController::class, 'setup'])->name('two-factor.setup');
     Route::post('/two-factor/confirm', [TwoFactorController::class, 'confirm'])->middleware('throttle:6,1')->name('two-factor.confirm');
     Route::get('/two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->name('two-factor.recovery-codes');
@@ -88,6 +103,12 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::put('/admin/organizations/{organization}', [OrganizationController::class, 'update'])->middleware('permission:organizations.manage')->name('admin.organizations.update');
         Route::delete('/admin/organizations/{organization}', [OrganizationController::class, 'destroy'])->middleware('permission:organizations.manage')->name('admin.organizations.destroy');
         Route::get('/admin/publishers', [PublisherController::class, 'index'])->middleware('permission:publishers.view')->name('admin.publishers.index');
+        Route::get('/admin/publishers/applications', [AdminPublisherApplicationController::class, 'index'])->middleware(['horus', 'permission:publisher_applications.view'])->name('admin.publisher-applications.index');
+        Route::get('/admin/publishers/applications/{application}', [AdminPublisherApplicationController::class, 'show'])->middleware(['horus', 'permission:publisher_applications.view'])->name('admin.publisher-applications.show');
+        Route::post('/admin/publishers/applications/{application}/start-review', [AdminPublisherApplicationController::class, 'startReview'])->middleware(['horus', 'permission:publisher_applications.review', 'throttle:sensitive'])->name('admin.publisher-applications.start-review');
+        Route::post('/admin/publishers/applications/{application}/request-information', [AdminPublisherApplicationController::class, 'requestInformation'])->middleware(['horus', 'permission:publisher_applications.review', 'throttle:sensitive'])->name('admin.publisher-applications.request-information');
+        Route::post('/admin/publishers/applications/{application}/approve', [AdminPublisherApplicationController::class, 'approve'])->middleware(['horus', 'permission:publisher_applications.review', 'throttle:sensitive'])->name('admin.publisher-applications.approve');
+        Route::post('/admin/publishers/applications/{application}/reject', [AdminPublisherApplicationController::class, 'reject'])->middleware(['horus', 'permission:publisher_applications.review', 'throttle:sensitive'])->name('admin.publisher-applications.reject');
         Route::get('/admin/publishers/create', [PublisherController::class, 'create'])->middleware('permission:publishers.manage')->name('admin.publishers.create');
         Route::post('/admin/publishers', [PublisherController::class, 'store'])->middleware('permission:publishers.manage')->name('admin.publishers.store');
         Route::get('/admin/publishers/{publisher}', [PublisherController::class, 'show'])->middleware(['horus', 'permission:publishers.view'])->name('admin.publishers.show');

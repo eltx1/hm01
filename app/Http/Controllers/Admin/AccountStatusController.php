@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\AccountStatus;
+use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Advertiser;
 use App\Models\Organization;
@@ -12,12 +13,16 @@ use App\Services\Identity\SessionInvalidator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class AccountStatusController extends Controller
 {
     public function organization(Request $request, Organization $organization, AuditRecorder $audit, SessionInvalidator $sessions): RedirectResponse
     {
         $status = $this->validatedStatus($request);
+        if ($status === AccountStatus::Active && $organization->publisherApplication()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['status' => 'Public application accounts must be approved through the Publisher Applications review workflow.']);
+        }
         $before = $organization->status->value;
         $organization->update(['status' => $status]);
         if ($status !== AccountStatus::Active) {
@@ -41,6 +46,10 @@ class AccountStatusController extends Controller
     private function updateAccount(Request $request, Model $account, AuditRecorder $audit, string $event): RedirectResponse
     {
         $status = $this->validatedStatus($request);
+        if ($status === AccountStatus::Active && $account instanceof Publisher
+            && $account->application()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['status' => 'Public application accounts must be approved through the Publisher Applications review workflow.']);
+        }
         $before = $account->status->value;
         $account->update(['status' => $status]);
         $this->audit($audit, $request, $account, $event, $before, $status);

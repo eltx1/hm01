@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\PublisherApplicationStatus;
 use App\Enums\UserStatus;
 use App\Http\Controllers\Controller;
 use App\Models\User;
@@ -9,6 +10,7 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Identity\SessionInvalidator;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
 {
@@ -38,6 +40,9 @@ class UserController extends Controller
     {
         $this->authorizeOrganization($request, $user);
         abort_if($user->is($request->user()), 422, 'You cannot delete yourself.');
+        if ($user->publisherApplication()->where('status', '!=', PublisherApplicationStatus::Approved->value)->exists()) {
+            throw ValidationException::withMessages(['user' => 'A pending public applicant identity must be retained until an explicit application decision. Suspend it for a security response.']);
+        }
         $sessions->invalidate($user);
         $audit->record('user.deleted', $user->organization_id, $request->user(), $user, oldValues: ['email' => $user->email]);
         $user->delete();

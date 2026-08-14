@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\NotificationCategory;
 use App\Mail\HorusNotificationMail;
 use App\Models\HorusNotification;
 use Illuminate\Console\Command;
@@ -22,7 +23,9 @@ class DeliverNotificationEmails extends Command
 
         foreach ($items as $item) {
             try {
-                if (! $item->recipient?->isActive()) {
+                $applicationAccountNotification = $item->category === NotificationCategory::Account
+                    && $item->recipient?->isPublisherApplicant();
+                if (! $item->recipient?->isActive() && ! $applicationAccountNotification) {
                     $item->update(['email_requested' => false]);
 
                     continue;
