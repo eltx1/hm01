@@ -43,7 +43,7 @@ final class TurnstileVerifier
         }
 
         $replayKey = 'publisher-turnstile:'.hash('sha256', $token);
-        if (! Cache::add($replayKey, true, now()->addMinutes(5))) {
+        if (! Cache::add ($replayKey, true, now()->addMinutes(5))) {
             $this->fail();
         }
     }
