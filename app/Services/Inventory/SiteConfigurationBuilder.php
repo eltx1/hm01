@@ -17,7 +17,7 @@ use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Operations\PlatformControlService;
 use App\Services\Prebid\PrebidConfigurationBuilder;
 use App\Services\Serving\SiteEngineStateResolver;
-use App\Services\SupplyChain\SupplyChainInvariantService;
+use App\Services\SupplyChain\SupplyChainStandardsContract;
 use App\Services\SupplyChain\SupplyChainObjectValidator;
 
 final class SiteConfigurationBuilder
@@ -27,7 +27,7 @@ final class SiteConfigurationBuilder
         private readonly PrebidConfigurationBuilder $prebid,
         private readonly DemandConfigurationBuilder $demand,
         private readonly PlatformControlService $controls,
-        private readonly SupplyChainInvariantService $supplyChain,
+        private readonly SupplyChainStandardsContract $supplyChain,
         private readonly SupplyChainObjectValidator $supplyChainValidator,
         private readonly RuntimePolicyResolver $runtimePolicies,
     ) {}

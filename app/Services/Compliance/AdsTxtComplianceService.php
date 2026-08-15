@@ -6,13 +6,13 @@ use App\Enums\AdsTxtComplianceStatus;
 use App\Models\Site;
 use App\Models\SupplyChainCheck;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
-use App\Services\SupplyChain\SupplyChainInvariantService;
+use App\Services\SupplyChain\SupplyChainStandardsContract;
 
 final class AdsTxtComplianceService
 {
     public function __construct(
         private readonly SupplyChainArtifactBuilder $artifacts,
-        private readonly SupplyChainInvariantService $invariants,
+        private readonly SupplyChainStandardsContract $contract,
         private readonly AdsTxtParser $parser,
         private readonly AdsTxtComparator $comparator,
     ) {}
@@ -20,7 +20,7 @@ final class AdsTxtComplianceService
     /** @return array<string, mixed> */
     public function canonical(Site $site): array
     {
-        $result = $this->invariants->adsTxtForSite($site);
+        $result = $this->contract->adsTxtForSite($site);
         $content = $this->artifacts->adsTxtForSite($site, $result);
         $entries = $result['entries'] ?? collect($result['records'])->values()->map(
             fn ($record, int $index): array => [

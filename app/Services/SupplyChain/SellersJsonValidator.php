@@ -8,13 +8,16 @@ use InvalidArgumentException;
 
 final class SellersJsonValidator
 {
-    public function __construct(private readonly DomainNormalizer $domains) {}
+    public function __construct(
+        private readonly DomainNormalizer $domains,
+        private readonly PublicExtensionGuard $extensions,
+    ) {}
 
     /** @return array<int, string> */
     public function validate(array $payload): array
     {
         $errors = [];
-        $allowedTopLevel = ['contact_email', 'contact_address', 'version', 'identifiers', 'sellers'];
+        $allowedTopLevel = ['contact_email', 'contact_address', 'version', 'identifiers', 'sellers', 'ext'];
         $unexpected = array_diff(array_keys($payload), $allowedTopLevel);
         if ($unexpected !== []) {
             $errors[] = 'Unexpected top-level field(s): '.implode(', ', $unexpected).'.';
@@ -33,6 +36,9 @@ final class SellersJsonValidator
         $address = $payload['contact_address'] ?? null;
         if ($address !== null && (! is_string($address) || trim($address) === '' || mb_strlen($address) > 1000 || $this->hasUnsafeText($address))) {
             $errors[] = 'contact_address must be bounded safe text when supplied.';
+        }
+        if (array_key_exists('ext', $payload)) {
+            $errors = array_merge($errors, $this->extensions->validate($payload['ext'], 'ext'));
         }
 
         $identifiers = $payload['identifiers'] ?? [];
@@ -54,13 +60,15 @@ final class SellersJsonValidator
         foreach (is_array($payload['sellers'] ?? null) ? $payload['sellers'] : [] as $index => $seller) {
             if (! is_array($seller)) {
                 $errors[] = 'Seller '.($index + 1).' must be an object.';
-
                 continue;
             }
-            $unexpected = array_diff(array_keys($seller), ['seller_id', 'seller_type', 'is_confidential', 'name', 'domain']);
+            $unexpected = array_diff(array_keys($seller), [
+                'seller_id', 'seller_type', 'is_confidential', 'is_passthrough', 'name', 'domain', 'comment', 'ext',
+            ]);
             if ($unexpected !== []) {
                 $errors[] = 'Seller '.($index + 1).' has unexpected field(s): '.implode(', ', $unexpected).'.';
             }
+
             $sellerId = $seller['seller_id'] ?? null;
             if (! is_string($sellerId) || $sellerId === '' || strlen($sellerId) > 64 || preg_match('/[\s,\x00-\x1F\x7F]/u', $sellerId)) {
                 $errors[] = 'Seller '.($index + 1).' has an invalid seller_id.';
@@ -73,27 +81,39 @@ final class SellersJsonValidator
             if (! is_string($seller['seller_type'] ?? null) || ! SellerType::tryFrom(strtoupper($seller['seller_type']))) {
                 $errors[] = 'Seller '.($index + 1).' has an invalid seller_type.';
             }
-            $confidential = $seller['is_confidential'] ?? 0;
-            if (! is_int($confidential) || ! in_array($confidential, [0, 1], true)) {
-                $errors[] = 'Seller '.($index + 1).' is_confidential must be integer 0 or 1.';
-                $confidential = 0;
+            foreach (['is_confidential', 'is_passthrough'] as $flag) {
+                if (array_key_exists($flag, $seller) && (! is_int($seller[$flag]) || ! in_array($seller[$flag], [0, 1], true))) {
+                    $errors[] = 'Seller '.($index + 1).' '.$flag.' must be integer 0 or 1.';
+                }
             }
+
+            $confidential = $seller['is_confidential'] ?? 0;
             if ($confidential === 1) {
                 if (array_key_exists('name', $seller) || array_key_exists('domain', $seller)) {
-                    $errors[] = 'Confidential seller '.($index + 1).' must omit public name and domain.';
+                    $errors[] = 'Confidential seller '.($index + 1).' must omit public name and domain in Horus public output.';
                 }
             } else {
                 $name = $seller['name'] ?? null;
                 if (! is_string($name) || trim($name) === '' || mb_strlen($name) > 255 || $this->hasUnsafeText($name)) {
                     $errors[] = 'Non-confidential seller '.($index + 1).' requires a safe public name.';
                 }
-                try {
-                    if (! is_string($seller['domain'] ?? null) || ! $this->domains->normalize($seller['domain'])) {
-                        $errors[] = 'Non-confidential seller '.($index + 1).' requires a business domain.';
+                if (array_key_exists('domain', $seller)) {
+                    try {
+                        if (! is_string($seller['domain']) || $this->domains->normalize($seller['domain']) !== $seller['domain']) {
+                            $errors[] = 'Seller '.($index + 1).' domain must be a canonical PSL+1 business domain.';
+                        }
+                    } catch (InvalidArgumentException) {
+                        $errors[] = 'Seller '.($index + 1).' has an invalid business domain.';
                     }
-                } catch (InvalidArgumentException) {
-                    $errors[] = 'Non-confidential seller '.($index + 1).' has an invalid business domain.';
                 }
+            }
+
+            if (array_key_exists('comment', $seller)
+                && (! is_string($seller['comment']) || mb_strlen($seller['comment']) > 1000 || $this->hasUnsafeText($seller['comment']))) {
+                $errors[] = 'Seller '.($index + 1).' comment must be bounded safe text.';
+            }
+            if (array_key_exists('ext', $seller)) {
+                $errors = array_merge($errors, $this->extensions->validate($seller['ext'], 'sellers.'.($index + 1).'.ext'));
             }
         }
 

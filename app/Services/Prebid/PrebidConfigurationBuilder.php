@@ -10,10 +10,15 @@ use App\Models\GamConnection;
 use App\Models\Placement;
 use App\Models\PrebidPriceBucket;
 use App\Models\Site;
+use App\Services\SupplyChain\DomainNormalizer;
+use InvalidArgumentException;
 
 final class PrebidConfigurationBuilder
 {
-    public function __construct(private readonly PrebidManager $manager) {}
+    public function __construct(
+        private readonly PrebidManager $manager,
+        private readonly DomainNormalizer $domains,
+    ) {}
 
     public function build(
         Site $site,
@@ -24,7 +29,7 @@ final class PrebidConfigurationBuilder
             ? $this->gamBridgeContext($connection)
             : $this->standaloneContext($site);
         $build = $context['build'];
-        $site->loadMissing(['placements.sizes']);
+        $site->loadMissing(['publisher', 'placements.sizes']);
 
         $siteMappings = BidderSiteMapping::withoutGlobalScopes()
             ->where('organization_id', $site->organization_id)
@@ -45,9 +50,6 @@ final class PrebidConfigurationBuilder
             ->map(function (Placement $placement) use ($siteMappings, $deliveryMode, $site): ?array {
                 $mediaTypes = $this->mediaTypes($placement);
                 if ($deliveryMode === PrebidDeliveryMode::Standalone && ! isset($mediaTypes['banner'])) {
-                    // Task 15 standalone runtime intentionally supports banner
-                    // only. Native/video require renderer/cache capabilities that
-                    // are not silently approximated.
                     return null;
                 }
                 if (isset($mediaTypes['banner']) && ($mediaTypes['banner']['sizes'] ?? []) === []) {
@@ -109,6 +111,15 @@ final class PrebidConfigurationBuilder
             && filled($build->minified_path)
             && $adUnits !== [];
 
+        $publisher = array_filter([
+            'name' => $site->publisher?->display_name ?: $site->publisher?->legal_name,
+            'domain' => $this->publisherDomain($site),
+        ], fn ($value): bool => filled($value));
+        $ortbSite = ['domain' => strtolower(rtrim((string) $site->primary_domain, '.'))];
+        if ($publisher !== []) {
+            $ortbSite['publisher'] = $publisher;
+        }
+
         return [
             'enabled' => $enabled,
             'hasProfile' => (bool) $context['has_profile'],
@@ -131,7 +142,7 @@ final class PrebidConfigurationBuilder
                     'transmitPreciseGeo' => ['default' => false],
                 ],
                 'storageControl' => ['enforcement' => 'strict'],
-                'ortb2' => ['site' => ['domain' => $site->primary_domain, 'publisher' => ['id' => $site->public_key]]],
+                'ortb2' => ['site' => $ortbSite],
             ],
             'delivery' => [
                 'mode' => $deliveryMode->value,
@@ -167,9 +178,6 @@ final class PrebidConfigurationBuilder
         if ($connection === null) {
             return $this->disabledContext();
         }
-
-        // Existing GAM behavior remains authoritative, including managed
-        // price buckets and setup objects.
         $settings = $this->manager->settingsFor($connection);
         $settings->loadMissing('build');
 
@@ -200,8 +208,6 @@ final class PrebidConfigurationBuilder
             'enabled' => (bool) $settings->enabled,
             'build' => $settings->build,
             'auction_timeout_ms' => (int) $settings->auction_timeout_ms,
-            // Price granularity is a normal Prebid auction setting here; no GAM
-            // bucket records or line-item requirements are consulted.
             'price_granularity' => $settings->price_granularity ?: 'medium',
             'currency' => (string) $settings->currency,
             'bidder_sequence' => $settings->bidder_sequence ?: 'fixed',
@@ -230,6 +236,19 @@ final class PrebidConfigurationBuilder
             'bidder_timeout_reporting' => false,
             'gam_fallback' => true,
         ];
+    }
+
+    private function publisherDomain(Site $site): ?string
+    {
+        $domain = trim((string) $site->publisher?->business_domain);
+        if ($domain === '') {
+            return null;
+        }
+        try {
+            return $this->domains->normalize($domain);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
     }
 
     private function mediaTypes(Placement $placement): array

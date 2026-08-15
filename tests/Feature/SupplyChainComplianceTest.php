@@ -239,7 +239,7 @@ class SupplyChainComplianceTest extends TestCase
     public function test_cross_validation_detects_unknown_ads_seller_and_intermediary_incompleteness(): void
     {
         $this->seed(DemandNetworkSeeder::class);
-        $intermediary = $this->seller('intermediary-42', 'INTERMEDIARY');
+        $intermediary = $this->seller('intermediary-42', 'INTERMEDIARY', false, null);
         $account = DemandAccount::withoutGlobalScopes()->create([
             'organization_id' => $this->admin->organization_id,
             'demand_network_id' => DemandNetwork::query()->where('code', 'MGID')->value('id'),
@@ -274,7 +274,7 @@ class SupplyChainComplianceTest extends TestCase
         $overview = app(SupplyChainComplianceService::class)->siteOverview($this->site);
         $codes = collect($overview['findings'])->pluck('code');
         $this->assertContains('ADS_TXT_UNKNOWN_HORUS_SELLER', $codes);
-        $this->assertContains('ADS_TXT_SELLER_AUTHORIZATION_MISSING', $codes);
+        $this->assertContains('ADS_TXT_RELATIONSHIP_UNCONFIGURED', $codes);
         $this->assertContains('SCHAIN_UPSTREAM_IDENTITY_REQUIRED', $codes);
         $this->assertSame(0, $overview['schain']['complete']);
         $this->assertSame('PARTIAL', $overview['schain_health']);
@@ -360,7 +360,7 @@ class SupplyChainComplianceTest extends TestCase
         $this->assertSame('confidential-conflict', $firstConfidential->seller_id);
     }
 
-    public function test_static_config_contains_only_valid_runtime_schain_and_omits_control_plane_identity_data(): void
+    public function test_static_config_contains_only_valid_runtime_schain_and_public_first_party_metadata(): void
     {
         $seller = $this->seller('runtime-42', 'BOTH');
         $config = app(SiteConfigurationBuilder::class)->build($this->site, ConfigEnvironment::Production, 1);
@@ -374,7 +374,7 @@ class SupplyChainComplianceTest extends TestCase
         $encoded = json_encode($config, JSON_THROW_ON_ERROR);
         $this->assertStringNotContainsString($seller->id, $encoded);
         $this->assertStringNotContainsString('Publisher One LLC', $encoded);
-        $this->assertStringNotContainsString('publisher-one-owner.example', $encoded);
+        $this->assertStringContainsString('publisher-one-owner.example', $encoded);
 
         app(SellerDeclarationManager::class)->deactivate($seller, $this->admin);
         $withoutSeller = app(SiteConfigurationBuilder::class)->build($this->site->refresh(), ConfigEnvironment::Production, 2);
@@ -396,12 +396,12 @@ class SupplyChainComplianceTest extends TestCase
         );
     }
 
-    private function seller(string $sellerId, string $type, bool $confidential = false): SellerDeclaration
+    private function seller(string $sellerId, string $type, bool $confidential = false, ?string $relationship = 'DIRECT'): SellerDeclaration
     {
-        return $this->sellerFor($this->publisher, $sellerId, $type, $confidential);
+        return $this->sellerFor($this->publisher, $sellerId, $type, $confidential, $relationship);
     }
 
-    private function sellerFor($publisher, string $sellerId, string $type, bool $confidential = false): SellerDeclaration
+    private function sellerFor($publisher, string $sellerId, string $type, bool $confidential = false, ?string $relationship = 'DIRECT'): SellerDeclaration
     {
         $manager = app(SellerDeclarationManager::class);
         $seller = $manager->create([
@@ -414,7 +414,9 @@ class SupplyChainComplianceTest extends TestCase
             'is_confidential' => $confidential,
         ], $this->admin);
         $manager->review($seller, SupplyChainReviewStatus::Verified, $this->admin);
+        $active = $manager->activate($seller->fresh(), $this->admin);
+        $active->forceFill(['ads_txt_relationship' => $relationship])->save();
 
-        return $manager->activate($seller->fresh(), $this->admin);
+        return $active->refresh();
     }
 }

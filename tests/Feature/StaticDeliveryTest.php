@@ -256,13 +256,16 @@ class StaticDeliveryTest extends TestCase
     public function test_snapshot_contains_ads_txt_1_1_sellers_json_and_synthetic_health(): void
     {
         [$site] = $this->siteWithPrimaryHorus();
+        $site->publisher()->update(['business_domain' => 'publisher.example']);
         SellerDeclaration::withoutGlobalScopes()->create([
             'organization_id' => $site->organization_id,
-            'site_id' => $site->id,
+            'publisher_id' => $site->publisher_id,
+            'site_id' => null,
             'seller_id' => 'publisher-42',
             'seller_type' => 'PUBLISHER',
+            'ads_txt_relationship' => 'DIRECT',
             'name' => 'Publisher Example',
-            'domain' => $site->primary_domain,
+            'domain' => 'publisher.example',
             'status' => 'ACTIVE',
         ]);
 
@@ -270,8 +273,8 @@ class StaticDeliveryTest extends TestCase
         $adsTxt = $files['supply/sites/'.$site->public_key.'/ads.txt'];
         $sellers = json_decode($files['sellers.json'], true, 512, JSON_THROW_ON_ERROR);
 
-        $this->assertStringContainsString('OWNERDOMAIN='.$site->primary_domain, $adsTxt);
-        $this->assertStringContainsString('MANAGERDOMAIN=', $adsTxt);
+        $this->assertStringContainsString('OWNERDOMAIN=publisher.example', $adsTxt);
+        $this->assertStringNotContainsString('MANAGERDOMAIN=', $adsTxt);
         $this->assertSame('publisher-42', $sellers['sellers'][0]['seller_id']);
         $this->assertArrayNotHasKey('identifiers', $sellers);
         $this->assertSame($files['sellers.json'], $files['supply/sellers.json']);
