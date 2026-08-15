@@ -37,8 +37,8 @@ final class TurnstileVerifier
             $this->fail();
         }
 
-        $challengeAt = isset($result['challenge_ts']) ? strtotime((string) $result['challenge_ts']) : false;
-        if ($challengeAt !== false && (time() - $challengeAt > 300 || $challengeAt > time() + 30)) {
+        $challengeAt = strtotime((string) ($result['challenge_ts'] ?? ''));
+        if ($challengeAt === false || time() - $challengeAt > 300 || $challengeAt > time() + 30) {
             $this->fail();
         }
 
@@ -72,7 +72,9 @@ final class TurnstileVerifier
             $this->fail();
         }
 
-        return $response->json() ?: [];
+        $payload = $response->json();
+
+        return is_array($payload) ? $payload : [];
     }
 
     private function usesDeterministicProvider(): bool
