@@ -1,4 +1,4 @@
-@extends('layouts.guest')
+@extends(session('auth_surface') === 'admin' ? 'layouts.staff-auth' : 'layouts.guest')
 @section('title', 'Recovery codes')
 @section('content')
 <h1>Save your recovery codes</h1>
