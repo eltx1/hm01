@@ -61,7 +61,30 @@ class TwoFactorController extends Controller
     public function verifyChallenge(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
         $data = $request->validate(['code' => ['required', 'string']]);
-        $user = User::findOrFail($request->session()->get('two_factor_user_id'));
+        $context = $request->session()->get('two_factor_context');
+        $user = User::with('organization')->find($request->session()->get('two_factor_user_id'));
+
+        if (! $user
+            || ! $user->two_factor_secret
+            || ! $user->two_factor_confirmed_at
+            || ! $user->canAuthenticate()
+            || ($context === 'admin' && (! $user->isActive() || ! $user->isHorusAdministrator()))) {
+            $request->session()->forget(['two_factor_user_id', 'two_factor_remember', 'two_factor_context']);
+            if ($user) {
+                $audit->record(
+                    $context === 'admin' && ! $user->isHorusAdministrator()
+                        ? 'admin_auth.non_horus_denied'
+                        : 'admin_auth.failed',
+                    $user->organization_id,
+                    $user,
+                    metadata: ['reason' => 'two_factor_identity_ineligible'],
+                    request: $request,
+                );
+            }
+
+            throw ValidationException::withMessages(['code' => 'The authentication or recovery code is invalid.']);
+        }
+
         $valid = $twoFactor->verify($user->two_factor_secret, $data['code']);
         $usedRecovery = false;
         if (! $valid) {
@@ -69,18 +92,66 @@ class TwoFactorController extends Controller
             $valid = $usedRecovery;
         }
         if (! $valid) {
-            $user->forceFill(['failed_login_count' => $user->failed_login_count + 1, 'last_failed_login_at' => now()])->save();
-            LoginEvent::create(['organization_id' => $user->organization_id, 'user_id' => $user->id, 'email' => $user->email, 'successful' => false, 'failure_reason' => 'two_factor_invalid', 'ip_address' => $request->ip(), 'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024)]);
+            $user->forceFill([
+                'failed_login_count' => $user->failed_login_count + 1,
+                'last_failed_login_at' => now(),
+            ])->save();
+            LoginEvent::create([
+                'organization_id' => $user->organization_id,
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'successful' => false,
+                'failure_reason' => 'two_factor_invalid',
+                'ip_address' => $request->ip(),
+                'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024),
+            ]);
+            if ($context === 'admin') {
+                $audit->record(
+                    'admin_auth.failed',
+                    $user->organization_id,
+                    $user,
+                    metadata: ['reason' => 'two_factor_invalid'],
+                    request: $request,
+                );
+            }
             throw ValidationException::withMessages(['code' => 'The authentication or recovery code is invalid.']);
         }
 
-        Auth::login($user, (bool) $request->session()->pull('two_factor_remember', false));
-        $request->session()->forget('two_factor_user_id');
+        $remember = (bool) $request->session()->pull('two_factor_remember', false);
+        Auth::login($user, $remember);
+        $request->session()->forget(['two_factor_user_id', 'two_factor_context']);
         $request->session()->regenerate();
         $request->session()->put('two_factor_passed_at', now()->timestamp);
-        $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0])->save();
-        LoginEvent::create(['organization_id' => $user->organization_id, 'user_id' => $user->id, 'email' => $user->email, 'successful' => true, 'ip_address' => $request->ip(), 'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024)]);
+        if ($context === 'admin') {
+            $request->session()->put('auth_surface', 'admin');
+        }
+        $user->forceFill([
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+            'failed_login_count' => 0,
+            'locked_until' => null,
+            'lock_reason' => null,
+        ])->save();
+        LoginEvent::create([
+            'organization_id' => $user->organization_id,
+            'user_id' => $user->id,
+            'email' => $user->email,
+            'successful' => true,
+            'ip_address' => $request->ip(),
+            'user_agent' => mb_substr((string) $request->userAgent(), 0, 1024),
+        ]);
         $audit->record($usedRecovery ? 'auth.two_factor.recovery_used' : 'auth.two_factor.challenge_passed', $user->organization_id, $user);
+        if ($context === 'admin') {
+            $audit->record(
+                'admin_auth.succeeded',
+                $user->organization_id,
+                $user,
+                metadata: ['factor' => $usedRecovery ? 'recovery_code' : 'totp'],
+                request: $request,
+            );
+
+            return redirect()->to($this->safeAdminIntendedDestination($request));
+        }
 
         return redirect()->intended(route('dashboard'));
     }
@@ -113,5 +184,32 @@ class TwoFactorController extends Controller
         $audit->record('auth.two_factor.disabled', $user->organization_id, $user);
 
         return redirect()->route('two-factor.setup');
+    }
+
+    private function safeAdminIntendedDestination(Request $request): string
+    {
+        $fallback = route('dashboard', absolute: false);
+        $intended = $request->session()->pull('url.intended');
+        if (! is_string($intended) || $intended === '') {
+            return $fallback;
+        }
+
+        $parts = parse_url($intended);
+        if ($parts === false) {
+            return $fallback;
+        }
+
+        if (isset($parts['host']) && strcasecmp((string) $parts['host'], $request->getHost()) !== 0) {
+            return $fallback;
+        }
+
+        $path = (string) ($parts['path'] ?? '/');
+        if ($path !== '/' && $path !== '/admin' && ! str_starts_with($path, '/admin/')) {
+            return $fallback;
+        }
+
+        $query = isset($parts['query']) && $parts['query'] !== '' ? '?'.$parts['query'] : '';
+
+        return $path.$query;
     }
 }
