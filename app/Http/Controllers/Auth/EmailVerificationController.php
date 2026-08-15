@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Services\Audit\AuditRecorder;
+use App\Services\PublisherApplications\PublisherApplicantEmailService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 use Illuminate\Http\RedirectResponse;
@@ -31,9 +32,9 @@ class EmailVerificationController extends Controller
         return redirect()->route($application ? 'publisher-application.show' : 'dashboard');
     }
 
-    public function send(Request $request): RedirectResponse
+    public function send(Request $request, PublisherApplicantEmailService $emails): RedirectResponse
     {
-        $request->user()->sendEmailVerificationNotification();
+        $emails->sendVerification($request->user());
 
         return back()->with('status', 'verification-link-sent');
     }
