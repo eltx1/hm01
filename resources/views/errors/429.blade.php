@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Try again shortly · Horus Media')
+@section('code', '429')
+@section('heading', 'Too many requests')
+@section('message', 'This action has been temporarily rate limited to protect the account and platform. Please wait briefly before trying again; no permanent IP block has been applied by this page.')

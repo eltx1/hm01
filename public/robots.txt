@@ -1,2 +1,4 @@
+# Horus Media Control Plane is a private product surface, not the public marketing site.
+# robots.txt is crawl guidance only; authentication and authorization remain the security boundary.
 User-agent: *
-Disallow:
+Disallow: /

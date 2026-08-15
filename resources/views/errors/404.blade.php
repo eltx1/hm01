@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Page not found · Horus Media')
+@section('code', '404')
+@section('heading', 'Page not found')
+@section('message', 'The page may have moved, the link may have expired, or the resource may not be available to your account. Use the Control Plane navigation to continue.')

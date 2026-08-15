@@ -22,8 +22,13 @@ class UserInvitationNotification extends Notification
     {
         return (new MailMessage)
             ->subject('Your Horus Media invitation')
-            ->line('You have been invited to a Horus Media organization.')
-            ->action('Accept invitation', route('invitations.accept.show', $this->token))
-            ->line('This secure invitation expires in 48 hours and can be used once.');
+            ->view('emails.auth-action', [
+                'title' => 'Your Horus Media invitation',
+                'heading' => 'You are invited to Horus Media',
+                'lines' => ['An administrator invited this email address to a Horus Media organization.'],
+                'actionText' => 'Accept invitation',
+                'actionUrl' => route('invitations.accept.show', $this->token),
+                'afterLines' => ['This secure invitation expires in 48 hours and can be used once. If you were not expecting this invitation, you can ignore this email.'],
+            ]);
     }
 }

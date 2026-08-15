@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Access not available · Horus Media')
+@section('code', '403')
+@section('heading', 'Access not available')
+@section('message', 'Your account does not have permission to use this area. If you believe you need access, contact your organization administrator or Horus Media support.')

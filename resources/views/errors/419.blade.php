@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Session expired · Horus Media')
+@section('code', '419')
+@section('heading', 'Your session expired')
+@section('message', 'For your security, this request can no longer be submitted. Sign in again if needed, then retry the action from the current page.')

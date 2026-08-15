@@ -18,6 +18,7 @@ final class SecureResponseHeaders
         $response->headers->set('Content-Security-Policy', $this->contentSecurityPolicy());
         $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');
         $response->headers->set('Cross-Origin-Resource-Policy', 'same-site');
+        $response->headers->set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
         if ($request->isSecure() && app()->environment('production')) {
             $value = 'max-age='.(int) config('security.headers.hsts_max_age');
             if (config('security.headers.hsts_include_subdomains')) $value .= '; includeSubDomains';

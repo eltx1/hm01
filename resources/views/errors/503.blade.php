@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Temporarily unavailable · Horus Media')
+@section('code', '503')
+@section('heading', 'Temporarily unavailable')
+@section('message', 'Horus Media is temporarily unavailable while the Control Plane is being maintained or recovered. Please return shortly; your account data is not displayed on this page.')
