@@ -1,0 +1,5 @@
+@extends('layouts.error')
+@section('title', 'Something went wrong · Horus Media')
+@section('code', '500')
+@section('heading', 'Something went wrong')
+@section('message', 'The Control Plane could not complete this request. No technical details are exposed here. Retry from a safe page, and contact support if the problem continues.')
