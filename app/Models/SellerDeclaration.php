@@ -15,7 +15,7 @@ class SellerDeclaration extends Model
 {
     use BelongsToOrganization, HasUlids;
 
-    protected $fillable = ['organization_id', 'publisher_id', 'site_id', 'seller_id', 'seller_type', 'name', 'domain', 'is_confidential', 'status', 'review_status', 'last_verified_at', 'reviewed_at', 'reviewed_by', 'metadata'];
+    protected $fillable = ['organization_id', 'publisher_id', 'site_id', 'seller_id', 'seller_type', 'ads_txt_relationship', 'name', 'domain', 'is_confidential', 'status', 'review_status', 'last_verified_at', 'reviewed_at', 'reviewed_by', 'metadata'];
 
     protected static function booted(): void
     {

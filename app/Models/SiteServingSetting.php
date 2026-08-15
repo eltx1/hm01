@@ -13,7 +13,7 @@ class SiteServingSetting extends Model
 {
     use BelongsToOrganization, HasUlids;
 
-    protected $fillable = ['organization_id', 'site_id', 'serving_mode', 'revenue_share_percent', 'prebid_enabled', 'prebid_configured_mode', 'native_demand_enabled', 'placement_plan', 'configuration_version'];
+    protected $fillable = ['organization_id', 'site_id', 'serving_mode', 'revenue_share_percent', 'prebid_enabled', 'prebid_configured_mode', 'native_demand_enabled', 'monetization_manager_domain', 'monetization_manager_relationship', 'monetization_manager_country', 'placement_plan', 'configuration_version'];
 
     protected function casts(): array
     {
