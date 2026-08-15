@@ -155,7 +155,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertAuthenticatedAs($user);
 
         $this->post('/logout');
-        $this->get('/admin/publishers')->assertRedirect('/login');
+        $this->get('/admin/publishers')->assertRedirect(route('admin.login'));
         $this->post('/login', ['email' => $user->email, 'password' => 'Secure-Password-2026!'])
             ->assertRedirect(route('publisher-application.show'));
     }
