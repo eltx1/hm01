@@ -12,6 +12,9 @@ final class PublicExtensionGuard
         if (! is_array($value)) {
             return [$path.' must be a JSON object.'];
         }
+        if ($value !== [] && array_is_list($value)) {
+            return [$path.' must be a JSON object, not an array.'];
+        }
         if ($depth > 4) {
             return [$path.' exceeds the maximum public extension depth.'];
         }

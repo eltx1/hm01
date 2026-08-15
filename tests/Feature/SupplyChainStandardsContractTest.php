@@ -182,6 +182,23 @@ class SupplyChainStandardsContractTest extends TestCase
         $this->assertSame(['DIRECT', 'RESELLER'], array_column($parsed['records'], 'relationship'));
     }
 
+    public function test_runtime_static_config_uses_the_same_canonical_seller_contract(): void
+    {
+        app(SupplyChainInvariantService::class)->saveSellerDeclaration($this->publisher, $this->site, [
+            'seller_id' => 'site-runtime-100',
+            'seller_type' => 'PUBLISHER',
+            'name' => 'Canonical Publisher LLC',
+            'domain' => 'canonical-publisher.example',
+            'is_confidential' => false,
+        ], $this->admin)->forceFill(['ads_txt_relationship' => 'DIRECT'])->save();
+
+        $config = app(\App\Services\Inventory\SiteConfigurationBuilder::class)
+            ->build($this->site, \App\Enums\ConfigEnvironment::Production, 1);
+
+        $this->assertArrayNotHasKey('supplyChain', $config);
+        $this->assertStringNotContainsString('site-runtime-100', json_encode($config, JSON_THROW_ON_ERROR));
+    }
+
     private function globalSeller(string $sellerId, ?string $relationship, string $sellerType = 'PUBLISHER'): SellerDeclaration
     {
         $seller = app(SupplyChainInvariantService::class)->saveSellerDeclaration($this->publisher, null, [

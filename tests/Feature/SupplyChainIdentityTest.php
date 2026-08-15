@@ -48,7 +48,7 @@ class SupplyChainIdentityTest extends TestCase
         $this->assertSame(SupplyChainInvariantService::OWNER_DOMAIN_DECLARED, app(SupplyChainInvariantService::class)->ownerIdentity($site)['source']);
     }
 
-    public function test_legacy_publisher_keeps_artifact_with_explicit_review_required_fallback(): void
+    public function test_legacy_publisher_keeps_internal_review_fallback_but_does_not_publish_unreviewed_ownerdomain(): void
     {
         [$publisher, $site] = $this->context(null, 'legacy-news.example');
 
@@ -59,7 +59,7 @@ class SupplyChainIdentityTest extends TestCase
         $this->assertSame(SupplyChainReviewStatus::ReviewRequired, $publisher->supply_chain_review_status);
         $this->assertSame(SupplyChainInvariantService::OWNER_DOMAIN_LEGACY_FALLBACK, $owner['source']);
         $this->assertSame('OWNER_DOMAIN_REVIEW_REQUIRED', $owner['findings'][0]['code']);
-        $this->assertStringContainsString("OWNERDOMAIN=legacy-news.example\n", $adsTxt);
+        $this->assertStringNotContainsString('OWNERDOMAIN=', $adsTxt);
     }
 
     public function test_admin_business_domain_change_is_normalized_audited_and_resets_review(): void
