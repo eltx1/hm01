@@ -4,11 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
     <title>@yield('title') · Horus Media Staff</title>
     <x-brand.favicons />
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="auth-page staff-auth-page">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="auth-shell">
         <aside class="auth-context" aria-label="Horus Media staff identity">
             <div class="auth-context-content">
@@ -24,10 +26,11 @@
             </div>
         </aside>
         <div class="auth-workspace">
-            <main class="auth-card hm-panel">
+            <main class="auth-card hm-panel" id="main-content" tabindex="-1">
                 <a class="auth-card-brand" href="{{ route('admin.login') }}" aria-label="Horus Media staff sign in"><x-brand.full-logo /></a>
                 <p class="eyebrow">Secure Staff Access</p>
                 @if (session('status')) <div class="notice" role="status">{{ session('status') }}</div> @endif
+                @if ($errors->any())<div class="notice error validation-summary" role="alert" tabindex="-1"><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
                 @yield('content')
             </main>
             <p class="auth-product-note">Authorized Horus Media staff only. Customer accounts should use the standard portal.</p>
