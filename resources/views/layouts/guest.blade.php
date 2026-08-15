@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title') · Horus Media</title>
     <x-brand.favicons />
-    @vite(['resources/css/app.css', 'resources/css/publisher-application.css', 'resources/js/app.js'])
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="auth-page">
     <div class="auth-shell">
