@@ -3,21 +3,20 @@
 namespace App\Services\Compliance;
 
 use App\Enums\SellerDeclarationStatus;
-use App\Enums\SellerType;
 use App\Enums\SupplyChainReviewStatus;
 use App\Models\Publisher;
 use App\Models\SellerDeclaration;
 use App\Models\Site;
 use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
-use App\Services\SupplyChain\SupplyChainInvariantService;
+use App\Services\SupplyChain\SupplyChainStandardsContract;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
 final class SupplyChainComplianceService
 {
     public function __construct(
-        private readonly SupplyChainInvariantService $invariants,
+        private readonly SupplyChainStandardsContract $contract,
         private readonly SupplyChainArtifactBuilder $artifacts,
         private readonly CanonicalJson $json,
     ) {}
@@ -70,7 +69,7 @@ final class SupplyChainComplianceService
             $findings->push($this->finding(
                 'ACTIVE_SELLER_NOT_PUBLISHED',
                 'ERROR',
-                'The active declaration is excluded from sellers.json because its canonical identity is incomplete or conflicting.',
+                'The active declaration is excluded from sellers.json because its canonical legal-entity identity is incomplete or conflicting.',
                 $declaration,
             ));
         }
@@ -109,23 +108,24 @@ final class SupplyChainComplianceService
     /** @return array<string, mixed> */
     public function siteOverview(Site $site, ?array $network = null): array
     {
-        $network ??= $this->invariants->sellers();
-        $selection = $this->invariants->sellerForSite($site, $network);
-        $adsTxt = $this->invariants->adsTxtForSite($site, $network);
-        $schain = $this->invariants->schainForSite($site, $network);
+        $network ??= $this->contract->sellers();
+        $selection = $this->contract->sellerForSite($site, $network);
+        $adsTxt = $this->contract->adsTxtForSite($site, $network);
+        $schain = $this->contract->schainForSite($site, $network);
         $published = collect($network['sellers'])->keyBy(fn (array $seller): string => (string) data_get($seller, 'payload.seller_id'));
         $findings = collect(array_merge($selection['findings'], $adsTxt['findings'], $schain['findings']));
-        $managerDomain = null;
+        $systemDomain = null;
         try {
-            $managerDomain = $this->invariants->managerDomain();
+            $systemDomain = $this->contract->horusAdvertisingSystemDomain();
+            $this->contract->managerDirectiveForSite($site);
         } catch (InvalidArgumentException) {
-            $findings->push($this->finding('MANAGER_DOMAIN_INVALID', 'ERROR', 'The configured Horus manager domain is invalid.'));
+            $findings->push($this->finding('MANAGER_DOMAIN_INVALID', 'ERROR', 'The explicitly configured monetization-manager contract is invalid.'));
         }
 
-        $managerRecords = collect($adsTxt['lines'])->map(fn (string $line): array => array_map('trim', explode(',', $line)))
-            ->filter(fn (array $fields): bool => count($fields) >= 3 && strtolower($fields[0]) === $managerDomain)
+        $horusRecords = collect($adsTxt['lines'])->map(fn (string $line): array => array_map('trim', explode(',', $line)))
+            ->filter(fn (array $fields): bool => count($fields) >= 3 && $systemDomain !== null && strtolower($fields[0]) === $systemDomain)
             ->values();
-        foreach ($managerRecords as $fields) {
+        foreach ($horusRecords as $fields) {
             $sellerId = $fields[1];
             $seller = $published->get($sellerId);
             if (! $seller) {
@@ -136,25 +136,23 @@ final class SupplyChainComplianceService
                     sellerId: $sellerId,
                     site: $site,
                 ));
-
                 continue;
             }
             if ((string) $seller['publisher_id'] !== (string) $site->publisher_id) {
                 $findings->push($this->finding(
                     'ADS_TXT_SELLER_ENTITY_MISMATCH',
                     'ERROR',
-                    'Ads.txt authorizes a Horus seller ID belonging to another paid entity.',
+                    'Ads.txt authorizes a Horus seller ID belonging to another paid legal entity.',
                     sellerId: $sellerId,
                     site: $site,
                 ));
             }
-            $type = SellerType::from((string) data_get($seller, 'payload.seller_type'));
-            $relationship = strtoupper($fields[2]);
-            if ($type !== SellerType::Both && $relationship !== $type->expectedAdsTxtRelationship()) {
+            $configured = strtoupper(trim((string) $seller['declaration']->ads_txt_relationship));
+            if (! in_array($configured, ['DIRECT', 'RESELLER'], true) || strtoupper($fields[2]) !== $configured) {
                 $findings->push($this->finding(
-                    'ADS_TXT_SELLER_TYPE_MISMATCH',
+                    'ADS_TXT_RELATIONSHIP_CONTRACT_MISMATCH',
                     'ERROR',
-                    'The Ads.txt relationship does not match the seller type declared by Horus.',
+                    'The public ads.txt relationship does not match the explicitly configured relationship contract.',
                     sellerId: $sellerId,
                     site: $site,
                 ));
@@ -162,7 +160,7 @@ final class SupplyChainComplianceService
         }
 
         foreach ($schain['nodes'] as $node) {
-            if ($managerDomain && strtolower((string) $node['asi']) === $managerDomain && ! $published->has((string) $node['sid'])) {
+            if ($systemDomain && strtolower((string) $node['asi']) === $systemDomain && ! $published->has((string) $node['sid'])) {
                 $findings->push($this->finding(
                     'SCHAIN_UNKNOWN_SELLER',
                     'ERROR',
@@ -174,17 +172,20 @@ final class SupplyChainComplianceService
         }
 
         $selectedSellerId = $selection['seller'] ? (string) data_get($selection['seller'], 'payload.seller_id') : null;
-        $hasAdsAuthorization = $selectedSellerId !== null && $managerRecords->contains(
+        $selectedRelationship = $selection['seller']
+            ? strtoupper(trim((string) $selection['seller']['declaration']->ads_txt_relationship))
+            : '';
+        $hasAdsAuthorization = $selectedSellerId !== null && $horusRecords->contains(
             fn (array $fields): bool => (string) $fields[1] === $selectedSellerId,
         );
         $hasSchainNode = $selectedSellerId !== null && collect($schain['nodes'])->contains(
-            fn (array $node): bool => (string) $node['asi'] === $managerDomain && (string) $node['sid'] === $selectedSellerId,
+            fn (array $node): bool => (string) $node['asi'] === $systemDomain && (string) $node['sid'] === $selectedSellerId,
         );
-        if ($selectedSellerId && ! $hasAdsAuthorization) {
+        if ($selectedSellerId && in_array($selectedRelationship, ['DIRECT', 'RESELLER'], true) && ! $hasAdsAuthorization) {
             $findings->push($this->finding(
                 'ADS_TXT_SELLER_AUTHORIZATION_MISSING',
                 'ERROR',
-                'The selected Horus seller ID is not present in this website’s canonical Ads.txt output.',
+                'The selected Horus seller ID has an explicit relationship but is absent from this website’s canonical ads.txt output.',
                 sellerId: $selectedSellerId,
                 site: $site,
             ));
@@ -204,7 +205,7 @@ final class SupplyChainComplianceService
         return [
             'site' => $site,
             'seller_id' => $selectedSellerId,
-            'ads_txt_health' => $selectedSellerId ? ($hasAdsAuthorization ? 'HEALTHY' : 'CONFLICT') : 'NOT_CONFIGURED',
+            'ads_txt_health' => ! $selectedSellerId ? 'NOT_CONFIGURED' : ($hasAdsAuthorization ? 'HEALTHY' : (in_array($selectedRelationship, ['DIRECT', 'RESELLER'], true) ? 'CONFLICT' : 'NOT_CONFIGURED')),
             'schain_health' => $selectedSellerId ? ($hasSchainNode ? ($schain['complete'] === 1 ? 'HEALTHY' : 'PARTIAL') : 'CONFLICT') : 'NOT_CONFIGURED',
             'schain' => ['complete' => $schain['complete'], 'ver' => $schain['ver'], 'nodes' => $schain['nodes']],
             'findings' => $findings->all(),
@@ -250,7 +251,7 @@ final class SupplyChainComplianceService
      */
     private function networkWithStoredDeclarationFindings(?array $network = null): array
     {
-        $network ??= $this->invariants->sellers();
+        $network ??= $this->contract->sellers();
         if (! array_key_exists('declaration_findings', $network)) {
             $network['declaration_findings'] = $this->storedDeclarationFindings()->all();
         }
