@@ -6,13 +6,13 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Publisher Application') · Horus Media</title>
     <x-brand.favicons />
-    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    @vite(['resources/css/app.css', 'resources/css/publisher-application.css', 'resources/js/app.js'])
 </head>
 <body>
     <div class="applicant-shell">
         <header class="applicant-topbar">
             <div><x-brand.product-lockup context="horus" variant="header" :href="route('publisher-application.show')" class="applicant-brand" /><p class="eyebrow">Publisher Application</p></div>
-            <div><span>{{ auth()->user()->email }}</span><form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button">Sign out</button></form></div>
+            <div>@if(config('publisher-applications.support_url'))<a class="text-link" href="{{ config('publisher-applications.support_url') }}">Need help?</a>@endif<span>{{ auth()->user()->email }}</span><form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button">Sign out</button></form></div>
         </header>
         <main class="applicant-content">
             @if(session('status'))<div class="notice" role="status">{{ session('status') }}</div>@endif
