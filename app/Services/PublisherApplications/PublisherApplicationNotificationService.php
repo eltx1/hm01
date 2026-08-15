@@ -13,7 +13,7 @@ final class PublisherApplicationNotificationService
 
     public function submitted(PublisherApplication $application): int
     {
-        return $this->notifications->notify($this->notifications->horusRecipients('publisher_applications.review'), [
+        $staff = $this->notifications->notify($this->notifications->horusRecipients('publisher_applications.review'), [
             'category' => NotificationCategory::Account,
             'type' => 'PUBLISHER_APPLICATION_SUBMITTED',
             'severity' => NotificationSeverity::Info,
@@ -25,6 +25,20 @@ final class PublisherApplicationNotificationService
             'action_route' => 'admin.publisher-applications.show',
             'action_parameters' => ['application' => $application->id],
         ]);
+
+        $resubmission = $application->current_revision > 1;
+        $applicant = $this->applicant(
+            $application,
+            $resubmission ? 'PUBLISHER_APPLICATION_RESUBMITTED' : 'PUBLISHER_APPLICATION_RECEIVED',
+            NotificationSeverity::Info,
+            $resubmission ? 'Publisher application resubmitted' : 'Publisher application received',
+            $resubmission
+                ? 'Horus Media received your updated Publisher application. Sign in at any time to view its current status.'
+                : 'Horus Media received your Publisher application. Sign in at any time to view its current status.',
+            'received:'.$application->current_revision,
+        );
+
+        return $staff + $applicant;
     }
 
     public function informationRequested(PublisherApplication $application): int
