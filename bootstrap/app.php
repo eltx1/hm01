@@ -39,6 +39,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'routing_reference',
             'tax_identifier',
             'payment_details',
+            'cf-turnstile-response',
+            '_company_website',
         ]);
         $exceptions->report(function (Throwable $exception): void {
             Log::error('unhandled_exception', [
