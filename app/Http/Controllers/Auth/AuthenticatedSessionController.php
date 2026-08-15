@@ -49,11 +49,14 @@ class AuthenticatedSessionController extends Controller
             return back()->withErrors(['email' => 'The provided credentials or account status are invalid.'])->onlyInput('email');
         }
 
+        $request->session()->forget(['two_factor_user_id', 'two_factor_remember', 'two_factor_context', 'auth_surface']);
+
         if ($user->two_factor_confirmed_at) {
             $request->session()->regenerate();
             $request->session()->put([
                 'two_factor_user_id' => $user->id,
                 'two_factor_remember' => $request->boolean('remember'),
+                'two_factor_context' => 'public',
             ]);
 
             return redirect()->route('two-factor.challenge');
@@ -61,6 +64,7 @@ class AuthenticatedSessionController extends Controller
 
         Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
+        $request->session()->put('auth_surface', 'public');
         $user->forceFill(['last_login_at' => now(), 'last_login_ip' => $request->ip(), 'failed_login_count' => 0, 'locked_until' => null, 'lock_reason' => null])->save();
         $this->recordLogin($request, $user, true, null, $email);
         $audit->record('auth.login.succeeded', $user->organization_id, $user);
@@ -75,14 +79,15 @@ class AuthenticatedSessionController extends Controller
     public function destroy(Request $request, AuditRecorder $audit): RedirectResponse
     {
         $user = $request->user();
+        $surface = $request->session()->get('auth_surface');
         if ($user) {
-            $audit->record('auth.logout', $user->organization_id, $user);
+            $audit->record('auth.logout', $user->organization_id, $user, metadata: ['surface' => $surface ?: 'public']);
         }
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return redirect()->route('login');
+        return redirect()->route($surface === 'admin' ? 'admin.login' : 'login');
     }
 
     private function recordLogin(Request $request, ?User $user, bool $success, ?string $reason, string $email): void
