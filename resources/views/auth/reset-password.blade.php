@@ -10,7 +10,7 @@
     <input id="reset-email" class="hm-input" type="email" name="email" value="{{ old('email', $email) }}" required autocomplete="email" inputmode="email" @error('email') aria-invalid="true" aria-describedby="reset-email-error" @enderror>
     @error('email')<p class="field-error" id="reset-email-error" role="alert">{{ $message }}</p>@enderror
     <label for="reset-password"><span class="field-label">New password <span class="required-marker" aria-hidden="true">Required</span></span></label>
-    <input id="reset-password" class="hm-input" type="password" name="password" required autocomplete="new-password" aria-describedby="password-requirements" @error('password') aria-invalid="true" aria-describedby="password-requirements reset-password-error" @enderror>
+    <input id="reset-password" class="hm-input" type="password" name="password" required autocomplete="new-password" aria-describedby="password-requirements{{ $errors->has('password') ? ' reset-password-error' : '' }}" @error('password') aria-invalid="true" @enderror>
     <p class="field-help" id="password-requirements">At least 14 characters, mixed case, a number, and a symbol.</p>
     @error('password')<p class="field-error" id="reset-password-error" role="alert">{{ $message }}</p>@enderror
     <label for="reset-password-confirmation"><span class="field-label">Confirm new password <span class="required-marker" aria-hidden="true">Required</span></span></label>
