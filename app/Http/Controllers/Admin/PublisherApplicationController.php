@@ -41,7 +41,8 @@ final class PublisherApplicationController extends Controller
     public function show(PublisherApplication $application): View
     {
         $application->load([
-            'applicant', 'reviewer', 'organization',
+            'applicant', 'reviewer', 'organization', 'legalAcceptances',
+            'marketingConsents' => fn ($query) => $query->latest('recorded_at'),
             'publisher.qualityProfiles' => fn ($query) => $query->latest('version'),
             'publisher.qualityReviewRuns' => fn ($query) => $query->latest()->limit(20),
             'revisions' => fn ($query) => $query->latest('version'),

@@ -81,4 +81,14 @@ class PublisherApplication extends Model
     {
         return $this->hasMany(PublisherApplicationEvent::class);
     }
+
+    public function legalAcceptances(): HasMany
+    {
+        return $this->hasMany(PublisherApplicationLegalAcceptance::class, 'publisher_application_id');
+    }
+
+    public function marketingConsents(): HasMany
+    {
+        return $this->hasMany(PublisherApplicationMarketingConsent::class, 'publisher_application_id');
+    }
 }

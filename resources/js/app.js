@@ -1,4 +1,5 @@
 import './bootstrap';
+import '../css/publisher-application.css';
 
 const navigation = document.querySelector('#control-navigation');
 const navigationToggle = document.querySelector('[data-nav-toggle]');

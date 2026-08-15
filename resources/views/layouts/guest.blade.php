@@ -30,7 +30,7 @@
                 @if (session('status')) <div class="notice" role="status">{{ session('status') }}</div> @endif
                 @yield('content')
             </main>
-            <p class="auth-product-note">Horus Media · Advertising, monetization, and intelligent programmatic growth.</p>
+            <p class="auth-product-note">Horus Media · Advertising, monetization, and intelligent programmatic growth.@if(config('publisher-applications.support_url')) <a class="text-link" href="{{ config('publisher-applications.support_url') }}">Need help?</a>@endif</p>
         </div>
     </div>
 </body>
