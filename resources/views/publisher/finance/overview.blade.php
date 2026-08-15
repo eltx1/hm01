@@ -10,18 +10,20 @@
         <h2>Your financial position, without estimated/finalized mixing</h2>
         <p>Every currency is shown separately. Estimated reporting can change; finalized earnings and statement balances are the accounting record.</p>
     </div>
-    <span class="pill">Payment profile: {{ $profile?->verification_status?->value ?? 'INCOMPLETE' }}</span>
+    <x-status-badge :status="$profile?->verification_status ?? 'INCOMPLETE'" />
 </section>
 
 <article>
     <p class="eyebrow">Action Center</p>
     <h2>What you need to do</h2>
-    @foreach($actions as $action)
-        <div class="event"><strong>{{ $action['label'] }}</strong><span class="pill">{{ $action['code'] }}</span></div>
-    @endforeach
+    @forelse($actions as $action)
+        <div class="event"><strong>{{ $action['label'] }}</strong><span class="pill">{{ str($action['code'])->replace('_', ' ')->headline() }}</span></div>
+    @empty
+        <x-empty-state title="No finance actions required" description="Your current payment and statement setup has no outstanding Publisher action." />
+    @endforelse
 </article>
 
-@foreach($currencies as $currency)
+@forelse($currencies as $currency)
     <section class="workspace-section">
         <div class="workspace-heading">
             <div><p class="eyebrow">{{ $currency['currency'] }}</p><h2>{{ $currency['current_period'] }} financial position</h2></div>
@@ -38,17 +40,19 @@
                 ['Scheduled payout', $currency['scheduled_payout_minor'], 'Has a scheduled date'],
                 ['Paid', $currency['paid_minor'], 'Settled amount only'],
             ] as [$label, $minor, $note])
-                <article><p class="eyebrow">{{ $label }}</p><strong class="metric-small">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $minor) }}</strong><span class="table-note">{{ $note }}</span></article>
+                <article><p class="eyebrow">{{ $label }}</p><strong class="metric-small money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $minor) }}</strong><span class="table-note">{{ $note }}</span></article>
             @endforeach
         </section>
         <article>
             <div class="summary-grid">
-                <div><strong>Payment threshold</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['payment_threshold_minor']) }}</span></div>
-                <div><strong>Opening carry-forward</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['opening_carry_forward_minor']) }}</span></div>
-                <div><strong>Current period state</strong><span>{{ $currency['current_period_status'] }}</span></div>
+                <div><strong>Payment threshold</strong><span class="money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['payment_threshold_minor']) }}</span></div>
+                <div><strong>Opening carry-forward</strong><span class="money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['opening_carry_forward_minor']) }}</span></div>
+                <div><strong>Current period state</strong><x-status-badge :status="$currency['current_period_status']" /></div>
                 <div><strong>Last finalized period</strong><span>{{ $currency['last_finalized_period'] ?: 'No finalized statement' }}</span></div>
             </div>
         </article>
     </section>
-@endforeach
+@empty
+    <x-empty-state title="No earnings data yet" description="Estimated and finalized earnings will appear here after reporting data is available for your Publisher account." />
+@endforelse
 @endsection
