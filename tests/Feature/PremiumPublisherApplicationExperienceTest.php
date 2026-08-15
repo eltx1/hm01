@@ -205,6 +205,7 @@ class PremiumPublisherApplicationExperienceTest extends TestCase
         $service->startReview($application, $admin);
         $service->requestMoreInformation($application, $admin, 'Please confirm the updated application information.');
         $this->actingAs($user)
+            ->withServerVariables(['REMOTE_ADDR' => '203.0.113.31'])
             ->post(route('publisher-application.submit'), ['confirm' => 1])
             ->assertSessionHasErrors('legal.TERMS_OF_SERVICE');
 
