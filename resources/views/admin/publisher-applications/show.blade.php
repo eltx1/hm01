@@ -2,7 +2,10 @@
 @section('title', 'Publisher Application')
 @section('heading', 'Publisher Application Review')
 @section('content')
-@php($profile = $application->publisher->qualityProfiles->first())
+@php
+    $profile = $application->publisher->qualityProfiles->first();
+    $latestMarketingConsent = $application->marketingConsents->first();
+@endphp
 <section class="hero"><div><p class="eyebrow">{{ $application->applicant->name }} · {{ $application->applicant->email }}</p><h2>{{ $application->publisher->display_name }}</h2><p>{{ $application->publisher->legal_name }} · {{ $application->primary_domain }}</p></div><div class="status-row"><x-status-badge :status="$application->status" /><span class="status">Revision {{ $application->current_revision ?: 'not submitted' }}</span></div></section>
 <div class="notice"><strong>Decision boundary:</strong> application approval creates operational Publisher eligibility only. Website approval and production monetization remain separate.</div>
 
@@ -31,6 +34,13 @@
 @if(auth()->user()->hasPermission('publisher_quality.ai.run'))<form method="POST" action="{{ route('admin.publishers.quality-review.run', $application->publisher) }}" class="inline-form">@csrf<label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label><button>Run THOTH advisory</button></form><p class="muted">THOTH may append advisory evidence but can never approve or reject this application.</p>@endif
 @else<p class="muted">The applicant has not saved quality-profile evidence yet.</p>@endif
 @forelse($application->publisher->qualityReviewRuns as $run)<div class="compact-row"><div><strong>{{ $run->provider }} · {{ $run->model }}</strong><p>{{ $run->result['recommended_decision'] ?? $run->error_code ?? 'Pending' }} · advisory only</p></div><x-status-badge :status="$run->status" /></div>@empty@endforelse
+</article>
+
+<article class="workspace-section"><div class="workspace-heading"><div><p class="eyebrow">Application acceptance evidence</p><h2>Legal documents & consent</h2></div><span class="status">{{ $application->legalAcceptances->count() }} acceptance record(s)</span></div>
+@forelse($application->legalAcceptances->sortByDesc('accepted_at') as $acceptance)
+<div class="compact-row"><div><strong>{{ str($acceptance->document_type)->replace('_', ' ')->headline() }} · {{ $acceptance->document_version }}</strong><p><a class="text-link" href="{{ $acceptance->canonical_url }}" target="_blank" rel="noopener noreferrer">Canonical document</a> · Evidence {{ $acceptance->evidence_hash }}</p></div><span class="muted">Accepted {{ $acceptance->accepted_at }}</span></div>
+@empty<p class="muted">No legal acceptance evidence has been recorded.</p>@endforelse
+<div class="compact-row"><div><strong>Optional marketing consent</strong><p>Recorded independently from contractual/privacy acceptance and never gates transactional application communications.</p></div><span class="muted">{{ $latestMarketingConsent ? ($latestMarketingConsent->opted_in ? 'Opted in' : 'Not opted in').' · '.$latestMarketingConsent->recorded_at : 'No record' }}</span></div>
 </article>
 
 <article class="workspace-section"><h2>Immutable submitted revisions</h2>@forelse($application->revisions as $revision)<details><summary>Revision {{ $revision->version }} · {{ $revision->submitted_at }}</summary><p>SHA-256 {{ $revision->snapshot_hash }}</p><pre>{{ json_encode($revision->snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre></details>@empty<p class="muted">No submitted revision.</p>@endforelse</article>
