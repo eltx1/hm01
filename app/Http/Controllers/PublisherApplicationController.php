@@ -45,7 +45,8 @@ final class PublisherApplicationController extends Controller
         $acceptedLegal = $application->legalAcceptances->keyBy(fn ($acceptance) => $acceptance->document_type.'@'.$acceptance->document_version);
         $marketingConsent = $application->marketingConsents->first();
         $websiteVerification = null;
-        if ($application->domainClaim?->publisher_seller_declaration_id && $application->domainClaim?->website_seller_declaration_id) {
+        $terminal = in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true);
+        if (! $terminal && $application->domainClaim?->publisher_seller_declaration_id && $application->domainClaim?->website_seller_declaration_id) {
             $websiteVerification = $verification->reserve($application, $request->user());
             $application->refresh()->load(['domainClaim.publisherSeller', 'domainClaim.websiteSeller']);
             $claimVerified = $application->domainClaim?->verification_status === 'VERIFIED';
