@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\Enums\SiteManagementRole;
 use App\Models\BidderAdsTxtRecord;
 use App\Models\BidderSiteMapping;
 use App\Models\DemandAdsTxtRecord;
@@ -58,7 +59,7 @@ final class SupplyChainStaticPublicationObserver
             $model instanceof BidderSiteMapping => ['bidder_account_id', 'site_id', 'enabled'],
             $model instanceof DemandAdsTxtRecord => ['demand_account_id', 'site_id', 'domain', 'publisher_account_id', 'relationship', 'certification_authority_id', 'status', 'review_status'],
             $model instanceof DemandSite => ['demand_account_id', 'site_id', 'is_enabled', 'approval_status'],
-            $model instanceof SiteServingSetting => ['management_role', 'monetization_manager_domain', 'monetization_manager_relationship', 'monetization_manager_country'],
+            $model instanceof SiteServingSetting => ['monetization_manager_role', 'monetization_manager_domain', 'monetization_manager_relationship', 'monetization_manager_country'],
             default => [],
         };
 
@@ -73,8 +74,10 @@ final class SupplyChainStaticPublicationObserver
         if ($model instanceof PlatformAdsTxtRecord || $model instanceof BidderAdsTxtRecord || $model instanceof DemandAdsTxtRecord) {
             return $this->transitionedFromActiveToDisabled($model, 'status');
         }
-        if ($model instanceof SiteServingSetting && $model->wasChanged('management_role')) {
-            return strtoupper((string) $model->management_role) === 'NONE';
+        if ($model instanceof SiteServingSetting && $model->wasChanged('monetization_manager_role')) {
+            $role = $model->monetization_manager_role;
+            $value = $role instanceof SiteManagementRole ? $role->value : strtoupper((string) $role);
+            return $value === SiteManagementRole::None->value;
         }
 
         return false;
@@ -83,7 +86,8 @@ final class SupplyChainStaticPublicationObserver
     private function transitionedFromActiveToDisabled(Model $model, string $field): bool
     {
         $before = strtoupper((string) $model->getRawOriginal($field));
-        $after = strtoupper((string) $model->getAttribute($field));
+        $afterValue = $model->getAttribute($field);
+        $after = strtoupper(is_object($afterValue) && property_exists($afterValue, 'value') ? (string) $afterValue->value : (string) $afterValue);
 
         return $before === 'ACTIVE' && in_array($after, ['DISABLED', 'INACTIVE', 'REJECTED'], true);
     }
