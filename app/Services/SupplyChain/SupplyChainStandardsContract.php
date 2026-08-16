@@ -2,6 +2,7 @@
 
 namespace App\Services\SupplyChain;
 
+use App\Enums\SiteManagementRole;
 use App\Models\SellerDeclaration;
 use App\Models\Site;
 use App\Models\SiteServingSetting;
@@ -133,23 +134,57 @@ final class SupplyChainStandardsContract
         return $domain === '' ? null : $this->domains->normalize($domain);
     }
 
-    /** @return array{domain: string, relationship: string, country: ?string, line: string}|null */
+    /** @return array{domain: string, relationship: string, country: ?string, line: string, role: string}|null */
     public function managerDirectiveForSite(Site $site): ?array
     {
         $settings = SiteServingSetting::withoutGlobalScopes()->where('site_id', $site->id)->first();
-        $domain = trim((string) $settings?->monetization_manager_domain);
-        $relationship = strtoupper(trim((string) $settings?->monetization_manager_relationship));
-        $country = strtoupper(trim((string) $settings?->monetization_manager_country));
-        if ($domain === '' && $relationship === '' && $country === '') { return null; }
-        if (! in_array($relationship, [self::MANAGER_PRIMARY, self::MANAGER_EXCLUSIVE], true)) {
-            throw new InvalidArgumentException('MANAGERDOMAIN requires an explicit PRIMARY or EXCLUSIVE monetization-manager relationship.');
+        if (! $settings) {
+            return null;
         }
-        if ($domain === '') { throw new InvalidArgumentException('MANAGERDOMAIN requires an explicit manager business domain.'); }
-        $domain = $this->domains->normalize($domain);
-        if ($country !== '' && preg_match('/^[A-Z]{2}$/', $country) !== 1) {
-            throw new InvalidArgumentException('MANAGERDOMAIN country must be an ISO 3166-1 alpha-2 code.');
+
+        $rawRole = strtoupper(trim((string) $settings->getRawOriginal('monetization_manager_role')));
+        $role = SiteManagementRole::tryFrom($rawRole === '' ? SiteManagementRole::None->value : $rawRole);
+        if (! $role) {
+            throw new InvalidArgumentException('The per-site monetization-manager role is invalid.');
         }
-        return ['domain' => $domain, 'relationship' => $relationship, 'country' => $country !== '' ? $country : null, 'line' => 'MANAGERDOMAIN='.$domain.($country !== '' ? ', '.$country : '')];
+
+        $configuredDomain = trim((string) $settings->monetization_manager_domain);
+        $configuredRelationship = strtoupper(trim((string) $settings->monetization_manager_relationship));
+        $country = strtoupper(trim((string) $settings->monetization_manager_country));
+
+        if ($role === SiteManagementRole::None) {
+            if ($configuredDomain !== '' || $configuredRelationship !== '' || $country !== '') {
+                throw new InvalidArgumentException('MANAGERDOMAIN fields are configured without an authorized per-site management role.');
+            }
+
+            return null;
+        }
+
+        $domain = $this->horusAdvertisingSystemDomain();
+        if ($configuredDomain !== '' && ! $this->domains->same($configuredDomain, $domain)) {
+            throw new InvalidArgumentException('An approved Horus management role may only emit the canonical Horus manager domain.');
+        }
+
+        $relationship = (string) $role->relationship();
+        if ($configuredRelationship !== '' && $configuredRelationship !== $relationship) {
+            throw new InvalidArgumentException('The monetization-manager relationship conflicts with the approved management role.');
+        }
+
+        if ($role->isCountryScoped()) {
+            if (preg_match('/^[A-Z]{2}$/', $country) !== 1) {
+                throw new InvalidArgumentException('A country-scoped MANAGERDOMAIN role requires an ISO 3166-1 alpha-2 country code.');
+            }
+        } elseif ($country !== '') {
+            throw new InvalidArgumentException('A global MANAGERDOMAIN role cannot carry a country code.');
+        }
+
+        return [
+            'domain' => $domain,
+            'relationship' => $relationship,
+            'country' => $role->isCountryScoped() ? $country : null,
+            'line' => 'MANAGERDOMAIN='.$domain.($role->isCountryScoped() ? ', '.$country : ''),
+            'role' => $role->value,
+        ];
     }
 
     /** @return list<string> */
