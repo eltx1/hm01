@@ -15,7 +15,7 @@
     <article><span>Ads.txt</span><strong>{{ $detail['status'] }}</strong><small>{{ $detail['last_verification']?->diffForHumans() ?: 'Never verified' }}</small></article>
     <article><span>sellers.json consistency</span><strong>{{ $detail['sellers_json_consistency']['status'] }}</strong></article>
     <article><span>Managed deployment</span><strong>{{ $detail['managed_redirect']['mode'] }}</strong><small>{{ $detail['managed_redirect']['status'] }}</small></article>
-    <article><span>Last static publication</span><strong>{{ $detail['last_static_publication']['delivered_at']?->diffForHumans() ?? 'Never' }}</strong></article>
+    <article><span>Last static publication</span><strong>{{ data_get($detail, 'last_static_publication.delivered_at')?->diffForHumans() ?? 'Never' }}</strong></article>
 </div>
 
 <article class="workspace-section">
