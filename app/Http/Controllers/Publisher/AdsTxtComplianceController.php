@@ -7,6 +7,7 @@ use App\Models\Site;
 use App\Services\Compliance\AdsTxtComplianceService;
 use App\Services\Compliance\AdsTxtVerifier;
 use App\Services\Compliance\SupplyChainComplianceService;
+use App\Services\Compliance\SupplyChainControlCenterService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -14,8 +15,11 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class AdsTxtComplianceController extends Controller
 {
-    public function index(AdsTxtComplianceService $compliance, SupplyChainComplianceService $supplyChain): View
-    {
+    public function index(
+        AdsTxtComplianceService $compliance,
+        SupplyChainComplianceService $supplyChain,
+        SupplyChainControlCenterService $controlCenter,
+    ): View {
         $sites = Site::query()->with('domains')->orderBy('primary_domain')->get();
         $summaries = $sites->mapWithKeys(function (Site $site) use ($compliance): array {
             $summary = $compliance->summary($site);
@@ -24,11 +28,14 @@ final class AdsTxtComplianceController extends Controller
 
             return [$site->id => $summary];
         });
+        $deploymentStates = $sites->mapWithKeys(
+            fn (Site $site): array => [$site->id => $controlCenter->publisherSite($site)],
+        );
 
         $publisher = request()->user()->organization->publisher;
         $sellerIdentities = $publisher ? $supplyChain->publisherOverview($publisher) : [];
 
-        return view('publisher.compliance.ads-txt', compact('sites', 'summaries', 'sellerIdentities'));
+        return view('publisher.compliance.ads-txt', compact('sites', 'summaries', 'deploymentStates', 'sellerIdentities'));
     }
 
     public function download(Site $site, AdsTxtComplianceService $compliance): Response
