@@ -52,7 +52,7 @@ final class ControlPlaneNavigation
                 $this->item('Direct Demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
             ]),
             $this->group('Supply Chain & Compliance', [
-                $this->item('Supply Chain', 'admin.compliance.supply-chain.overview', 'supply_chain.ads_txt.view', [
+                $this->item('Supply Chain / Ads.txt', 'admin.compliance.supply-chain.overview', 'supply_chain.ads_txt.view', [
                     'admin.compliance.supply-chain.*', 'admin.compliance.ads-txt.*', 'admin.compliance.sellers.*', 'admin.prebid.ads-txt.*',
                 ]),
             ]),
