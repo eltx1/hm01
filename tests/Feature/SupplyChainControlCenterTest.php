@@ -12,6 +12,7 @@ use App\Models\AuditLog;
 use App\Models\PlatformAdsTxtRecord;
 use App\Models\PrebidBidder;
 use App\Services\Compliance\AdsTxtVerifier;
+use App\Services\Monetization\SiteMonetizationReadinessService;
 use App\Services\Network\Contracts\DnsResolver;
 use App\Services\Prebid\BidderAdsTxtService;
 use App\Services\Prebid\PrebidManager;
@@ -135,7 +136,7 @@ class SupplyChainControlCenterTest extends TestCase
             ->assertDontSee('Horus Media platform master authorization');
     }
 
-    public function test_bidder_authorization_findings_are_engine_aware_and_unused_bidder_does_not_block_ads_txt(): void
+    public function test_bidder_authorization_findings_are_engine_aware_and_unused_bidder_does_not_block_unrelated_engines(): void
     {
         $this->seed(PrebidSeeder::class);
         $bidder = PrebidBidder::withoutGlobalScopes()->firstOrFail();
@@ -143,18 +144,18 @@ class SupplyChainControlCenterTest extends TestCase
         $account->update(['ads_txt_requirement' => BidderAdsTxtRequirement::Required]);
         app(PrebidManager::class)->assignToSite($account, $this->site, ['enabled' => true], $this->admin);
 
-        $service = app(BidderAdsTxtService::class);
-        $off = $service->readinessForSite($this->site->refresh());
-        $this->assertSame(0, $off['required']);
-        $this->assertSame(0, $off['required_missing']);
-        $this->assertSame([], $off['findings']);
+        // Canonical supply-chain truth still recognizes the explicit mapped account.
+        $supply = app(BidderAdsTxtService::class)->readinessForSite($this->site->refresh());
+        $this->assertSame(1, $supply['required']);
+        $this->assertSame(1, $supply['required_missing']);
+        $this->assertSame('BIDDER_ADS_TXT_REQUIRED_MISSING', $supply['findings'][0]['code']);
 
-        $this->site->update(['prebid_enabled' => true]);
-        $this->site->servingSettings()->update(['prebid_enabled' => true]);
-        $on = $service->readinessForSite($this->site->refresh());
-        $this->assertSame(1, $on['required']);
-        $this->assertSame(1, $on['required_missing']);
-        $this->assertSame('BIDDER_ADS_TXT_REQUIRED_MISSING', $on['findings'][0]['code']);
+        // Monetization readiness remains engine-aware: Prebid is unused here, so the
+        // mapped account cannot turn Header Bidding ACTIVE or block GAM / Direct JS.
+        $readiness = app(SiteMonetizationReadinessService::class)->admin($this->site->refresh());
+        $prebid = collect($readiness['modules'])->firstWhere('key', 'prebid');
+        $this->assertSame('NOT_CONFIGURED', $prebid['status']);
+        $this->assertStringContainsString('not enabled', strtolower($prebid['reason']));
     }
 
     public function test_master_impact_preview_requires_password_typed_confirmation_and_audits_enablement(): void
