@@ -17,6 +17,7 @@ use App\Services\SupplyChain\SupplyChainArtifactBuilder;
 use App\Services\SupplyChain\SupplyChainPublicOriginVerifier;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
@@ -141,13 +142,13 @@ class AutomaticSupplyChainStaticPublicationTest extends TestCase
         $target = $service->managedUrlForSite($site);
         $payload = app(SupplyChainArtifactBuilder::class)->adsTxtForSite($site);
 
-        Http::fake([
+        $this->fakeHttp([
             'https://publisher.example/ads.txt' => Http::response('', 302, ['Location' => $target]),
             $target => Http::response($payload, 200, ['Content-Type' => 'text/plain; charset=utf-8']),
         ]);
         $this->assertTrue($service->verify($site)['valid']);
 
-        Http::fake([
+        $this->fakeHttp([
             'https://publisher.example/ads.txt' => Http::response('', 302, ['Location' => $target]),
             $target => Http::response('', 302, ['Location' => 'https://third.example/ads.txt']),
         ]);
@@ -160,7 +161,7 @@ class AutomaticSupplyChainStaticPublicationTest extends TestCase
         $payload = app(SupplyChainArtifactBuilder::class)->sellersJson();
         $this->assertFalse($verifier->readiness()['verified']);
 
-        Http::fake([
+        $this->fakeHttp([
             'https://horusmedia.net/sellers.json' => Http::response('', 302, ['Location' => 'https://cdn.horusmedia.net/sellers.json']),
             'https://cdn.horusmedia.net/sellers.json' => Http::response($payload, 200, ['Content-Type' => 'application/json; charset=utf-8']),
         ]);
@@ -168,11 +169,18 @@ class AutomaticSupplyChainStaticPublicationTest extends TestCase
         $this->assertTrue($result['verified']);
         $this->assertTrue($verifier->readiness()['verified']);
 
-        Http::fake([
+        $this->fakeHttp([
             'https://horusmedia.net/sellers.json' => Http::response('', 404),
             'https://cdn.horusmedia.net/sellers.json' => Http::response($payload, 200, ['Content-Type' => 'application/json']),
         ]);
         $this->assertFalse($verifier->verifySellersJson()['verified']);
+    }
+
+    /** @param array<string, mixed> $stubs */
+    private function fakeHttp(array $stubs): void
+    {
+        Http::swap(new Factory($this->app['events']));
+        Http::fake($stubs);
     }
 
     private function site(): array
