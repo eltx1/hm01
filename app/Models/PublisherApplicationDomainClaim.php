@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PublisherApplicationStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -53,6 +54,16 @@ class PublisherApplicationDomainClaim extends Model
             'verification_attempt_count' => 'integer',
             'verification_http_status' => 'integer',
         ];
+    }
+
+    /** Derived compatibility state; no claim lifecycle column is persisted. */
+    public function getClaimStatusAttribute(): string
+    {
+        $status = $this->application?->status;
+
+        return in_array($status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)
+            ? 'TERMINAL'
+            : 'CLAIMED';
     }
 
     public function application(): BelongsTo
