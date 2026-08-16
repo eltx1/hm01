@@ -18,9 +18,9 @@ final class CanonicalAdsTxtComposer
             $lines = $group->pluck('line')->unique()->values();
             if ($lines->count() > 1) {
                 $findings[] = [
-                    'code' => 'ADS_TXT_AUTHORIZATION_CONFLICT',
+                    'code' => 'ADS_TXT_RELATIONSHIP_CONFLICT',
                     'severity' => 'ERROR',
-                    'message' => 'The same advertising-system seller identity has conflicting relationship, authority, or normalized system values.',
+                    'message' => 'The same advertising-system seller identity has conflicting explicit ads.txt authorization values, including relationship or certification authority.',
                     'identity' => base64_encode((string) $key),
                     'sources' => $group->map(fn (CanonicalAdsTxtSource $source): array => $source->provenance())->values()->all(),
                 ];
