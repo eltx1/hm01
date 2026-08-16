@@ -5,6 +5,7 @@ namespace App\Services\Compliance;
 use App\Enums\AdsTxtComplianceStatus;
 use App\Models\Site;
 use App\Models\SupplyChainCheck;
+use App\Services\Prebid\BidderAdsTxtService;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
 use App\Services\SupplyChain\SupplyChainStandardsContract;
 
@@ -15,6 +16,7 @@ final class AdsTxtComplianceService
         private readonly SupplyChainStandardsContract $contract,
         private readonly AdsTxtParser $parser,
         private readonly AdsTxtComparator $comparator,
+        private readonly BidderAdsTxtService $bidderAdsTxt,
     ) {}
 
     /** @return array<string, mixed> */
@@ -46,6 +48,20 @@ final class AdsTxtComplianceService
             }
 
             $record = $entry['record'];
+            if (($entry['source_type'] ?? null) === 'BIDDER_RECORD') {
+                return [
+                    'id' => $record->id,
+                    'canonical' => $entry['line'],
+                    'source' => 'PREBID_BIDDER_'.$record->source,
+                    'scope' => $record->site_id ? 'WEBSITE' : 'BIDDER_ACCOUNT_GLOBAL',
+                    'account_id' => $record->bidder_account_id,
+                    'account_label' => $record->account?->name ?: 'Prebid bidder',
+                    'status' => $record->status,
+                    'relationship' => $record->relationship,
+                    'review_status' => $record->review_status?->value ?? (string) $record->review_status,
+                    'remote_verification_status' => $this->bidderAdsTxt->effectiveRemoteStatus($record)->value,
+                ];
+            }
 
             return [
                 'id' => $record->id,
@@ -141,7 +157,7 @@ final class AdsTxtComplianceService
             AdsTxtComplianceStatus::Conflict->value => 'Resolve conflicting seller declarations.',
             AdsTxtComplianceStatus::Stale->value => 'Run a fresh verification.',
             AdsTxtComplianceStatus::Unreachable->value => 'Restore a public text/plain ads.txt endpoint.',
-            default => 'Configure an eligible demand record when monetization requires it.',
+            default => 'Configure an eligible authorized-seller record when monetization requires it.',
         };
     }
 }
