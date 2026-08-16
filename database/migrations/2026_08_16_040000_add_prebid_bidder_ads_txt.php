@@ -47,10 +47,13 @@ return new class extends Migration
         Schema::dropIfExists('bidder_ads_txt_records');
 
         Schema::table('bidder_accounts', function (Blueprint $table): void {
+            $table->dropIndex(['ads_txt_requirement']);
             $table->dropForeign(['ads_txt_requirement_reviewed_by']);
             $table->dropColumn([
-                'ads_txt_requirement', 'ads_txt_evidence_url', 'ads_txt_requirement_verified_at',
                 'ads_txt_requirement_reviewed_by',
+                'ads_txt_requirement_verified_at',
+                'ads_txt_evidence_url',
+                'ads_txt_requirement',
             ]);
         });
     }
