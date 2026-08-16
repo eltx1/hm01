@@ -46,7 +46,7 @@ class SupplyChainPublicationTriggerTest extends TestCase
         $this->assertSame('NORMAL', $change->priority->value);
     }
 
-    public function test_seller_identity_change_triggers_global_static_outbox_without_site_config_version(): void
+    public function test_active_seller_identity_change_triggers_global_static_outbox_without_site_config_version(): void
     {
         [, $site] = $this->context();
         StaticGlobalArtifactChange::query()->delete();
@@ -62,8 +62,8 @@ class SupplyChainPublicationTriggerTest extends TestCase
             'name' => $site->publisher->legal_name,
             'domain' => $site->publisher->business_domain,
             'is_confidential' => false,
-            'status' => 'DISABLED',
-            'review_status' => 'REVIEW_REQUIRED',
+            'status' => 'ACTIVE',
+            'review_status' => 'VERIFIED',
         ]);
 
         $this->assertSame(1, StaticGlobalArtifactChange::query()->count());
