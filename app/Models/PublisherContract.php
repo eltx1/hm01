@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\ContractStatus;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Services\SupplyChain\HorusSellerIdentityService;
+use App\Services\SupplyChain\HorusWebsiteSellerLifecycleService;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -31,6 +32,7 @@ class PublisherContract extends Model
             $publisher = Publisher::withoutGlobalScopes()->find($contract->publisher_id);
             if ($publisher) {
                 app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+                app(HorusWebsiteSellerLifecycleService::class)->reopenForCommercialRelationshipChange($publisher);
             }
         });
 
@@ -38,6 +40,7 @@ class PublisherContract extends Model
             $publisher = Publisher::withoutGlobalScopes()->find($contract->publisher_id);
             if ($publisher) {
                 app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+                app(HorusWebsiteSellerLifecycleService::class)->reopenForCommercialRelationshipChange($publisher);
             }
         });
     }
