@@ -94,14 +94,18 @@ final class ApplicationAdsTxtVerificationService
         return $claim;
     }
 
-    /** Clean Task 40 handoff: only real ads.txt-verified application domains are crawl-eligible. */
+    /** Clean Task 40 handoff: only the current real ads.txt-verified claim is crawl-eligible. */
     public function crawlingEligible(PublisherApplication $application): bool
     {
-        $claim = $application->domainClaim;
+        $domain = strtolower(rtrim((string) $application->primary_domain, '.'));
 
-        return $claim !== null
-            && $claim->normalized_domain === strtolower(rtrim((string) $application->primary_domain, '.'))
-            && $claim->verification_status === 'VERIFIED';
+        // Query canonical persisted state instead of a possibly preloaded relation.
+        // Task 40 can run after a freshness refresh inside the same request, so a
+        // cached domainClaim relation must never keep a stale VERIFIED decision alive.
+        return $application->domainClaims()
+            ->where('normalized_domain', $domain)
+            ->where('verification_status', 'VERIFIED')
+            ->exists();
     }
 
     /** @return array<string, mixed> */
