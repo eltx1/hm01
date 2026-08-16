@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Validation\ValidationException;
 use LogicException;
 
 class PublisherApplication extends Model
@@ -45,6 +46,19 @@ class PublisherApplication extends Model
                 $to = $rawNext instanceof PublisherApplicationStatus ? $rawNext : PublisherApplicationStatus::tryFrom((string) $rawNext);
                 if (! $from || ! $to || ($from !== $to && ! $from->canTransitionTo($to))) {
                     throw new LogicException('Invalid Publisher application lifecycle transition.');
+                }
+                if ($from !== $to && $to === PublisherApplicationStatus::Submitted) {
+                    $verified = PublisherApplicationDomainClaim::query()
+                        ->where('publisher_application_id', $application->id)
+                        ->where('normalized_domain', strtolower(rtrim((string) $application->primary_domain, '.')))
+                        ->where('claim_status', 'CLAIMED')
+                        ->where('verification_status', 'VERIFIED')
+                        ->exists();
+                    if (! $verified) {
+                        throw ValidationException::withMessages([
+                            'website_verification' => 'Verify the current website through both required Horus ads.txt seller authorizations before submitting.',
+                        ]);
+                    }
                 }
             }
             if ($application->getRawOriginal('submitted_at') !== null && $application->isDirty('submitted_at')) {
