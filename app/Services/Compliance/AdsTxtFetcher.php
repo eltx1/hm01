@@ -6,6 +6,7 @@ use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Services\Campaigns\RemoteUrlSafetyValidator;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -16,24 +17,52 @@ final class AdsTxtFetcher
     /** @return array<string, mixed> */
     public function fetch(Site $site): array
     {
-        $started = hrtime(true);
         $allowedHosts = SiteDomain::withoutGlobalScope('organization')
             ->where('site_id', $site->id)
             ->where('verification_status', 'VERIFIED')
             ->pluck('domain')->map(fn (string $domain): string => strtolower(rtrim($domain, '.')))->unique()->values();
         $primary = strtolower(rtrim($site->primary_domain, '.'));
         if (! $allowedHosts->contains($primary)) {
-            return $this->failure('DOMAIN_NOT_VERIFIED', 'The primary website domain is not verified for safe compliance fetching.', null, null, $started);
+            return $this->failure('DOMAIN_NOT_VERIFIED', 'The primary website domain is not verified for safe compliance fetching.', null, null, hrtime(true));
         }
 
+        return $this->fetchInternal($primary, $allowedHosts, false);
+    }
+
+    /**
+     * Application verification fetch. It uses the same bounded/SSRF-safe crawler as
+     * normal compliance but follows the ads.txt 1.1 redirect contract: redirects
+     * inside the original root are allowed and exactly one outside-root delegation
+     * hop is allowed; the delegated target may not redirect again.
+     *
+     * @return array<string, mixed>
+     */
+    public function fetchDomain(string $normalizedDomain): array
+    {
+        $primary = strtolower(rtrim(trim($normalizedDomain), '.'));
+        if ($primary === '' || str_contains($primary, '/') || str_contains($primary, ':')) {
+            return $this->failure('INVALID_DOMAIN', 'The ads.txt verification domain is invalid.', null, null, hrtime(true));
+        }
+
+        return $this->fetchInternal($primary, collect([$primary]), true);
+    }
+
+    /** @return array<string, mixed> */
+    private function fetchInternal(string $primary, Collection $allowedHosts, bool $officialDelegation): array
+    {
+        $started = hrtime(true);
         $url = 'https://'.$primary.'/ads.txt';
         $originalUrl = $url;
         $redirects = [];
+        $delegatedOutsideRoot = false;
 
         for ($hop = 0; $hop <= (int) config('ads-txt.max_redirects', 3); $hop++) {
             $host = strtolower(rtrim((string) parse_url($url, PHP_URL_HOST), '.'));
-            if (! $allowedHosts->contains($host)) {
-                return $this->failure('UNAUTHORIZED_REDIRECT', 'The response redirected to a domain that is not verified for this website.', $url, null, $started, $redirects);
+            $hostAllowed = $officialDelegation
+                ? ($this->withinOriginalRoot($host, $primary) || $delegatedOutsideRoot)
+                : $allowedHosts->contains($host);
+            if (! $hostAllowed) {
+                return $this->failure('UNAUTHORIZED_REDIRECT', 'The response redirected outside the authorized ads.txt scope.', $url, null, $started, $redirects);
             }
 
             try {
@@ -52,13 +81,14 @@ final class AdsTxtFetcher
                         'User-Agent' => (string) config('ads-txt.user_agent'),
                         'Accept' => 'text/plain',
                     ])->get($url);
-            } catch (ConnectionException $exception) {
+            } catch (ConnectionException) {
                 return $this->failure('CONNECTION_FAILED', 'The ads.txt request timed out or could not connect.', $url, null, $started, $redirects);
-            } catch (Throwable $exception) {
+            } catch (Throwable) {
                 return $this->failure('UNSAFE_TARGET', 'The ads.txt target could not be fetched safely.', $url, null, $started, $redirects);
             }
 
-            if (in_array($response->status(), [301, 302, 303, 307, 308], true)) {
+            $redirectStatuses = $officialDelegation ? [301, 302, 307] : [301, 302, 303, 307, 308];
+            if (in_array($response->status(), $redirectStatuses, true)) {
                 if ($hop >= (int) config('ads-txt.max_redirects', 3)) {
                     return $this->failure('TOO_MANY_REDIRECTS', 'The ads.txt response exceeded the redirect limit.', $url, $response->status(), $started, $redirects);
                 }
@@ -71,10 +101,26 @@ final class AdsTxtFetcher
                     && strtolower((string) parse_url($next, PHP_URL_SCHEME)) !== 'https') {
                     return $this->failure('INSECURE_REDIRECT', 'The ads.txt endpoint attempted to downgrade an HTTPS request.', $next, $response->status(), $started, $redirects);
                 }
+
+                $nextHost = strtolower(rtrim((string) parse_url($next, PHP_URL_HOST), '.'));
+                if ($officialDelegation) {
+                    if ($delegatedOutsideRoot) {
+                        return $this->failure('EXTERNAL_REDIRECT_CHAIN_INVALID', 'A delegated external ads.txt endpoint may not redirect again.', $next, $response->status(), $started, $redirects);
+                    }
+                    if (! $this->withinOriginalRoot($nextHost, $primary)) {
+                        $delegatedOutsideRoot = true;
+                    }
+                } elseif (! $allowedHosts->contains($nextHost)) {
+                    return $this->failure('UNAUTHORIZED_REDIRECT', 'The response redirected to a domain that is not verified for this website.', $next, $response->status(), $started, $redirects);
+                }
+
                 $redirects[] = ['from' => $url, 'to' => $next, 'status' => $response->status()];
                 $url = $next;
-
                 continue;
+            }
+
+            if ($officialDelegation && in_array($response->status(), [303, 308], true)) {
+                return $this->failure('INVALID_REDIRECT_STATUS', 'The ads.txt redirect status is not authorized by the current ads.txt specification.', $url, $response->status(), $started, $redirects);
             }
 
             $contentType = strtolower(trim((string) $response->header('Content-Type')));
@@ -91,15 +137,11 @@ final class AdsTxtFetcher
             }
 
             $stream = $response->toPsrResponse()->getBody();
-            if ($stream->isSeekable()) {
-                $stream->rewind();
-            }
+            if ($stream->isSeekable()) { $stream->rewind(); }
             $body = '';
             while (! $stream->eof() && strlen($body) <= $maxBytes) {
                 $chunk = $stream->read(min(8192, ($maxBytes + 1) - strlen($body)));
-                if ($chunk === '') {
-                    break;
-                }
+                if ($chunk === '') { break; }
                 $body .= $chunk;
             }
             $bytes = strlen($body);
@@ -125,48 +167,33 @@ final class AdsTxtFetcher
         return $this->failure('FETCH_FAILED', 'The ads.txt endpoint could not be fetched.', $url, null, $started, $redirects);
     }
 
+    private function withinOriginalRoot(string $host, string $originalRoot): bool
+    {
+        return $host === $originalRoot || str_ends_with($host, '.'.$originalRoot);
+    }
+
     private function resolveRedirect(string $current, string $location): string
     {
-        if (preg_match('#^https?://#i', $location)) {
-            return $location;
-        }
+        if (preg_match('#^https?://#i', $location)) { return $location; }
         $scheme = (string) parse_url($current, PHP_URL_SCHEME);
         $host = (string) parse_url($current, PHP_URL_HOST);
         $port = parse_url($current, PHP_URL_PORT);
         $origin = $scheme.'://'.$host.($port ? ':'.$port : '');
-        if (str_starts_with($location, '//')) {
-            return $scheme.':'.$location;
-        }
-        if (str_starts_with($location, '/')) {
-            return $origin.$location;
-        }
+        if (str_starts_with($location, '//')) { return $scheme.':'.$location; }
+        if (str_starts_with($location, '/')) { return $origin.$location; }
         $path = (string) parse_url($current, PHP_URL_PATH);
 
         return $origin.rtrim(str_replace('\\', '/', dirname($path)), '/').'/'.$location;
     }
 
     /** @return array<string, mixed> */
-    private function failure(
-        string $code,
-        string $message,
-        ?string $url,
-        ?int $httpStatus,
-        int $started,
-        array $redirects = [],
-        ?string $contentType = null,
-    ): array {
+    private function failure(string $code, string $message, ?string $url, ?int $httpStatus, int $started, array $redirects = [], ?string $contentType = null): array
+    {
         return [
-            'ok' => false,
-            'url' => $url,
-            'final_url' => $url,
-            'http_status' => $httpStatus,
-            'content_type' => $contentType,
-            'body' => '',
-            'bytes' => null,
-            'duration_ms' => $this->duration($started),
-            'redirects' => $redirects,
-            'error_code' => $code,
-            'error' => $message,
+            'ok' => false, 'url' => $url, 'final_url' => $url, 'http_status' => $httpStatus,
+            'content_type' => $contentType, 'body' => '', 'bytes' => null,
+            'duration_ms' => $this->duration($started), 'redirects' => $redirects,
+            'error_code' => $code, 'error' => $message,
         ];
     }
 
