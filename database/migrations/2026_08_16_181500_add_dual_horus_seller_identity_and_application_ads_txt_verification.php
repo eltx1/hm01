@@ -16,7 +16,10 @@ return new class extends Migration
         });
 
         Schema::table('publisher_application_domain_claims', function (Blueprint $table): void {
-            $table->ulid('publisher_seller_declaration_id')->nullable()->after('normalized_domain');
+            $table->string('claim_status', 16)->default('CLAIMED')->after('normalized_domain');
+            $table->timestamp('claimed_at')->nullable()->after('claim_status');
+            $table->timestamp('released_at')->nullable()->after('claimed_at');
+            $table->ulid('publisher_seller_declaration_id')->nullable()->after('released_at');
             $table->ulid('website_seller_declaration_id')->nullable()->after('publisher_seller_declaration_id')->unique('application_domain_website_seller_unique');
             $table->string('verification_status', 24)->default('PENDING')->after('website_seller_declaration_id');
             $table->timestamp('verification_requested_at')->nullable()->after('verification_status');
@@ -28,6 +31,7 @@ return new class extends Migration
             $table->string('evidence_sha256', 64)->nullable()->after('verification_content_type');
             $table->string('failure_code', 80)->nullable()->after('evidence_sha256');
             $table->unsignedInteger('verification_attempt_count')->default(0)->after('failure_code');
+            $table->index(['publisher_application_id', 'claim_status'], 'application_domain_claim_status_idx');
             $table->index(['publisher_application_id', 'verification_status'], 'application_domain_verification_status_idx');
             $table->index(['publisher_seller_declaration_id', 'website_seller_declaration_id'], 'application_domain_seller_identity_idx');
         });
@@ -37,9 +41,11 @@ return new class extends Migration
     {
         Schema::table('publisher_application_domain_claims', function (Blueprint $table): void {
             $table->dropUnique('application_domain_website_seller_unique');
+            $table->dropIndex('application_domain_claim_status_idx');
             $table->dropIndex('application_domain_verification_status_idx');
             $table->dropIndex('application_domain_seller_identity_idx');
             $table->dropColumn([
+                'claim_status', 'claimed_at', 'released_at',
                 'publisher_seller_declaration_id', 'website_seller_declaration_id',
                 'verification_status', 'verification_requested_at', 'last_checked_at',
                 'verified_at', 'final_ads_txt_url', 'verification_http_status',
