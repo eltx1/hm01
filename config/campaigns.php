@@ -1,6 +1,10 @@
 <?php
 
 return [
+    // Direct Advertiser campaigns already existed before Task 41. Keep that deployed
+    // product state by default; the typed Global Setting can turn the pilot off at
+    // runtime without making an environment variable the control plane.
+    'advertiser_campaigns_enabled' => env('ADVERTISER_CAMPAIGNS_ENABLED', true),
     'creative_disk' => env('CAMPAIGN_CREATIVE_DISK', 'local'),
     'creative_directory' => env('CAMPAIGN_CREATIVE_DIRECTORY', 'campaign-creatives'),
     'max_file_bytes' => [
