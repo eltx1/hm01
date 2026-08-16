@@ -2,6 +2,7 @@
 @section('title', $campaign->exists ? 'Edit campaign' : 'Create campaign')
 @section('heading', $campaign->exists ? 'Edit campaign' : 'Create campaign')
 @section('content')
+<article style="margin-bottom:1rem"><p class="eyebrow">Delivery readiness</p><p class="muted">Campaigns use Horus-managed delivery infrastructure. Saving a draft does not promise delivery; submission and activation require an eligible delivery backend for the selected inventory.</p></article>
 <form class="form-stack" method="POST" action="{{ $campaign->exists ? route('advertiser.campaigns.update',$campaign) : route('advertiser.campaigns.store') }}">@csrf @if($campaign->exists)@method('PUT')@endif
 <section class="detail-grid"><article><p class="eyebrow">Campaign</p><h2>Plan</h2>
 <label>Name<input class="hm-input" name="name" value="{{ old('name',$campaign->name) }}" required></label><label>Objective<input class="hm-input" name="objective" value="{{ old('objective',$campaign->objective) }}" placeholder="Awareness, traffic, video views…" required></label>
@@ -11,8 +12,8 @@
 </article><article><p class="eyebrow">Targeting</p><h2>Audience and inventory</h2>
 <label>Countries (hold Ctrl/⌘ for multiple)<select class="hm-input" name="countries[]" multiple size="6">@foreach(['EG','SA','AE','US','GB','CA','DE','FR'] as $country)<option @selected(in_array($country,old('countries',$campaign->targets?->firstWhere('dimension','COUNTRY')?->values ?? [])))>{{ $country }}</option>@endforeach</select></label>
 <label>Devices<select class="hm-input" name="devices[]" multiple size="4">@foreach(['DESKTOP','TABLET','MOBILE','CONNECTED_TV'] as $device)<option @selected(in_array($device,old('devices',$campaign->targets?->firstWhere('dimension','DEVICE')?->values ?? [])))>{{ $device }}</option>@endforeach</select></label>
-<p class="muted">Every selected website is deployed automatically to its currently selected GAM network. HORUS_GAM is used by default.</p>
+<p class="muted">Horus validates delivery readiness for every selected website before a campaign can move into delivery.</p>
 @php($selectedSites=old('site_ids',$campaign->sites?->pluck('site_id')->all() ?? []))@php($selectedPlacements=old('placement_ids',$campaign->placements?->pluck('placement_id')->all() ?? []))
-@foreach($sites as $site)<div class="domain-card"><label><input type="checkbox" name="site_ids[]" value="{{ $site->id }}" @checked(in_array($site->id,$selectedSites))> <strong>{{ $site->display_name }}</strong> · {{ $site->publisher->display_name }} · {{ $site->serving_mode->value }}</label>@foreach($placements->where('site_id',$site->id) as $placement)<label style="margin-left:1.5rem"><input type="checkbox" name="placement_ids[]" value="{{ $placement->id }}" @checked(in_array($placement->id,$selectedPlacements))> {{ $placement->name }} ({{ $placement->code }})</label>@endforeach</div>@endforeach
+@foreach($sites as $site)<div class="domain-card"><label><input type="checkbox" name="site_ids[]" value="{{ $site->id }}" @checked(in_array($site->id,$selectedSites))> <strong>{{ $site->display_name }}</strong> · {{ $site->publisher->display_name }}</label>@foreach($placements->where('site_id',$site->id) as $placement)<label style="margin-left:1.5rem"><input type="checkbox" name="placement_ids[]" value="{{ $placement->id }}" @checked(in_array($placement->id,$selectedPlacements))> {{ $placement->name }} ({{ $placement->code }})</label>@endforeach</div>@endforeach
 </article></section><button class="hm-button-primary">{{ $campaign->exists ? 'Save campaign' : 'Create campaign' }}</button></form>
 @endsection
