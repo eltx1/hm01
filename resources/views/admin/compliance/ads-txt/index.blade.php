@@ -8,6 +8,7 @@
 
 <x-control-plane.workspace-tabs :items="[
     ['label' => 'Ads.txt', 'href' => route('admin.compliance.ads-txt.index')],
+    ['label' => 'Master Ads.txt Records', 'href' => route('admin.compliance.ads-txt.master.index'), 'visible' => auth()->user()->hasPermission('supply_chain.ads_txt.view')],
     ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
 ]" label="Supply chain compliance sections" />
 
