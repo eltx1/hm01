@@ -111,7 +111,7 @@ class PlatformMasterAdsTxtTest extends TestCase
 
         $result = app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site);
         $this->assertNotContains($master->raw_record, $result['lines']);
-        $this->assertTrue(collect($result['findings'])->contains(fn ($finding) => ($finding['code'] ?? null) === 'ADS_TXT_AUTHORIZATION_CONFLICT'));
+        $this->assertTrue(collect($result['findings'])->contains(fn ($finding) => ($finding['code'] ?? null) === 'ADS_TXT_RELATIONSHIP_CONFLICT'));
         $this->assertSame(AdsTxtComplianceStatus::Conflict->value, app(AdsTxtComplianceService::class)->summary($this->site)['status']);
     }
 
