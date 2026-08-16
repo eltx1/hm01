@@ -9,6 +9,7 @@ use App\Models\SellerDeclaration;
 use App\Models\Site;
 use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
+use App\Services\SupplyChain\SupplyChainCrossConsistencyValidator;
 use App\Services\SupplyChain\SupplyChainStandardsContract;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
@@ -19,6 +20,7 @@ final class SupplyChainComplianceService
         private readonly SupplyChainStandardsContract $contract,
         private readonly SupplyChainArtifactBuilder $artifacts,
         private readonly CanonicalJson $json,
+        private readonly SupplyChainCrossConsistencyValidator $crossConsistency,
     ) {}
 
     /** @return array<string, mixed> */
@@ -200,13 +202,22 @@ final class SupplyChainComplianceService
             ));
         }
 
-        $findings = $findings->unique(fn (array $finding): string => implode('|', array_map('strval', $finding)))->values();
+        $crossConsistency = $this->crossConsistency->validateSite($site, $network, $adsTxt, $schain);
+        $findings = $findings->merge($crossConsistency['findings'])
+            ->unique(fn (array $finding): string => implode('|', array_map('strval', $finding)))
+            ->values();
 
         return [
             'site' => $site,
             'seller_id' => $selectedSellerId,
             'ads_txt_health' => ! $selectedSellerId ? 'NOT_CONFIGURED' : ($hasAdsAuthorization ? 'HEALTHY' : (in_array($selectedRelationship, ['DIRECT', 'RESELLER'], true) ? 'CONFLICT' : 'NOT_CONFIGURED')),
             'schain_health' => $selectedSellerId ? ($hasSchainNode ? ($schain['complete'] === 1 ? 'HEALTHY' : 'PARTIAL') : 'CONFLICT') : 'NOT_CONFIGURED',
+            'cross_consistency_status' => $crossConsistency['compliant'] ? 'COMPLIANT' : 'CONFLICT',
+            'cross_consistency' => [
+                'compliant' => $crossConsistency['compliant'],
+                'seller_id' => $crossConsistency['seller_id'],
+                'owner_domain' => $crossConsistency['owner_domain'],
+            ],
             'schain' => ['complete' => $schain['complete'], 'ver' => $schain['ver'], 'nodes' => $schain['nodes']],
             'findings' => $findings->all(),
         ];
@@ -241,6 +252,7 @@ final class SupplyChainComplianceService
                         'domain' => $site['site']->primary_domain,
                         'ads_txt_health' => $site['ads_txt_health'],
                         'schain_health' => $site['schain_health'],
+                        'cross_consistency_status' => $site['cross_consistency_status'],
                     ])->all(),
                 ];
             })->all();
