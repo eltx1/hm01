@@ -9,6 +9,7 @@
     $latestMarketingConsent = $application->marketingConsents->first();
     $canReview = auth()->user()->hasPermission('publisher_applications.review');
     $canRunThoth = auth()->user()->hasPermission('publisher_quality.ai.run');
+    $claim = $application->domainClaims->firstWhere('claim_status', 'CLAIMED') ?? $application->domainClaims->first();
 @endphp
 
 <section class="hero">
@@ -24,7 +25,7 @@
 </section>
 
 <div class="notice">
-    <strong>Decision boundary:</strong> application approval creates operational Publisher eligibility only. Website approval and production monetization remain separate.
+    <strong>Decision boundary:</strong> ads.txt verification is website/supply-chain evidence only. Application approval creates operational Publisher eligibility only; website approval and production monetization remain separate.
 </div>
 
 <section class="metric-grid">
@@ -35,40 +36,39 @@
     <article><p class="eyebrow">Publisher account</p><strong>{{ $application->publisher->status->value }}</strong></article>
 </section>
 
+<article class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">Task 39 supply-chain evidence</p><h2>Website verification &amp; Horus seller identities</h2></div>@if($claim)<span class="status">{{ $claim->verification_status }}</span>@endif</div>
+    @if($claim)
+        <div class="detail-grid">
+            <div><span>Website</span><strong>{{ $claim->normalized_domain }}</strong></div>
+            <div><span>Publisher Seller ID</span><strong>{{ $claim->publisherSeller?->seller_id ?: 'Not reserved' }}</strong></div>
+            <div><span>Website Seller ID</span><strong>{{ $claim->websiteSeller?->seller_id ?: 'Not reserved' }}</strong></div>
+            <div><span>Ads.txt</span><strong>{{ $claim->verification_status }}</strong></div>
+            <div><span>Last checked</span><strong>{{ $claim->last_checked_at ?: 'Never' }}</strong></div>
+            <div><span>Verified at</span><strong>{{ $claim->verified_at ?: 'Not verified' }}</strong></div>
+            <div><span>Final ads.txt URL</span><strong>{{ $claim->final_ads_txt_url ?: 'Not fetched' }}</strong></div>
+            <div><span>HTTP evidence</span><strong>{{ $claim->verification_http_status ?: '—' }} · {{ $claim->verification_content_type ?: '—' }}</strong></div>
+            <div><span>Evidence SHA-256</span><strong>{{ $claim->evidence_sha256 ?: '—' }}</strong></div>
+            <div><span>Failure code</span><strong>{{ $claim->failure_code ?: 'None' }}</strong></div>
+        </div>
+        <p class="muted">The HMP and HMS IDs are permanent public technical account identifiers. A VERIFIED ads.txt state does not activate the Publisher, Site, serving engines, Finance, or payouts.</p>
+    @else
+        <p class="muted">No application domain claim is available.</p>
+    @endif
+</article>
+
 @if ($canReview)
     <article class="workspace-section">
         <h2>Review actions</h2>
         <div class="status-row">
             @if ($application->status === \App\Enums\PublisherApplicationStatus::Submitted)
-                <form method="POST" action="{{ route('admin.publisher-applications.start-review', $application) }}">
-                    @csrf
-                    <button class="hm-button-primary">Start review</button>
-                </form>
+                <form method="POST" action="{{ route('admin.publisher-applications.start-review', $application) }}">@csrf<button class="hm-button-primary">Start review</button></form>
             @endif
 
             @if ($application->status === \App\Enums\PublisherApplicationStatus::UnderReview)
-                <details>
-                    <summary>Request more information</summary>
-                    <form method="POST" action="{{ route('admin.publisher-applications.request-information', $application) }}" class="form-stack">
-                        @csrf
-                        <label>Required applicant-visible request<textarea name="reason" required maxlength="5000"></textarea></label>
-                        <button>Send information request</button>
-                    </form>
-                </details>
-
-                <form method="POST" action="{{ route('admin.publisher-applications.approve', $application) }}">
-                    @csrf
-                    <button class="hm-button-primary">Approve application</button>
-                </form>
-
-                <details>
-                    <summary>Reject</summary>
-                    <form method="POST" action="{{ route('admin.publisher-applications.reject', $application) }}" class="form-stack">
-                        @csrf
-                        <label>Required decision reason<textarea name="reason" required maxlength="5000"></textarea></label>
-                        <button class="danger-button">Reject application</button>
-                    </form>
-                </details>
+                <details><summary>Request more information</summary><form method="POST" action="{{ route('admin.publisher-applications.request-information', $application) }}" class="form-stack">@csrf<label>Required applicant-visible request<textarea name="reason" required maxlength="5000"></textarea></label><button>Send information request</button></form></details>
+                <form method="POST" action="{{ route('admin.publisher-applications.approve', $application) }}">@csrf<button class="hm-button-primary">Approve application</button></form>
+                <details><summary>Reject</summary><form method="POST" action="{{ route('admin.publisher-applications.reject', $application) }}" class="form-stack">@csrf<label>Required decision reason<textarea name="reason" required maxlength="5000"></textarea></label><button class="danger-button">Reject application</button></form></details>
             @endif
 
             @if ($application->status === \App\Enums\PublisherApplicationStatus::Approved)
@@ -80,13 +80,8 @@
 
 <article class="workspace-section">
     <div class="workspace-heading">
-        <div>
-            <p class="eyebrow">Canonical Task 24 profile</p>
-            <h2>Publisher quality evidence</h2>
-        </div>
-        @if ($profile)
-            <span class="status">Version {{ $profile->version }}</span>
-        @endif
+        <div><p class="eyebrow">Canonical Task 24 profile</p><h2>Publisher quality evidence</h2></div>
+        @if ($profile)<span class="status">Version {{ $profile->version }}</span>@endif
     </div>
 
     @if ($profile)
@@ -98,73 +93,36 @@
         </div>
 
         @if ($canRunThoth)
-            <form method="POST" action="{{ route('admin.publishers.quality-review.run', $application->publisher) }}" class="inline-form">
-                @csrf
-                <label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label>
-                <button>Run THOTH advisory</button>
-            </form>
-            <p class="muted">THOTH may append advisory evidence but can never approve or reject this application.</p>
+            <form method="POST" action="{{ route('admin.publishers.quality-review.run', $application->publisher) }}" class="inline-form">@csrf<label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label><button>Run THOTH advisory</button></form>
+            <p class="muted">THOTH may append advisory evidence but can never approve or reject this application. Task 40 crawling eligibility can rely on the separate VERIFIED application-domain ads.txt contract.</p>
         @endif
     @else
         <p class="muted">The applicant has not saved quality-profile evidence yet.</p>
     @endif
 
     @forelse ($application->publisher->qualityReviewRuns as $run)
-        <div class="compact-row">
-            <div>
-                <strong>{{ $run->provider }} · {{ $run->model }}</strong>
-                <p>{{ $run->result['recommended_decision'] ?? $run->error_code ?? 'Pending' }} · advisory only</p>
-            </div>
-            <x-status-badge :status="$run->status" />
-        </div>
+        <div class="compact-row"><div><strong>{{ $run->provider }} · {{ $run->model }}</strong><p>{{ $run->result['recommended_decision'] ?? $run->error_code ?? 'Pending' }} · advisory only</p></div><x-status-badge :status="$run->status" /></div>
     @empty
         <p class="muted">No THOTH advisory run has been recorded for this Publisher.</p>
     @endforelse
 </article>
 
 <article class="workspace-section">
-    <div class="workspace-heading">
-        <div>
-            <p class="eyebrow">Application acceptance evidence</p>
-            <h2>Legal documents &amp; consent</h2>
-        </div>
-        <span class="status">{{ $application->legalAcceptances->count() }} acceptance record(s)</span>
-    </div>
+    <div class="workspace-heading"><div><p class="eyebrow">Application acceptance evidence</p><h2>Legal documents &amp; consent</h2></div><span class="status">{{ $application->legalAcceptances->count() }} acceptance record(s)</span></div>
 
     @forelse ($application->legalAcceptances as $acceptance)
-        <div class="compact-row">
-            <div>
-                <strong>{{ str($acceptance->document_type)->replace('_', ' ')->headline() }} · {{ $acceptance->document_version }}</strong>
-                <p>
-                    <a class="text-link" href="{{ $acceptance->canonical_url }}" target="_blank" rel="noopener noreferrer">Canonical document</a>
-                    · Evidence {{ $acceptance->evidence_hash }}
-                </p>
-            </div>
-            <span class="muted">Accepted {{ $acceptance->accepted_at }}</span>
-        </div>
+        <div class="compact-row"><div><strong>{{ str($acceptance->document_type)->replace('_', ' ')->headline() }} · {{ $acceptance->document_version }}</strong><p><a class="text-link" href="{{ $acceptance->canonical_url }}" target="_blank" rel="noopener noreferrer">Canonical document</a> · Evidence {{ $acceptance->evidence_hash }}</p></div><span class="muted">Accepted {{ $acceptance->accepted_at }}</span></div>
     @empty
         <p class="muted">No legal acceptance evidence has been recorded.</p>
     @endforelse
 
-    <div class="compact-row">
-        <div>
-            <strong>Optional marketing consent</strong>
-            <p>Recorded independently from contractual/privacy acceptance and never gates transactional application communications.</p>
-        </div>
-        <span class="muted">
-            {{ $latestMarketingConsent ? (($latestMarketingConsent->opted_in ? 'Opted in' : 'Not opted in').' · '.$latestMarketingConsent->recorded_at) : 'No record' }}
-        </span>
-    </div>
+    <div class="compact-row"><div><strong>Optional marketing consent</strong><p>Recorded independently from contractual/privacy acceptance and never gates transactional application communications.</p></div><span class="muted">{{ $latestMarketingConsent ? (($latestMarketingConsent->opted_in ? 'Opted in' : 'Not opted in').' · '.$latestMarketingConsent->recorded_at) : 'No record' }}</span></div>
 </article>
 
 <article class="workspace-section">
     <h2>Immutable submitted revisions</h2>
     @forelse ($application->revisions as $revision)
-        <details>
-            <summary>Revision {{ $revision->version }} · {{ $revision->submitted_at }}</summary>
-            <p>SHA-256 {{ $revision->snapshot_hash }}</p>
-            <pre>{{ json_encode($revision->snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre>
-        </details>
+        <details><summary>Revision {{ $revision->version }} · {{ $revision->submitted_at }}</summary><p>SHA-256 {{ $revision->snapshot_hash }}</p><pre>{{ json_encode($revision->snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre></details>
     @empty
         <p class="muted">No submitted revision.</p>
     @endforelse
@@ -173,18 +131,7 @@
 <article class="workspace-section">
     <h2>Lifecycle history</h2>
     @foreach ($application->events as $event)
-        <div class="compact-row">
-            <div>
-                <strong>{{ str($event->action)->replace('_', ' ')->headline() }}</strong>
-                <p>
-                    {{ $event->previous_status ?: 'Created' }} → {{ $event->new_status }}
-                    @if ($event->reason)
-                        · {{ $event->reason }}
-                    @endif
-                </p>
-            </div>
-            <span class="muted">{{ $event->actor?->name ?: 'System' }} · {{ $event->created_at }}</span>
-        </div>
+        <div class="compact-row"><div><strong>{{ str($event->action)->replace('_', ' ')->headline() }}</strong><p>{{ $event->previous_status ?: 'Created' }} → {{ $event->new_status }} @if ($event->reason)· {{ $event->reason }}@endif</p></div><span class="muted">{{ $event->actor?->name ?: 'System' }} · {{ $event->created_at }}</span></div>
     @endforeach
 </article>
 @endsection
