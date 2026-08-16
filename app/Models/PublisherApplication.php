@@ -53,52 +53,41 @@ class PublisherApplication extends Model
         });
 
         static::updated(function (self $application): void {
-            if (! $application->wasChanged('status') || $application->status !== PublisherApplicationStatus::Approved) {
+            if (! $application->wasChanged('status')) {
                 return;
             }
 
-            $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
-            app(HorusSellerIdentityService::class)->ensureForPublisher($publisher);
+            $identities = app(HorusSellerIdentityService::class);
+            if ($application->status === PublisherApplicationStatus::Approved) {
+                $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
+                $identities->ensureForPublisher($publisher);
+                $identities->markApplicationApproved($application);
+            } elseif (in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)) {
+                $identities->retireApplicationReservations($application, $application->status->value);
+                $application->domainClaims()->where('claim_status', 'CLAIMED')->update([
+                    'claim_status' => 'RELEASED',
+                    'released_at' => now(),
+                ]);
+            }
         });
     }
 
-    public function publisher(): BelongsTo
-    {
-        return $this->belongsTo(Publisher::class);
-    }
-
-    public function applicant(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'applicant_user_id');
-    }
-
-    public function reviewer(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'reviewed_by');
-    }
+    public function publisher(): BelongsTo { return $this->belongsTo(Publisher::class); }
+    public function applicant(): BelongsTo { return $this->belongsTo(User::class, 'applicant_user_id'); }
+    public function reviewer(): BelongsTo { return $this->belongsTo(User::class, 'reviewed_by'); }
 
     public function domainClaim(): HasOne
     {
-        return $this->hasOne(PublisherApplicationDomainClaim::class);
+        return $this->hasOne(PublisherApplicationDomainClaim::class)->where('claim_status', 'CLAIMED')->latestOfMany('claimed_at');
     }
 
-    public function revisions(): HasMany
+    public function domainClaims(): HasMany
     {
-        return $this->hasMany(PublisherApplicationRevision::class);
+        return $this->hasMany(PublisherApplicationDomainClaim::class);
     }
 
-    public function events(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationEvent::class);
-    }
-
-    public function legalAcceptances(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationLegalAcceptance::class, 'publisher_application_id');
-    }
-
-    public function marketingConsents(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationMarketingConsent::class, 'publisher_application_id');
-    }
+    public function revisions(): HasMany { return $this->hasMany(PublisherApplicationRevision::class); }
+    public function events(): HasMany { return $this->hasMany(PublisherApplicationEvent::class); }
+    public function legalAcceptances(): HasMany { return $this->hasMany(PublisherApplicationLegalAcceptance::class, 'publisher_application_id'); }
+    public function marketingConsents(): HasMany { return $this->hasMany(PublisherApplicationMarketingConsent::class, 'publisher_application_id'); }
 }
