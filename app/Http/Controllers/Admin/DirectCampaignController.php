@@ -9,6 +9,7 @@ use App\Models\CampaignCreative;
 use App\Models\CampaignNetworkInstance;
 use App\Models\User;
 use App\Services\Campaigns\AdvertiserAccountService;
+use App\Services\Campaigns\CampaignDeliveryCapabilityService;
 use App\Services\Campaigns\CampaignDeploymentService;
 use App\Services\Campaigns\CampaignNetworkPlanner;
 use App\Services\Campaigns\CampaignReportingService;
@@ -27,12 +28,19 @@ class DirectCampaignController extends Controller
         ]);
     }
 
-    public function show(Campaign $campaign, CampaignNetworkPlanner $planner, CampaignReportingService $reporting): View
+    public function show(Campaign $campaign, CampaignNetworkPlanner $planner, CampaignReportingService $reporting, CampaignDeliveryCapabilityService $capabilities): View
     {
         $campaign->load(['advertiser.billingProfiles', 'goals', 'targets', 'sites.site.publisher', 'placements.placement', 'creatives.files', 'budget', 'networkInstances.connection', 'approvalLogs.actor', 'invoices']);
+        $capability = $capabilities->evaluate($campaign, in_array($campaign->status->value, ['DRAFT', 'REJECTED', 'PENDING_REVIEW'], true));
+        $capabilities->warnIfUnavailable($campaign, $capability);
         $preview = null;
         try { $preview = $planner->preview($campaign); } catch (\Throwable $exception) { $preview = ['issues' => [$exception->getMessage()], 'estimatedObjects' => 0, 'pendingObjects' => 0, 'plans' => []]; }
-        return view('admin.campaigns.show', ['campaign' => $campaign->fresh(['networkInstances.connection']), 'preview' => $preview, 'report' => $reporting->summary($campaign)]);
+        return view('admin.campaigns.show', [
+            'campaign' => $campaign->fresh(['networkInstances.connection']),
+            'preview' => $preview,
+            'report' => $reporting->summary($campaign),
+            'deliveryCapability' => $capability,
+        ]);
     }
 
     public function linkAdvertiserUser(Request $request, Advertiser $advertiser, AdvertiserAccountService $accounts): RedirectResponse
