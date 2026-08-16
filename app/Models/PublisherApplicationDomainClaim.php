@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 class PublisherApplicationDomainClaim extends Model
 {
@@ -17,6 +18,30 @@ class PublisherApplicationDomainClaim extends Model
         'final_ads_txt_url', 'verification_http_status', 'verification_content_type',
         'evidence_sha256', 'failure_code', 'verification_attempt_count',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (self $claim): void {
+            if ($claim->isDirty('normalized_domain') && $claim->getRawOriginal('website_seller_declaration_id') !== null) {
+                throw new LogicException('An application domain cannot be reassigned after its permanent HMS seller identity has been reserved.');
+            }
+            if ($claim->isDirty('website_seller_declaration_id') && $claim->getRawOriginal('website_seller_declaration_id') !== null) {
+                throw new LogicException('A reserved HMS seller identity cannot be replaced or recycled.');
+            }
+            if ($claim->isDirty('publisher_seller_declaration_id') && $claim->getRawOriginal('publisher_seller_declaration_id') !== null) {
+                throw new LogicException('The application HMP seller identity reference is immutable once reserved.');
+            }
+            if ($claim->isDirty('claim_status') && $claim->getRawOriginal('claim_status') === 'RELEASED') {
+                throw new LogicException('A released application domain claim cannot be reclaimed or reassigned.');
+            }
+        });
+
+        static::deleting(function (self $claim): void {
+            if ($claim->website_seller_declaration_id || $claim->publisher_seller_declaration_id || $claim->verification_requested_at) {
+                throw new LogicException('Application domain identity and verification evidence is immutable and cannot be deleted after seller reservation begins.');
+            }
+        });
+    }
 
     protected function casts(): array
     {
