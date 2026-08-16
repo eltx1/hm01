@@ -12,6 +12,7 @@
 </section>
 
 <x-control-plane.workspace-tabs :items="[
+    ['label' => 'Control Center', 'href' => route('admin.compliance.supply-chain.overview')],
     ['label' => 'Ads.txt', 'href' => route('admin.compliance.ads-txt.index')],
     ['label' => 'Master Ads.txt Records', 'href' => route('admin.compliance.ads-txt.master.index')],
     ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
@@ -38,6 +39,7 @@
 
 <article class="workspace-section">
     <p class="eyebrow">Canonical source</p><h2>Reviewed master records</h2>
+    <div class="notice"><strong>Exact current impact:</strong> This record will appear on {{ $impactedSiteCount }} eligible websites when enabled, subject to canonical conflict handling.</div>
     <div class="table-wrap"><table><thead><tr><th>Authorization</th><th>Status</th><th>Review</th><th>Effective window</th><th>Remote verification</th><th>Actions</th></tr></thead><tbody>
     @forelse($records as $record)
         <tr>
@@ -54,17 +56,28 @@
                     @if(auth()->user()->hasPermission('supply_chain.sellers.review'))
                     <form method="POST" action="{{ route('admin.compliance.ads-txt.master.review', $record) }}">@csrf<input type="hidden" name="review_status" value="VERIFIED"><button class="hm-button-secondary">Review: Verified</button></form>
                     @endif
-                    @if($record->status === 'ACTIVE')
-                        @if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
-                        <form method="POST" action="{{ route('admin.compliance.ads-txt.master.disable', $record) }}">@csrf<button class="hm-button-danger">Disable</button></form>
-                        @endif
-                    @elseif(auth()->user()->hasPermission('supply_chain.ads_txt.manage') && auth()->user()->hasPermission('supply_chain.sellers.review'))
-                        <form method="POST" action="{{ route('admin.compliance.ads-txt.master.enable', $record) }}" onsubmit="return confirm('This authorization will be included in every eligible Horus-managed website. Continue?')">@csrf
-                            <input type="hidden" name="consequence_confirmed" value="1">
-                            <button class="hm-button-primary">Enable globally</button>
-                        </form>
-                    @endif
                 </div>
+                @if($record->status === 'ACTIVE' && auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
+                    <details class="managed-record"><summary>Disable globally</summary>
+                        <form method="POST" action="{{ route('admin.compliance.ads-txt.master.disable', $record) }}" class="form-stack">@csrf
+                            <p><strong>This record is currently eligible on {{ $impactedSiteCount }} websites.</strong></p>
+                            <label>Reason<textarea class="hm-input" name="reason" required minlength="8" maxlength="1000"></textarea></label>
+                            <label>Current password<input class="hm-input" type="password" name="current_password" required autocomplete="current-password"></label>
+                            <label>Type <code>DISABLE {{ $impactedSiteCount }} SITES</code><input class="hm-input" name="impact_confirmation" required autocomplete="off"></label>
+                            <button class="hm-button-danger">Disable master record</button>
+                        </form>
+                    </details>
+                @elseif($record->status !== 'ACTIVE' && auth()->user()->hasPermission('supply_chain.ads_txt.manage') && auth()->user()->hasPermission('supply_chain.sellers.review'))
+                    <details class="managed-record"><summary>Enable globally</summary>
+                        <form method="POST" action="{{ route('admin.compliance.ads-txt.master.enable', $record) }}" class="form-stack">@csrf
+                            <p><strong>This record will appear on {{ $impactedSiteCount }} eligible websites.</strong></p>
+                            <label>Reason<textarea class="hm-input" name="reason" required minlength="8" maxlength="1000"></textarea></label>
+                            <label>Current password<input class="hm-input" type="password" name="current_password" required autocomplete="current-password"></label>
+                            <label>Type <code>ENABLE {{ $impactedSiteCount }} SITES</code><input class="hm-input" name="impact_confirmation" required autocomplete="off"></label>
+                            <button class="hm-button-primary">Enable master record</button>
+                        </form>
+                    </details>
+                @endif
             </td>
         </tr>
         @if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))

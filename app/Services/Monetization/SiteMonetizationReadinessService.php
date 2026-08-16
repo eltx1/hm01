@@ -20,6 +20,7 @@ use App\Models\Site;
 use App\Services\Compliance\AdsTxtComplianceService;
 use App\Services\Inventory\RuntimePolicyResolver;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Prebid\BidderAdsTxtService;
 use App\Services\Privacy\PrivacyReadinessService;
 use App\Services\Serving\ResolvedSiteEngineState;
 use App\Services\Serving\SiteEngineStateResolver;
@@ -34,6 +35,7 @@ final class SiteMonetizationReadinessService
         private readonly RuntimePolicyResolver $runtimePolicies,
         private readonly ReportingHealthService $reportingHealth,
         private readonly PrivacyReadinessService $privacyReadiness,
+        private readonly BidderAdsTxtService $bidderAdsTxt,
     ) {}
 
     /**
@@ -198,6 +200,12 @@ final class SiteMonetizationReadinessService
         }
 
         $mappingCount = BidderSiteMapping::withoutGlobalScopes()->where('site_id', $site->id)->where('enabled', true)->count();
+        $bidderSupply = $this->bidderAdsTxt->readinessForSite($site);
+        $supplyDiagnostics = [
+            'ads_txt_required' => $bidderSupply['required'],
+            'ads_txt_required_missing' => $bidderSupply['required_missing'],
+            'ads_txt_requirement_unknown' => $bidderSupply['unknown'],
+        ];
         if ($engineState->prebidDeliveryMode === PrebidDeliveryMode::Standalone) {
             $settings = PrebidSetting::withoutGlobalScopes()->with('build')
                 ->where('scope', PrebidSetting::SCOPE_SITE_STANDALONE)
@@ -206,12 +214,18 @@ final class SiteMonetizationReadinessService
                 'settings_enabled' => (bool) $settings?->enabled,
                 'build' => $settings?->build?->version,
                 'mapping_count' => $mappingCount,
-            ];
+            ] + $supplyDiagnostics;
             if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
                 return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
                     'Header bidding is enabled for standalone delivery but its runtime profile is incomplete.',
                     'Horus Media must complete the standalone header-bidding profile and bidder mappings.', null, $settings?->updated_at,
                     $diagnostics);
+            }
+            if ($bidderSupply['required_missing'] > 0) {
+                return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                    'Header bidding has a production bidder that requires ads.txt, but its reviewed authorization is missing for this website.',
+                    'Add and review the required bidder ads.txt authorization before treating Header Bidding as active.',
+                    $this->publisherRoute('publisher.ads-txt.index'), $settings->updated_at, $diagnostics);
             }
 
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,
@@ -223,7 +237,7 @@ final class SiteMonetizationReadinessService
         if ($connection === null) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
                 'Header bidding is configured for the GAM bridge, but no eligible GAM connection is available.',
-                'Horus Media must restore the GAM bridge connection.', null, $site->updated_at, $baseDiagnostics);
+                'Horus Media must restore the GAM bridge connection.', null, $site->updated_at, $baseDiagnostics + $supplyDiagnostics);
         }
         $settings = PrebidSetting::withoutGlobalScopes()->with('build')
             ->where('scope', PrebidSetting::SCOPE_GAM_CONNECTION)
@@ -232,12 +246,18 @@ final class SiteMonetizationReadinessService
             'settings_enabled' => (bool) $settings?->enabled,
             'build' => $settings?->build?->version,
             'gam_connection_id' => $connection->id,
-        ];
+        ] + $supplyDiagnostics;
         if (! $settings || ! $settings->enabled || ! $settings->build || $mappingCount === 0) {
             return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
                 'Header bidding is enabled for this website but its managed GAM bridge setup is incomplete.',
                 'Horus Media must complete the managed header-bidding setup.', null, $settings?->updated_at,
                 $diagnostics);
+        }
+        if ($bidderSupply['required_missing'] > 0) {
+            return $this->module('prebid', 'Header Bidding', MonetizationStatus::ActionRequired, $dependency,
+                'Header bidding has a production bidder that requires ads.txt, but its reviewed authorization is missing for this website.',
+                'Add and review the required bidder ads.txt authorization before treating Header Bidding as active.',
+                $this->publisherRoute('publisher.ads-txt.index'), $settings->updated_at, $diagnostics);
         }
 
         return $this->module('prebid', 'Header Bidding', MonetizationStatus::Active, $dependency,

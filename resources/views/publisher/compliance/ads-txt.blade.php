@@ -17,9 +17,19 @@
 
 @forelse($sites as $site)
 @php($summary = $summaries[$site->id])
+@php($deployment = $deploymentStates[$site->id])
 <article class="workspace-section publisher-compliance-card">
     <div class="workspace-heading"><div><p class="eyebrow">{{ $site->display_name }}</p><h2>{{ $site->primary_domain }}/ads.txt</h2><div class="status-row"><x-status-badge :status="$summary['status']" /><span class="muted">Last check: {{ $summary['last_checked']?->diffForHumans() ?: 'never' }}</span></div></div><div class="status-row"><button class="hm-button-primary" type="button" data-copy-target="publisher-ads-txt-{{ $site->id }}">Copy All</button><a class="hm-button-secondary" href="{{ route('publisher.ads-txt.download', $site) }}">Download</a>@if(auth()->user()->hasPermission('publisher.ads_txt.verify_own'))<form method="POST" action="{{ route('publisher.ads-txt.verify', $site) }}">@csrf<button class="hm-button-secondary">Check Again</button></form>@endif</div></div>
-    <p>{{ $summary['action'] }}</p><pre id="publisher-ads-txt-{{ $site->id }}" class="compliance-code">{{ $summary['canonical']['content'] }}</pre>
+    <p>{{ $deployment['next_action'] }}</p>
+    <div class="managed-record">
+        <div class="workspace-heading"><div><p class="eyebrow">Deployment mode</p><h3>{{ $deployment['deployment_mode'] }}</h3></div><x-status-badge :status="$deployment['deployment_mode'] === 'MANAGED_REDIRECT_DELEGATION' ? $deployment['redirect_status'] : 'MANUAL_COPY'" /></div>
+        <p>{{ $deployment['instructions'] }}</p>
+        @if($deployment['deployment_mode'] === 'MANAGED_REDIRECT_DELEGATION')
+            <p>Managed canonical target: <code>{{ $deployment['managed_target'] }}</code></p>
+            <small class="muted">Redirect verification: {{ $deployment['redirect_status'] }}{{ $deployment['redirect_verified_at'] ? ' · '.$deployment['redirect_verified_at']->diffForHumans() : '' }}</small>
+        @endif
+    </div>
+    <pre id="publisher-ads-txt-{{ $site->id }}" class="compliance-code">{{ $deployment['canonical'] }}</pre>
     <div class="compliance-diff-grid">
         <div><h3>Correct records</h3>@forelse($summary['comparison']['correct'] ?? [] as $item)<code class="record-line record-correct">{{ $item['canonical'] }}</code>@empty<p class="muted">Nothing confirmed yet.</p>@endforelse</div>
         <div><h3>Missing required records</h3>@forelse($summary['comparison']['missing'] ?? [] as $item)<code class="record-line record-missing">{{ $item['canonical'] }}</code>@empty<p class="muted">No missing seller records.</p>@endforelse @foreach($summary['comparison']['missing_directives'] ?? [] as $item)<code class="record-line record-missing">{{ $item['canonical'] }}</code>@endforeach</div>
