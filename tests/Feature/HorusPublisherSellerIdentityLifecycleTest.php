@@ -118,6 +118,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
             'starts_at' => now()->subDay(),
             'revenue_share_percent' => 70,
             'currency' => 'USD',
+            'payment_terms' => 'NET_30',
             'created_by' => $admin->id,
         ]);
 
@@ -291,6 +292,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
             'starts_at' => now()->subDay(),
             'revenue_share_percent' => 70,
             'currency' => 'USD',
+            'payment_terms' => 'NET_30',
             'created_by' => $admin->id,
         ]);
         $invariants = app(SupplyChainInvariantService::class);
@@ -347,6 +349,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
             'starts_at' => now()->subDay(),
             'revenue_share_percent' => 70,
             'currency' => 'USD',
+            'payment_terms' => 'NET_30',
             'created_by' => $admin->id,
         ]);
 
