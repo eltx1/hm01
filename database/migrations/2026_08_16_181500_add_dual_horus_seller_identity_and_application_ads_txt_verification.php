@@ -18,8 +18,8 @@ return new class extends Migration
         Schema::table('publisher_application_domain_claims', function (Blueprint $table): void {
             $table->ulid('publisher_seller_declaration_id')->nullable()->after('normalized_domain');
             $table->ulid('website_seller_declaration_id')->nullable()->after('publisher_seller_declaration_id')->unique('application_domain_website_seller_unique');
-            $table->string('verification_status', 24)->default('PENDING')->after('claim_status');
-            $table->timestamp('verification_requested_at')->nullable()->after('claimed_at');
+            $table->string('verification_status', 24)->default('PENDING')->after('website_seller_declaration_id');
+            $table->timestamp('verification_requested_at')->nullable()->after('verification_status');
             $table->timestamp('last_checked_at')->nullable()->after('verification_requested_at');
             $table->timestamp('verified_at')->nullable()->after('last_checked_at');
             $table->text('final_ads_txt_url')->nullable()->after('verified_at');
