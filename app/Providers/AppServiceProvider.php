@@ -14,6 +14,7 @@ use App\Observers\PublisherPaymentObserver;
 use App\Observers\PublisherPaymentProfileObserver;
 use App\Observers\PublisherStatementObserver;
 use App\Observers\ReconciliationRunObserver;
+use App\Observers\SupplyChainStaticPublicationObserver;
 use App\Services\ControlPlane\ActionCenter;
 use App\Services\ControlPlane\Actions\FinanceActions;
 use App\Services\ControlPlane\Actions\IntegrationActions;
@@ -39,9 +40,6 @@ use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
         $this->app->tag([
@@ -65,9 +63,6 @@ class AppServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
         $this->configureAuthenticationMail();
@@ -79,6 +74,21 @@ class AppServiceProvider extends ServiceProvider
         ReportImportJob::observe(OperationalFailureObserver::class);
         StaticDeliveryBatch::observe(OperationalFailureObserver::class);
         GamApiOperation::observe(OperationalFailureObserver::class);
+
+        foreach ([
+            \App\Models\SellerDeclaration::class,
+            \App\Models\Publisher::class,
+            \App\Models\Site::class,
+            \App\Models\SiteDomain::class,
+            \App\Models\PlatformAdsTxtRecord::class,
+            \App\Models\BidderAdsTxtRecord::class,
+            \App\Models\BidderSiteMapping::class,
+            \App\Models\DemandAdsTxtRecord::class,
+            \App\Models\DemandSite::class,
+            \App\Models\SiteServingSetting::class,
+        ] as $model) {
+            $model::observe(SupplyChainStaticPublicationObserver::class);
+        }
 
         RateLimiter::for('login', fn (Request $request) => [
             Limit::perMinute(5)->by(str($request->input('email'))->lower().'|'.$request->ip()),
