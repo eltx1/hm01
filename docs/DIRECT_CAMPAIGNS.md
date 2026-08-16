@@ -13,6 +13,20 @@ Google Ad Manager is the direct-campaign ad server. Each selected website resolv
 
 A campaign targeting websites on more than one connection is divided into one `campaign_network_instance` per connection. A failed partner or publisher instance never rolls back, repeats, or duplicates a successful Horus instance.
 
+## Task 41 delivery-capability truth
+
+Direct Advertiser Campaign delivery is currently **GAM-backed**. Horus does not currently contain an independent advertiser ad server. `HORUS_DIRECT`, standalone Prebid, and Direct JS remain valid GAM-less Publisher monetization paths, but none of them is an advertiser campaign delivery backend.
+
+`CampaignDeliveryCapabilityService` is the reusable backend authority for the question “can this campaign be delivered right now?”. It evaluates the campaign's actual selected sites/network connections, connector/configuration readiness, operational controls, target inventory and the existing `CampaignNetworkPlanner`. It returns exact machine-readable states including `AVAILABLE`, `DRAFT_ONLY`, `NO_GAM_BACKEND`, `GAM_CONNECTION_DISABLED`, `GAM_OPERATIONALLY_DISABLED`, `GAM_CONNECTION_UNHEALTHY`, `TARGET_INVENTORY_UNAVAILABLE`, `REMOTE_MAPPING_INCOMPLETE`, `CAMPAIGN_FEATURE_DISABLED`, and `CONFIGURATION_INCOMPLETE`.
+
+Capability is enforced before submission, approval, scheduling/activation, resume and external deployment. `CampaignDeploymentService` repeats the check before external GAM writes as defense in depth. A draft may be saved while delivery is unavailable when the product feature itself is enabled, but a draft never promises delivery.
+
+The runtime setting `advertiser_campaigns.enabled` is the Horus-level pilot control. Its configuration fallback defaults to `true` solely to preserve the pre-Task-41 production behavior of an already-existing campaign product; deploying Task 41 does not write or silently flip the database setting. An Admin can explicitly disable the feature through typed Global Settings. When disabled, new campaign creation/submission is blocked while existing campaign history, finance, reports and safe maintenance remain readable.
+
+New-delivery capability is deliberately separate from safety/lifecycle actions. If an already-deployed campaign later loses capability, Horus surfaces `ACTION REQUIRED / DELIVERY BACKEND UNAVAILABLE` and a deduplicated internal warning; it does not delete remote GAM objects or rewrite settled finance. Pause/Complete continue to attempt the existing safe remote operation where the connector remains usable.
+
+Advertiser-facing surfaces expose only customer-safe readiness and draft guidance. Horus Admin surfaces may show backend `GAM`, selected connection/network, exact blockers and a safe next action.
+
 ## Local data model
 
 The direct campaign migration extends the existing `advertisers` table and creates:
