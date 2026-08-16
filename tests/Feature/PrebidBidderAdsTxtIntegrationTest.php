@@ -19,6 +19,7 @@ use App\Services\Prebid\PrebidManager;
 use App\Services\SupplyChain\SupplyChainStandardsContract;
 use Database\Seeders\PrebidSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithIdentity;
@@ -130,17 +131,17 @@ class PrebidBidderAdsTxtIntegrationTest extends TestCase
         $record = $this->record($this->account);
         $verifier = app(BidderSellersJsonVerifier::class);
 
-        Http::fake(['https://exchange.example/sellers.json' => Http::response(['sellers' => [['seller_id' => 'seller-100', 'seller_type' => 'INTERMEDIARY']]], 200)]);
+        $this->fakeHttp(['https://exchange.example/sellers.json' => Http::response(['sellers' => [['seller_id' => 'seller-100', 'seller_type' => 'INTERMEDIARY']]], 200)]);
         $verified = $verifier->verify($record, $this->admin);
         $this->assertSame(BidderSellersJsonStatus::Verified, $verified->remote_verification_status);
         Http::assertSent(fn (Request $request): bool => $request->url() === 'https://exchange.example/sellers.json');
 
-        Http::fake(['*' => Http::response(['sellers' => [['seller_id' => 'someone-else']]], 200)]);
+        $this->fakeHttp(['*' => Http::response(['sellers' => [['seller_id' => 'someone-else']]], 200)]);
         $absent = $verifier->verify($record->refresh(), $this->admin);
         $this->assertSame(BidderSellersJsonStatus::Conflict, $absent->remote_verification_status);
         $this->assertSame('SELLER_ID_ABSENT', $absent->remote_error_code);
 
-        Http::fake();
+        $this->fakeHttp();
         $this->app->instance(DnsResolver::class, new class implements DnsResolver {
             public function addresses(string $host): array { return ['127.0.0.1', '169.254.169.254']; }
         });
@@ -150,7 +151,7 @@ class PrebidBidderAdsTxtIntegrationTest extends TestCase
         Http::assertNothingSent();
 
         $this->publicDns();
-        Http::fake(['*' => Http::failedConnection()]);
+        $this->fakeHttp(['*' => Http::failedConnection()]);
         $timeout = app(BidderSellersJsonVerifier::class)->verify($record->refresh(), $this->admin);
         $this->assertSame(BidderSellersJsonStatus::Unreachable, $timeout->remote_verification_status);
         $this->assertSame('CONNECTION_FAILED', $timeout->remote_error_code);
@@ -190,7 +191,13 @@ class PrebidBidderAdsTxtIntegrationTest extends TestCase
     private function publicDns(): void
     {
         $this->app->instance(DnsResolver::class, new class implements DnsResolver {
-            public function addresses(string $host): array { return ['203.0.113.10']; }
+            public function addresses(string $host): array { return ['93.184.216.34']; }
         });
+    }
+
+    private function fakeHttp(callable|array|null $callback = null): void
+    {
+        Http::swap(new Factory($this->app['events']));
+        Http::fake($callback);
     }
 }
