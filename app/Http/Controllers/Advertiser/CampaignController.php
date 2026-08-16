@@ -14,6 +14,7 @@ use App\Models\Site;
 use App\Services\Campaigns\AdvertiserAccountService;
 use App\Services\Campaigns\AdvertiserInvoiceService;
 use App\Services\Campaigns\CampaignCreativeService;
+use App\Services\Campaigns\CampaignDeliveryCapabilityService;
 use App\Services\Campaigns\CampaignReportingService;
 use App\Services\Campaigns\CampaignWorkflowService;
 use Illuminate\Http\RedirectResponse;
@@ -24,6 +25,10 @@ use JsonException;
 
 class CampaignController extends Controller
 {
+    public function __construct(private readonly CampaignDeliveryCapabilityService $deliveryCapability)
+    {
+    }
+
     public function index(Request $request): View
     {
         $advertiser = $this->advertiser($request);
@@ -31,11 +36,13 @@ class CampaignController extends Controller
             'advertiser' => $advertiser,
             'campaigns' => Campaign::query()->where('advertiser_id', $advertiser->id)->withCount(['sites', 'creatives', 'networkInstances'])->latest()->paginate(20),
             'invoices' => AdvertiserInvoice::query()->where('advertiser_id', $advertiser->id)->latest()->limit(10)->get(),
+            'campaignCreationEnabled' => $this->deliveryCapability->featureEnabled(),
         ]);
     }
 
     public function create(Request $request): View
     {
+        abort_unless($this->deliveryCapability->featureEnabled(), 403, 'Advertiser Campaign creation is currently unavailable.');
         return $this->form($request, new Campaign(['currency' => 'USD', 'pricing_model' => CampaignPricingModel::Cpm, 'starts_at' => now()->addDay(), 'ends_at' => now()->addMonth()]));
     }
 
@@ -62,7 +69,11 @@ class CampaignController extends Controller
     {
         $this->owns($request, $campaign);
         $campaign->load(['goals', 'targets', 'sites.site.publisher', 'placements.placement', 'creatives.files', 'budget', 'networkInstances.connection', 'approvalLogs.actor', 'invoices']);
-        return view('advertiser.campaigns.show', ['campaign' => $campaign, 'report' => $reporting->summary($campaign)]);
+        return view('advertiser.campaigns.show', [
+            'campaign' => $campaign,
+            'report' => $reporting->summary($campaign),
+            'deliveryCapability' => $this->deliveryCapability->evaluate($campaign, in_array($campaign->status->value, ['DRAFT', 'REJECTED'], true))->forCustomer(),
+        ]);
     }
 
     public function submit(Request $request, Campaign $campaign, CampaignWorkflowService $workflow): RedirectResponse
@@ -115,7 +126,11 @@ class CampaignController extends Controller
     {
         $this->advertiser($request);
         $sites = Site::withoutGlobalScopes()->with(['publisher', 'placements'])->where('status', 'APPROVED')->orderBy('display_name')->get();
-        return view('advertiser.campaigns.form', ['campaign' => $campaign, 'sites' => $sites, 'placements' => Placement::withoutGlobalScopes()->whereIn('site_id', $sites->pluck('id'))->where('status', 'ACTIVE')->orderBy('name')->get()]);
+        return view('advertiser.campaigns.form', [
+            'campaign' => $campaign,
+            'sites' => $sites,
+            'placements' => Placement::withoutGlobalScopes()->whereIn('site_id', $sites->pluck('id'))->where('status', 'ACTIVE')->orderBy('name')->get(),
+        ]);
     }
 
     private function validatedCampaign(Request $request): array
