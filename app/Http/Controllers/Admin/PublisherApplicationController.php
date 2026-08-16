@@ -42,7 +42,7 @@ final class PublisherApplicationController extends Controller
     {
         $application->load([
             'applicant', 'reviewer', 'organization', 'legalAcceptances',
-            'domainClaims' => fn ($query) => $query->with(['publisherSeller', 'websiteSeller'])->latest('claimed_at'),
+            'domainClaims' => fn ($query) => $query->with(['publisherSeller', 'websiteSeller'])->latest('created_at'),
             'marketingConsents' => fn ($query) => $query->latest('recorded_at'),
             'publisher.qualityProfiles' => fn ($query) => $query->latest('version'),
             'publisher.qualityReviewRuns' => fn ($query) => $query->latest()->limit(20),
