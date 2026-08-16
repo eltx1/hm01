@@ -42,6 +42,7 @@ final class PublisherApplicationController extends Controller
     {
         $application->load([
             'applicant', 'reviewer', 'organization', 'legalAcceptances',
+            'domainClaims' => fn ($query) => $query->with(['publisherSeller', 'websiteSeller'])->latest('claimed_at'),
             'marketingConsents' => fn ($query) => $query->latest('recorded_at'),
             'publisher.qualityProfiles' => fn ($query) => $query->latest('version'),
             'publisher.qualityReviewRuns' => fn ($query) => $query->latest()->limit(20),
@@ -71,7 +72,7 @@ final class PublisherApplicationController extends Controller
     {
         $approved = $applications->approve($application, $request->user());
 
-        return redirect()->route('admin.publisher-applications.show', $approved)->with('status', 'Application approved. The account may now continue through existing Publisher onboarding; no website or serving configuration was created.');
+        return redirect()->route('admin.publisher-applications.show', $approved)->with('status', 'Application approved. Reserved HMP/HMS identities are preserved. The account may continue through existing Publisher onboarding; no website or serving configuration was created.');
     }
 
     public function reject(Request $request, PublisherApplication $application, PublisherApplicationService $applications): RedirectResponse
@@ -79,6 +80,6 @@ final class PublisherApplicationController extends Controller
         $data = $request->validate(['reason' => ['required', 'string', 'max:5000']]);
         $applications->reject($application, $request->user(), $data['reason']);
 
-        return back()->with('status', 'Application rejected. Evidence has been retained and operational access remains disabled.');
+        return back()->with('status', 'Application rejected. Seller identities and verification evidence have been retained permanently while operational access remains disabled.');
     }
 }
