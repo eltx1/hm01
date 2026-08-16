@@ -135,6 +135,9 @@ final class PublisherApplicationController extends Controller
     public function submit(Request $request, PublisherApplicationService $applications, PublisherApplicationLegalService $legal): RedirectResponse
     {
         $request->validate(['confirm' => ['accepted']]);
+        if (! $request->user()->hasVerifiedEmail()) {
+            throw ValidationException::withMessages(['email' => 'Verify your email before submitting the application.']);
+        }
         $application = $this->applicationFor($request)->load('domainClaim');
         if ($application->domainClaim?->verification_status !== 'VERIFIED') {
             throw ValidationException::withMessages(['website_verification' => 'Verify your website through the required Horus ads.txt records before submitting the application.']);
