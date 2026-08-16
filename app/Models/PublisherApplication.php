@@ -51,7 +51,6 @@ class PublisherApplication extends Model
                     $verified = PublisherApplicationDomainClaim::query()
                         ->where('publisher_application_id', $application->id)
                         ->where('normalized_domain', strtolower(rtrim((string) $application->primary_domain, '.')))
-                        ->where('claim_status', 'CLAIMED')
                         ->where('verification_status', 'VERIFIED')
                         ->exists();
                     if (! $verified) {
@@ -78,10 +77,6 @@ class PublisherApplication extends Model
                 $identities->markApplicationApproved($application);
             } elseif (in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)) {
                 $identities->retireApplicationReservations($application, $application->status->value);
-                $application->domainClaims()->where('claim_status', 'CLAIMED')->update([
-                    'claim_status' => 'RELEASED',
-                    'released_at' => now(),
-                ]);
             }
         });
     }
@@ -92,7 +87,7 @@ class PublisherApplication extends Model
 
     public function domainClaim(): HasOne
     {
-        return $this->hasOne(PublisherApplicationDomainClaim::class)->where('claim_status', 'CLAIMED')->latestOfMany('claimed_at');
+        return $this->hasOne(PublisherApplicationDomainClaim::class);
     }
 
     public function domainClaims(): HasMany
