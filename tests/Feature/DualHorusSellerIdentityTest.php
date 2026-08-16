@@ -139,14 +139,18 @@ class DualHorusSellerIdentityTest extends TestCase
             ["horusmedia.net, HMP-01ARZ3NDEKTSV4RRFFQ69G5FAA, DIRECT\nhorusmedia.net, {$hms}, DIRECT\n", 'PUBLISHER_HMP_AUTHORIZATION_MISSING'],
             ["horusmedia.net, {$hmp}, DIRECT\nhorusmedia.net, HMS-01ARZ3NDEKTSV4RRFFQ69G5FAA, DIRECT\n", 'WEBSITE_HMS_AUTHORIZATION_MISSING'],
         ];
-        foreach ($cases as [$body, $expected]) {
-            Http::fake(['*' => Http::response($body, 200, ['Content-Type' => 'text/plain; charset=utf-8'])]);
+        $responses = array_map(fn (array $case): string => $case[0], $cases);
+        $responses[] = " HORUSMEDIA.NET , {$hmp} , direct \n\thorusmedia.net, {$hms}, DIRECT # site account\n";
+        Http::fake(function () use (&$responses) {
+            return Http::response(array_shift($responses), 200, ['Content-Type' => 'text/plain; charset=utf-8']);
+        });
+
+        foreach ($cases as [, $expected]) {
             $result = $service->verify($application->fresh(), $user);
             $this->assertFalse($result['verified']);
             $this->assertSame($expected, $result['code']);
         }
 
-        Http::fake(['*' => Http::response(" HORUSMEDIA.NET , {$hmp} , direct \n\thorusmedia.net, {$hms}, DIRECT # site account\n", 200, ['Content-Type' => 'text/plain'])]);
         $result = $service->verify($application->fresh(), $user);
         $this->assertTrue($result['verified']);
         $claim = $application->fresh()->domainClaim()->firstOrFail();
@@ -169,33 +173,33 @@ class DualHorusSellerIdentityTest extends TestCase
         $service = app(ApplicationAdsTxtVerificationService::class);
         $reserved = $service->reserve($application, $user);
         $body = implode("\n", $reserved['records'])."\n";
+        $requestNumber = 0;
 
-        Http::fake(function (Request $request) use ($body) {
-            return str_contains($request->url(), 'delegated.example')
-                ? Http::response($body, 200, ['Content-Type' => 'text/plain'])
-                : Http::response('', 302, ['Location' => 'https://delegated.example/ads.txt']);
+        Http::fake(function (Request $request) use ($body, &$requestNumber) {
+            $requestNumber++;
+            return match ($requestNumber) {
+                1, 3 => Http::response('', 302, ['Location' => 'https://delegated.example/ads.txt']),
+                2 => Http::response($body, 200, ['Content-Type' => 'text/plain']),
+                4 => Http::response('', 302, ['Location' => 'https://second.example/ads.txt']),
+                default => Http::response('', 500),
+            };
         });
         $ok = $service->verify($application->fresh(), $user);
         $this->assertTrue($ok['verified']);
         $this->assertSame('https://delegated.example/ads.txt', $ok['final_url']);
 
-        Http::fake(function (Request $request) {
-            return str_contains($request->url(), 'delegated.example')
-                ? Http::response('', 302, ['Location' => 'https://second.example/ads.txt'])
-                : Http::response('', 302, ['Location' => 'https://delegated.example/ads.txt']);
-        });
         $bad = $service->verify($application->fresh(), $user);
         $this->assertFalse($bad['verified']);
         $this->assertSame('EXTERNAL_REDIRECT_CHAIN_INVALID', $bad['code']);
 
-        Http::fake();
+        $sentBeforePrivateCheck = count(Http::recorded());
         $this->app->instance(DnsResolver::class, new class implements DnsResolver {
             public function addresses(string $host): array { return ['127.0.0.1']; }
         });
         $private = app(AdsTxtFetcher::class)->fetchDomain($application->primary_domain);
         $this->assertFalse($private['ok']);
         $this->assertSame('UNSAFE_TARGET', $private['error_code']);
-        Http::assertNothingSent();
+        $this->assertCount($sentBeforePrivateCheck, Http::recorded());
     }
 
     public function test_approval_reuses_reserved_ids_and_matching_site_attaches_same_hms_idempotently(): void
