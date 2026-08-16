@@ -47,7 +47,10 @@ final class CampaignDeliveryCapabilityService
             );
         }
 
-        $campaign->loadMissing([
+        // Capability answers what can be delivered RIGHT NOW. Force-refresh all
+        // delivery-critical relationships rather than trusting an earlier loaded
+        // relation on a long-lived model instance after an operational change.
+        $campaign->load([
             'sites.site.gamConnection',
             'placements.placement',
             'creatives.files',
