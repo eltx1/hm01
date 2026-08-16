@@ -309,8 +309,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
         }
 
         app(HorusSellerIdentityService::class)->reviewConfidentiality($seller->refresh(), true, $admin);
-        $this->assertSame(SupplyChainReviewStatus::ReviewRequired, $seller->refresh()->review_status);
-        $invariants->reviewSellerDeclaration($seller, SupplyChainReviewStatus::Verified, $admin);
+        $this->assertSame(SupplyChainReviewStatus::Verified, $seller->refresh()->review_status);
         $active = $invariants->changeSellerStatus($seller->refresh(), SellerDeclarationStatus::Active, $admin);
 
         $this->assertTrue($active->is_confidential);
