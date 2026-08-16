@@ -2,7 +2,8 @@
 @section('title', 'Campaigns')
 @section('heading', 'Direct campaigns')
 @section('content')
-<section class="hero"><div><p class="eyebrow">Advertiser workspace</p><h2>{{ $advertiser->display_name }}</h2><p>Create, submit, monitor, and invoice direct campaigns without requiring Google Ad Manager access.</p></div><a class="hm-button-primary" href="{{ route('advertiser.campaigns.create') }}">Create campaign</a></section>
+<section class="hero"><div><p class="eyebrow">Advertiser workspace</p><h2>{{ $advertiser->display_name }}</h2><p>Create, submit, monitor, and invoice direct campaigns through Horus-managed delivery. You do not need to own or manage the underlying delivery account.</p></div>@if($campaignCreationEnabled)<a class="hm-button-primary" href="{{ route('advertiser.campaigns.create') }}">Create campaign</a>@endif</section>
+@if(!$campaignCreationEnabled)<article class="danger-zone" style="margin-top:1rem"><h3>Campaign delivery is currently unavailable</h3><p>Existing campaigns, invoices, and history remain available. New campaign creation is temporarily disabled.</p></article>@endif
 <section class="metric-grid" style="margin-top:1rem">
     <article><p class="eyebrow">Campaigns</p><strong class="metric-small">{{ $campaigns->total() }}</strong></article>
     <article><p class="eyebrow">Open invoices</p><strong class="metric-small">{{ $invoices->whereNotIn('status',['PAID','VOID'])->count() }}</strong></article>
@@ -11,13 +12,13 @@
 <article>
     <div class="section-heading"><div><p class="eyebrow">Campaign workspace</p><h2>Your campaigns</h2></div></div>
     @if($campaigns->count() === 0)
-        <x-empty-state title="No campaigns yet" description="Create your first direct campaign to define budget, pricing, targeting, and sites before review.">
-            <a class="hm-button-primary" href="{{ route('advertiser.campaigns.create') }}">Create your first campaign</a>
+        <x-empty-state title="No campaigns yet" description="Campaign drafts define budget, pricing, targeting, and sites before Horus Media review.">
+            @if($campaignCreationEnabled)<a class="hm-button-primary" href="{{ route('advertiser.campaigns.create') }}">Create your first campaign</a>@endif
         </x-empty-state>
     @else
         @foreach($campaigns as $campaign)
             <div class="domain-card">
-                <div><strong><a class="section-anchor" href="{{ route('advertiser.campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><div class="status-row"><x-status-badge :status="$campaign->status" /><span class="pill">{{ str($campaign->pricing_model->value)->replace('_', ' ')->headline() }}</span><span class="pill">{{ $campaign->sites_count }} sites</span><span class="pill">{{ $campaign->network_instances_count }} GAM networks</span></div></div>
+                <div><strong><a class="section-anchor" href="{{ route('advertiser.campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><div class="status-row"><x-status-badge :status="$campaign->status" /><span class="pill">{{ str($campaign->pricing_model->value)->replace('_', ' ')->headline() }}</span><span class="pill">{{ $campaign->sites_count }} sites</span><span class="pill">{{ $campaign->network_instances_count }} delivery route(s)</span></div></div>
                 <div class="money" aria-label="Campaign budget">{{ $campaign->currency }} {{ number_format($campaign->total_budget_minor/100,2) }}</div>
             </div>
         @endforeach
