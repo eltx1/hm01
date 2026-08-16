@@ -22,6 +22,10 @@ final class SupplyChainStaticPublicationObserver
 
     public function created(Model $model): void
     {
+        if (! $this->createdModelChangesPublicArtifacts($model)) {
+            return;
+        }
+
         $this->publisher->queueForModel($model, false, ['event' => 'CREATED']);
     }
 
@@ -39,12 +43,44 @@ final class SupplyChainStaticPublicationObserver
 
     public function deleted(Model $model): void
     {
+        if (! $this->deletedModelCouldHaveBeenPublic($model)) {
+            return;
+        }
+
         $urgent = $model instanceof SellerDeclaration
             || $model instanceof PlatformAdsTxtRecord
             || $model instanceof BidderAdsTxtRecord
             || $model instanceof DemandAdsTxtRecord;
 
         $this->publisher->queueForModel($model, $urgent, ['event' => 'DELETED']);
+    }
+
+    private function createdModelChangesPublicArtifacts(Model $model): bool
+    {
+        return match (true) {
+            $model instanceof PlatformAdsTxtRecord,
+            $model instanceof BidderAdsTxtRecord,
+            $model instanceof DemandAdsTxtRecord,
+            $model instanceof BidderSiteMapping,
+            $model instanceof DemandSite => true,
+            $model instanceof SellerDeclaration => $this->enumValue($model->status) === 'ACTIVE',
+            $model instanceof Site => in_array($this->enumValue($model->status), ['APPROVED', 'ACTIVE'], true),
+            default => false,
+        };
+    }
+
+    private function deletedModelCouldHaveBeenPublic(Model $model): bool
+    {
+        return match (true) {
+            $model instanceof PlatformAdsTxtRecord,
+            $model instanceof BidderAdsTxtRecord,
+            $model instanceof DemandAdsTxtRecord,
+            $model instanceof BidderSiteMapping,
+            $model instanceof DemandSite => true,
+            $model instanceof SellerDeclaration => $this->enumValue($model->status) === 'ACTIVE',
+            $model instanceof Site => in_array($this->enumValue($model->status), ['APPROVED', 'ACTIVE'], true),
+            default => false,
+        };
     }
 
     private function touchesSupplyChain(Model $model): bool
@@ -75,9 +111,7 @@ final class SupplyChainStaticPublicationObserver
             return $this->transitionedFromActiveToDisabled($model, 'status');
         }
         if ($model instanceof SiteServingSetting && $model->wasChanged('monetization_manager_role')) {
-            $role = $model->monetization_manager_role;
-            $value = $role instanceof SiteManagementRole ? $role->value : strtoupper((string) $role);
-            return $value === SiteManagementRole::None->value;
+            return $this->enumValue($model->monetization_manager_role) === SiteManagementRole::None->value;
         }
 
         return false;
@@ -86,9 +120,17 @@ final class SupplyChainStaticPublicationObserver
     private function transitionedFromActiveToDisabled(Model $model, string $field): bool
     {
         $before = strtoupper((string) $model->getRawOriginal($field));
-        $afterValue = $model->getAttribute($field);
-        $after = strtoupper(is_object($afterValue) && property_exists($afterValue, 'value') ? (string) $afterValue->value : (string) $afterValue);
+        $after = $this->enumValue($model->getAttribute($field));
 
         return $before === 'ACTIVE' && in_array($after, ['DISABLED', 'INACTIVE', 'REJECTED'], true);
+    }
+
+    private function enumValue(mixed $value): string
+    {
+        if ($value instanceof \BackedEnum) {
+            return strtoupper((string) $value->value);
+        }
+
+        return strtoupper((string) $value);
     }
 }
