@@ -11,8 +11,10 @@
         !auth()->user()->hasVerifiedEmail() => 20,
         $status === \App\Enums\PublisherApplicationStatus::Approved => 100,
         $status === \App\Enums\PublisherApplicationStatus::Submitted, $status === \App\Enums\PublisherApplicationStatus::UnderReview, $status === \App\Enums\PublisherApplicationStatus::Rejected, $status === \App\Enums\PublisherApplicationStatus::Withdrawn => 100,
-        $profile && $agreementsComplete => 80,
-        $profile => 60,
+        $profile && $agreementsComplete => 90,
+        $profile => 75,
+        $claimVerified => 55,
+        $websiteVerification => 45,
         default => 40,
     };
 @endphp
@@ -22,14 +24,15 @@
 </section>
 
 <ol class="publisher-application-steps" aria-label="Publisher application progress">
-@foreach([1 => 'Account', 2 => 'Website / Publisher', 3 => 'Quality & traffic', 4 => 'Agreements', 5 => 'Review & submit'] as $number => $label)
-    <li @class(['active' => $step === $number, 'complete' => $number === 1 ? auth()->user()->hasVerifiedEmail() : ($number === 3 ? (bool) $profile : ($number === 4 ? $agreementsComplete : false))])>
-        @if($number > 1 && $editable)<a href="{{ route('publisher-application.show', ['step' => $number]) }}"><span>{{ $number }}</span><strong>{{ $label }}</strong></a>@else<span>{{ $number }}</span><strong>{{ $label }}</strong>@endif
+@foreach([1 => 'Account', 2 => 'Website / Verify', 3 => 'Quality & traffic', 4 => 'Agreements', 5 => 'Review & submit'] as $number => $label)
+    @php($accessible = $number <= 2 || $claimVerified)
+    <li @class(['active' => $step === $number, 'complete' => $number === 1 ? auth()->user()->hasVerifiedEmail() : ($number === 2 ? $claimVerified : ($number === 3 ? (bool) $profile : ($number === 4 ? $agreementsComplete : false)))])>
+        @if($number > 1 && $editable && $accessible)<a href="{{ route('publisher-application.show', ['step' => $number]) }}"><span>{{ $number }}</span><strong>{{ $label }}</strong></a>@else<span>{{ $number }}</span><strong>{{ $label }}</strong>@endif
     </li>
 @endforeach
 </ol>
 
-<section class="application-meta" aria-label="Application information"><div><span>Application status</span><strong>{{ str($status->value)->replace('_', ' ')->headline() }}</strong></div><div><span>Last saved</span><strong>{{ $application->updated_at }}</strong></div><div><span>Submitted revision</span><strong>{{ $application->current_revision ?: 'Not submitted' }}</strong></div></section>
+<section class="application-meta" aria-label="Application information"><div><span>Application status</span><strong>{{ str($status->value)->replace('_', ' ')->headline() }}</strong></div><div><span>Website verification</span><strong>{{ $application->domainClaim?->verification_status ?? 'NOT STARTED' }}</strong></div><div><span>Submitted revision</span><strong>{{ $application->current_revision ?: 'Not submitted' }}</strong></div></section>
 
 @if($status === \App\Enums\PublisherApplicationStatus::MoreInfoRequired && $requestEvent)
 <article class="workspace-section"><p class="eyebrow">Additional information requested</p><h2>Horus Media needs an update</h2><p>{{ $requestEvent->reason }}</p><p class="muted">Update the requested information and resubmit. Your earlier submitted revisions and evidence remain immutable.</p></article>
@@ -40,13 +43,41 @@
 @endif
 
 @if($editable && $step === 2)
-<article class="workspace-section wizard-card"><p class="eyebrow">Step 2 of 5</p><h2>Website and Publisher</h2><p class="muted">Tell us who operates the property. Website approval remains a separate post-approval process.</p><form method="POST" action="{{ route('publisher-application.update') }}" class="form-grid">@csrf @method('PUT')<input type="hidden" name="step" value="2">
-<label>Contact name<input class="hm-input" name="contact_name" value="{{ old('contact_name', auth()->user()->name) }}" required maxlength="255"></label>
-<label>Business email<input class="hm-input" value="{{ auth()->user()->email }}" disabled></label>
-<label>Legal business name<input class="hm-input" name="legal_name" value="{{ old('legal_name', $application->publisher->legal_name) }}" required maxlength="255"></label>
-<label>Publisher display name<input class="hm-input" name="publisher_name" value="{{ old('publisher_name', $application->publisher->display_name) }}" required maxlength="255"></label>
-<label class="full">Primary website or domain<input class="hm-input" name="primary_domain" value="{{ old('primary_domain', $application->primary_domain) }}" required maxlength="500"></label>
-<div class="full wizard-actions"><span></span><button class="hm-button-primary">Save & continue</button></div></form></article>
+<article class="workspace-section wizard-card">
+    <p class="eyebrow">Step 2 of 5</p><h2>Website and Publisher</h2>
+    <p class="muted">Confirm who operates the property. Saving this step reserves the permanent Horus Publisher and Website seller IDs used for ads.txt verification. This does not approve the Publisher or activate monetization.</p>
+    <form method="POST" action="{{ route('publisher-application.update') }}" class="form-grid">@csrf @method('PUT')<input type="hidden" name="step" value="2">
+        <label>Contact name<input class="hm-input" name="contact_name" value="{{ old('contact_name', auth()->user()->name) }}" required maxlength="255"></label>
+        <label>Business email<input class="hm-input" value="{{ auth()->user()->email }}" disabled></label>
+        <label>Legal business name<input class="hm-input" name="legal_name" value="{{ old('legal_name', $application->publisher->legal_name) }}" required maxlength="255"></label>
+        <label>Publisher display name<input class="hm-input" name="publisher_name" value="{{ old('publisher_name', $application->publisher->display_name) }}" required maxlength="255"></label>
+        <label class="full">Primary website or domain<input class="hm-input" name="primary_domain" value="{{ old('primary_domain', $application->primary_domain) }}" required maxlength="500" @readonly((bool) $websiteVerification)></label>
+        @if($websiteVerification)<p class="field-help full">This domain is locked because its permanent HMS seller identity has already been reserved.</p>@endif
+        <div class="full wizard-actions"><span></span><button class="hm-button-primary">{{ $websiteVerification ? 'Save Publisher details' : 'Save & prepare verification' }}</button></div>
+    </form>
+</article>
+
+@if($websiteVerification)
+<article class="workspace-section wizard-card website-verification-card">
+    <p class="eyebrow">Website Verification</p><h2>{{ $claimVerified ? '✓ Website verified' : 'Verify your website with ads.txt' }}</h2>
+    <p>Add these two real Horus seller authorizations to your website's ads.txt file. Keep both lines exactly as shown; normal standards-valid whitespace is accepted.</p>
+    <pre id="application-ads-txt-records">{{ implode("\n", $websiteVerification['records']) }}</pre>
+    <div class="wizard-actions"><button type="button" data-copy-target="application-ads-txt-records">Copy Both</button><span></span></div>
+    <div class="detail-grid">
+        <div><span>Expected location</span><strong>{{ $websiteVerification['ads_txt_url'] }}</strong></div>
+        <div><span>Publisher Seller ID</span><strong>{{ $websiteVerification['publisher_seller']->seller_id }}</strong></div>
+        <div><span>Website Seller ID</span><strong>{{ $websiteVerification['website_seller']->seller_id }}</strong></div>
+        <div><span>Status</span><strong>{{ $application->domainClaim?->verification_status ?? 'PENDING' }}</strong></div>
+    </div>
+    @if($application->domainClaim?->last_checked_at)<p class="muted">Last checked {{ $application->domainClaim->last_checked_at }}@if($application->domainClaim->failure_code) · {{ $application->domainClaim->failure_code }}@endif</p>@endif
+    @error('website_verification')<p class="field-error" role="alert">{{ $message }}</p>@enderror
+    @if($claimVerified)
+        <div class="wizard-actions"><span class="status">✓ Website verified</span><a class="hm-button-primary button-link" href="{{ route('publisher-application.show', ['step' => 3]) }}">Continue to quality</a></div>
+    @else
+        <form method="POST" action="{{ route('publisher-application.update') }}" class="wizard-actions">@csrf @method('PUT')<input type="hidden" name="step" value="2"><input type="hidden" name="verify_website" value="1"><span class="muted">Horus checks the live ads.txt file only.</span><button class="hm-button-primary" data-submitting-label="Verifying…">Verify Website</button></form>
+    @endif
+</article>
+@endif
 @endif
 
 @if($editable && $step === 3)
@@ -78,23 +109,23 @@
 
 @if($step === 5)
 <article class="workspace-section wizard-card"><p class="eyebrow">Step 5 of 5</p><h2>Review and submit</h2>
-<div class="summary-grid"><div><span>Applicant</span><strong>{{ auth()->user()->name }}</strong><small>{{ auth()->user()->email }}</small></div><div><span>Publisher</span><strong>{{ $application->publisher->display_name }}</strong><small>{{ $application->primary_domain }}</small></div><div><span>Quality profile</span><strong>{{ $profile ? 'Version '.$profile->version : 'Not completed' }}</strong><small>{{ $profile?->content_description ?: 'Complete Step 3 before submission.' }}</small></div><div><span>Required agreements</span><strong>{{ $agreementsComplete ? 'Current versions accepted' : 'Action required' }}</strong><small>{{ $requiredDocuments->count() }} current required document(s)</small></div></div>
-@if($editable)<form method="POST" action="{{ route('publisher-application.submit') }}" class="form-stack application-submit">@csrf<label class="check"><input type="checkbox" name="confirm" value="1" required> I confirm the submitted application information is complete and accurate.</label><p class="muted">Submission creates an immutable application revision. Horus staff remain the final decision-maker; THOTH advisory cannot approve or reject the application.</p><div class="wizard-actions"><a class="text-link" href="{{ route('publisher-application.show', ['step' => 4]) }}">Back</a><button class="hm-button-primary">{{ $status === \App\Enums\PublisherApplicationStatus::MoreInfoRequired ? 'Resubmit for review' : 'Submit for review' }}</button></div></form>@else<p class="muted">Submitted evidence is read-only unless Horus Media requests additional information.</p>@endif
+<div class="summary-grid"><div><span>Applicant</span><strong>{{ auth()->user()->name }}</strong><small>{{ auth()->user()->email }}</small></div><div><span>Publisher</span><strong>{{ $application->publisher->display_name }}</strong><small>{{ $application->primary_domain }}</small></div><div><span>Website verification</span><strong>{{ $application->domainClaim?->verification_status ?? 'NOT STARTED' }}</strong><small>{{ $application->domainClaim?->verified_at ?: 'Verification required before submission.' }}</small></div><div><span>Quality profile</span><strong>{{ $profile ? 'Version '.$profile->version : 'Not completed' }}</strong><small>{{ $profile?->content_description ?: 'Complete Step 3 before submission.' }}</small></div><div><span>Required agreements</span><strong>{{ $agreementsComplete ? 'Current versions accepted' : 'Action required' }}</strong><small>{{ $requiredDocuments->count() }} current required document(s)</small></div></div>
+@if($editable)<form method="POST" action="{{ route('publisher-application.submit') }}" class="form-stack application-submit">@csrf<label class="check"><input type="checkbox" name="confirm" value="1" required> I confirm the submitted application information is complete and accurate.</label><p class="muted">Submission creates an immutable application revision. Website verification is supply-chain evidence only. Horus staff remain the final decision-maker; THOTH advisory cannot approve or reject the application.</p><div class="wizard-actions"><a class="text-link" href="{{ route('publisher-application.show', ['step' => 4]) }}">Back</a><button class="hm-button-primary">{{ $status === \App\Enums\PublisherApplicationStatus::MoreInfoRequired ? 'Resubmit for review' : 'Submit for review' }}</button></div></form>@else<p class="muted">Submitted evidence is read-only unless Horus Media requests additional information.</p>@endif
 </article>
 @endif
 
 @if($status === \App\Enums\PublisherApplicationStatus::Approved)
-<article class="workspace-section"><p class="eyebrow">Approved application</p><h2>Continue to Publisher onboarding</h2><p>Publisher approval does not approve a website or activate ad serving.</p><a class="hm-button-primary button-link" href="{{ route('publisher.onboarding.show', 1) }}">Continue onboarding</a></article>
+<article class="workspace-section"><p class="eyebrow">Approved application</p><h2>Continue to Publisher onboarding</h2><p>Publisher approval does not approve a website or activate ad serving. Your reserved HMP and HMS seller IDs remain the same.</p><a class="hm-button-primary button-link" href="{{ route('publisher.onboarding.show', 1) }}">Continue onboarding</a></article>
 @elseif($status === \App\Enums\PublisherApplicationStatus::Rejected)
-<article class="workspace-section"><h2>Application not approved</h2><p>This application was not approved. Your account remains limited to this status experience and cannot create serving configuration.</p>@if($rejectionEvent?->reason)<p>{{ $rejectionEvent->reason }}</p>@endif</article>
+<article class="workspace-section"><h2>Application not approved</h2><p>This application was not approved. Your account remains limited to this status experience and cannot create serving configuration. Reserved Horus seller IDs are retained permanently and remain disabled; remove their records from your ads.txt.</p>@if($rejectionEvent?->reason)<p>{{ $rejectionEvent->reason }}</p>@endif</article>
 @elseif($status === \App\Enums\PublisherApplicationStatus::Withdrawn)
-<article class="workspace-section"><h2>Application withdrawn</h2><p>No operational access was granted. Security, audit, legal, and submitted revision evidence has been retained.</p></article>
+<article class="workspace-section"><h2>Application withdrawn</h2><p>No operational access was granted. Security, audit, legal, seller identity, and website verification evidence has been retained. Remove the Horus records from your ads.txt if they are no longer needed.</p></article>
 @endif
 
 @if($profile)<article class="workspace-section saved-quality-evidence"><p class="eyebrow">Saved quality profile</p><h2>Current application evidence</h2><p>{{ $profile->content_description }}</p><span class="status">Profile v{{ $profile->version }}</span></article>@endif
 <article class="workspace-section"><h2>Submitted revisions</h2>@forelse($application->revisions as $revision)<div class="compact-row"><div><strong>Revision {{ $revision->version }}</strong><p>Evidence hash {{ $revision->snapshot_hash }}</p></div><span class="muted">{{ $revision->submitted_at }}</span></div>@empty<p class="muted">No application revision has been submitted.</p>@endforelse</article>
 
 @if($status->canTransitionTo(\App\Enums\PublisherApplicationStatus::Withdrawn))
-<details class="workspace-section"><summary>Withdraw application</summary><p>Withdrawal does not delete audit, legal, or security evidence.</p><form method="POST" action="{{ route('publisher-application.withdraw') }}" class="form-stack">@csrf<label class="check"><input type="checkbox" name="confirm_withdrawal" value="1" required> I confirm that I want to withdraw this application.</label><button class="danger-button">Withdraw application</button></form></details>
+<details class="workspace-section"><summary>Withdraw application</summary><p>Withdrawal does not delete audit, legal, seller identity, or website verification evidence.</p><form method="POST" action="{{ route('publisher-application.withdraw') }}" class="form-stack">@csrf<label class="check"><input type="checkbox" name="confirm_withdrawal" value="1" required> I confirm that I want to withdraw this application.</label><button class="danger-button">Withdraw application</button></form></details>
 @endif
 @endsection
