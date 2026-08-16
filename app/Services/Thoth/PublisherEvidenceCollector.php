@@ -78,7 +78,9 @@ final class PublisherEvidenceCollector
 
             if ($authorizationVerified) {
                 $freshDays = max(1, (int) config('thoth.application_domain_verification_fresh_days', 7));
-                $isFresh = $claim->verified_at !== null && $claim->verified_at->greaterThanOrEqualTo(now()->subDays($freshDays));
+                $freshCutoff = now()->subDays($freshDays);
+                $isFresh = $claim->verified_at !== null && $claim->verified_at->greaterThanOrEqualTo($freshCutoff);
+
                 if ($isFresh) {
                     $freshness = 'FRESH';
                 } else {
@@ -94,6 +96,7 @@ final class PublisherEvidenceCollector
                 $verificationGap = 'The current application domain is not Task 39 ads.txt verified; no website content was fetched.';
             }
         } catch (Throwable) {
+            $authorizationVerified = false;
             $verificationGap = 'No eligible Task 39 ads.txt-verified application domain claim was available; no website content was fetched.';
         }
 
@@ -145,7 +148,7 @@ final class PublisherEvidenceCollector
             'contact' => ['/contact', '/contact-us'],
         ];
 
-        foreach (array_slice(array_values(array_unique(array_map(fn ($domain) => strtolower((string) $domain), $domains))), 0, $maxPages) as $domain) {
+        foreach (array_values(array_unique(array_map(fn ($domain) => strtolower((string) $domain), $domains))) as $domain) {
             foreach ($groups as $label => $paths) {
                 if (count($pages) >= $maxPages || $totalText >= $maxTotalText) {
                     break 2;
@@ -162,8 +165,14 @@ final class PublisherEvidenceCollector
                         continue;
                     }
 
-                    $remaining = $maxTotalText - $totalText;
+                    $remaining = max(0, $maxTotalText - $totalText);
+                    if ($remaining === 0) {
+                        break;
+                    }
                     $page['visible_text'] = mb_substr($page['visible_text'], 0, $remaining);
+                    if ($page['visible_text'] === '') {
+                        continue;
+                    }
                     $totalText += mb_strlen($page['visible_text']);
                     $pages[] = $page;
                     $found = true;
@@ -189,25 +198,65 @@ final class PublisherEvidenceCollector
             }
 
             [$finalUrl, $http] = $response;
-            $type = strtolower((string) $http->header('content-type'));
+            $type = strtolower((string) $http->header('Content-Type'));
             if (! $http->successful() || ! str_contains($type, 'text/html')) {
                 continue;
             }
 
-            $max = max(1, (int) config('thoth.evidence.max_bytes_per_page', 262144));
-            $body = $http->toPsrResponse()->getBody()->read($max + 1);
-            if (strlen($body) > $max) {
+            $body = $this->readBoundedBody($http);
+            if ($body === null) {
+                continue;
+            }
+            $visibleText = mb_substr(
+                $this->visibleText($body),
+                0,
+                max(1, (int) config('thoth.evidence.max_text_chars', 30000)),
+            );
+            if ($visibleText === '') {
                 continue;
             }
 
             return [
                 'url' => $finalUrl,
                 'title' => $this->title($body),
-                'visible_text' => mb_substr($this->visibleText($body), 0, max(1, (int) config('thoth.evidence.max_text_chars', 30000))),
+                'visible_text' => $visibleText,
             ];
         }
 
         return null;
+    }
+
+    private function readBoundedBody(Response $response): ?string
+    {
+        $max = max(1, (int) config('thoth.evidence.max_bytes_per_page', 262144));
+        $declaredBytes = (int) ($response->header('Content-Length') ?: 0);
+        if ($declaredBytes > $max) {
+            return null;
+        }
+
+        $stream = $response->toPsrResponse()->getBody();
+        if ($stream->isSeekable()) {
+            $stream->rewind();
+        }
+
+        $body = '';
+        while (! $stream->eof() && strlen($body) <= $max) {
+            $remaining = ($max + 1) - strlen($body);
+            if ($remaining <= 0) {
+                break;
+            }
+            $chunk = $stream->read(min(8192, $remaining));
+            if ($chunk === '') {
+                break;
+            }
+            $body .= $chunk;
+        }
+
+        if (strlen($body) > $max || ! $stream->eof()) {
+            return null;
+        }
+
+        return mb_scrub($body, 'UTF-8');
     }
 
     /** @return array{0: string, 1: Response}|null */
@@ -219,13 +268,13 @@ final class PublisherEvidenceCollector
         for ($redirects = 0; $redirects <= $maxRedirects; $redirects++) {
             $parts = parse_url($current);
             $scheme = strtolower((string) ($parts['scheme'] ?? ''));
-            $host = strtolower((string) ($parts['host'] ?? ''));
+            $host = strtolower(rtrim((string) ($parts['host'] ?? ''), '.'));
             if (! in_array($scheme, ['http', 'https'], true) || $host === '' || ! $this->sameVerifiedSite($host, $verifiedDomain)) {
                 return null;
             }
 
             $addresses = $this->safety->assertSafe($host);
-            $port = $scheme === 'https' ? 443 : 80;
+            $port = (int) ($parts['port'] ?? ($scheme === 'https' ? 443 : 80));
             $resolve = defined('CURLOPT_RESOLVE') ? [
                 'curl' => [CURLOPT_RESOLVE => array_map(
                     fn ($ip) => $host.':'.$port.':'.(str_contains($ip, ':') ? '['.$ip.']' : $ip),
@@ -247,9 +296,14 @@ final class PublisherEvidenceCollector
                 return null;
             }
 
-            $location = trim((string) $http->header('location'));
+            $location = trim((string) $http->header('Location'));
             $next = $this->resolveRedirect($current, $location);
             if ($next === null) {
+                return null;
+            }
+
+            $nextHost = strtolower(rtrim((string) parse_url($next, PHP_URL_HOST), '.'));
+            if ($nextHost === '' || ! $this->sameVerifiedSite($nextHost, $verifiedDomain)) {
                 return null;
             }
             $current = $next;
@@ -277,20 +331,22 @@ final class PublisherEvidenceCollector
         $parts = parse_url($current);
         $scheme = $parts['scheme'] ?? null;
         $host = $parts['host'] ?? null;
+        $port = $parts['port'] ?? null;
         if (! $scheme || ! $host) {
             return null;
         }
+        $origin = $scheme.'://'.$host.($port ? ':'.$port : '');
         if (str_starts_with($location, '//')) {
             return $scheme.':'.$location;
         }
         if (str_starts_with($location, '/')) {
-            return $scheme.'://'.$host.$location;
+            return $origin.$location;
         }
 
         $path = (string) ($parts['path'] ?? '/');
         $directory = rtrim(str_replace('\\', '/', dirname($path)), '/');
 
-        return $scheme.'://'.$host.($directory === '' || $directory === '.' ? '/' : $directory.'/').$location;
+        return $origin.($directory === '' || $directory === '.' ? '/' : $directory.'/').$location;
     }
 
     private function applicationVerifier(): ApplicationAdsTxtVerificationService
