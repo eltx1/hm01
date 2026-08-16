@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Builders\PublisherApplicationDomainClaimBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,6 +18,11 @@ class PublisherApplicationDomainClaim extends Model
         'last_checked_at', 'verified_at', 'final_ads_txt_url', 'verification_http_status',
         'verification_content_type', 'evidence_sha256', 'failure_code', 'verification_attempt_count',
     ];
+
+    public function newEloquentBuilder($query): PublisherApplicationDomainClaimBuilder
+    {
+        return new PublisherApplicationDomainClaimBuilder($query);
+    }
 
     protected static function booted(): void
     {
