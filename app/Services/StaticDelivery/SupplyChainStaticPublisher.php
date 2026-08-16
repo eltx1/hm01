@@ -26,12 +26,12 @@ final class SupplyChainStaticPublisher
     }
 
     /** @param array<string, mixed> $context */
-    public function queueForModel(Model $model, bool $urgent = false, array $context = []): StaticGlobalArtifactChange
+    public function queueForModel(Model $model, bool $urgent = false, array $context = [], ?User $actor = null): StaticGlobalArtifactChange
     {
         return $this->queue($urgent ? StaticDeliveryPriority::Urgent : StaticDeliveryPriority::Normal, array_merge([
             'model' => $model::class,
             'model_id' => (string) $model->getKey(),
-        ], $context));
+        ], $context), $actor);
     }
 
     /** @param array<string, mixed> $context */
