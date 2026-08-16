@@ -24,18 +24,12 @@ final class AdsTxtComplianceService
     {
         $result = $this->contract->adsTxtForSite($site);
         $content = $this->artifacts->adsTxtForSite($site, $result);
-        $entries = $result['entries'] ?? collect($result['records'])->values()->map(
-            fn ($record, int $index): array => [
-                'record' => $record,
-                'declaration' => null,
-                'source_type' => 'DEMAND_RECORD',
-                'line' => $result['lines'][$index] ?? $record->raw_record,
-            ],
-        )->all();
+        $entries = $result['entries'] ?? [];
         $records = collect($entries)->map(function (array $entry): array {
-            if ($entry['source_type'] === 'SELLER_DECLARATION') {
+            $sourceType = $entry['source_type'] ?? 'DEMAND_RECORD';
+            $provenance = $entry['provenance'] ?? [];
+            if ($sourceType === 'SELLER_DECLARATION') {
                 $declaration = $entry['declaration'];
-
                 return [
                     'id' => $declaration->id,
                     'canonical' => $entry['line'],
@@ -44,11 +38,27 @@ final class AdsTxtComplianceService
                     'account_id' => null,
                     'account_label' => 'Horus Media seller identity',
                     'status' => $declaration->status,
+                    'provenance' => $provenance,
                 ];
             }
 
             $record = $entry['record'];
-            if (($entry['source_type'] ?? null) === 'BIDDER_RECORD') {
+            if ($sourceType === 'PLATFORM_MASTER') {
+                return [
+                    'id' => $record->id,
+                    'canonical' => $entry['line'],
+                    'source' => 'PLATFORM_MASTER',
+                    'scope' => 'PLATFORM_GLOBAL',
+                    'account_id' => null,
+                    'account_label' => 'Horus Media platform master authorization',
+                    'status' => $record->status,
+                    'relationship' => $record->relationship,
+                    'review_status' => $record->review_status?->value ?? (string) $record->review_status,
+                    'remote_verification_status' => $record->remote_verification_status,
+                    'provenance' => $provenance,
+                ];
+            }
+            if ($sourceType === 'BIDDER_RECORD') {
                 return [
                     'id' => $record->id,
                     'canonical' => $entry['line'],
@@ -60,9 +70,9 @@ final class AdsTxtComplianceService
                     'relationship' => $record->relationship,
                     'review_status' => $record->review_status?->value ?? (string) $record->review_status,
                     'remote_verification_status' => $this->bidderAdsTxt->effectiveRemoteStatus($record)->value,
+                    'provenance' => $provenance,
                 ];
             }
-
             return [
                 'id' => $record->id,
                 'canonical' => $entry['line'],
@@ -71,9 +81,14 @@ final class AdsTxtComplianceService
                 'account_id' => $record->demand_account_id,
                 'account_label' => $record->account?->network?->name ?: 'Managed demand',
                 'status' => $record->status,
+                'provenance' => $provenance,
             ];
         })->all();
         $requiredMissing = collect($result['findings'])->where('code', 'BIDDER_ADS_TXT_REQUIRED_MISSING')->count();
+        $canonicalConflicts = collect($result['findings'])->where('severity', 'ERROR')->filter(
+            fn (array $finding): bool => str_contains((string) ($finding['code'] ?? ''), 'ADS_TXT')
+                && str_contains((string) ($finding['code'] ?? ''), 'CONFLICT'),
+        )->count();
 
         return [
             'content' => $content,
@@ -81,6 +96,7 @@ final class AdsTxtComplianceService
             'records' => $records,
             'record_count' => count($result['lines']),
             'required_missing_count' => $requiredMissing,
+            'canonical_conflict_count' => $canonicalConflicts,
             'findings' => $result['findings'],
             'parsed' => $this->parser->parse($content),
         ];
@@ -91,12 +107,11 @@ final class AdsTxtComplianceService
     {
         $canonical = $this->canonical($site);
         $bidderRequiredMissing = (int) ($canonical['required_missing_count'] ?? 0);
+        $canonicalConflicts = (int) ($canonical['canonical_conflict_count'] ?? 0);
         $latest = SupplyChainCheck::withoutGlobalScope('organization')
             ->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
             ->latest('checked_at')->first();
-        $comparison = $latest
-            ? $this->comparator->compare($canonical['content'], $latest->response_body ?? '', $canonical['findings'])
-            : [];
+        $comparison = $latest ? $this->comparator->compare($canonical['content'], $latest->response_body ?? '', $canonical['findings']) : [];
         $fetchSucceeded = (bool) data_get($latest?->findings, 'fetch.ok', false);
         $canonicalChanged = $latest && $latest->required_checksum !== $canonical['checksum'];
         $currentStatusWins = in_array($comparison['status'] ?? null, [
@@ -104,27 +119,26 @@ final class AdsTxtComplianceService
             AdsTxtComplianceStatus::Invalid->value,
             AdsTxtComplianceStatus::NotConfigured->value,
         ], true);
-        $baseStatus = $bidderRequiredMissing > 0
-            ? AdsTxtComplianceStatus::Missing->value
-            : ($latest
-                ? ($fetchSucceeded || $currentStatusWins ? $comparison['status'] : $latest->status)
-                : ($canonical['record_count'] === 0
-                    ? AdsTxtComplianceStatus::NotConfigured->value
-                    : AdsTxtComplianceStatus::Stale->value));
+        $baseStatus = $canonicalConflicts > 0
+            ? AdsTxtComplianceStatus::Conflict->value
+            : ($bidderRequiredMissing > 0
+                ? AdsTxtComplianceStatus::Missing->value
+                : ($latest
+                    ? ($fetchSucceeded || $currentStatusWins ? $comparison['status'] : $latest->status)
+                    : ($canonical['record_count'] === 0 ? AdsTxtComplianceStatus::NotConfigured->value : AdsTxtComplianceStatus::Stale->value)));
         $isStale = $latest && $latest->checked_at->lt(now()->subDays((int) config('ads-txt.fresh_for_days', 7)));
-        $status = $bidderRequiredMissing > 0
-            ? AdsTxtComplianceStatus::Missing->value
-            : (($isStale || $canonicalChanged)
-                && ! in_array($comparison['status'] ?? null, [AdsTxtComplianceStatus::Conflict->value, AdsTxtComplianceStatus::Invalid->value], true)
-                && $baseStatus !== AdsTxtComplianceStatus::NotConfigured->value
-                ? AdsTxtComplianceStatus::Stale->value
-                : $baseStatus);
+        $status = $canonicalConflicts > 0
+            ? AdsTxtComplianceStatus::Conflict->value
+            : ($bidderRequiredMissing > 0
+                ? AdsTxtComplianceStatus::Missing->value
+                : (($isStale || $canonicalChanged)
+                    && ! in_array($comparison['status'] ?? null, [AdsTxtComplianceStatus::Conflict->value, AdsTxtComplianceStatus::Invalid->value], true)
+                    && $baseStatus !== AdsTxtComplianceStatus::NotConfigured->value
+                    ? AdsTxtComplianceStatus::Stale->value : $baseStatus));
         $correct = count((array) ($comparison['correct'] ?? []));
         $missing = count((array) ($comparison['missing'] ?? [])) + count((array) ($comparison['missing_directives'] ?? [])) + $bidderRequiredMissing;
-        $invalid = count((array) ($comparison['invalid'] ?? [])) + count((array) ($comparison['conflicts'] ?? []));
-        if (! $latest && $canonical['record_count'] > 0) {
-            $missing += $canonical['record_count'];
-        }
+        $invalid = count((array) ($comparison['invalid'] ?? [])) + count((array) ($comparison['conflicts'] ?? [])) + $canonicalConflicts;
+        if (! $latest && $canonical['record_count'] > 0) { $missing += $canonical['record_count']; }
         $requiredCount = $canonical['record_count'] + $bidderRequiredMissing;
 
         return [
@@ -139,9 +153,11 @@ final class AdsTxtComplianceService
             'occurrence_count' => $latest?->occurrence_count ?? 0,
             'verification_state' => ! $latest ? 'NEVER_CHECKED' : ($isStale || $canonicalChanged ? 'DUE' : 'FRESH'),
             'next_check_at' => $latest?->checked_at?->copy()->addDays((int) config('ads-txt.fresh_for_days', 7)),
-            'action' => $bidderRequiredMissing > 0
-                ? 'Add and review the missing required Prebid bidder ads.txt authorization before production monetization.'
-                : $this->action($status, $missing, $invalid),
+            'action' => $canonicalConflicts > 0
+                ? 'Resolve canonical ads.txt source conflicts before publishing.'
+                : ($bidderRequiredMissing > 0
+                    ? 'Add and review the missing required Prebid bidder ads.txt authorization before production monetization.'
+                    : $this->action($status, $missing, $invalid)),
             'canonical' => $canonical,
             'live_content' => $latest?->response_body,
             'comparison' => $comparison,
@@ -152,9 +168,8 @@ final class AdsTxtComplianceService
 
     public function history(Site $site)
     {
-        return SupplyChainCheck::withoutGlobalScope('organization')
-            ->with('initiator')->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
-            ->latest('checked_at')->get();
+        return SupplyChainCheck::withoutGlobalScope('organization')->with('initiator')
+            ->where('site_id', $site->id)->where('check_type', 'ADS_TXT')->latest('checked_at')->get();
     }
 
     private function action(string $status, int $missing, int $invalid): string
@@ -164,7 +179,7 @@ final class AdsTxtComplianceService
             AdsTxtComplianceStatus::Partial->value => 'Publish the remaining '.$missing.' required item(s).',
             AdsTxtComplianceStatus::Missing->value => 'Publish the canonical ads.txt file.',
             AdsTxtComplianceStatus::Invalid->value => 'Correct '.$invalid.' invalid or duplicate item(s).',
-            AdsTxtComplianceStatus::Conflict->value => 'Resolve conflicting seller declarations.',
+            AdsTxtComplianceStatus::Conflict->value => 'Resolve conflicting seller authorizations.',
             AdsTxtComplianceStatus::Stale->value => 'Run a fresh verification.',
             AdsTxtComplianceStatus::Unreachable->value => 'Restore a public text/plain ads.txt endpoint.',
             default => 'Configure an eligible authorized-seller record when monetization requires it.',
