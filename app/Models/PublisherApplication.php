@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\PublisherApplicationStatus;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -49,6 +50,15 @@ class PublisherApplication extends Model
             if ($application->getRawOriginal('submitted_at') !== null && $application->isDirty('submitted_at')) {
                 throw new LogicException('The first Publisher application submission timestamp is immutable.');
             }
+        });
+
+        static::updated(function (self $application): void {
+            if (! $application->wasChanged('status') || $application->status !== PublisherApplicationStatus::Approved) {
+                return;
+            }
+
+            $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
+            app(HorusSellerIdentityService::class)->ensureForPublisher($publisher);
         });
     }
 

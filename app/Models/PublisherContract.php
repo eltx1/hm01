@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ContractStatus;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -16,6 +17,30 @@ class PublisherContract extends Model
     protected $fillable = ['organization_id', 'publisher_id', 'contract_reference', 'starts_at', 'ends_at', 'auto_renews', 'revenue_share_percent', 'payment_threshold', 'currency', 'payment_terms', 'contract_file_path', 'contract_file_name', 'contract_file_mime', 'status', 'internal_notes', 'created_by'];
 
     protected $hidden = ['internal_notes', 'contract_file_path'];
+
+    protected static function booted(): void
+    {
+        static::saved(function (PublisherContract $contract): void {
+            if (! $contract->wasRecentlyCreated && ! $contract->wasChanged([
+                'publisher_id', 'contract_reference', 'starts_at', 'ends_at', 'status',
+                'revenue_share_percent', 'payment_threshold', 'currency', 'payment_terms',
+            ])) {
+                return;
+            }
+
+            $publisher = Publisher::withoutGlobalScopes()->find($contract->publisher_id);
+            if ($publisher) {
+                app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+            }
+        });
+
+        static::deleted(function (PublisherContract $contract): void {
+            $publisher = Publisher::withoutGlobalScopes()->find($contract->publisher_id);
+            if ($publisher) {
+                app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+            }
+        });
+    }
 
     protected function casts(): array
     {

@@ -6,6 +6,7 @@ use App\Enums\AccountStatus;
 use App\Enums\SupplyChainReviewStatus;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Services\SupplyChain\DomainNormalizer;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
@@ -26,6 +27,26 @@ class Publisher extends Model
     {
         static::creating(function (Publisher $publisher): void {
             $publisher->supply_chain_review_status ??= SupplyChainReviewStatus::ReviewRequired;
+        });
+
+        static::updating(function (Publisher $publisher): void {
+            if ($publisher->isDirty(['legal_name', 'business_domain'])) {
+                $publisher->supply_chain_review_status = SupplyChainReviewStatus::ReviewRequired;
+                $publisher->supply_chain_reviewed_at = null;
+                $publisher->supply_chain_reviewed_by = null;
+            }
+        });
+
+        static::updated(function (Publisher $publisher): void {
+            $identities = app(HorusSellerIdentityService::class);
+
+            if ($publisher->wasChanged(['legal_name', 'business_domain'])) {
+                $identities->reopenForPublisherIdentityChange($publisher);
+            }
+
+            if ($publisher->wasChanged('status') && $publisher->status !== AccountStatus::Active) {
+                $identities->disableForUnrepresentedPublisher($publisher);
+            }
         });
     }
 
