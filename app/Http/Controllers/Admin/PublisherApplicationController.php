@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\PublisherApplication;
+use App\Models\PublisherQualityProfile;
 use App\Services\PublisherApplications\PublisherApplicationService;
+use App\Services\Thoth\PublisherQualityReviewService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 final class PublisherApplicationController extends Controller
@@ -66,6 +69,34 @@ final class PublisherApplicationController extends Controller
         $applications->requestMoreInformation($application, $request->user(), $data['reason']);
 
         return back()->with('status', 'The information request was recorded and sent to the applicant.');
+    }
+
+    public function thothReview(Request $request, PublisherApplication $application, PublisherQualityReviewService $reviews): RedirectResponse
+    {
+        if (! in_array($application->status, [
+            PublisherApplicationStatus::Submitted,
+            PublisherApplicationStatus::UnderReview,
+            PublisherApplicationStatus::MoreInfoRequired,
+        ], true)) {
+            throw ValidationException::withMessages(['thoth' => 'THOTH pre-approval review is not allowed in the current application state.']);
+        }
+
+        $profile = PublisherQualityProfile::query()
+            ->where('publisher_id', $application->publisher_id)
+            ->latest('version')
+            ->first();
+        if (! $profile) {
+            throw ValidationException::withMessages(['profile' => 'Complete the publisher quality profile before running THOTH.']);
+        }
+
+        $run = $reviews->runForApplication($application, $profile, $request->user(), $request->boolean('rerun'));
+
+        return back()->with(
+            $run->status === 'COMPLETED' ? 'status' : 'error',
+            $run->status === 'COMPLETED'
+                ? 'THOTH pre-approval website advisory completed. Human Admin review remains authoritative.'
+                : 'THOTH pre-approval advisory failed safely: '.$run->error_code,
+        );
     }
 
     public function approve(Request $request, PublisherApplication $application, PublisherApplicationService $applications): RedirectResponse
