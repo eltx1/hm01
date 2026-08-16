@@ -35,22 +35,39 @@
 - Contract documents use private storage and authorized controller downloads.
 - Payment and tax references are encrypted at rest and omitted from audit data.
 - Automated domain verification validates public DNS targets, rejects private
-  and reserved addresses, limits response size and time, and does not follow redirects.
+  and reserved addresses, limits response size and time, and follows only the
+  explicitly bounded redirect policy of the verification mechanism in use.
 - Site reviews, status changes, serving changes, revenue-share changes, manual
   verification, internal notes, and emergency pauses are audited.
 - THOTH provider keys are either environment-managed or stored with Laravel
   authenticated encryption under `APP_KEY`; they are hidden from serialization,
   HTML, logs, audit values, Publisher payloads, and static delivery artifacts.
-- THOTH treats verified-site HTML as untrusted data. Fetches reuse public-IP
-  validation, DNS pinning, redirect blocking, MIME/size/time limits, and static
-  text extraction; remote JavaScript is never executed or embedded in Admin.
+- THOTH treats verified-site HTML as untrusted data. Operational Publisher
+  fetches require a verified SiteDomain. Pre-approval application fetches require
+  the current Task 39 ads.txt-verified application claim. Stale application
+  verification is refreshed only through the canonical Task 39 verifier using
+  already-reserved HMP/HMS identities; THOTH cannot reserve or mutate seller IDs.
+- THOTH website fetching revalidates every destination through public-IP/DNS
+  safety and DNS pinning. Redirects are tightly bounded and allowed only within
+  the verified site's exact/www scope; arbitrary cross-domain redirects,
+  private/reserved/loopback destinations, unsafe DNS results, excessive
+  responses, invalid MIME types, and redirect-limit violations fail closed.
+- THOTH static extraction never executes JavaScript, iframes, forms, objects,
+  embeds, or browser automation. Script/style/hidden/aria-hidden content is
+  removed before evidence reaches an AI provider.
 - AI providers receive a field allowlist and no tools, browsing, internal APIs,
-  serving controls, finance access, or write capability. Human Horus Admins are
-  the sole Publisher decision authority, protected by separate RBAC permissions.
+  serving controls, finance access, application decision actions, or write
+  capability. HMP/HMS are not included in the application AI evidence envelope.
+  Human Horus Admins are the sole Publisher/application decision authority,
+  protected by separate RBAC permissions.
 - Public application transitions, submitted revisions, decisions, and
   information requests are append-oriented and audited. Domain claims and row
   locks prevent duplicate applications and duplicate approval handoffs. Public
   registration and application writes use dedicated rate limits.
+- The application-specific THOTH action is Horus-only, requires
+  `publisher_quality.ai.run`, Admin 2FA, active/verified authentication and the
+  sensitive-action throttle. It is allowed only for submitted, under-review, or
+  more-information-required applications and never auto-runs on applicant edits.
 
 ## Required future controls
 
