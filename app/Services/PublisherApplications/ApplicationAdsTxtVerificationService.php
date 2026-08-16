@@ -5,6 +5,7 @@ namespace App\Services\PublisherApplications;
 use App\Enums\PublisherApplicationStatus;
 use App\Models\PublisherApplication;
 use App\Models\PublisherApplicationDomainClaim;
+use App\Models\SellerDeclaration;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Compliance\AdsTxtFetcher;
@@ -51,10 +52,61 @@ final class ApplicationAdsTxtVerificationService
     public function verify(PublisherApplication $application, User $actor): array
     {
         $reserved = $this->reserve($application, $actor);
-        /** @var PublisherApplicationDomainClaim $claim */
-        $claim = $reserved['claim'];
-        $hmp = $reserved['publisher_seller'];
-        $hms = $reserved['website_seller'];
+
+        return $this->verifyReserved(
+            $reserved['claim'],
+            $reserved['publisher_seller'],
+            $reserved['website_seller'],
+            $actor,
+        );
+    }
+
+    /**
+     * Re-check an already verified Task 39 claim without reserving, creating,
+     * replacing, or otherwise mutating HMP/HMS identity state. This is the only
+     * verification path THOTH may use when a pre-approval verification is stale.
+     *
+     * @return array<string, mixed>
+     */
+    public function refreshExistingVerification(PublisherApplication $application, User $actor): array
+    {
+        $claim = $this->currentClaim($application)->loadMissing(['publisherSeller', 'websiteSeller']);
+
+        if ($claim->verification_status !== 'VERIFIED') {
+            return ['verified' => false, 'code' => 'APPLICATION_DOMAIN_NOT_VERIFIED', 'claim' => $claim];
+        }
+
+        if (! $claim->publisherSeller instanceof SellerDeclaration || ! $claim->websiteSeller instanceof SellerDeclaration) {
+            return ['verified' => false, 'code' => 'APPLICATION_SELLER_IDENTITIES_MISSING', 'claim' => $claim];
+        }
+
+        return $this->verifyReserved($claim, $claim->publisherSeller, $claim->websiteSeller, $actor);
+    }
+
+    public function currentClaim(PublisherApplication $application): PublisherApplicationDomainClaim
+    {
+        $domain = strtolower(rtrim((string) $application->primary_domain, '.'));
+        $claim = $application->domainClaims()->where('normalized_domain', $domain)->first();
+        if (! $claim) {
+            throw ValidationException::withMessages(['primary_domain' => 'The application does not have a canonical claim for its current website domain.']);
+        }
+
+        return $claim;
+    }
+
+    /** Clean Task 40 handoff: only real ads.txt-verified application domains are crawl-eligible. */
+    public function crawlingEligible(PublisherApplication $application): bool
+    {
+        $claim = $application->domainClaim;
+
+        return $claim !== null
+            && $claim->normalized_domain === strtolower(rtrim((string) $application->primary_domain, '.'))
+            && $claim->verification_status === 'VERIFIED';
+    }
+
+    /** @return array<string, mixed> */
+    private function verifyReserved(PublisherApplicationDomainClaim $claim, SellerDeclaration $hmp, SellerDeclaration $hms, User $actor): array
+    {
         $fetch = $this->fetcher->fetchDomain($claim->normalized_domain);
         $now = now();
         $attempt = (int) $claim->verification_attempt_count + 1;
@@ -123,27 +175,6 @@ final class ApplicationAdsTxtVerificationService
             'invalid_record_count' => count($parsed['invalid']),
             'final_url' => $fetch['final_url'],
         ];
-    }
-
-    public function currentClaim(PublisherApplication $application): PublisherApplicationDomainClaim
-    {
-        $domain = strtolower(rtrim((string) $application->primary_domain, '.'));
-        $claim = $application->domainClaims()->where('normalized_domain', $domain)->first();
-        if (! $claim) {
-            throw ValidationException::withMessages(['primary_domain' => 'The application does not have a canonical claim for its current website domain.']);
-        }
-
-        return $claim;
-    }
-
-    /** Clean Task 40 handoff: only real ads.txt-verified application domains are crawl-eligible. */
-    public function crawlingEligible(PublisherApplication $application): bool
-    {
-        $claim = $application->domainClaim;
-
-        return $claim !== null
-            && $claim->normalized_domain === strtolower(rtrim((string) $application->primary_domain, '.'))
-            && $claim->verification_status === 'VERIFIED';
     }
 
     private function auditAttempt(PublisherApplicationDomainClaim $claim, User $actor, bool $verified, ?string $failure, string $hmp, string $hms): void
