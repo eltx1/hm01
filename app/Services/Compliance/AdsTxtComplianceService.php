@@ -73,12 +73,14 @@ final class AdsTxtComplianceService
                 'status' => $record->status,
             ];
         })->all();
+        $requiredMissing = collect($result['findings'])->where('code', 'BIDDER_ADS_TXT_REQUIRED_MISSING')->count();
 
         return [
             'content' => $content,
             'checksum' => hash('sha256', $content),
             'records' => $records,
             'record_count' => count($result['lines']),
+            'required_missing_count' => $requiredMissing,
             'findings' => $result['findings'],
             'parsed' => $this->parser->parse($content),
         ];
@@ -88,6 +90,7 @@ final class AdsTxtComplianceService
     public function summary(Site $site): array
     {
         $canonical = $this->canonical($site);
+        $bidderRequiredMissing = (int) ($canonical['required_missing_count'] ?? 0);
         $latest = SupplyChainCheck::withoutGlobalScope('organization')
             ->where('site_id', $site->id)->where('check_type', 'ADS_TXT')
             ->latest('checked_at')->first();
@@ -101,28 +104,33 @@ final class AdsTxtComplianceService
             AdsTxtComplianceStatus::Invalid->value,
             AdsTxtComplianceStatus::NotConfigured->value,
         ], true);
-        $baseStatus = $latest
-            ? ($fetchSucceeded || $currentStatusWins ? $comparison['status'] : $latest->status)
-            : ($canonical['record_count'] === 0
-            ? AdsTxtComplianceStatus::NotConfigured->value
-            : AdsTxtComplianceStatus::Stale->value);
+        $baseStatus = $bidderRequiredMissing > 0
+            ? AdsTxtComplianceStatus::Missing->value
+            : ($latest
+                ? ($fetchSucceeded || $currentStatusWins ? $comparison['status'] : $latest->status)
+                : ($canonical['record_count'] === 0
+                    ? AdsTxtComplianceStatus::NotConfigured->value
+                    : AdsTxtComplianceStatus::Stale->value));
         $isStale = $latest && $latest->checked_at->lt(now()->subDays((int) config('ads-txt.fresh_for_days', 7)));
-        $status = ($isStale || $canonicalChanged)
-            && ! in_array($comparison['status'] ?? null, [AdsTxtComplianceStatus::Conflict->value, AdsTxtComplianceStatus::Invalid->value], true)
-            && $baseStatus !== AdsTxtComplianceStatus::NotConfigured->value
-            ? AdsTxtComplianceStatus::Stale->value
-            : $baseStatus;
+        $status = $bidderRequiredMissing > 0
+            ? AdsTxtComplianceStatus::Missing->value
+            : (($isStale || $canonicalChanged)
+                && ! in_array($comparison['status'] ?? null, [AdsTxtComplianceStatus::Conflict->value, AdsTxtComplianceStatus::Invalid->value], true)
+                && $baseStatus !== AdsTxtComplianceStatus::NotConfigured->value
+                ? AdsTxtComplianceStatus::Stale->value
+                : $baseStatus);
         $correct = count((array) ($comparison['correct'] ?? []));
-        $missing = count((array) ($comparison['missing'] ?? [])) + count((array) ($comparison['missing_directives'] ?? []));
+        $missing = count((array) ($comparison['missing'] ?? [])) + count((array) ($comparison['missing_directives'] ?? [])) + $bidderRequiredMissing;
         $invalid = count((array) ($comparison['invalid'] ?? [])) + count((array) ($comparison['conflicts'] ?? []));
         if (! $latest && $canonical['record_count'] > 0) {
-            $missing = $canonical['record_count'];
+            $missing += $canonical['record_count'];
         }
+        $requiredCount = $canonical['record_count'] + $bidderRequiredMissing;
 
         return [
             'site' => $site,
             'status' => $status,
-            'required_count' => $canonical['record_count'],
+            'required_count' => $requiredCount,
             'correct_count' => $correct,
             'missing_count' => $missing,
             'invalid_count' => $invalid,
@@ -131,7 +139,9 @@ final class AdsTxtComplianceService
             'occurrence_count' => $latest?->occurrence_count ?? 0,
             'verification_state' => ! $latest ? 'NEVER_CHECKED' : ($isStale || $canonicalChanged ? 'DUE' : 'FRESH'),
             'next_check_at' => $latest?->checked_at?->copy()->addDays((int) config('ads-txt.fresh_for_days', 7)),
-            'action' => $this->action($status, $missing, $invalid),
+            'action' => $bidderRequiredMissing > 0
+                ? 'Add and review the missing required Prebid bidder ads.txt authorization before production monetization.'
+                : $this->action($status, $missing, $invalid),
             'canonical' => $canonical,
             'live_content' => $latest?->response_body,
             'comparison' => $comparison,
