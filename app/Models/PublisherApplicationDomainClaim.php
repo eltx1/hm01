@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\PublisherApplicationStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,8 +12,8 @@ class PublisherApplicationDomainClaim extends Model
     use HasUlids;
 
     protected $fillable = [
-        'publisher_application_id', 'normalized_domain', 'publisher_seller_declaration_id',
-        'website_seller_declaration_id', 'verification_status', 'verification_requested_at',
+        'publisher_application_id', 'normalized_domain', 'claim_status', 'claimed_at', 'released_at',
+        'publisher_seller_declaration_id', 'website_seller_declaration_id', 'verification_status', 'verification_requested_at',
         'last_checked_at', 'verified_at', 'final_ads_txt_url', 'verification_http_status',
         'verification_content_type', 'evidence_sha256', 'failure_code', 'verification_attempt_count',
     ];
@@ -33,9 +32,6 @@ class PublisherApplicationDomainClaim extends Model
             }
         });
 
-        // Task 27 deleted a domain claim when an application became terminal. Once
-        // Task 39 has reserved a permanent public seller identity, that delete becomes
-        // a no-op so immutable seller/verification evidence is retained.
         static::deleting(function (self $claim): bool {
             if ($claim->website_seller_declaration_id || $claim->publisher_seller_declaration_id || $claim->verification_requested_at) {
                 return false;
@@ -48,22 +44,14 @@ class PublisherApplicationDomainClaim extends Model
     protected function casts(): array
     {
         return [
+            'claimed_at' => 'datetime',
+            'released_at' => 'datetime',
             'verification_requested_at' => 'datetime',
             'last_checked_at' => 'datetime',
             'verified_at' => 'datetime',
             'verification_attempt_count' => 'integer',
             'verification_http_status' => 'integer',
         ];
-    }
-
-    /** Derived compatibility state; no claim lifecycle column is persisted. */
-    public function getClaimStatusAttribute(): string
-    {
-        $status = $this->application?->status;
-
-        return in_array($status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)
-            ? 'TERMINAL'
-            : 'CLAIMED';
     }
 
     public function application(): BelongsTo
