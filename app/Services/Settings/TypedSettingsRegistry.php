@@ -21,6 +21,13 @@ final class TypedSettingsRegistry
                 'Public product/company name shown by Horus Media.', 'PUBLIC'
             ),
             new SettingDefinition(
+                'advertiser_campaigns.enabled', 'ADVERTISER CAMPAIGNS', 'Advertiser Campaigns Enabled', 'boolean', 'campaigns.advertiser_campaigns_enabled',
+                ['required', 'boolean'], [],
+                'Controls whether normal Advertiser users may create or submit Direct Advertiser campaigns. Delivery still requires an eligible GAM-backed capability.',
+                'SAFE', true, true,
+                'Turning this off blocks new Advertiser campaign creation/submission and new or resumed delivery while preserving existing campaigns, history, finance, and emergency pause/complete actions.'
+            ),
+            new SettingDefinition(
                 'supply_chain.manager_domain', 'SUPPLY CHAIN', 'Manager domain', 'domain', 'supply-chain.manager_domain',
                 ['required', 'string', 'max:253'], [],
                 'Advertising-system domain used by MANAGERDOMAIN and the Horus schain node.', 'PUBLIC', true, true,
