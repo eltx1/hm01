@@ -10,6 +10,21 @@
     $canReview = auth()->user()->hasPermission('publisher_applications.review');
     $canRunThoth = auth()->user()->hasPermission('publisher_quality.ai.run');
     $claim = $application->domainClaims->firstWhere('claim_status', 'CLAIMED') ?? $application->domainClaims->first();
+    $freshDays = max(1, (int) config('thoth.application_domain_verification_fresh_days', 7));
+    $claimFresh = $claim?->verification_status === 'VERIFIED' && $claim?->verified_at?->greaterThanOrEqualTo(now()->subDays($freshDays));
+    $applicationRun = $application->publisher->qualityReviewRuns->first(fn ($run) =>
+        ($run->evidence_snapshot['review_context'] ?? null) === 'PUBLISHER_APPLICATION'
+        && ($run->evidence_snapshot['application']['id'] ?? null) === $application->id
+    );
+    $applicationEvidence = $applicationRun?->evidence_snapshot ?? [];
+    $websiteEvidence = $applicationEvidence['website_evidence'] ?? [];
+    $evidenceGaps = $applicationEvidence['evidence_gaps'] ?? [];
+    $advisory = $applicationRun?->result ?? [];
+    $reviewableForThoth = in_array($application->status, [
+        \App\Enums\PublisherApplicationStatus::Submitted,
+        \App\Enums\PublisherApplicationStatus::UnderReview,
+        \App\Enums\PublisherApplicationStatus::MoreInfoRequired,
+    ], true);
 @endphp
 
 <section class="hero">
@@ -25,7 +40,7 @@
 </section>
 
 <div class="notice">
-    <strong>Decision boundary:</strong> ads.txt verification is website/supply-chain evidence only. Application approval creates operational Publisher eligibility only; website approval and production monetization remain separate.
+    <strong>Decision boundary:</strong> ads.txt verification is website/supply-chain evidence only. THOTH is an AI advisor only. Application approval, website approval and production monetization remain separate human-controlled states.
 </div>
 
 <section class="metric-grid">
@@ -37,29 +52,31 @@
 </section>
 
 <article class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Task 39 supply-chain evidence</p><h2>Website verification &amp; Horus seller identities</h2></div>@if($claim)<span class="status">{{ $claim->verification_status }}</span>@endif</div>
+    <div class="workspace-heading"><div><p class="eyebrow">Domain / authorization</p><h2>Website verification &amp; Horus seller identities</h2></div>@if($claim)<span class="status">{{ $claim->verification_status }}</span>@endif</div>
     @if($claim)
         <div class="detail-grid">
-            <div><span>Website</span><strong>{{ $claim->normalized_domain }}</strong></div>
+            <div><span>Website domain</span><strong>{{ $claim->normalized_domain }}</strong></div>
             <div><span>Publisher Seller ID</span><strong>{{ $claim->publisherSeller?->seller_id ?: 'Not reserved' }}</strong></div>
             <div><span>Website Seller ID</span><strong>{{ $claim->websiteSeller?->seller_id ?: 'Not reserved' }}</strong></div>
-            <div><span>Ads.txt</span><strong>{{ $claim->verification_status }}</strong></div>
+            <div><span>Horus ads.txt verification</span><strong>{{ $claim->verification_status }}</strong></div>
+            <div><span>Verification timestamp</span><strong>{{ $claim->verified_at ?: 'Not verified' }}</strong></div>
+            <div><span>Freshness</span><strong>{{ $claimFresh ? 'Fresh' : ($claim->verification_status === 'VERIFIED' ? 'Stale — THOTH will re-check before fetching' : 'Not verified') }}</strong></div>
             <div><span>Last checked</span><strong>{{ $claim->last_checked_at ?: 'Never' }}</strong></div>
-            <div><span>Verified at</span><strong>{{ $claim->verified_at ?: 'Not verified' }}</strong></div>
             <div><span>Final ads.txt URL</span><strong>{{ $claim->final_ads_txt_url ?: 'Not fetched' }}</strong></div>
             <div><span>HTTP evidence</span><strong>{{ $claim->verification_http_status ?: '—' }} · {{ $claim->verification_content_type ?: '—' }}</strong></div>
             <div><span>Evidence SHA-256</span><strong>{{ $claim->evidence_sha256 ?: '—' }}</strong></div>
             <div><span>Failure code</span><strong>{{ $claim->failure_code ?: 'None' }}</strong></div>
         </div>
-        <p class="muted">The HMP and HMS IDs are permanent public technical account identifiers. A VERIFIED ads.txt state does not activate the Publisher, Site, serving engines, Finance, or payouts.</p>
+        <p class="muted">HMP/HMS are permanent public technical identifiers displayed to Admin for supply-chain review. THOTH receives only the semantic authorization result, not these seller IDs.</p>
     @else
-        <p class="muted">No application domain claim is available.</p>
+        <p class="muted">No application domain claim is available. THOTH will not fetch an arbitrary or merely submitted website.</p>
     @endif
 </article>
 
 @if ($canReview)
     <article class="workspace-section">
-        <h2>Review actions</h2>
+        <div class="workspace-heading"><div><p class="eyebrow">Human decision</p><h2>Application review actions</h2></div><span class="status">Admin only</span></div>
+        <p class="muted">These are the authoritative application actions. THOTH cannot call or trigger them.</p>
         <div class="status-row">
             @if ($application->status === \App\Enums\PublisherApplicationStatus::Submitted)
                 <form method="POST" action="{{ route('admin.publisher-applications.start-review', $application) }}">@csrf<button class="hm-button-primary">Start review</button></form>
@@ -92,19 +109,67 @@
             <div><span>Audience</span><strong>{{ implode(', ', $profile->audience_countries) }}</strong></div>
         </div>
 
-        @if ($canRunThoth)
-            <form method="POST" action="{{ route('admin.publishers.quality-review.run', $application->publisher) }}" class="inline-form">@csrf<label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label><button>Run THOTH advisory</button></form>
-            <p class="muted">THOTH may append advisory evidence but can never approve or reject this application. Task 40 crawling eligibility can rely on the separate VERIFIED application-domain ads.txt contract.</p>
+        @if ($canRunThoth && $reviewableForThoth)
+            <form method="POST" action="{{ route('admin.publisher-applications.thoth-review', $application) }}" class="inline-form">
+                @csrf
+                <label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label>
+                <button>Run THOTH Website Review</button>
+            </form>
+            <p class="muted">This explicit Admin action may refresh stale Task 39 ads.txt verification and collect bounded static public website evidence. It never creates a Site or activates serving.</p>
+        @elseif($canRunThoth)
+            <p class="muted">THOTH pre-approval review is disabled for this application state. Allowed states are Submitted, Under Review and More Info Required.</p>
         @endif
     @else
         <p class="muted">The applicant has not saved quality-profile evidence yet.</p>
     @endif
+</article>
 
-    @forelse ($application->publisher->qualityReviewRuns as $run)
-        <div class="compact-row"><div><strong>{{ $run->provider }} · {{ $run->model }}</strong><p>{{ $run->result['recommended_decision'] ?? $run->error_code ?? 'Pending' }} · advisory only</p></div><x-status-badge :status="$run->status" /></div>
-    @empty
-        <p class="muted">No THOTH advisory run has been recorded for this Publisher.</p>
-    @endforelse
+<article class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">Public website evidence</p><h2>Bounded live evidence snapshot</h2></div><span class="status">{{ count($websiteEvidence) }} page(s)</span></div>
+    @if($applicationRun)
+        <div class="detail-grid">
+            <div><span>Review context</span><strong>{{ $applicationEvidence['review_context'] ?? '—' }}</strong></div>
+            <div><span>Authorization verified</span><strong>{{ ($applicationEvidence['application']['website_authorization_verified'] ?? false) ? 'Yes' : 'No' }}</strong></div>
+            <div><span>Verification freshness</span><strong>{{ $applicationEvidence['application']['verification_freshness'] ?? '—' }}</strong></div>
+            <div><span>Last evidence collection</span><strong>{{ $applicationRun->started_at }}</strong></div>
+        </div>
+        @forelse($websiteEvidence as $page)
+            <div class="compact-row"><div><strong>{{ $page['title'] ?: 'Untitled page' }}</strong><p>{{ $page['url'] }}</p></div><span class="muted">Static HTML text</span></div>
+        @empty
+            <p class="muted">No acceptable live website page was available. Applicant declarations remain visible for manual review; this is not an automatic rejection.</p>
+        @endforelse
+        @if($evidenceGaps)
+            <h3>Evidence gaps</h3>
+            <ul>@foreach($evidenceGaps as $gap)<li>{{ $gap }}</li>@endforeach</ul>
+        @endif
+    @else
+        <p class="muted">No application-specific THOTH website evidence has been collected yet.</p>
+    @endif
+</article>
+
+<article class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">THOTH AI advisory</p><h2>Advisory result</h2></div>@if($applicationRun)<x-status-badge :status="$applicationRun->status" />@endif</div>
+    @if($applicationRun)
+        <div class="detail-grid">
+            <div><span>Recommendation</span><strong>{{ $advisory['recommended_decision'] ?? $applicationRun->error_code ?? 'Unavailable' }}</strong></div>
+            <div><span>Risk</span><strong>{{ $advisory['risk_level'] ?? '—' }}</strong></div>
+            <div><span>Confidence</span><strong>{{ isset($advisory['confidence']) ? $advisory['confidence'].'%' : '—' }}</strong></div>
+            <div><span>Provider / model</span><strong>{{ $applicationRun->provider }} · {{ $applicationRun->model }}</strong></div>
+            <div><span>Run timestamp</span><strong>{{ $applicationRun->started_at }}</strong></div>
+        </div>
+        @if($advisory['findings'] ?? [])
+            <h3>Findings</h3>
+            @foreach($advisory['findings'] as $finding)
+                <div class="compact-row"><div><strong>{{ $finding['code'] ?? 'Finding' }} · {{ $finding['severity'] ?? '—' }}</strong><p>{{ $finding['explanation'] ?? '' }}</p></div></div>
+            @endforeach
+        @endif
+        @if($advisory['positive_signals'] ?? [])<h3>Positive signals</h3><ul>@foreach($advisory['positive_signals'] as $item)<li>{{ $item }}</li>@endforeach</ul>@endif
+        @if($advisory['concerns'] ?? [])<h3>Concerns</h3><ul>@foreach($advisory['concerns'] as $item)<li>{{ $item }}</li>@endforeach</ul>@endif
+        @if($advisory['recommended_admin_checks'] ?? [])<h3>Recommended checks</h3><ul>@foreach($advisory['recommended_admin_checks'] as $item)<li>{{ $item }}</li>@endforeach</ul>@endif
+        <p class="muted"><strong>Human final decision remains separate.</strong> A THOTH recommendation never changes application, Publisher, Organization, Site, serving, financial, contract, HMP or HMS state.</p>
+    @else
+        <p class="muted">No application-specific THOTH advisory run has been recorded.</p>
+    @endif
 </article>
 
 <article class="workspace-section">
