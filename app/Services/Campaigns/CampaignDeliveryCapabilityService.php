@@ -37,7 +37,7 @@ final class CampaignDeliveryCapabilityService
         return (bool) $this->settings->get('advertiser_campaigns.enabled');
     }
 
-    public function evaluate(Campaign $campaign): CampaignDeliveryCapabilityResult
+    public function evaluate(Campaign $campaign, bool $allowPendingCreativeReview = false): CampaignDeliveryCapabilityResult
     {
         if (! $this->featureEnabled()) {
             return $this->blocked(
@@ -87,19 +87,19 @@ final class CampaignDeliveryCapabilityService
                 );
             }
 
-            $candidate = $this->candidateIncludingDisabled($site);
-            if ($candidate && ! $candidate->is_enabled) {
-                return $this->blocked(
-                    CampaignDeliveryCapabilityStatus::GamConnectionDisabled,
-                    'GAM_CONNECTION_DISABLED',
-                    'The selected GAM delivery connection is disabled.',
-                    siteId: $site->id,
-                    connectionId: $candidate->id,
-                );
-            }
-
-            $connection = $this->connections->resolve($site);
+            $connection = $this->resolveSelectedConnection($site);
             if (! $connection) {
+                $disabled = $this->candidateIncludingDisabled($site);
+                if ($disabled && ! $disabled->is_enabled) {
+                    return $this->blocked(
+                        CampaignDeliveryCapabilityStatus::GamConnectionDisabled,
+                        'GAM_CONNECTION_DISABLED',
+                        'The selected GAM delivery connection is disabled.',
+                        siteId: $site->id,
+                        connectionId: $disabled->id,
+                    );
+                }
+
                 return $this->blocked(
                     CampaignDeliveryCapabilityStatus::NoGamBackend,
                     'NO_ELIGIBLE_GAM_CONNECTION',
@@ -198,6 +198,12 @@ final class CampaignDeliveryCapabilityService
         }
 
         $issues = array_values(array_unique($preview['issues'] ?? []));
+        if ($allowPendingCreativeReview) {
+            $issues = array_values(array_filter(
+                $issues,
+                fn (string $issue): bool => ! str_contains(strtolower($issue), 'approved active creative'),
+            ));
+        }
         if ($issues !== []) {
             return $this->plannerBlocker(implode(' ', $issues), array_values($networkRows), $issues);
         }
@@ -211,7 +217,7 @@ final class CampaignDeliveryCapabilityService
 
     public function requireAvailable(Campaign $campaign, string $transition = 'delivery'): CampaignDeliveryCapabilityResult
     {
-        $result = $this->evaluate($campaign);
+        $result = $this->evaluate($campaign, $transition === 'submission');
         if ($result->available()) {
             return $result;
         }
@@ -219,8 +225,6 @@ final class CampaignDeliveryCapabilityService
         $this->warnIfUnavailable($campaign, $result);
         throw ValidationException::withMessages([
             'delivery_capability' => 'Campaign delivery is currently unavailable. Save or keep the campaign as a draft and contact Horus Media if delivery is required.',
-            'delivery_capability_code' => $result->status->value,
-            'delivery_transition' => $transition,
         ]);
     }
 
@@ -248,6 +252,18 @@ final class CampaignDeliveryCapabilityService
         ]);
     }
 
+    private function resolveSelectedConnection(Site $site): ?GamConnection
+    {
+        if ($site->gam_connection_id) {
+            return GamConnection::withoutGlobalScopes()
+                ->whereKey($site->gam_connection_id)
+                ->where('is_enabled', true)
+                ->first();
+        }
+
+        return $this->connections->resolve($site);
+    }
+
     private function candidateIncludingDisabled(Site $site): ?GamConnection
     {
         if ($site->gam_connection_id) {
@@ -261,11 +277,13 @@ final class CampaignDeliveryCapabilityService
                 ->first(),
             ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()
                 ->where('type', GamConnectionType::McmPartnerGam->value)
+                ->orderByDesc('is_enabled')
                 ->orderByDesc('last_successful_sync_at')
                 ->first(),
             ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()
                 ->where('type', GamConnectionType::PublisherGam->value)
                 ->where('organization_id', $site->organization_id)
+                ->orderByDesc('is_enabled')
                 ->orderByDesc('last_successful_sync_at')
                 ->first(),
             default => null,
