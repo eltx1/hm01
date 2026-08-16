@@ -39,6 +39,11 @@ class StaticDeliveryBatch extends Model
         return $this->hasMany(StaticDeliveryItem::class, 'batch_id');
     }
 
+    public function globalChanges(): HasMany
+    {
+        return $this->hasMany(StaticGlobalArtifactChange::class, 'batch_id');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
