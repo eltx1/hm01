@@ -26,10 +26,7 @@ final class PublisherApplicationController extends Controller
         ApplicationAdsTxtVerificationService $verification,
     ): View {
         $application = $this->applicationFor($request)->load([
-            'publisher',
-            'domainClaim.publisherSeller',
-            'domainClaim.websiteSeller',
-            'legalAcceptances',
+            'publisher', 'domainClaim.publisherSeller', 'domainClaim.websiteSeller', 'legalAcceptances',
             'marketingConsents' => fn ($query) => $query->latest('recorded_at'),
             'events' => fn ($query) => $query->where('applicant_visible', true)->latest(),
             'revisions' => fn ($query) => $query->latest('version'),
@@ -83,6 +80,20 @@ final class PublisherApplicationController extends Controller
             throw ValidationException::withMessages(['application' => 'This application cannot be edited in its current state.']);
         }
 
+        if ($step === 2 && $request->boolean('verify_website')) {
+            if (! $request->user()->hasVerifiedEmail()) {
+                throw ValidationException::withMessages(['website_verification' => 'Verify your email before verifying the website.']);
+            }
+            $result = $verification->verify($application, $request->user());
+            if (! $result['verified']) {
+                return redirect()->route('publisher-application.show', ['step' => 2])
+                    ->withErrors(['website_verification' => 'Website not verified yet. Horus could not find both required DIRECT seller records in the live ads.txt file. Verification code: '.$result['code']]);
+            }
+
+            return redirect()->route('publisher-application.show', ['step' => 3])
+                ->with('status', 'Website verified through the live Horus ads.txt seller authorizations.');
+        }
+
         if ($step === 2) {
             $data = $request->validate([
                 'contact_name' => ['required', 'string', 'max:255'],
@@ -112,33 +123,13 @@ final class PublisherApplicationController extends Controller
             if ($application->domainClaim?->verification_status !== 'VERIFIED') {
                 throw ValidationException::withMessages(['website_verification' => 'Verify your website through the required Horus ads.txt records before continuing.']);
             }
-            $data = $request->validate([
-                'legal' => ['nullable', 'array'],
-                'marketing_opt_in' => ['nullable', 'boolean'],
-            ]);
+            $data = $request->validate(['legal' => ['nullable', 'array'], 'marketing_opt_in' => ['nullable', 'boolean']]);
             $legal->record($application, $request->user(), $data, $request);
 
             return redirect()->route('publisher-application.show', ['step' => 5])->with('status', 'Agreement choices recorded.');
         }
 
         throw ValidationException::withMessages(['step' => 'Choose a valid application step.']);
-    }
-
-    public function verifyWebsite(Request $request, ApplicationAdsTxtVerificationService $verification): RedirectResponse
-    {
-        $application = $this->applicationFor($request)->load('domainClaim');
-        if (! $request->user()->hasVerifiedEmail() || ! $application->status->applicantMayEdit()) {
-            throw ValidationException::withMessages(['website_verification' => 'Website verification is not available in the current application state.']);
-        }
-
-        $result = $verification->verify($application, $request->user());
-        if (! $result['verified']) {
-            return redirect()->route('publisher-application.show', ['step' => 2])
-                ->withErrors(['website_verification' => 'Website not verified yet. Horus could not find both required DIRECT seller records in the live ads.txt file. Verification code: '.$result['code']]);
-        }
-
-        return redirect()->route('publisher-application.show', ['step' => 3])
-            ->with('status', 'Website verified through the live Horus ads.txt seller authorizations.');
     }
 
     public function submit(Request $request, PublisherApplicationService $applications, PublisherApplicationLegalService $legal): RedirectResponse
