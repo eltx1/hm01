@@ -15,9 +15,11 @@ use App\Models\Role;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Identity\InvitationService;
+use App\Services\PublisherApplications\ApplicationAdsTxtVerificationService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\URL;
@@ -126,6 +128,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->post('/logout')->assertRedirect('/login');
         $this->post('/login', ['email' => $user->email, 'password' => 'Secure-Password-2026!'])->assertRedirect(route('publisher-application.show'));
         $this->get(route('publisher-application.show'))->assertSee('Original independent reporting');
+        $this->verifyWebsite($user);
 
         $this->post(route('publisher-application.submit'), ['confirm' => 1])->assertSessionHasNoErrors();
         $application = PublisherApplication::withoutGlobalScopes()->firstOrFail();
@@ -210,7 +213,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertSame(AccountStatus::Active, $second->publisher->organization->status);
         $this->assertTrue($second->applicant->hasRole(RoleName::PublisherAdmin->value));
         $this->assertDatabaseCount('publishers', 1);
-        $this->assertDatabaseCount('organizations', 2); // applicant plus Horus Admin
+        $this->assertDatabaseCount('organizations', 2);
         $this->assertDatabaseCount('sites', 0);
         $this->assertDatabaseCount('publisher_application_revisions', 1);
         $this->assertSame(1, AuditLog::query()->where('event', 'publisher_application.approved')->count());
@@ -230,7 +233,10 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertSame(PublisherApplicationStatus::Rejected, $application->status);
         $this->assertSame(AccountStatus::Pending, $application->publisher->status);
         $this->assertDatabaseCount('publisher_application_revisions', 1);
-        $this->assertDatabaseMissing('publisher_application_domain_claims', ['publisher_application_id' => $application->id]);
+        $this->assertDatabaseHas('publisher_application_domain_claims', [
+            'publisher_application_id' => $application->id,
+            'claim_status' => 'RELEASED',
+        ]);
         $this->actingAs($user)->get(route('publisher-application.show'))->assertOk()->assertSee('not approved');
         $this->get('/publisher/sites')->assertForbidden();
     }
@@ -241,6 +247,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->actingAs($user)->post(route('publisher-application.withdraw'), ['confirm_withdrawal' => 1])->assertSessionHasNoErrors();
         $this->assertSame(PublisherApplicationStatus::Withdrawn, $application->fresh()->status);
         $this->assertDatabaseCount('publisher_application_revisions', 1);
+        $this->assertDatabaseHas('publisher_application_domain_claims', ['publisher_application_id' => $application->id, 'claim_status' => 'RELEASED']);
         $this->assertDatabaseHas('audit_logs', ['event' => 'publisher_application.withdrawn', 'auditable_id' => $application->id]);
     }
 
@@ -303,7 +310,7 @@ class PublicPublisherApplicationTest extends TestCase
 
         $this->assertDatabaseCount('publisher_applications', 1);
         $this->assertDatabaseCount('publishers', 1);
-        $this->assertDatabaseCount('user_roles', 2); // Horus Admin and applicant Publisher Admin
+        $this->assertDatabaseCount('user_roles', 2);
         $this->assertSame(1, AuditLog::query()->where('event', 'publisher_application.approved')->count());
     }
 
@@ -325,11 +332,21 @@ class PublicPublisherApplicationTest extends TestCase
         return $user;
     }
 
+    private function verifyWebsite(User $user): void
+    {
+        $application = PublisherApplication::withoutGlobalScopes()->firstOrFail();
+        $verification = app(ApplicationAdsTxtVerificationService::class);
+        $reserved = $verification->reserve($application, $user);
+        Http::fake(['*' => Http::response(implode("\n", $reserved['records'])."\n", 200, ['Content-Type' => 'text/plain'])]);
+        $this->assertTrue($verification->verify($application->fresh(), $user)['verified']);
+    }
+
     /** @return array{0: User, 1: PublisherApplication} */
     private function submittedApplication(): array
     {
         $user = $this->readyDraft();
         $this->put(route('publisher-application.update'), $this->applicationPayload())->assertSessionHasNoErrors();
+        $this->verifyWebsite($user);
         $this->post(route('publisher-application.submit'), ['confirm' => 1])->assertSessionHasNoErrors();
 
         return [$user, PublisherApplication::withoutGlobalScopes()->firstOrFail()];
