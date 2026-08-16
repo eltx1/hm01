@@ -7,6 +7,7 @@ use App\Enums\SupplyChainReviewStatus;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Services\SupplyChain\DomainNormalizer;
 use App\Services\SupplyChain\HorusSellerIdentityService;
+use App\Services\SupplyChain\HorusWebsiteSellerLifecycleService;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
@@ -42,6 +43,7 @@ class Publisher extends Model
 
             if ($publisher->wasChanged(['legal_name', 'business_domain'])) {
                 $identities->reopenForPublisherIdentityChange($publisher);
+                app(HorusWebsiteSellerLifecycleService::class)->reopenForPublisherIdentityChange($publisher);
             }
 
             if ($publisher->wasChanged('status') && $publisher->status !== AccountStatus::Active) {
@@ -65,55 +67,16 @@ class Publisher extends Model
         return Attribute::make(set: fn (?string $value) => app(DomainNormalizer::class)->normalize($value));
     }
 
-    public function contacts(): HasMany
-    {
-        return $this->hasMany(PublisherContact::class);
-    }
-
-    public function contracts(): HasMany
-    {
-        return $this->hasMany(PublisherContract::class);
-    }
-
-    public function paymentProfile(): HasOne
-    {
-        return $this->hasOne(PublisherPaymentProfile::class);
-    }
-
-    public function sites(): HasMany
-    {
-        return $this->hasMany(Site::class);
-    }
-
-    public function qualityProfiles(): HasMany
-    {
-        return $this->hasMany(PublisherQualityProfile::class);
-    }
-
-    public function application(): HasOne
-    {
-        return $this->hasOne(PublisherApplication::class);
-    }
-
-    public function qualityReviewRuns(): HasMany
-    {
-        return $this->hasMany(PublisherQualityReviewRun::class);
-    }
-
-    public function qualityDecisions(): HasMany
-    {
-        return $this->hasMany(PublisherQualityDecision::class);
-    }
-
-    public function sellerDeclarations(): HasMany
-    {
-        return $this->hasMany(SellerDeclaration::class);
-    }
-
-    public function supplyChainReviewer(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'supply_chain_reviewed_by');
-    }
+    public function contacts(): HasMany { return $this->hasMany(PublisherContact::class); }
+    public function contracts(): HasMany { return $this->hasMany(PublisherContract::class); }
+    public function paymentProfile(): HasOne { return $this->hasOne(PublisherPaymentProfile::class); }
+    public function sites(): HasMany { return $this->hasMany(Site::class); }
+    public function qualityProfiles(): HasMany { return $this->hasMany(PublisherQualityProfile::class); }
+    public function application(): HasOne { return $this->hasOne(PublisherApplication::class); }
+    public function qualityReviewRuns(): HasMany { return $this->hasMany(PublisherQualityReviewRun::class); }
+    public function qualityDecisions(): HasMany { return $this->hasMany(PublisherQualityDecision::class); }
+    public function sellerDeclarations(): HasMany { return $this->hasMany(SellerDeclaration::class); }
+    public function supplyChainReviewer(): BelongsTo { return $this->belongsTo(User::class, 'supply_chain_reviewed_by'); }
 
     public function applicableRevenueShare(): string
     {
