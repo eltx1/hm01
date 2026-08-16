@@ -151,23 +151,36 @@ class PlatformMasterAdsTxtTest extends TestCase
         $this->assertStringNotContainsString('placeholder.example.com, placeholder, DIRECT, placeholder', $content);
     }
 
-    public function test_master_admin_requires_explicit_global_consequence_confirmation(): void
+    public function test_master_admin_requires_password_reason_and_exact_impact_confirmation(): void
     {
-        $record = app(PlatformAdsTxtService::class)->create([
+        $service = app(PlatformAdsTxtService::class);
+        $record = $service->create([
             'advertising_system_domain' => 'admin.exchange.com',
             'publisher_account_id' => 'admin-seat',
             'relationship' => 'DIRECT',
         ], $this->admin);
-        app(PlatformAdsTxtService::class)->review($record, SupplyChainReviewStatus::Verified, $this->admin);
+        $service->review($record, SupplyChainReviewStatus::Verified, $this->admin);
+        $impact = $service->impactedSiteCount();
 
         $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->post(route('admin.compliance.ads-txt.master.enable', $record), [])
-            ->assertSessionHasErrors('consequence_confirmed');
+            ->assertSessionHasErrors(['current_password', 'reason', 'impact_confirmation']);
         $this->assertSame('DISABLED', $record->refresh()->status);
 
         $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
-            ->post(route('admin.compliance.ads-txt.master.enable', $record), ['consequence_confirmed' => '1'])
-            ->assertRedirect();
+            ->post(route('admin.compliance.ads-txt.master.enable', $record), [
+                'current_password' => 'password',
+                'reason' => 'Approve reviewed platform-wide authorization.',
+                'impact_confirmation' => 'WRONG',
+            ])->assertSessionHasErrors('impact_confirmation');
+        $this->assertSame('DISABLED', $record->refresh()->status);
+
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.compliance.ads-txt.master.enable', $record), [
+                'current_password' => 'password',
+                'reason' => 'Approve reviewed platform-wide authorization.',
+                'impact_confirmation' => 'ENABLE '.$impact.' SITES',
+            ])->assertRedirect();
         $this->assertSame('ACTIVE', $record->refresh()->status);
     }
 
