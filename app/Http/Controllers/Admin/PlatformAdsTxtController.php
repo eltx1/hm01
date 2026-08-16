@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\PlatformAdsTxtRecord;
 use App\Models\Site;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Compliance\AdsTxtComplianceService;
 use App\Services\SupplyChain\PlatformAdsTxtService;
 use Illuminate\Http\RedirectResponse;
@@ -51,27 +52,72 @@ final class PlatformAdsTxtController extends Controller
         return back()->with('status', 'Platform master authorization review recorded.');
     }
 
-    public function enable(Request $request, PlatformAdsTxtRecord $platformAdsTxtRecord, PlatformAdsTxtService $service): RedirectResponse
-    {
-        if ((string) $request->input('consequence_confirmed') !== '1') {
-            throw ValidationException::withMessages([
-                'consequence_confirmed' => 'Confirm that this authorization will be included in every eligible Horus-managed website.',
-            ]);
-        }
+    public function enable(
+        Request $request,
+        PlatformAdsTxtRecord $platformAdsTxtRecord,
+        PlatformAdsTxtService $service,
+        AuditRecorder $audit,
+    ): RedirectResponse {
+        $impact = $service->impactedSiteCount();
+        $data = $this->validatedImpact($request, 'ENABLE', $impact);
         $service->enable($platformAdsTxtRecord, $request->user());
-        return back()->with('status', 'Platform master authorization enabled for every eligible Horus-managed website.');
+        $this->auditImpact($audit, $request, $platformAdsTxtRecord, 'ENABLE', $impact, $data['reason']);
+
+        return back()->with('status', 'Platform master authorization enabled for '.$impact.' eligible Horus-managed website(s).');
     }
 
-    public function disable(Request $request, PlatformAdsTxtRecord $platformAdsTxtRecord, PlatformAdsTxtService $service): RedirectResponse
-    {
+    public function disable(
+        Request $request,
+        PlatformAdsTxtRecord $platformAdsTxtRecord,
+        PlatformAdsTxtService $service,
+        AuditRecorder $audit,
+    ): RedirectResponse {
+        $impact = $service->impactedSiteCount();
+        $data = $this->validatedImpact($request, 'DISABLE', $impact);
         $service->disable($platformAdsTxtRecord, $request->user());
-        return back()->with('status', 'Platform master authorization disabled. Canonical composition excludes it immediately.');
+        $this->auditImpact($audit, $request, $platformAdsTxtRecord, 'DISABLE', $impact, $data['reason']);
+
+        return back()->with('status', 'Platform master authorization disabled. Canonical composition excludes it from '.$impact.' currently eligible website(s).');
     }
 
     public function verify(Request $request, PlatformAdsTxtRecord $platformAdsTxtRecord, PlatformAdsTxtService $service): RedirectResponse
     {
         $record = $service->verify($platformAdsTxtRecord, $request->user());
         return back()->with('status', 'Master sellers.json verification: '.$record->remote_verification_status.'.');
+    }
+
+    private function validatedImpact(Request $request, string $action, int $impact): array
+    {
+        $data = $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'reason' => ['required', 'string', 'min:8', 'max:1000'],
+            'impact_confirmation' => ['required', 'string', 'max:80'],
+        ]);
+        $expected = $action.' '.$impact.' SITES';
+        if (! hash_equals($expected, strtoupper(trim($data['impact_confirmation'])))) {
+            throw ValidationException::withMessages([
+                'impact_confirmation' => 'Type '.$expected.' to confirm the platform-wide supply-chain impact.',
+            ]);
+        }
+
+        return $data;
+    }
+
+    private function auditImpact(
+        AuditRecorder $audit,
+        Request $request,
+        PlatformAdsTxtRecord $record,
+        string $action,
+        int $impact,
+        string $reason,
+    ): void {
+        $audit->record(
+            'supply_chain.platform_ads_txt.high_impact_confirmed',
+            $request->user()->organization_id,
+            $request->user(),
+            $record,
+            newValues: ['action' => $action, 'impact_count' => $impact, 'reason' => $reason],
+        );
     }
 
     private function validated(Request $request): array
