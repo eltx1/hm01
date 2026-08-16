@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\PublisherPaymentProfileStatus;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -21,6 +22,31 @@ class PublisherPaymentProfile extends Model
     ];
 
     protected $hidden = ['payment_details', 'tax_identifier'];
+
+    protected static function booted(): void
+    {
+        static::saved(function (PublisherPaymentProfile $profile): void {
+            if (! $profile->wasRecentlyCreated && ! $profile->wasChanged([
+                'publisher_id', 'beneficiary_name', 'payment_method', 'currency', 'country',
+                'billing_address', 'account_last_four', 'tax_identifier', 'is_verified',
+                'verification_status',
+            ])) {
+                return;
+            }
+
+            $publisher = Publisher::withoutGlobalScopes()->find($profile->publisher_id);
+            if ($publisher) {
+                app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+            }
+        });
+
+        static::deleted(function (PublisherPaymentProfile $profile): void {
+            $publisher = Publisher::withoutGlobalScopes()->find($profile->publisher_id);
+            if ($publisher) {
+                app(HorusSellerIdentityService::class)->reopenForCommercialRelationshipChange($publisher);
+            }
+        });
+    }
 
     protected function casts(): array
     {
