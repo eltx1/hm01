@@ -62,7 +62,15 @@ class SiteLifecycleService
                 'new_status' => SiteStatus::Draft, 'changed_by' => $actor->id,
                 'reason' => 'Website created.',
             ]);
-            $this->sellerIdentities->ensureForSite($site, $actor);
+
+            // Task 39 extends Publishers that already participate in the canonical
+            // HORUS_MANAGED seller lifecycle. Legacy/site-test fixtures without an HMP
+            // remain unchanged; approved public applications already have their HMP.
+            $publisher = $site->publisher()->withoutGlobalScopes()->firstOrFail();
+            if ($this->sellerIdentities->managedForPublisher($publisher)) {
+                $this->sellerIdentities->ensureForSite($site, $actor);
+            }
+
             $this->audit->record('site.created', $site->organization_id, $actor, $site, newValues: ['serving_mode' => ServingMode::HorusGam->value, 'status' => SiteStatus::Draft->value, 'primary_domain' => $site->primary_domain]);
 
             return $site;
@@ -107,7 +115,7 @@ class SiteLifecycleService
             if ($newStatus === SiteStatus::Active) {
                 $this->publisher->publishActiveProduction($site, $actor);
             } elseif ($oldStatus === SiteStatus::Active && in_array($newStatus, [SiteStatus::Suspended, SiteStatus::Archived], true)) {
-                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $actor);
+                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $administrator ?? $actor);
             }
         });
 
