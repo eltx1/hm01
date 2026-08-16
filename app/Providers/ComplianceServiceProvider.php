@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Http\Controllers\Admin\AdsTxtComplianceController as AdminAdsTxtComplianceController;
 use App\Http\Controllers\Admin\SellerComplianceController;
+use App\Http\Controllers\Admin\SupplyChainControlCenterController;
 use App\Http\Controllers\Publisher\AdsTxtComplianceController as PublisherAdsTxtComplianceController;
+use App\Services\Compliance\SupplyChainControlCenterService;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
@@ -13,6 +15,18 @@ final class ComplianceServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Route::middleware(['web', 'auth', 'active', 'verified', 'admin.2fa'])->group(function (): void {
+            Route::get('/admin/compliance/supply-chain', [SupplyChainControlCenterController::class, 'overview'])
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.view'])->name('admin.compliance.supply-chain.overview');
+            Route::get('/admin/compliance/supply-chain/websites/{site}', [SupplyChainControlCenterController::class, 'site'])
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.view'])->name('admin.compliance.supply-chain.site');
+            Route::get('/admin/compliance/supply-chain/bidder-authorizations/{bidderAccount}', [SupplyChainControlCenterController::class, 'bidder'])
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.view'])->name('admin.compliance.supply-chain.bidder');
+            Route::post('/admin/compliance/supply-chain/sellers-json/verify', [SupplyChainControlCenterController::class, 'verifySellersJson'])
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.verify', 'throttle:ads-txt-verification'])->name('admin.compliance.supply-chain.sellers-json.verify');
+            Route::get('/admin/compliance/supply-chain/{section}', [SupplyChainControlCenterController::class, 'section'])
+                ->whereIn('section', array_values(array_diff(SupplyChainControlCenterService::SECTIONS, ['overview'])))
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.view'])->name('admin.compliance.supply-chain.section');
+
             Route::get('/admin/compliance/ads-txt', [AdminAdsTxtComplianceController::class, 'index'])
                 ->middleware(['horus', 'permission:supply_chain.ads_txt.view'])->name('admin.compliance.ads-txt.index');
             Route::get('/admin/compliance/ads-txt/sites/{site}', [AdminAdsTxtComplianceController::class, 'show'])
