@@ -89,6 +89,24 @@ and rollback result.
 Evidence: signed pilot record, campaign ID, report comparison, invoice, statement,
 and finance approval.
 
+## Task 41 — Direct Advertiser Campaign delivery pilot gate
+
+Publisher GAM-less readiness is not sufficient evidence for advertiser campaign delivery. Before enabling new customer-facing Direct Advertiser Campaign delivery in a production pilot:
+
+- [ ] `advertiser_campaigns.enabled` is intentionally reviewed by an authorized Horus Admin; deployment of Task 41 itself is not treated as product-owner approval.
+- [ ] The pilot campaign reports `AVAILABLE` from the campaign delivery capability service.
+- [ ] Every selected campaign site resolves to the intended eligible GAM-backed delivery connection; an unrelated GAM connection elsewhere in the database is not accepted.
+- [ ] Selected GAM connections are enabled, usable by the configured connector and not in a failed/disabled health state.
+- [ ] Platform/site/connection `GAM` and `AD_SERVING` operational controls permit new delivery.
+- [ ] `CampaignNetworkPlanner` can represent the selected inventory and required ad-unit/country/device mappings without blockers.
+- [ ] Advertiser UI shows only customer-safe delivery readiness; Admin UI shows the exact GAM-backed capability and blockers.
+- [ ] A forced unavailable-backend test proves submit/approve/schedule/resume/deploy fail closed before external GAM writes.
+- [ ] A deployed-campaign recovery test proves remote pause remains possible where the connector is usable and does not delete remote objects or rewrite historical finance.
+- [ ] Action Center warning deduplication is verified for an Approved/Scheduled/Active campaign whose delivery backend becomes unavailable.
+- [ ] `HORUS_DIRECT`, standalone Prebid and Direct JS Publisher monetization remain independently verified and are not presented as advertiser campaign delivery backends.
+
+Evidence: campaign ID, capability projection, selected connection/network, planner preview, operational controls, blocked-transition test, safe-pause result, notification evidence and CI run.
+
 ## Go / No-Go
 
 Go only when Gates 0–3 are complete and Gate 4 has an owner and a rollback plan.
