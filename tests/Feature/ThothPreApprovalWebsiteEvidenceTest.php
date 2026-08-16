@@ -18,6 +18,7 @@ use App\Services\Sites\DnsResolver as SiteDnsResolver;
 use App\Services\Thoth\PublisherEvidenceCollector;
 use App\Services\Thoth\PublisherQualityReviewService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
@@ -262,13 +263,23 @@ class ThothPreApprovalWebsiteEvidenceTest extends TestCase
     /** @return array<string, mixed> */
     private function verifyApplication(PublisherApplication $application, User $user): array
     {
+        // Laravel's Http::fake() appends stub callbacks. Give Task 39 verification
+        // its own factory so its wildcard ads.txt stub cannot shadow the website
+        // and provider fakes that each Task 40 assertion installs afterwards.
+        $this->resetHttpFactory();
         $service = app(ApplicationAdsTxtVerificationService::class);
         $reserved = $service->reserve($application, $user);
         Http::fake(['*' => Http::response(implode("\n", $reserved['records'])."\n", 200, ['Content-Type' => 'text/plain'])]);
         $result = $service->verify($application->fresh(), $user);
         $this->assertTrue($result['verified']);
+        $this->resetHttpFactory();
 
         return $reserved;
+    }
+
+    private function resetHttpFactory(): void
+    {
+        Http::swap(new HttpFactory);
     }
 
     private function profile(PublisherApplication $application, int $version = 1, string $description = 'Applicant supplied quality profile.'): PublisherQualityProfile
