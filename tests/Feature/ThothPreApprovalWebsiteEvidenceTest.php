@@ -69,6 +69,7 @@ class ThothPreApprovalWebsiteEvidenceTest extends TestCase
         $this->assertStringNotContainsString($reserved['publisher_seller']->seller_id, $encoded);
         $this->assertStringNotContainsString($reserved['website_seller']->seller_id, $encoded);
         $this->assertDatabaseCount('sites', 0);
+        $this->assertFalse(class_exists(\App\Models\ApplicationQualityProfile::class));
     }
 
     public function test_unverified_application_claim_never_fetches_public_website(): void
@@ -190,8 +191,105 @@ class ThothPreApprovalWebsiteEvidenceTest extends TestCase
             ->assertSee('REVIEW_REQUIRED');
 
         $otherPublisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Other Publisher'), RoleName::PublisherAdmin);
-        $this->actingAs($otherPublisherUser)->post(route('admin.publisher-applications.thoth-review', $application))->assertForbidden();
+        $this->actingAs($otherPublisherUser)->post(route('admin.publisher-applications.thoth-review', $application))->assertNotFound();
         $this->assertSame($profile->id, $run->profile_id);
+    }
+
+    public function test_application_thoth_route_requires_ai_permission_and_terminal_state_is_blocked(): void
+    {
+        [$application] = $this->application('permission.example', 'owner@permission.example');
+        $this->profile($application);
+
+        $support = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia, 'Horus Support'), RoleName::SupportAgent);
+        $this->actingAs($support)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.publisher-applications.thoth-review', $application))
+            ->assertForbidden();
+
+        $application->update(['status' => PublisherApplicationStatus::Withdrawn, 'withdrawn_at' => now()]);
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.publisher-applications.thoth-review', $application->fresh()))
+            ->assertSessionHasErrors('thoth');
+        $this->assertDatabaseCount('publisher_quality_review_runs', 0);
+    }
+
+    public function test_provider_outage_records_safe_failed_run_without_changing_application_or_manual_review(): void
+    {
+        [$application, $user] = $this->application('outage.example', 'owner@outage.example');
+        $this->verifyApplication($application, $user);
+        $this->profile($application);
+        $application->update(['status' => PublisherApplicationStatus::Submitted, 'submitted_at' => now(), 'current_revision' => 1]);
+        $this->readyConnection();
+
+        Http::fake(fn (Request $request) => str_contains($request->url(), 'api.openai.com')
+            ? Http::response(['error' => ['message' => 'provider unavailable']], 500)
+            : Http::response('<html><title>Outage test</title><p>Safe public evidence.</p></html>', 200, ['Content-Type' => 'text/html']));
+
+        $beforeApplication = $application->status;
+        $beforePublisher = $application->publisher->status;
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.publisher-applications.thoth-review', $application))
+            ->assertSessionHas('error');
+
+        $run = PublisherQualityReviewRun::latest()->firstOrFail();
+        $this->assertSame('FAILED', $run->status);
+        $this->assertSame('PROVIDER_UNAVAILABLE', $run->error_code);
+        $this->assertSame($beforeApplication, $application->fresh()->status);
+        $this->assertSame($beforePublisher, $application->publisher->fresh()->status);
+        $this->assertDatabaseCount('sites', 0);
+        $this->get(route('admin.publisher-applications.show', $application))
+            ->assertOk()
+            ->assertSee('PROVIDER_UNAVAILABLE')
+            ->assertSee('Human decision');
+    }
+
+    public function test_oversized_application_html_is_rejected_as_evidence_gap(): void
+    {
+        [$application, $user] = $this->application('oversize.example', 'owner@oversize.example');
+        $this->verifyApplication($application, $user);
+        $profile = $this->profile($application);
+        Config::set('thoth.evidence.max_bytes_per_page', 64);
+        $body = '<html><title>Too large</title><p>'.str_repeat('x', 200).'</p></html>';
+        Http::fake(fn () => Http::response($body, 200, ['Content-Type' => 'text/html', 'Content-Length' => (string) strlen($body)]));
+
+        $snapshot = app(PublisherEvidenceCollector::class)->collectForApplication($application->fresh(), $profile, $this->admin);
+
+        $this->assertSame([], $snapshot['website_evidence']);
+        $this->assertNotEmpty($snapshot['evidence_gaps']);
+        $this->assertTrue($snapshot['application']['website_authorization_verified']);
+    }
+
+    public function test_application_private_target_and_dns_rebinding_are_blocked_before_unsafe_http(): void
+    {
+        [$privateApplication, $privateUser] = $this->application('private.example', 'owner@private.example');
+        $this->verifyApplication($privateApplication, $privateUser);
+        $privateProfile = $this->profile($privateApplication);
+        $this->app->instance(SiteDnsResolver::class, new class extends SiteDnsResolver {
+            public function addresses(string $domain): array { return ['127.0.0.1']; }
+        });
+        Http::fake();
+
+        $snapshot = app(PublisherEvidenceCollector::class)->collectForApplication($privateApplication->fresh(), $privateProfile, $this->admin);
+        Http::assertNothingSent();
+        $this->assertSame([], $snapshot['website_evidence']);
+
+        [$rebindApplication, $rebindUser] = $this->application('rebind.example', 'owner@rebind.example');
+        $this->verifyApplication($rebindApplication, $rebindUser);
+        $rebindProfile = $this->profile($rebindApplication);
+        $this->app->instance(SiteDnsResolver::class, new class extends SiteDnsResolver {
+            private int $calls = 0;
+            public function addresses(string $domain): array
+            {
+                $this->calls++;
+                return $this->calls === 1 ? ['93.184.216.34'] : ['127.0.0.1'];
+            }
+        });
+        Http::fake(fn (Request $request) => $request->url() === 'https://rebind.example/'
+            ? Http::response('', 302, ['Location' => 'https://rebind.example/home'])
+            : Http::response('<html><p>Must not be reached.</p></html>', 200, ['Content-Type' => 'text/html']));
+
+        $rebind = app(PublisherEvidenceCollector::class)->collectForApplication($rebindApplication->fresh(), $rebindProfile, $this->admin);
+        $this->assertSame([], $rebind['website_evidence']);
+        $this->assertCount(1, Http::recorded(), 'A redirect hop must revalidate DNS before issuing the next request.');
     }
 
     public function test_safe_same_site_redirect_is_followed_and_arbitrary_cross_domain_redirect_is_blocked(): void
