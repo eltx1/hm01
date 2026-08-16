@@ -13,10 +13,9 @@ class PublisherApplicationDomainClaim extends Model
 
     protected $fillable = [
         'publisher_application_id', 'normalized_domain', 'publisher_seller_declaration_id',
-        'website_seller_declaration_id', 'claim_status', 'verification_status', 'claimed_at',
-        'released_at', 'verification_requested_at', 'last_checked_at', 'verified_at',
-        'final_ads_txt_url', 'verification_http_status', 'verification_content_type',
-        'evidence_sha256', 'failure_code', 'verification_attempt_count',
+        'website_seller_declaration_id', 'verification_status', 'verification_requested_at',
+        'last_checked_at', 'verified_at', 'final_ads_txt_url', 'verification_http_status',
+        'verification_content_type', 'evidence_sha256', 'failure_code', 'verification_attempt_count',
     ];
 
     protected static function booted(): void
@@ -31,23 +30,23 @@ class PublisherApplicationDomainClaim extends Model
             if ($claim->isDirty('publisher_seller_declaration_id') && $claim->getRawOriginal('publisher_seller_declaration_id') !== null) {
                 throw new LogicException('The application HMP seller identity reference is immutable once reserved.');
             }
-            if ($claim->isDirty('claim_status') && $claim->getRawOriginal('claim_status') === 'RELEASED') {
-                throw new LogicException('A released application domain claim cannot be reclaimed or reassigned.');
-            }
         });
 
-        static::deleting(function (self $claim): void {
+        // Task 27 deleted a domain claim when an application became terminal. Once
+        // Task 39 has reserved a permanent public seller identity, that delete becomes
+        // a no-op so immutable seller/verification evidence is retained.
+        static::deleting(function (self $claim): bool {
             if ($claim->website_seller_declaration_id || $claim->publisher_seller_declaration_id || $claim->verification_requested_at) {
-                throw new LogicException('Application domain identity and verification evidence is immutable and cannot be deleted after seller reservation begins.');
+                return false;
             }
+
+            return true;
         });
     }
 
     protected function casts(): array
     {
         return [
-            'claimed_at' => 'datetime',
-            'released_at' => 'datetime',
             'verification_requested_at' => 'datetime',
             'last_checked_at' => 'datetime',
             'verified_at' => 'datetime',
