@@ -1,0 +1,256 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Enums\AdsTxtComplianceStatus;
+use App\Enums\DemandAccountScope;
+use App\Enums\DemandApprovalStatus;
+use App\Enums\DemandIntegrationMode;
+use App\Enums\OrganizationType;
+use App\Enums\RoleName;
+use App\Enums\SiteStatus;
+use App\Enums\SupplyChainReviewStatus;
+use App\Models\DemandAccount;
+use App\Models\DemandAdsTxtRecord;
+use App\Models\DemandNetwork;
+use App\Models\DemandSite;
+use App\Models\PlatformAdsTxtRecord;
+use App\Models\PrebidBidder;
+use App\Services\Compliance\AdsTxtComplianceService;
+use App\Services\Network\Contracts\DnsResolver;
+use App\Services\Prebid\BidderAdsTxtService;
+use App\Services\Prebid\PrebidManager;
+use App\Services\SupplyChain\PlatformAdsTxtService;
+use App\Services\SupplyChain\SupplyChainArtifactBuilder;
+use App\Services\SupplyChain\SupplyChainStandardsContract;
+use Database\Seeders\DemandNetworkSeeder;
+use Database\Seeders\PrebidSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithIdentity;
+use Tests\Concerns\InteractsWithPublisherSites;
+use Tests\TestCase;
+
+class PlatformMasterAdsTxtTest extends TestCase
+{
+    use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
+
+    private $admin;
+    private $site;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->seedIdentity();
+        $this->seed([DemandNetworkSeeder::class, PrebidSeeder::class]);
+        $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');
+        $this->admin = $this->makeUser($horus, RoleName::SuperAdmin);
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher A'), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser, ['business_domain' => 'publisher-a.com']);
+        $this->site = $this->makeSiteFor($publisher, $publisherUser, ['primary_domain' => 'site-a.com']);
+        $this->site->update(['status' => SiteStatus::Active]);
+        $this->publicDns();
+    }
+
+    public function test_one_master_record_appears_on_all_eligible_sites_and_disabled_disappears(): void
+    {
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher B'), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser, ['business_domain' => 'publisher-b.com']);
+        $siteB = $this->makeSiteFor($publisher, $publisherUser, ['primary_domain' => 'site-b.com']);
+        $siteB->update(['status' => SiteStatus::Approved]);
+
+        $master = $this->master('master.exchange.com', 'global-seat', 'RESELLER', 'ca-master');
+        $contract = app(SupplyChainStandardsContract::class);
+        $line = 'master.exchange.com, global-seat, RESELLER, ca-master';
+
+        $this->assertContains($line, $contract->adsTxtForSite($this->site)['lines']);
+        $this->assertContains($line, $contract->adsTxtForSite($siteB)['lines']);
+
+        app(PlatformAdsTxtService::class)->disable($master, $this->admin);
+        $this->assertNotContains($line, $contract->adsTxtForSite($this->site)['lines']);
+        $this->assertNotContains($line, $contract->adsTxtForSite($siteB)['lines']);
+    }
+
+    public function test_effective_dates_gate_master_record(): void
+    {
+        $service = app(PlatformAdsTxtService::class);
+        $future = $service->create([
+            'advertising_system_domain' => 'future.exchange.com',
+            'publisher_account_id' => 'future-seat',
+            'relationship' => 'DIRECT',
+            'effective_from' => now()->addDay(),
+        ], $this->admin);
+        $service->review($future, SupplyChainReviewStatus::Verified, $this->admin);
+        $service->enable($future, $this->admin);
+        $this->assertNotContains($future->raw_record, app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site)['lines']);
+
+        $future->update(['effective_from' => now()->subMinute(), 'effective_to' => now()->addMinute()]);
+        $this->assertContains($future->raw_record, app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site)['lines']);
+
+        $future->update(['effective_to' => now()->subSecond()]);
+        $this->assertNotContains($future->raw_record, app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site)['lines']);
+    }
+
+    public function test_exact_duplicate_across_master_bidder_and_demand_collapses_and_preserves_provenance(): void
+    {
+        $master = $this->master('shared.exchange.com', 'seller-100', 'DIRECT', 'abc123');
+        $this->bidderRecord('shared.exchange.com', 'seller-100', 'DIRECT', 'abc123');
+        $this->demandRecord('shared.exchange.com', 'seller-100', 'DIRECT', 'abc123');
+
+        $result = app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site);
+        $this->assertSame(1, collect($result['lines'])->where(fn ($line) => $line === $master->raw_record)->count());
+        $entry = collect($result['entries'])->firstWhere('line', $master->raw_record);
+        $types = collect($entry['provenance'])->pluck('source_type')->sort()->values()->all();
+        $this->assertSame(['BIDDER_RECORD', 'DEMAND_RECORD', 'PLATFORM_MASTER'], $types);
+        $this->assertTrue(collect($result['findings'])->contains(fn ($finding) => ($finding['code'] ?? null) === 'DUPLICATE_ADS_TXT_RECORD'));
+    }
+
+    public function test_conflicting_duplicate_blocks_compliance_without_silent_preference(): void
+    {
+        $master = $this->master('conflict.exchange.com', 'seller-x', 'RESELLER', null);
+        $this->demandRecord('conflict.exchange.com', 'seller-x', 'DIRECT', null);
+
+        $result = app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site);
+        $this->assertNotContains($master->raw_record, $result['lines']);
+        $this->assertTrue(collect($result['findings'])->contains(fn ($finding) => ($finding['code'] ?? null) === 'ADS_TXT_AUTHORIZATION_CONFLICT'));
+        $this->assertSame(AdsTxtComplianceStatus::Conflict->value, app(AdsTxtComplianceService::class)->summary($this->site)['status']);
+    }
+
+    public function test_tenant_specific_sources_do_not_leak_while_master_remains_platform_global(): void
+    {
+        $master = $this->master('master.exchange.com', 'all-sites', 'RESELLER', null);
+        $demand = $this->demandRecord('tenant.exchange.com', 'tenant-a', 'DIRECT', null);
+
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher B'), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser, ['business_domain' => 'publisher-b.com']);
+        $other = $this->makeSiteFor($publisher, $publisherUser, ['primary_domain' => 'other-site.com']);
+        $other->update(['status' => SiteStatus::Active]);
+        $lines = app(SupplyChainStandardsContract::class)->adsTxtForSite($other)['lines'];
+
+        $this->assertContains($master->raw_record, $lines);
+        $this->assertNotContains($demand->raw_record, $lines);
+    }
+
+    public function test_canonical_sorting_is_deterministic_and_placeholder_only_when_no_final_authorizations(): void
+    {
+        $z = $this->master('zeta.exchange.com', 'z', 'DIRECT', null);
+        $a = $this->master('alpha.exchange.com', 'a', 'RESELLER', null);
+        $contract = app(SupplyChainStandardsContract::class);
+        $first = $contract->adsTxtForSite($this->site)['lines'];
+        $second = $contract->adsTxtForSite($this->site)['lines'];
+        $this->assertSame($first, $second);
+        $this->assertSame([$a->raw_record, $z->raw_record], array_values(array_filter($first, fn ($line) => in_array($line, [$a->raw_record, $z->raw_record], true))));
+
+        app(PlatformAdsTxtService::class)->disable($a, $this->admin);
+        app(PlatformAdsTxtService::class)->disable($z, $this->admin);
+        $content = app(SupplyChainArtifactBuilder::class)->adsTxtForSite($this->site);
+        $this->assertStringContainsString('placeholder.example.com, placeholder, DIRECT, placeholder', $content);
+
+        $real = $this->master('real.exchange.com', 'real', 'DIRECT', null);
+        $content = app(SupplyChainArtifactBuilder::class)->adsTxtForSite($this->site);
+        $this->assertStringContainsString($real->raw_record, $content);
+        $this->assertStringNotContainsString('placeholder.example.com, placeholder, DIRECT, placeholder', $content);
+    }
+
+    public function test_master_admin_requires_explicit_global_consequence_confirmation(): void
+    {
+        $record = app(PlatformAdsTxtService::class)->create([
+            'advertising_system_domain' => 'admin.exchange.com',
+            'publisher_account_id' => 'admin-seat',
+            'relationship' => 'DIRECT',
+        ], $this->admin);
+        app(PlatformAdsTxtService::class)->review($record, SupplyChainReviewStatus::Verified, $this->admin);
+
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.compliance.ads-txt.master.enable', $record), [])
+            ->assertSessionHasErrors('consequence_confirmed');
+        $this->assertSame('DISABLED', $record->refresh()->status);
+
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.compliance.ads-txt.master.enable', $record), ['consequence_confirmed' => '1'])
+            ->assertRedirect();
+        $this->assertSame('ACTIVE', $record->refresh()->status);
+    }
+
+    private function master(string $domain, string $seller, string $relationship, ?string $authority): PlatformAdsTxtRecord
+    {
+        $service = app(PlatformAdsTxtService::class);
+        $record = $service->create([
+            'advertising_system_domain' => $domain,
+            'publisher_account_id' => $seller,
+            'relationship' => $relationship,
+            'certification_authority_id' => $authority,
+        ], $this->admin);
+        $service->review($record, SupplyChainReviewStatus::Verified, $this->admin);
+        return $service->enable($record, $this->admin);
+    }
+
+    private function bidderRecord(string $domain, string $seller, string $relationship, ?string $authority): void
+    {
+        $bidder = PrebidBidder::withoutGlobalScopes()->where('code', 'msft')->firstOrFail();
+        $manager = app(PrebidManager::class);
+        $account = $manager->addAccount($bidder, ['name' => 'Master duplicate bidder', 'enabled' => true], $this->admin);
+        $manager->assignToSite($account, $this->site, ['enabled' => true], $this->admin);
+        $service = app(BidderAdsTxtService::class);
+        $record = $service->create($account, null, [
+            'advertising_system_domain' => $domain,
+            'publisher_account_id' => $seller,
+            'relationship' => $relationship,
+            'certification_authority_id' => $authority,
+        ], $this->admin);
+        $service->review($record, SupplyChainReviewStatus::Verified, $this->admin);
+    }
+
+    private function demandRecord(string $domain, string $seller, string $relationship, ?string $authority): DemandAdsTxtRecord
+    {
+        $network = DemandNetwork::query()->where('code', 'MGID')->firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $this->site->organization_id,
+            'demand_network_id' => $network->id,
+            'publisher_id' => $this->site->publisher_id,
+            'name' => 'Tenant demand',
+            'scope' => DemandAccountScope::Publisher,
+            'integration_mode' => DemandIntegrationMode::DirectJs,
+            'approval_status' => DemandApprovalStatus::Approved,
+            'is_enabled' => true,
+            'is_default' => false,
+            'created_by' => $this->admin->id,
+            'updated_by' => $this->admin->id,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $account->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $this->site->id,
+            'approval_status' => DemandApprovalStatus::Approved,
+            'is_enabled' => true,
+            'is_default' => false,
+            'integration_mode' => DemandIntegrationMode::DirectJs,
+            'created_by' => $this->admin->id,
+            'updated_by' => $this->admin->id,
+        ]);
+        $line = implode(', ', array_filter([$domain, $seller, $relationship, $authority], fn ($value) => filled($value)));
+        return DemandAdsTxtRecord::withoutGlobalScopes()->create([
+            'organization_id' => $account->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => null,
+            'domain' => $domain,
+            'publisher_account_id' => $seller,
+            'relationship' => $relationship,
+            'certification_authority_id' => $authority,
+            'record_hash' => hash('sha256', $line),
+            'raw_record' => $line,
+            'status' => 'ACTIVE',
+            'review_status' => SupplyChainReviewStatus::Verified,
+            'source' => 'MANUAL',
+            'last_verified_at' => now(),
+            'reviewed_at' => now(),
+            'reviewed_by' => $this->admin->id,
+        ]);
+    }
+
+    private function publicDns(): void
+    {
+        $this->app->instance(DnsResolver::class, new class implements DnsResolver {
+            public function addresses(string $host): array { return ['8.8.8.8']; }
+        });
+    }
+}
