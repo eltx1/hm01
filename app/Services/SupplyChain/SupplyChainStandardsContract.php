@@ -5,6 +5,7 @@ namespace App\Services\SupplyChain;
 use App\Models\SellerDeclaration;
 use App\Models\Site;
 use App\Models\SiteServingSetting;
+use App\Services\Prebid\BidderAdsTxtService;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
@@ -16,6 +17,7 @@ final class SupplyChainStandardsContract
     public function __construct(
         private readonly SupplyChainInvariantService $invariants,
         private readonly DomainNormalizer $domains,
+        private readonly BidderAdsTxtService $bidderAdsTxt,
     ) {}
 
     /** @return array{sellers: array, findings: array} */
@@ -72,6 +74,10 @@ final class SupplyChainStandardsContract
         $entries = collect($raw['entries'] ?? [])->reject(
             fn (array $entry): bool => ($entry['source_type'] ?? null) === 'SELLER_DECLARATION',
         )->values();
+
+        $bidder = $this->bidderAdsTxt->entriesForSite($site);
+        $entries = $entries->concat($bidder['entries']);
+        $findings = $findings->merge($bidder['findings']);
 
         $selection = $this->sellerForSite($site, $network);
         $findings = $findings->merge($selection['findings']);
