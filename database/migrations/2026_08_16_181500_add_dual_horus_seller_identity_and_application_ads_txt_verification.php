@@ -54,6 +54,16 @@ return new class extends Migration
             ]);
         });
 
+        // MySQL may discard the original site_id supporting index when Task 39 adds
+        // seller_site_identity_scope_idx, because the compound index can satisfy the
+        // existing site_id foreign key. Recreate the canonical single-column support
+        // index before removing the Task 39 compound index so rollback never violates
+        // the pre-existing foreign-key requirement. SQLite does not auto-create this
+        // support index, so creating it here also restores a deterministic baseline.
+        Schema::table('seller_declarations', function (Blueprint $table): void {
+            $table->index('site_id', 'seller_declarations_site_id_foreign');
+        });
+
         Schema::table('seller_declarations', function (Blueprint $table): void {
             $table->dropUnique('seller_application_domain_claim_unique');
             $table->dropIndex('seller_publisher_identity_scope_idx');
