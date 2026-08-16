@@ -61,8 +61,7 @@ final class SupplyChainCrossConsistencyValidator
             ->merge($horusNodes->pluck('sid')->map(fn ($id): string => trim((string) $id)))
             ->when($selectedId !== null && $selectedId !== '', fn (Collection $ids) => $ids->push($selectedId))
             ->filter(fn (string $id): bool => $id !== '')
-            ->unique()
-            ->values();
+            ->unique()->values();
 
         foreach ($referencedIds as $sellerId) {
             $matches = $sellersById->get($sellerId, collect());
@@ -93,13 +92,16 @@ final class SupplyChainCrossConsistencyValidator
             $declaration = is_array($selected) ? ($selected['declaration'] ?? null) : null;
             $expectedRelationship = strtoupper(trim((string) $declaration?->ads_txt_relationship));
             $matchingAds = $horusAds->where('seller_id', $selectedId);
+            // Task 39 intentionally authorizes both the Publisher HMP and Website HMS
+            // account IDs in ads.txt. Cross-consistency therefore requires the selected
+            // transaction ID to be present with its relationship, while any additional
+            // Horus IDs are validated independently above as belonging to the same Publisher.
             $adsMatches = in_array($expectedRelationship, ['DIRECT', 'RESELLER'], true)
-                && $matchingAds->contains(fn (array $record): bool => $record['relationship'] === $expectedRelationship)
-                && $horusAds->every(fn (array $record): bool => $record['seller_id'] === $selectedId);
+                && $matchingAds->contains(fn (array $record): bool => $record['relationship'] === $expectedRelationship);
             if (! $adsMatches) {
                 $findings->push($this->finding(
                     'HORUS_ADS_TXT_SELLER_MISMATCH',
-                    'Canonical ads.txt does not use the selected Horus seller ID with its explicitly reviewed relationship.',
+                    'Canonical ads.txt does not authorize the selected Horus transaction seller ID with its explicitly reviewed relationship.',
                     $site,
                     $selectedId,
                 ));
@@ -134,20 +136,13 @@ final class SupplyChainCrossConsistencyValidator
         try {
             $this->contract->managerDirectiveForSite($site);
         } catch (InvalidArgumentException $exception) {
-            $findings->push($this->finding(
-                'MANAGERDOMAIN_NOT_AUTHORIZED',
-                $exception->getMessage(),
-                $site,
-                $selectedId,
-            ));
+            $findings->push($this->finding('MANAGERDOMAIN_NOT_AUTHORIZED', $exception->getMessage(), $site, $selectedId));
         }
 
         $findings = $findings->unique(
             fn (array $finding): string => implode('|', [
-                (string) ($finding['code'] ?? ''),
-                (string) ($finding['seller_id'] ?? ''),
-                (string) ($finding['site_id'] ?? ''),
-                (string) ($finding['message'] ?? ''),
+                (string) ($finding['code'] ?? ''), (string) ($finding['seller_id'] ?? ''),
+                (string) ($finding['site_id'] ?? ''), (string) ($finding['message'] ?? ''),
             ]),
         )->values();
 
@@ -195,8 +190,7 @@ final class SupplyChainCrossConsistencyValidator
         if ($declaration) {
             $sellerReview = $declaration->review_status;
             $sellerReviewValue = $sellerReview instanceof SupplyChainReviewStatus
-                ? $sellerReview->value
-                : strtoupper(trim((string) $sellerReview));
+                ? $sellerReview->value : strtoupper(trim((string) $sellerReview));
             if ($sellerReviewValue !== SupplyChainReviewStatus::Verified->value) {
                 $findings->push($this->finding(
                     'HORUS_SELLER_REVIEW_REQUIRED',
@@ -208,9 +202,7 @@ final class SupplyChainCrossConsistencyValidator
         }
     }
 
-    /** @param array<int, string> $lines
-     * @return Collection<int, array{seller_id: string, relationship: string}>
-     */
+    /** @param array<int, string> $lines @return Collection<int, array{seller_id: string, relationship: string}> */
     private function horusAdsRecords(array $lines, string $systemDomain): Collection
     {
         return collect($lines)->map(function (string $line): ?array {
@@ -225,10 +217,7 @@ final class SupplyChainCrossConsistencyValidator
                 'relationship' => strtoupper($fields[2]),
             ];
         })->filter(fn (?array $record): bool => $record !== null && $record['system'] === strtolower($systemDomain))
-            ->map(fn (array $record): array => [
-                'seller_id' => $record['seller_id'],
-                'relationship' => $record['relationship'],
-            ])->values();
+            ->map(fn (array $record): array => ['seller_id' => $record['seller_id'], 'relationship' => $record['relationship']])->values();
     }
 
     private function safeDomain(mixed $domain): ?string
@@ -240,9 +229,7 @@ final class SupplyChainCrossConsistencyValidator
         }
     }
 
-    /** @param array<string, mixed> $finding
-     * @return array<string, mixed>
-     */
+    /** @param array<string, mixed> $finding @return array<string, mixed> */
     private function normalizeFinding(array $finding, Site $site): array
     {
         return array_filter([
@@ -259,12 +246,8 @@ final class SupplyChainCrossConsistencyValidator
     private function finding(string $code, string $message, Site $site, ?string $sellerId = null): array
     {
         return array_filter([
-            'code' => $code,
-            'severity' => 'ERROR',
-            'message' => $message,
-            'seller_id' => $sellerId,
-            'site_id' => $site->id,
-            'site_domain' => $site->primary_domain,
+            'code' => $code, 'severity' => 'ERROR', 'message' => $message,
+            'seller_id' => $sellerId, 'site_id' => $site->id, 'site_domain' => $site->primary_domain,
         ], fn ($value) => $value !== null);
     }
 }

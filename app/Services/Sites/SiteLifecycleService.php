@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Notifications\DomainNotificationService;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -27,6 +28,7 @@ class SiteLifecycleService
         private readonly AuditRecorder $audit,
         private readonly SiteConfigPublisher $publisher,
         private readonly DomainNotificationService $notifications,
+        private readonly HorusSellerIdentityService $sellerIdentities,
     ) {}
 
     public function create(array $data, User $actor): Site
@@ -60,6 +62,15 @@ class SiteLifecycleService
                 'new_status' => SiteStatus::Draft, 'changed_by' => $actor->id,
                 'reason' => 'Website created.',
             ]);
+
+            // Task 39 extends Publishers that already participate in the canonical
+            // HORUS_MANAGED seller lifecycle. Legacy/site-test fixtures without an HMP
+            // remain unchanged; approved public applications already have their HMP.
+            $publisher = $site->publisher()->withoutGlobalScopes()->firstOrFail();
+            if ($this->sellerIdentities->managedForPublisher($publisher)) {
+                $this->sellerIdentities->ensureForSite($site, $actor);
+            }
+
             $this->audit->record('site.created', $site->organization_id, $actor, $site, newValues: ['serving_mode' => ServingMode::HorusGam->value, 'status' => SiteStatus::Draft->value, 'primary_domain' => $site->primary_domain]);
 
             return $site;

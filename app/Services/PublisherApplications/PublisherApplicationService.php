@@ -229,7 +229,10 @@ final class PublisherApplicationService
                 throw ValidationException::withMessages(['application' => 'This application can no longer be withdrawn.']);
             }
             $this->transition($application, PublisherApplicationStatus::Withdrawn, 'WITHDRAWN', $user, applicantVisible: true, updates: ['withdrawn_at' => now()]);
-            $application->domainClaim()->delete();
+            $application->domainClaim()->first()?->update([
+                'claim_status' => 'RELEASED',
+                'released_at' => now(),
+            ]);
             $this->audit->record('publisher_application.withdrawn', $application->organization_id, $user, $application, newValues: ['status' => PublisherApplicationStatus::Withdrawn->value]);
 
             return $application->refresh();
@@ -320,7 +323,10 @@ final class PublisherApplicationService
             $this->transition($locked, PublisherApplicationStatus::Rejected, 'REJECTED', $actor, $reason, true, updates: [
                 'rejected_at' => now(), 'reviewed_at' => now(), 'reviewed_by' => $actor->id,
             ]);
-            $locked->domainClaim()->delete();
+            $locked->domainClaim()->first()?->update([
+                'claim_status' => 'RELEASED',
+                'released_at' => now(),
+            ]);
             $this->audit->record('publisher_application.rejected', $locked->organization_id, $actor, $locked, newValues: [
                 'status' => PublisherApplicationStatus::Rejected->value, 'reason' => $reason,
             ]);

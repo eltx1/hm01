@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Validation\ValidationException;
 use LogicException;
 
 class PublisherApplication extends Model
@@ -46,6 +47,19 @@ class PublisherApplication extends Model
                 if (! $from || ! $to || ($from !== $to && ! $from->canTransitionTo($to))) {
                     throw new LogicException('Invalid Publisher application lifecycle transition.');
                 }
+                if ($from !== $to && $to === PublisherApplicationStatus::Submitted) {
+                    $verified = PublisherApplicationDomainClaim::query()
+                        ->where('publisher_application_id', $application->id)
+                        ->where('normalized_domain', strtolower(rtrim((string) $application->primary_domain, '.')))
+                        ->where('claim_status', 'CLAIMED')
+                        ->where('verification_status', 'VERIFIED')
+                        ->exists();
+                    if (! $verified) {
+                        throw ValidationException::withMessages([
+                            'website_verification' => 'Verify the current website through both required Horus ads.txt seller authorizations before submitting.',
+                        ]);
+                    }
+                }
             }
             if ($application->getRawOriginal('submitted_at') !== null && $application->isDirty('submitted_at')) {
                 throw new LogicException('The first Publisher application submission timestamp is immutable.');
@@ -53,52 +67,41 @@ class PublisherApplication extends Model
         });
 
         static::updated(function (self $application): void {
-            if (! $application->wasChanged('status') || $application->status !== PublisherApplicationStatus::Approved) {
+            if (! $application->wasChanged('status')) {
                 return;
             }
 
-            $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
-            app(HorusSellerIdentityService::class)->ensureForPublisher($publisher);
+            $identities = app(HorusSellerIdentityService::class);
+            if ($application->status === PublisherApplicationStatus::Approved) {
+                $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
+                $identities->ensureForPublisher($publisher);
+                $identities->markApplicationApproved($application);
+            } elseif (in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)) {
+                $application->domainClaims()->where('claim_status', 'CLAIMED')->update([
+                    'claim_status' => 'RELEASED',
+                    'released_at' => now(),
+                ]);
+                $identities->retireApplicationReservations($application, $application->status->value);
+            }
         });
     }
 
-    public function publisher(): BelongsTo
-    {
-        return $this->belongsTo(Publisher::class);
-    }
-
-    public function applicant(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'applicant_user_id');
-    }
-
-    public function reviewer(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'reviewed_by');
-    }
+    public function publisher(): BelongsTo { return $this->belongsTo(Publisher::class); }
+    public function applicant(): BelongsTo { return $this->belongsTo(User::class, 'applicant_user_id'); }
+    public function reviewer(): BelongsTo { return $this->belongsTo(User::class, 'reviewed_by'); }
 
     public function domainClaim(): HasOne
     {
         return $this->hasOne(PublisherApplicationDomainClaim::class);
     }
 
-    public function revisions(): HasMany
+    public function domainClaims(): HasMany
     {
-        return $this->hasMany(PublisherApplicationRevision::class);
+        return $this->hasMany(PublisherApplicationDomainClaim::class);
     }
 
-    public function events(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationEvent::class);
-    }
-
-    public function legalAcceptances(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationLegalAcceptance::class, 'publisher_application_id');
-    }
-
-    public function marketingConsents(): HasMany
-    {
-        return $this->hasMany(PublisherApplicationMarketingConsent::class, 'publisher_application_id');
-    }
+    public function revisions(): HasMany { return $this->hasMany(PublisherApplicationRevision::class); }
+    public function events(): HasMany { return $this->hasMany(PublisherApplicationEvent::class); }
+    public function legalAcceptances(): HasMany { return $this->hasMany(PublisherApplicationLegalAcceptance::class, 'publisher_application_id'); }
+    public function marketingConsents(): HasMany { return $this->hasMany(PublisherApplicationMarketingConsent::class, 'publisher_application_id'); }
 }
