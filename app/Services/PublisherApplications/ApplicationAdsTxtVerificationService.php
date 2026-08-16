@@ -2,6 +2,7 @@
 
 namespace App\Services\PublisherApplications;
 
+use App\Enums\PublisherApplicationStatus;
 use App\Models\PublisherApplication;
 use App\Models\PublisherApplicationDomainClaim;
 use App\Models\User;
@@ -25,6 +26,10 @@ final class ApplicationAdsTxtVerificationService
     /** @return array{claim: PublisherApplicationDomainClaim, publisher_seller: mixed, website_seller: mixed, records: array<int, string>, ads_txt_url: string} */
     public function reserve(PublisherApplication $application, ?User $actor = null): array
     {
+        if (in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)) {
+            throw ValidationException::withMessages(['primary_domain' => 'Seller identities cannot be reserved for a terminal Publisher application.']);
+        }
+
         $claim = $this->currentClaim($application);
         $sellers = $this->identities->ensureForApplicationClaim($application, $claim, $actor);
         $domain = $this->supplyChain->horusAdvertisingSystemDomain();
@@ -123,15 +128,22 @@ final class ApplicationAdsTxtVerificationService
     public function currentClaim(PublisherApplication $application): PublisherApplicationDomainClaim
     {
         $domain = strtolower(rtrim((string) $application->primary_domain, '.'));
-        $claim = $application->domainClaims()
-            ->where('normalized_domain', $domain)
-            ->where('claim_status', 'CLAIMED')
-            ->latest('claimed_at')->first();
+        $claim = $application->domainClaims()->where('normalized_domain', $domain)->first();
         if (! $claim) {
-            throw ValidationException::withMessages(['primary_domain' => 'The application does not have an active claim for its current website domain.']);
+            throw ValidationException::withMessages(['primary_domain' => 'The application does not have a canonical claim for its current website domain.']);
         }
 
         return $claim;
+    }
+
+    /** Clean Task 40 handoff: only real ads.txt-verified application domains are crawl-eligible. */
+    public function crawlingEligible(PublisherApplication $application): bool
+    {
+        $claim = $application->domainClaim;
+
+        return $claim !== null
+            && $claim->normalized_domain === strtolower(rtrim((string) $application->primary_domain, '.'))
+            && $claim->verification_status === 'VERIFIED';
     }
 
     private function auditAttempt(PublisherApplicationDomainClaim $claim, User $actor, bool $verified, ?string $failure, string $hmp, string $hms): void
