@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\SupplyChain\DomainNormalizer;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
@@ -189,10 +190,6 @@ final class BidderAdsTxtService
     /** @return Collection<int,BidderSiteMapping> */
     private function eligibleMappings(Site $site): Collection
     {
-        if (! $site->prebid_enabled) {
-            return collect();
-        }
-
         return BidderSiteMapping::withoutGlobalScopes()
             ->with('account.bidder')
             ->where('site_id', $site->id)
