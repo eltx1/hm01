@@ -115,7 +115,7 @@ class SiteLifecycleService
             if ($newStatus === SiteStatus::Active) {
                 $this->publisher->publishActiveProduction($site, $actor);
             } elseif ($oldStatus === SiteStatus::Active && in_array($newStatus, [SiteStatus::Suspended, SiteStatus::Archived], true)) {
-                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $administrator ?? $actor);
+                $this->publisher->publishUrgent($site, ConfigEnvironment::Production, $actor);
             }
         });
 
