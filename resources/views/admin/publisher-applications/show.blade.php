@@ -115,7 +115,7 @@
                 <label><input type="checkbox" name="rerun" value="1"> Deliberate re-run</label>
                 <button>Run THOTH Website Review</button>
             </form>
-            <p class="muted">This explicit Admin action may refresh stale Task 39 ads.txt verification and collect bounded static public website evidence. It never creates a Site or activates serving.</p>
+            <p class="muted">THOTH may append advisory evidence but can never approve or reject this application. This explicit Admin action may refresh stale Task 39 ads.txt verification and collect bounded static public website evidence. It never creates a Site or activates serving.</p>
         @elseif($canRunThoth)
             <p class="muted">THOTH pre-approval review is disabled for this application state. Allowed states are Submitted, Under Review and More Info Required.</p>
         @endif
