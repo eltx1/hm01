@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Models\Builders\PublisherApplicationDomainClaimBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -19,11 +18,6 @@ class PublisherApplicationDomainClaim extends Model
         'verification_content_type', 'evidence_sha256', 'failure_code', 'verification_attempt_count',
     ];
 
-    public function newEloquentBuilder($query): PublisherApplicationDomainClaimBuilder
-    {
-        return new PublisherApplicationDomainClaimBuilder($query);
-    }
-
     protected static function booted(): void
     {
         static::updating(function (self $claim): void {
@@ -39,11 +33,18 @@ class PublisherApplicationDomainClaim extends Model
         });
 
         static::deleting(function (self $claim): bool {
-            if ($claim->website_seller_declaration_id || $claim->publisher_seller_declaration_id || $claim->verification_requested_at) {
-                return false;
+            // Application-domain claims are historical compliance evidence. A terminal
+            // application releases the claim for operational use but never destroys it,
+            // regardless of whether HMP/HMS reservation or live verification happened.
+            // This also makes legacy service delete() calls safe and non-destructive.
+            if ($claim->claim_status !== 'RELEASED' || $claim->released_at === null) {
+                $claim->forceFill([
+                    'claim_status' => 'RELEASED',
+                    'released_at' => $claim->released_at ?? now(),
+                ])->save();
             }
 
-            return true;
+            return false;
         });
     }
 
