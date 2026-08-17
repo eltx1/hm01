@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\Settings\GlobalSettingsService;
 use App\Services\Settings\TypedSettingsRegistry;
+use App\Services\TrafficGate\TrafficGateGlobalSettingsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -16,11 +17,15 @@ final class SettingsController extends Controller
     public function __construct(
         private readonly GlobalSettingsService $settings,
         private readonly TypedSettingsRegistry $registry,
+        private readonly TrafficGateGlobalSettingsService $trafficGateSettings,
     ) {}
 
     public function index(): View
     {
-        return view('admin.settings.index', ['settings' => $this->settings->describe()]);
+        return view('admin.settings.index', [
+            'settings' => $this->settings->describe(),
+            'trafficGateOrigin' => (string) config('traffic_gate.origin'),
+        ]);
     }
 
     public function update(Request $request, string $key): RedirectResponse
@@ -33,7 +38,12 @@ final class SettingsController extends Controller
             'impact_confirmation' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:128'],
         ]);
         $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
-        $this->settings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
+
+        if (str_starts_with($key, 'traffic_gate.')) {
+            $this->trafficGateSettings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
+        } else {
+            $this->settings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
+        }
 
         return back()->with('status', 'Setting updated.');
     }
@@ -47,7 +57,12 @@ final class SettingsController extends Controller
             'impact_confirmation' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:128'],
         ]);
         $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
-        $this->settings->reset($request->user(), $key, $data['reason'] ?? null);
+
+        if (str_starts_with($key, 'traffic_gate.')) {
+            $this->trafficGateSettings->reset($request->user(), $key, $data['reason'] ?? null);
+        } else {
+            $this->settings->reset($request->user(), $key, $data['reason'] ?? null);
+        }
 
         return back()->with('status', 'Setting reset to its configured fallback.');
     }
