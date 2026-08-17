@@ -98,6 +98,8 @@ jobs:
           DB_PASSWORD: horus_test_password
         run: |
           php artisan migrate:fresh --seed --force
+          php artisan migrate:rollback --step=1 --force
+          php artisan migrate --force
           php artisan test
 
   release-artifact:
