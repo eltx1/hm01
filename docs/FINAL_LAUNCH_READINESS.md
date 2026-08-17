@@ -1,9 +1,9 @@
 # Horus Media Final Launch Readiness Audit
 
 **Audit date:** 2026-08-17  
-**Audited starting `main`:** `c02c46b724542764fe834b3a13f79a046f9ffaf9`  
-**Latest merged PR at audit start:** #67 — Task 41 advertiser campaign delivery capability guardrails  
-**Audit branch:** `task-42-final-launch-readiness-audit`
+**Audited starting `main`:** `c358796c91e8b28045a1b80e8e13dd7f50c4d476`  
+**Latest merged PR at remediation start:** #68 — Task 42 final launch readiness audit  
+**Remediation branch:** `task-43-public-application-fail-closed`
 
 This is the current launch-readiness authority for the repository. Older completion and launch reports remain historical evidence; they are not the current production verdict.
 
@@ -47,9 +47,13 @@ The suite covers customer login, dedicated staff login, email verification, pass
 
 Repository flow:
 
-`/register/publisher` -> optional configured Turnstile -> email verification -> applicant-only portal -> application profile/legal evidence -> HMP reservation -> website HMS reservation -> both real Horus DIRECT ads.txt records -> Horus verification -> trusted verified-domain THOTH evidence -> advisory -> human Admin decision -> existing Publisher onboarding.
+public-registration feature switch -> fail-closed Publisher Application readiness -> `/register/publisher` -> configured Turnstile when enabled -> email verification -> applicant-only portal -> application profile/legal evidence -> HMP reservation -> website HMS reservation -> both real Horus DIRECT ads.txt records -> Horus verification -> trusted verified-domain THOTH evidence -> advisory -> human Admin decision -> existing Publisher onboarding.
 
 Application approval does **not** automatically create a Site, placement, serving config, static ad-serving deployment, or monetization activation.
+
+Public Publisher Application readiness is a bounded `READY` / `BLOCKED` contract. Every required legal document must have a non-blank current version and canonical HTTP(S) URL. Required legal configuration cannot disappear from enforcement when incomplete. When public registration is enabled but readiness is `BLOCKED`, new registration fails closed before Organization, Publisher, User, or Publisher Application rows are created. Existing accounts and invitations remain unaffected.
+
+When Turnstile is enabled in production, readiness requires the real Cloudflare provider path plus site key, server secret, expected hostname, and action. The verifier independently fails closed in production if a fake/deterministic provider or required server-side verification configuration is invalid; deterministic fake behavior remains test/local-only.
 
 ### HMP/HMS dual identity
 
@@ -61,7 +65,10 @@ Verified invariants:
 - managed IDs are immutable and non-recyclable and do not encode DB IDs;
 - HMP/HMS are not User IDs and are not `Site.public_key`;
 - application verification requires the exact real records `horusmedia.net, HMP-..., DIRECT` and `horusmedia.net, HMS-..., DIRECT`;
-- pre-approval reserved HMP/HMS are deliberately published in sellers.json only while the non-terminal verified application reservation is eligible, as confidential entries without private applicant name/domain data;
+- reservation, registration, email verification, profile completion, or submission alone never makes reserved HMP/HMS publicly eligible;
+- reserved HMP/HMS remain internal and permanently stored until the corresponding **current** Publisher Application domain claim has successfully passed the real Task-39 ads.txt verification and is `CLAIMED` + `VERIFIED`;
+- only then may those still-disabled pre-approval identities appear in public sellers.json as confidential entries without private applicant name/domain data;
+- if the verified authorization is lost through verification failure, claim release, rejection, or withdrawal, the reserved declarations remain permanently stored but are removed from public sellers.json eligibility;
 - after review/activation, HMP and each HMS resolve to the same legitimate Publisher legal name/domain;
 - the site SupplyChain node uses `asi=horusmedia.net`, `sid=HMS-...`, `hp=1`;
 - HMP and HMS are never emitted as sequential SChain nodes.
@@ -69,6 +76,8 @@ Verified invariants:
 ### Canonical ads.txt and supply chain
 
 The canonical site composition uses the controlled union of Horus seller authorization, Platform Master records, Prebid bidder records, Direct Demand records, and reviewed canonical sources. The composer performs deterministic ordering, exact-duplicate collapse, conflict reporting, provenance retention, OWNERDOMAIN handling, conditional MANAGERDOMAIN handling, and safe empty behavior.
+
+A successful Task-39 application-domain transition into current `CLAIMED` + `VERIFIED` eligibility automatically queues the existing global Supply Chain static publication through the Static Delivery outbox and normal batching path. Repeated `VERIFIED -> VERIFIED` checks do not create a new eligibility event. A real authorization removal is queued through the same outbox as an urgent safety revocation. Verification-state persistence, audit evidence, and the outbox trigger are transaction-safe so a rolled-back authorization transition cannot leave a surviving publication request.
 
 Repository generation does **not** prove that a Publisher's live public `/ads.txt` or root `horusmedia.net/sellers.json` currently serves the generated payload. Those are external production checks.
 
@@ -80,7 +89,7 @@ The global static edge contract exposes `adServingDisabled`, `gamDisabled`, `pre
 
 ### Static delivery
 
-Repository tests cover 30-minute normal boundaries, no-change no-op, manifest dedupe, budget and emergency reserve, Deploy Now, locking, retry, rollback, file limits, checksum/secret guards, public payload validation, and urgent safety publication. Deploy Now with an empty queue remains an audited no-op.
+Repository tests cover 30-minute normal boundaries, no-change no-op, manifest dedupe, budget and emergency reserve, Deploy Now, locking, retry, rollback, file limits, checksum/secret guards, public payload validation, and urgent safety publication. Deploy Now with an empty queue remains an audited no-op. Task 43 reuses this same outbox, batching, priority, retry, manifest/checksum, budget, and driver abstraction for reserved HMP/HMS publication and revocation; it does not create a parallel deployment path.
 
 ### Reporting and finance
 
@@ -96,11 +105,11 @@ OpenAI uses the Responses API with strict JSON Schema and `store=false`. Gemini 
 
 ### Privacy and security
 
-Repository contracts cover TCF/GPP/GPC-facing runtime behavior, Prebid consent/storage/activity controls, explicit one-shot diagnostics, zero normal-boot diagnostic telemetry, Google CMP evidence states, CSRF, throttles, CSP/HSTS/clickjacking/nosniff/referrer/permissions headers, secret redaction, CSV safety, SSRF safety, public-static secret guards, audit logging, and production debug configuration. Technical readiness is not a legal-compliance certification.
+Repository contracts cover TCF/GPP/GPC-facing runtime behavior, Prebid consent/storage/activity controls, explicit one-shot diagnostics, zero normal-boot diagnostic telemetry, Google CMP evidence states, CSRF, throttles, CSP/HSTS/clickjacking/nosniff/referrer/permissions headers, secret redaction, CSV safety, SSRF safety, public-static secret guards, audit logging, production debug configuration, fail-closed required Publisher legal configuration, and production Turnstile provider/configuration enforcement. Technical readiness is not a legal-compliance certification.
 
 ## Targeted final contract evidence
 
-The following Task-42 requirements are explicitly mapped to executable tests:
+The following Task-42/43 requirements are explicitly mapped to executable tests:
 
 1. one Publisher -> one HMP — `DualHorusSellerIdentityTest` and `FinalLaunchReadinessContractTest`;
 2. two websites -> two different HMS — `FinalLaunchReadinessContractTest`;
@@ -112,25 +121,35 @@ The following Task-42 requirements are explicitly mapped to executable tests:
 8. Site B SChain uses HMS-B — `FinalLaunchReadinessContractTest`;
 9. HMP and HMS are not sequential SChain nodes — `DualHorusSellerIdentityTest` and `FinalLaunchReadinessContractTest`;
 10. application verification requires real ads.txt records — `DualHorusSellerIdentityTest`;
-11. verified application domain feeds THOTH — `ThothPreApprovalWebsiteEvidenceTest`;
-12. THOTH cannot approve — `ThothPreApprovalWebsiteEvidenceTest` and `ThothPublisherQualityAdvisorTest`;
-13. human application approval creates no Site — `PublicPublisherApplicationTest` and `DualHorusSellerIdentityTest`;
-14. GAM-less Site sends zero GAM requests — Loader browser tests plus `GamLessPilotReadinessTest` / `GamOptionalServingModelTest`;
-15. advertiser campaign without eligible GAM cannot deploy — `AdvertiserCampaignCapabilityGuardrailTest`;
-16. PREBID_ESTIMATES cannot create payout-ready revenue — `ProviderFinancialSourceIntegrityTest`;
-17. Master ads.txt changes trigger static publication — `AutomaticSupplyChainStaticPublicationTest` / `SupplyChainPublicationTriggerTest`;
-18. no cross-tenant leak — organization/cross-account/supply-chain/application tests.
+11. unverified reserved HMP/HMS never enter sellers.json, including during unrelated global publication — `DualHorusSellerIdentityTest` and `Task43PublicApplicationFailClosedTest`;
+12. successful real verification makes reservations publishable and queues normal global Supply Chain publication idempotently — `Task43PublicApplicationFailClosedTest`;
+13. verification loss, rejection, withdrawal, and direct claim release remove public eligibility and use urgent revocation while preserving identity records — `Task43PublicApplicationFailClosedTest`;
+14. rolled-back claim authorization leaves no static publication request — `Task43PublicApplicationFailClosedTest`;
+15. required legal version/URL failures block new public registration before partial rows and are visible to Admin — `Task43PublicApplicationFailClosedTest`;
+16. exact current legal acceptance remains version-bound — `Task43PublicApplicationFailClosedTest` plus existing Publisher Application tests;
+17. production fake Turnstile fails closed while deterministic testing remains available outside production — `Task43PublicApplicationFailClosedTest`;
+18. verified application domain feeds THOTH — `ThothPreApprovalWebsiteEvidenceTest`;
+19. THOTH cannot approve — `ThothPreApprovalWebsiteEvidenceTest` and `ThothPublisherQualityAdvisorTest`;
+20. human application approval creates no Site — `PublicPublisherApplicationTest` and `DualHorusSellerIdentityTest`;
+21. GAM-less Site sends zero GAM requests — Loader browser tests plus `GamLessPilotReadinessTest` / `GamOptionalServingModelTest`;
+22. advertiser campaign without eligible GAM cannot deploy — `AdvertiserCampaignCapabilityGuardrailTest`;
+23. PREBID_ESTIMATES cannot create payout-ready revenue — `ProviderFinancialSourceIntegrityTest`;
+24. Master ads.txt changes trigger static publication — `AutomaticSupplyChainStaticPublicationTest` / `SupplyChainPublicationTriggerTest`;
+25. no cross-tenant leak — organization/cross-account/supply-chain/application tests.
 
 ## Four independent launch decisions
 
 ### PUBLIC PUBLISHER APPLICATION — READY WITH EXTERNAL EVIDENCE
 
-Repository flow and security boundaries are implemented and tested. External blockers before public production enablement:
+Repository flow and security boundaries are implemented and tested. The production configuration itself must also resolve the runtime Publisher Application readiness contract to `READY` before public registration is enabled. Public Publisher Registration remains OFF by default.
+
+External blockers before public production enablement:
 
 - production `app.horusmedia.net` DNS/TLS/routing;
 - production MySQL/APP_KEY/APP_DEBUG=false/cache lock/scheduler;
+- configured current required Terms of Service, Privacy Policy, and Publisher Terms versions and canonical URLs;
 - SMTP delivery for verification and decisions;
-- production Turnstile hostname/secret validation if Turnstile is enabled;
+- production Turnstile real-provider/site-key/secret/hostname/action validation if Turnstile is enabled;
 - Admin TOTP/bootstrap evidence;
 - backup + isolated restore evidence;
 - at least one real HMP/HMS application ads.txt verification;
@@ -197,7 +216,8 @@ No no-GAM advertiser campaign backend exists in current architecture.
 | Database backup | NOT_VERIFIED | Security/Ops | backup ID/timestamp | — | before production migration |
 | Isolated restore drill | NOT_VERIFIED | Security/Ops | restore record | — | must not target production DB |
 | Private storage backup | NOT_VERIFIED | Security/Ops | backup coverage evidence | — | contracts/uploads |
-| Turnstile production hostname | NOT_VERIFIED | Security/Ops | hostname + successful Siteverify | — | if enabled |
+| Publisher required legal contract | NOT_VERIFIED | Legal/Ops | current versions + canonical production URLs + readiness capture | — | required before public registration is enabled |
+| Turnstile production hostname/provider | NOT_VERIFIED | Security/Ops | real Cloudflare provider + hostname/action + successful Siteverify | — | if enabled |
 | OpenAI/Gemini credential test | NOT_VERIFIED | Operations | provider connection test | — | if THOTH enabled |
 | horusmedia.net/sellers.json public origin | NOT_VERIFIED | Ad Ops | live HTTPS body + validation | — | repository generation alone is not enough |
 | Real Publisher /ads.txt | NOT_VERIFIED | Ad Ops | live Publisher origin body | — | per pilot site |
@@ -213,6 +233,6 @@ No no-GAM advertiser campaign backend exists in current architecture.
 
 ## Release recommendation
 
-The repository may proceed to **controlled external production evidence collection** for Profiles A, B, and C. It is not evidence that Horus is already live. Profile D remains NOT READY until its real production GAM campaign backend is verified.
+The repository may proceed to **controlled external production evidence collection** for Profiles A, B, and C only after the applicable runtime readiness/configuration gates are satisfied. This is not evidence that Horus is already live. Profile D remains NOT READY until its real production GAM campaign backend is verified.
 
 No speculative subsystem should be added to change these decisions. If an external check fails, record it as `FAILED`, stop the affected profile, and open a separately scoped remediation task if the fix requires a new subsystem.
