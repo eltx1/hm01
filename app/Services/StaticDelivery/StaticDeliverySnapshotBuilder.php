@@ -160,6 +160,7 @@ final class StaticDeliverySnapshotBuilder
                 'prebidDisabled' => (bool) $records->get('PREBID')?->is_disabled,
                 'directJsDisabled' => (bool) $records->get('DIRECT_JS')?->is_disabled || $legacyNativeDisabled,
                 'nativeDemandDisabled' => $legacyNativeDisabled,
+                'trafficGateDisabled' => (bool) $records->get('TRAFFIC_GATE')?->is_disabled,
             ],
         ];
     }
