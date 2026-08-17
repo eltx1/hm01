@@ -23,6 +23,7 @@ final class CampaignDeploymentService
         private readonly CampaignNetworkPlanner $planner,
         private readonly GamConnectorManager $connectors,
         private readonly AuditRecorder $audit,
+        private readonly CampaignDeliveryCapabilityService $deliveryCapability,
     ) {
     }
 
@@ -34,6 +35,7 @@ final class CampaignDeploymentService
         if (! in_array($campaign->status, [CampaignStatus::Approved, CampaignStatus::Scheduled, CampaignStatus::Active, CampaignStatus::Paused], true)) {
             throw ValidationException::withMessages(['status' => 'Approve the campaign before GAM deployment.']);
         }
+        $this->deliveryCapability->requireAvailable($campaign, 'deployment');
 
         $preview = $this->planner->preview($campaign);
         $results = [];
@@ -51,6 +53,8 @@ final class CampaignDeploymentService
     public function deployInstance(CampaignNetworkInstance $instance, User $actor, bool $dryRun = false, bool $confirmed = false): array
     {
         if (! $dryRun && ! $confirmed) throw ValidationException::withMessages(['confirm_external_writes' => 'Confirm external GAM writes.']);
+        $instance->loadMissing('campaign');
+        $this->deliveryCapability->requireAvailable($instance->campaign, 'network deployment');
         $plan = $this->planner->plan($instance->fresh());
         if ($plan['issues'] !== []) {
             $instance->update(['status' => CampaignNetworkStatus::Failed, 'last_error' => implode(' ', $plan['issues'])]);
@@ -129,6 +133,7 @@ final class CampaignDeploymentService
 
     public function resumeAll(Campaign $campaign, User $actor): array
     {
+        $this->deliveryCapability->requireAvailable($campaign, 'remote resume');
         return $this->synchronizeAll($campaign, $actor, true);
     }
 

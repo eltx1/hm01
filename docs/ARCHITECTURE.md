@@ -46,6 +46,31 @@ otherwise.
 
 For the complete contract see [Multi-engine serving](MULTI_ENGINE_SERVING.md).
 
+## Advertiser campaign delivery capability boundary
+
+The optional-at-product-level GAM statement above applies to Publisher monetization. It does **not** mean that Direct Advertiser Campaign delivery is GAM-less.
+
+The current direct-campaign deployment architecture is:
+
+~~~mermaid
+flowchart LR
+    A["Advertiser Campaign"] --> B["CampaignDeliveryCapabilityService"]
+    B --> C{"AVAILABLE?"}
+    C -->|No| D["Draft/history remain safe; new delivery blocked"]
+    C -->|Yes| E["CampaignNetworkPlanner"]
+    E --> F["Selected eligible GAM connection(s)"]
+    F --> G["CampaignDeploymentService"]
+    G --> H["External GAM writes"]
+~~~
+
+`CampaignDeliveryCapabilityService` evaluates the campaign's actual selected site/network context rather than the existence of any arbitrary GAM connection. It reuses `CampaignNetworkPlanner` for representability and mapping truth, resolves the connector, checks connection state/health/configuration and applies platform/site/connection operational controls. The structured status is carried as an exact blocker rather than a generic boolean.
+
+Workflow checks run before submit, Admin approval, scheduling/activation and resume. `CampaignDeploymentService` performs the same requirement again before external writes. Safety/lifecycle operations are intentionally asymmetric: pause/complete can still attempt existing remote operations after new-delivery capability is lost.
+
+The Horus-level typed setting `advertiser_campaigns.enabled` is a separate product gate. OFF blocks new advertiser campaign creation/delivery while retaining existing records and safe Admin maintenance. The configuration fallback preserves the existing pre-Task-41 production state and does not manufacture a database override during deployment.
+
+GAM-less Publisher engines remain independent. `HORUS_DIRECT`, standalone Prebid and Direct JS are not routed into `CampaignDeploymentService` and are not advertised as independent advertiser ad-serving backends.
+
 ## Prebid delivery contexts
 
 GAM-enabled Prebid preserves the current flow:

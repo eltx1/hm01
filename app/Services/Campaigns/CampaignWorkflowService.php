@@ -26,11 +26,18 @@ final class CampaignWorkflowService
     public function __construct(
         private readonly AuditRecorder $audit,
         private readonly AdvertiserInvoiceService $invoices,
+        private readonly CampaignDeliveryCapabilityService $deliveryCapability,
     ) {
     }
 
     public function create(Advertiser $advertiser, array $data, User $actor): Campaign
     {
+        if (! $this->deliveryCapability->featureEnabled()) {
+            throw ValidationException::withMessages([
+                'campaign_feature' => 'Advertiser Campaign creation is currently unavailable.',
+            ]);
+        }
+
         return DB::transaction(function () use ($advertiser, $data, $actor): Campaign {
             $campaign = Campaign::withoutGlobalScopes()->create([
                 'public_key' => 'HC_'.Str::upper(Str::random(20)),
@@ -127,6 +134,7 @@ final class CampaignWorkflowService
         if ($campaign->ends_at <= $campaign->starts_at) $errors['ends_at'] = 'The end date must be after the start date.';
         if ($campaign->total_budget_minor <= 0 && ! in_array($campaign->pricing_model, [CampaignPricingModel::House, CampaignPricingModel::Bonus], true)) $errors['total_budget_minor'] = 'A positive campaign budget is required.';
         if ($errors) throw ValidationException::withMessages($errors);
+        $this->deliveryCapability->requireAvailable($campaign, 'submission');
 
         return DB::transaction(function () use ($campaign, $actor): Campaign {
             $from = $campaign->status->value;
@@ -159,6 +167,7 @@ final class CampaignWorkflowService
         if ($campaign->creatives->where('is_active', true)->contains(fn (CampaignCreative $creative) => $creative->status !== CampaignCreativeStatus::Approved)) {
             throw ValidationException::withMessages(['creatives' => 'Every active creative must be approved first.']);
         }
+        $this->deliveryCapability->requireAvailable($campaign, 'approval');
         $from = $campaign->status->value;
         $campaign->update(['status' => CampaignStatus::Approved, 'approved_at' => now(), 'updated_by' => $actor->id]);
         $this->invoices->ensureForCampaign($campaign);
@@ -178,6 +187,7 @@ final class CampaignWorkflowService
     public function schedule(Campaign $campaign, User $actor): Campaign
     {
         if ($campaign->status !== CampaignStatus::Approved) throw ValidationException::withMessages(['status' => 'Approve the campaign before scheduling it.']);
+        $this->deliveryCapability->requireAvailable($campaign, 'scheduling');
         $status = $campaign->starts_at->isFuture() ? CampaignStatus::Scheduled : CampaignStatus::Active;
         $campaign->update([
             'status' => $status, 'scheduled_at' => now(),
@@ -200,6 +210,7 @@ final class CampaignWorkflowService
     public function resume(Campaign $campaign, User $actor): Campaign
     {
         if ($campaign->status !== CampaignStatus::Paused) throw ValidationException::withMessages(['status' => 'Only paused campaigns may be resumed.']);
+        $this->deliveryCapability->requireAvailable($campaign, 'resume');
         $status = $campaign->starts_at->isFuture() ? CampaignStatus::Scheduled : CampaignStatus::Active;
         $campaign->update(['status' => $status, 'paused_at' => null, 'activated_at' => $status === CampaignStatus::Active ? ($campaign->activated_at ?? now()) : $campaign->activated_at, 'updated_by' => $actor->id]);
         $this->log($campaign, $actor, 'RESUMED', CampaignStatus::Paused->value, $status->value);

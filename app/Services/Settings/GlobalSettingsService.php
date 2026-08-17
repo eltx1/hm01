@@ -85,6 +85,7 @@ final class GlobalSettingsService
             ['key' => $key, 'value' => $value],
             ['setting_key' => $key, 'group' => $definition->group, 'high_impact' => $definition->highImpact, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
         );
+        $this->auditAdvertiserCampaignFeatureChange($actor, $key, $before, $value, $reason);
 
         return $row->refresh();
     }
@@ -101,6 +102,7 @@ final class GlobalSettingsService
             ['key' => $key, 'value' => $this->fallbacks[$key]],
             ['setting_key' => $key, 'group' => $definition->group, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
         );
+        $this->auditAdvertiserCampaignFeatureChange($actor, $key, $before, $this->fallbacks[$key], $reason);
     }
 
     public function invalidate(): void
@@ -151,5 +153,22 @@ final class GlobalSettingsService
         } catch (Throwable) {
             return collect();
         }
+    }
+
+    private function auditAdvertiserCampaignFeatureChange(User $actor, string $key, mixed $before, mixed $after, ?string $reason): void
+    {
+        if ($key !== 'advertiser_campaigns.enabled' || $before === $after) {
+            return;
+        }
+
+        $this->audit->record(
+            'advertiser_campaigns.enabled_changed',
+            null,
+            $actor,
+            null,
+            ['enabled' => (bool) $before],
+            ['enabled' => (bool) $after],
+            ['setting_key' => $key, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
+        );
     }
 }

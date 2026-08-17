@@ -37,6 +37,18 @@ through GAM.
 External provider activation and live payment execution remain operational
 decisions requiring credentials, approvals, and a controlled pilot.
 
+## Advertiser campaign delivery truth
+
+Publisher monetization and Direct Advertiser Campaign delivery are separate product capabilities.
+
+Publisher websites may operate with GAM, standalone Prebid, Direct JS, or supported combinations. GAM is therefore optional for Publisher monetization as a whole.
+
+The current Direct Advertiser Campaign deployment engine, however, is GAM-backed. An advertiser does not need to own or manage GAM, but Horus must have an eligible selected GAM delivery connection for every targeted campaign network. Standalone Prebid, Direct JS, and `HORUS_DIRECT` do not become advertiser campaign ad servers.
+
+The typed product control `advertiser_campaigns.enabled` can stop new customer campaign creation/delivery while preserving existing campaigns, invoices, reports and safe pause/complete maintenance. Its deployed configuration fallback preserves the pre-Task-41 campaign-product state; Task 41 does not silently write an ON override merely because the code is deployed.
+
+When the feature is enabled, drafts may exist without current delivery capability, but submission, approval, scheduling/activation, resume and external deployment require the reusable campaign delivery capability to be `AVAILABLE`. Customer copy exposes only safe readiness language; exact GAM connection/blocker details are reserved for Horus Admin surfaces.
+
 ## Account model
 
 Organizations are typed as HORUS_MEDIA, PUBLISHER, ADVERTISER, or PARTNER.
