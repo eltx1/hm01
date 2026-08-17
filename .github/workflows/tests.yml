@@ -11,11 +11,17 @@ on:
 permissions:
   contents: read
 
+env:
+  # Keep dependency downloads bounded across the PHP matrix. This changes only
+  # transport concurrency; package versions, exit codes, and test coverage stay intact.
+  COMPOSER_MAX_PARALLEL_HTTP: 2
+
 jobs:
   tests:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
+      max-parallel: 1
       matrix:
         php: [8.2, 8.3, 8.4]
     name: PHP ${{ matrix.php }}
