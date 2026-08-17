@@ -78,7 +78,7 @@ class TrafficGateFoundationTest extends TestCase
         $this->assertSame(TrafficGateReadiness::Disabled, $disabled->readiness);
     }
 
-    public function test_invalid_gate_origin_never_activates_browser_gate(): void
+    public function test_invalid_gate_origin_never_activates_or_reaches_browser_payload(): void
     {
         [$site, $admin] = $this->fixture();
         $this->configureReadyGlobal($admin);
@@ -89,7 +89,14 @@ class TrafficGateFoundationTest extends TestCase
         $resolved = $resolver->resolve($site);
 
         $this->assertFalse($resolved->enabled);
+        $this->assertNull($resolved->gateOrigin);
         $this->assertSame(TrafficGateReadiness::InvalidConfiguration, $resolved->readiness);
+
+        $payload = app(SiteConfigPublisher::class)->preview($site->refresh(), ConfigEnvironment::Production);
+        $this->assertFalse($payload['trafficGate']['enabled']);
+        $this->assertNull($payload['trafficGate']['gateOrigin']);
+        $this->assertSame('INVALID_CONFIGURATION', $payload['trafficGate']['readiness']);
+        $this->assertStringNotContainsString('third-party.example', json_encode($payload['trafficGate'], JSON_THROW_ON_ERROR));
     }
 
     public function test_strict_balanced_and_permissive_policy_resolution(): void
