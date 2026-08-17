@@ -6,6 +6,7 @@ use App\Enums\PublisherApplicationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\PublisherApplication;
 use App\Models\PublisherQualityProfile;
+use App\Services\PublisherApplications\PublisherApplicationReadinessService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use App\Services\Thoth\PublisherQualityReviewService;
 use Illuminate\Http\RedirectResponse;
@@ -15,7 +16,7 @@ use Illuminate\View\View;
 
 final class PublisherApplicationController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, PublisherApplicationReadinessService $readiness): View
     {
         $status = strtoupper($request->string('status')->value());
         $age = max(0, min(3650, $request->integer('age')));
@@ -37,8 +38,9 @@ final class PublisherApplicationController extends Controller
             ->selectRaw('status, COUNT(*) AS aggregate')
             ->groupBy('status')
             ->pluck('aggregate', 'status');
+        $publisherApplicationReadiness = $readiness->state();
 
-        return view('admin.publisher-applications.index', compact('applications', 'counts', 'status', 'age', 'domain', 'applicant'));
+        return view('admin.publisher-applications.index', compact('applications', 'counts', 'status', 'age', 'domain', 'applicant', 'publisherApplicationReadiness'));
     }
 
     public function show(PublisherApplication $application): View

@@ -12,11 +12,21 @@ use Illuminate\Validation\ValidationException;
 
 final class PublisherApplicationLegalService
 {
+    public function __construct(private readonly PublisherApplicationReadinessService $readiness) {}
+
     /** @return array<string, array{type:string, label:string, version:string, url:string, required:bool}> */
     public function documents(): array
     {
-        return collect((array) config('publisher-applications.legal_documents', []))
-            ->mapWithKeys(function (array $document, string $type): array {
+        $registry = config('publisher-applications.legal_documents', []);
+        if (! is_array($registry)) {
+            return [];
+        }
+
+        return collect($registry)
+            ->mapWithKeys(function (mixed $document, string $type): array {
+                if (! is_array($document)) {
+                    return [];
+                }
                 $version = trim((string) ($document['version'] ?? ''));
                 $url = trim((string) ($document['url'] ?? ''));
                 if ($version === '' || $url === '') {
@@ -36,6 +46,7 @@ final class PublisherApplicationLegalService
     /** @param array<string, mixed> $input */
     public function record(PublisherApplication $application, User $user, array $input, Request $request): void
     {
+        $this->readiness->assertReady();
         $documents = $this->documents();
         $requestEvidenceHash = hash('sha256', (string) $request->userAgent());
 
@@ -97,6 +108,7 @@ final class PublisherApplicationLegalService
 
     public function assertCurrentRequiredAccepted(PublisherApplication $application, User $user): void
     {
+        $this->readiness->assertReady();
         $errors = [];
         foreach ($this->documents() as $type => $document) {
             if (! $document['required']) {

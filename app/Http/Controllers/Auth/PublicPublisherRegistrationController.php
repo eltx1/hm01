@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Services\PublisherApplications\PublisherApplicantEmailService;
+use App\Services\PublisherApplications\PublisherApplicationReadinessService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use App\Services\PublisherApplications\TurnstileVerifier;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
@@ -15,9 +17,12 @@ use Illuminate\View\View;
 
 final class PublicPublisherRegistrationController extends Controller
 {
-    public function create(): View
+    public function create(PublisherApplicationReadinessService $readiness): View|Response
     {
         abort_unless(config('publisher-applications.public_registration_enabled'), 404);
+        if (! $readiness->isReady()) {
+            return response()->view('auth.publisher-registration-unavailable', status: 503);
+        }
 
         return view('auth.register-publisher');
     }
@@ -27,8 +32,13 @@ final class PublicPublisherRegistrationController extends Controller
         PublisherApplicationService $applications,
         TurnstileVerifier $turnstile,
         PublisherApplicantEmailService $emails,
-    ): RedirectResponse {
+        PublisherApplicationReadinessService $readiness,
+    ): RedirectResponse|Response {
         abort_unless(config('publisher-applications.public_registration_enabled'), 404);
+        if (! $readiness->isReady()) {
+            return response()->view('auth.publisher-registration-unavailable', status: 503);
+        }
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email:rfc', 'max:255'],

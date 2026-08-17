@@ -86,6 +86,8 @@ class AppServiceProvider extends ServiceProvider
             \App\Models\DemandAdsTxtRecord::class,
             \App\Models\DemandSite::class,
             \App\Models\SiteServingSetting::class,
+            \App\Models\PublisherApplicationDomainClaim::class,
+            \App\Models\PublisherApplication::class,
         ] as $model) {
             $model::observe(SupplyChainStaticPublicationObserver::class);
         }

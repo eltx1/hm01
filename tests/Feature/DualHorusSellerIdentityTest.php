@@ -84,14 +84,9 @@ class DualHorusSellerIdentityTest extends TestCase
         ], $first['records']);
 
         $payload = app(SupplyChainArtifactBuilder::class)->sellersJsonPayload();
-        $rows = collect($payload['sellers'])->keyBy('seller_id');
-        foreach ([$hmp->seller_id, $hms->seller_id] as $sellerId) {
-            $row = $rows->get($sellerId);
-            $this->assertSame('PUBLISHER', $row['seller_type']);
-            $this->assertSame(1, $row['is_confidential']);
-            $this->assertArrayNotHasKey('name', $row);
-            $this->assertArrayNotHasKey('domain', $row);
-        }
+        $publicIds = collect($payload['sellers'])->pluck('seller_id');
+        $this->assertFalse($publicIds->contains($hmp->seller_id));
+        $this->assertFalse($publicIds->contains($hms->seller_id));
         $this->assertStringNotContainsString($user->email, json_encode($payload));
     }
 

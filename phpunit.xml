@@ -33,5 +33,11 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="PUBLISHER_TERMS_OF_SERVICE_VERSION" value="test-terms-v1"/>
+        <env name="PUBLISHER_TERMS_OF_SERVICE_URL" value="https://horus.test/legal/terms"/>
+        <env name="PUBLISHER_PRIVACY_POLICY_VERSION" value="test-privacy-v1"/>
+        <env name="PUBLISHER_PRIVACY_POLICY_URL" value="https://horus.test/legal/privacy"/>
+        <env name="PUBLISHER_TERMS_VERSION" value="test-publisher-terms-v1"/>
+        <env name="PUBLISHER_TERMS_URL" value="https://horus.test/legal/publisher-terms"/>
     </php>
 </phpunit>
