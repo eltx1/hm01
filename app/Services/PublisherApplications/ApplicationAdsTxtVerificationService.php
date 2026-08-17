@@ -12,6 +12,7 @@ use App\Services\Compliance\AdsTxtFetcher;
 use App\Services\Compliance\AdsTxtParser;
 use App\Services\SupplyChain\HorusSellerIdentityService;
 use App\Services\SupplyChain\SupplyChainStandardsContract;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 final class ApplicationAdsTxtVerificationService
@@ -113,10 +114,9 @@ final class ApplicationAdsTxtVerificationService
     {
         $fetch = $this->fetcher->fetchDomain($claim->normalized_domain);
         $now = now();
-        $attempt = (int) $claim->verification_attempt_count + 1;
 
         if (! ($fetch['ok'] ?? false)) {
-            $claim->update([
+            $persisted = $this->persistAttempt($claim, $actor, [
                 'verification_status' => 'FAILED',
                 'last_checked_at' => $now,
                 'verified_at' => null,
@@ -125,11 +125,9 @@ final class ApplicationAdsTxtVerificationService
                 'verification_content_type' => $fetch['content_type'] ?? null,
                 'evidence_sha256' => null,
                 'failure_code' => $fetch['error_code'] ?? 'FETCH_FAILED',
-                'verification_attempt_count' => $attempt,
-            ]);
-            $this->auditAttempt($claim->fresh(), $actor, false, (string) ($fetch['error_code'] ?? 'FETCH_FAILED'), $hmp->seller_id, $hms->seller_id);
+            ], false, (string) ($fetch['error_code'] ?? 'FETCH_FAILED'), $hmp->seller_id, $hms->seller_id);
 
-            return ['verified' => false, 'code' => $fetch['error_code'] ?? 'FETCH_FAILED', 'claim' => $claim->fresh()];
+            return ['verified' => false, 'code' => $fetch['error_code'] ?? 'FETCH_FAILED', 'claim' => $persisted];
         }
 
         $body = (string) $fetch['body'];
@@ -159,7 +157,7 @@ final class ApplicationAdsTxtVerificationService
             default => null,
         };
         $verified = $failure === null;
-        $claim->update([
+        $persisted = $this->persistAttempt($claim, $actor, [
             'verification_status' => $verified ? 'VERIFIED' : 'FAILED',
             'last_checked_at' => $now,
             'verified_at' => $verified ? $now : null,
@@ -168,17 +166,37 @@ final class ApplicationAdsTxtVerificationService
             'verification_content_type' => $fetch['content_type'],
             'evidence_sha256' => hash('sha256', $body),
             'failure_code' => $failure,
-            'verification_attempt_count' => $attempt,
-        ]);
-        $this->auditAttempt($claim->fresh(), $actor, $verified, $failure, $hmp->seller_id, $hms->seller_id);
+        ], $verified, $failure, $hmp->seller_id, $hms->seller_id);
 
         return [
             'verified' => $verified,
             'code' => $failure ?: 'VERIFIED',
-            'claim' => $claim->fresh(),
+            'claim' => $persisted,
             'invalid_record_count' => count($parsed['invalid']),
             'final_url' => $fetch['final_url'],
         ];
+    }
+
+    /** @param array<string, mixed> $values */
+    private function persistAttempt(
+        PublisherApplicationDomainClaim $claim,
+        User $actor,
+        array $values,
+        bool $verified,
+        ?string $failure,
+        string $hmp,
+        string $hms,
+    ): PublisherApplicationDomainClaim {
+        return DB::transaction(function () use ($claim, $actor, $values, $verified, $failure, $hmp, $hms): PublisherApplicationDomainClaim {
+            $locked = PublisherApplicationDomainClaim::query()->lockForUpdate()->findOrFail($claim->id);
+            $locked->update(array_merge($values, [
+                'verification_attempt_count' => (int) $locked->verification_attempt_count + 1,
+            ]));
+            $persisted = $locked->fresh();
+            $this->auditAttempt($persisted, $actor, $verified, $failure, $hmp, $hms);
+
+            return $persisted;
+        });
     }
 
     private function auditAttempt(PublisherApplicationDomainClaim $claim, User $actor, bool $verified, ?string $failure, string $hmp, string $hms): void
