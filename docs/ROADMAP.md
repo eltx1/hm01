@@ -1,126 +1,44 @@
 # Roadmap
 
-The implementation roadmap is complete through the application and control-plane
-layers. Approved multi-engine serving evolution is now being delivered
-incrementally without replacing the established GAM implementation. Production
-evidence and disciplined commercial operation remain required for go-live.
+The speculative implementation roadmap stops at Task 42. Current product work is governed by `FINAL_LAUNCH_READINESS.md`, `GO_LIVE_CHECKLIST.md`, and `PILOT_RUNBOOK.md`: collect missing external production evidence, remediate only observed failures, and scale only profiles whose own gates pass.
 
-## Phase 0 — Foundation
+## Implemented foundation
 
-Status: complete.
+The repository implements the Laravel control plane, identity/tenancy/RBAC, dedicated Admin authentication and TOTP, Publisher applications/onboarding/sites, HMP/HMS supply-chain identities, ads.txt/sellers.json/SChain, GAM integration, standalone Prebid, Direct JS/direct demand, Direct Advertiser Campaign workflow, reporting/finance, privacy readiness, THOTH advisory review, static delivery/Cloudflare edge controls, operations/audit/notifications/support, branding, and production release validation.
 
-Laravel, MySQL/environment configuration, health endpoint, secure sessions,
-CSRF, exceptions, structured logs, database queue/scheduler, audit records,
-responsive admin shell, tests, and portable deployment documentation with a
-Hostinger profile are implemented.
+`HORUS_GAM` remains the established/default GAM-backed Publisher path. `HORUS_DIRECT` represents a Horus-managed Publisher Website with no required GAM connection. GAM, standalone Prebid, and Direct JS are independent serving engines and one physical DOM surface has one rendering owner at a time.
 
-## Phase 1 — Identity and tenancy
+Direct Advertiser Campaign serving is a separate product truth: the current campaign backend is GAM-backed. `HORUS_DIRECT`, standalone Prebid, and Direct JS are not advertiser campaign backends.
 
-Status: complete.
+## Current Task-42 launch profiles
 
-Organization isolation, system RBAC, invitations, authentication, password
-reset, email verification, account states, session invalidation, audited
-impersonation, TOTP with recovery codes, account/contact management,
-white-label branding, dashboard shells, and secure administrator bootstrap are
-implemented.
+| Profile | Status | Next work |
+|---|---|---|
+| Public Publisher Application | READY WITH EXTERNAL EVIDENCE | Production DNS/TLS/SMTP/Turnstile-if-enabled, real HMP/HMS ads.txt, root sellers.json, backup/recovery, optional THOTH provider evidence. |
+| GAM-backed Publisher Pilot | READY WITH EXTERNAL EVIDENCE | Real GAM/network permissions, Publisher origin/Loader/privacy, reporting reconciliation, rollback and Finance sign-off. |
+| GAM-less `HORUS_DIRECT` Publisher Pilot | READY WITH EXTERNAL EVIDENCE | Real Publisher/provider/privacy/reporting/static rollback evidence; no GAM prerequisite. |
+| Direct Advertiser Campaign Pilot | NOT READY | First prove a real eligible production GAM campaign backend plus controlled deployment/pause/reconciliation/rollback evidence. |
 
-## Phase 2 — Publisher inventory
+## Controlled production sequence
 
-Status: complete.
+1. Validate the public application smoke path.
+2. Approve one Publisher through human review.
+3. Create one Website after approval/onboarding.
+4. Validate public supply-chain artifacts.
+5. Activate exactly one Publisher monetization profile (GAM-backed or GAM-less).
+6. Import/reconcile real aggregated reporting and prove financial finality.
+7. Prove safety pause/rollback and obtain Operations/Finance sign-off.
+8. Scale only after the chosen profile remains stable.
+9. Start an advertiser-campaign pilot only after its production GAM backend blocker is cleared.
 
-Publisher contracts, encrypted payment profiles, seven-step onboarding,
-websites, stable public site keys, authorized domains, four verification
-methods, review/status workflows, placement planning, revenue-share controls,
-notes, and complete serving/status histories are implemented. HORUS_GAM remains
-the database and application default GAM mode with no activation blocker. MCM
-and Publisher GAM remain optional.
+## External evidence, not new architecture
 
-## Phase 3 — Loader and configuration delivery
+The next work items are operational evidence: production routing/TLS/MySQL/APP_KEY/debug state, SMTP, scheduler/cache locks, deployment credentials, Admin TOTP, backup/isolated restore/private storage backup, Turnstile hostname if enabled, provider credentials, live sellers.json and Publisher ads.txt/HMP-HMS verification, real Loader/provider IDs, live privacy probe, reporting/reconciliation, rollback drills, and Finance approval.
 
-Status: complete.
+Failures discovered while collecting those facts should become tightly scoped remediation work. Do not invent a new subsystem merely to make a checklist green.
 
-Versioned CDN publication, permanent loader, configuration schema, atomic
-promotion and rollback, operationally limited browser behavior, GPT integration,
-Prebid integration, and PAUSED behavior are implemented. CDN headers and cache
-rules are documented in CLOUDFLARE_SETUP.md.
+## Explicitly out of Task-42 scope
 
-## Phase 4 — GAM control-plane integration
+Task 42 does not authorize WebAuthn, a new advertiser ad server, THOTH yield optimization, an IVT engine, new bidder-provider expansion, a payment processor, browser-canary monitoring, a provider compatibility matrix, price floors, or unrelated UI work.
 
-Status: complete in code; live activation pending.
-
-Credential reference validation, HORUS_GAM setup, dry-run plans, idempotent GAM
-writes, reconciliation, ad-unit mapping, audit trails, and optional MCM and
-Publisher GAM adapters are implemented. A real network, credential, permission,
-and root-ad-unit smoke test remains an external gate for GAM-enabled pilots.
-
-## Phase 5 — Prebid and optional demand
-
-Status: complete for the GAM-bridge/runtime implemented to date; controlled rollout pending.
-
-Pinned Prebid builds, bidder configuration, consent settings, timeouts, targeting,
-native connector contracts, direct-JS/GAM fallback, ads.txt, and aggregated
-reporting are implemented. Provider approvals, real account IDs, and a staged
-pilot remain external gates.
-
-## Phase 6 — Direct sales
-
-Status: complete in code; commercial pilot pending.
-
-Advertisers, campaigns, creatives, approvals, budgets, targeting, GAM
-synchronization, billing profiles, invoices, delivery reports, and financial
-terms are implemented. A real advertiser, approved creative, bounded budget,
-and finance sign-off remain external gates.
-
-## Phase 7 — Reporting and finance
-
-Status: complete in code; reconciliation and payment operations pending.
-
-Scheduled GAM/network imports, aggregate facts, reconciliation, dashboards,
-revenue-share calculations, statements, adjustments, partial payments,
-advertiser reports, invoice balances, exports, and corrections are implemented.
-Real source reports, agreed variance thresholds, payment approvals, and a
-repeatable restore-backed finance review remain external gates.
-
-## Phase 8 — Production hardening
-
-Status: operational readiness in progress.
-
-Load/security testing, observability, backup/restore drills, retention, access
-reviews, incident runbooks, CDN failover, performance budgets, and staged
-multi-provider release validation are tracked in
-SECURITY_OPERATIONS.md and GO_LIVE_CHECKLIST.md.
-
-## Phase 9 — Controlled pilot and scale
-
-Status: next commercial execution phase.
-
-Run one publisher and one capped advertiser campaign using PILOT_RUNBOOK.md.
-Exit after seven stable days, reconciled reporting, no high-severity findings,
-reproducible statements/invoices, current backup/restore evidence, and written
-publisher/advertiser/finance sign-off. Only then expand demand, publishers,
-provider connections, and payment volume.
-
-## Phase 10 — Multi-engine serving evolution
-
-Status: approved architecture evolution; incremental implementation.
-
-Horus Media supports three independent serving-engine capabilities: GAM, Prebid,
-and Direct JS. `HORUS_GAM` remains the established/default GAM mode and its
-existing GPT/GAM behavior must remain backward compatible. `HORUS_DIRECT`
-represents a Horus-managed website with no required GAM connection.
-
-The implementation sequence is deliberately staged:
-
-1. establish the multi-engine architecture contract and no-GAM serving-mode
-   representation;
-2. make core engine eligibility and static configuration GAM-optional while
-   preserving schema-v2 compatibility;
-3. implement standalone Prebid winner rendering as dedicated browser-runtime
-   work;
-4. evolve Direct JS placement/runtime controls without converting providers into
-   fake Prebid bidders;
-5. validate mixed-engine pages where independent placements use different
-   renderers without double-rendering a physical DOM surface.
-
-See `MULTI_ENGINE_SERVING.md` for the authoritative invariants. This phase does
-not deprecate GAM, MCM, Publisher GAM, or the existing direct-campaign GAM path.
+Historical phase-by-phase implementation detail remains available in Git history and the task-specific architecture/operations documents. A green repository does not mean Horus is already live.
