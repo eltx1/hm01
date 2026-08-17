@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\PublisherApplicationLegalAcceptance;
 use App\Models\PublisherApplicationRevision;
 use App\Models\PublisherQualityProfile;
+use App\Models\Site;
 use App\Services\PublisherApplications\ApplicationAdsTxtVerificationService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -67,6 +68,140 @@ class SafeDataRetentionTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['event' => 'operations.data_retention_pruned']);
     }
 
+    public function test_other_ephemeral_rules_preserve_references_and_terminal_state_boundaries(): void
+    {
+        [$application, $user] = $this->application('ephemeral.example', 'ephemeral@retention.example');
+        $site = Site::withoutGlobalScopes()->create([
+            'organization_id' => $application->organization_id,
+            'publisher_id' => $application->publisher_id,
+            'display_name' => 'Retention Site',
+            'primary_domain' => 'ephemeral.example',
+            'language' => 'en',
+            'content_category' => 'general',
+            'country' => 'US',
+            'default_revenue_share_percent' => 70.00,
+        ]);
+
+        $expiredTokenId = (string) Str::ulid();
+        DB::table('privacy_diagnostic_tokens')->insert([
+            'id' => $expiredTokenId,
+            'site_id' => $site->id,
+            'environment' => 'PRODUCTION',
+            'token_hash' => hash('sha256', 'expired-retention-token'),
+            'allowed_hostnames' => json_encode(['ephemeral.example'], JSON_THROW_ON_ERROR),
+            'max_reports' => 1,
+            'report_count' => 1,
+            'created_by' => $user->id,
+            'expires_at' => now()->subDays(60),
+            'completed_at' => now()->subDays(60),
+            'created_at' => now()->subDays(60),
+            'updated_at' => now()->subDays(60),
+        ]);
+
+        $recentEvidenceId = (string) Str::ulid();
+        $this->insertPrivacyEvidence(
+            $recentEvidenceId,
+            $application->organization_id,
+            $site->id,
+            $expiredTokenId,
+            now()->subDays(10),
+        );
+
+        $recentTokenId = (string) Str::ulid();
+        DB::table('privacy_diagnostic_tokens')->insert([
+            'id' => $recentTokenId,
+            'site_id' => $site->id,
+            'environment' => 'PRODUCTION',
+            'token_hash' => hash('sha256', 'recent-retention-token'),
+            'allowed_hostnames' => json_encode(['ephemeral.example'], JSON_THROW_ON_ERROR),
+            'max_reports' => 1,
+            'report_count' => 1,
+            'created_by' => $user->id,
+            'expires_at' => now()->addDay(),
+            'created_at' => now()->subDay(),
+            'updated_at' => now()->subDay(),
+        ]);
+
+        $oldEvidenceId = (string) Str::ulid();
+        $this->insertPrivacyEvidence(
+            $oldEvidenceId,
+            $application->organization_id,
+            $site->id,
+            $recentTokenId,
+            now()->subDays(400),
+        );
+
+        $expiredInvitationId = (string) Str::ulid();
+        DB::table('user_invitations')->insert([
+            'id' => $expiredInvitationId,
+            'organization_id' => $application->organization_id,
+            'role_id' => null,
+            'invited_by' => $user->id,
+            'email' => 'never-accepted@retention.example',
+            'token_hash' => hash('sha256', 'never-accepted-invitation'),
+            'expires_at' => now()->subDays(200),
+            'accepted_at' => null,
+            'created_at' => now()->subDays(210),
+            'updated_at' => now()->subDays(200),
+        ]);
+
+        $acceptedInvitationId = (string) Str::ulid();
+        DB::table('user_invitations')->insert([
+            'id' => $acceptedInvitationId,
+            'organization_id' => $application->organization_id,
+            'role_id' => null,
+            'invited_by' => $user->id,
+            'email' => 'accepted@retention.example',
+            'token_hash' => hash('sha256', 'accepted-invitation'),
+            'expires_at' => now()->subDays(200),
+            'accepted_at' => now()->subDays(205),
+            'created_at' => now()->subDays(210),
+            'updated_at' => now()->subDays(205),
+        ]);
+
+        $terminalBatchId = 'retention-terminal-batch';
+        DB::table('job_batches')->insert([
+            'id' => $terminalBatchId,
+            'name' => 'Retention terminal batch',
+            'total_jobs' => 1,
+            'pending_jobs' => 0,
+            'failed_jobs' => 0,
+            'failed_job_ids' => '[]',
+            'options' => null,
+            'cancelled_at' => null,
+            'created_at' => now()->subDays(100)->timestamp,
+            'finished_at' => now()->subDays(99)->timestamp,
+        ]);
+
+        $pendingBatchId = 'retention-pending-batch';
+        DB::table('job_batches')->insert([
+            'id' => $pendingBatchId,
+            'name' => 'Retention pending batch',
+            'total_jobs' => 1,
+            'pending_jobs' => 1,
+            'failed_jobs' => 0,
+            'failed_job_ids' => '[]',
+            'options' => null,
+            'cancelled_at' => null,
+            'created_at' => now()->subDays(100)->timestamp,
+            'finished_at' => null,
+        ]);
+
+        $this->artisan('data-retention:prune', ['--execute' => true])->assertSuccessful();
+
+        $this->assertDatabaseMissing('privacy_diagnostic_tokens', ['id' => $expiredTokenId]);
+        $this->assertDatabaseHas('privacy_diagnostic_evidence', [
+            'id' => $recentEvidenceId,
+            'privacy_diagnostic_token_id' => null,
+        ]);
+        $this->assertDatabaseHas('privacy_diagnostic_tokens', ['id' => $recentTokenId]);
+        $this->assertDatabaseMissing('privacy_diagnostic_evidence', ['id' => $oldEvidenceId]);
+        $this->assertDatabaseMissing('user_invitations', ['id' => $expiredInvitationId]);
+        $this->assertDatabaseHas('user_invitations', ['id' => $acceptedInvitationId]);
+        $this->assertDatabaseMissing('job_batches', ['id' => $terminalBatchId]);
+        $this->assertDatabaseHas('job_batches', ['id' => $pendingBatchId]);
+    }
+
     public function test_dry_run_deletes_nothing_and_execution_is_idempotent(): void
     {
         [$application] = $this->application('dry-run.example', 'dry-run@retention.example');
@@ -87,6 +222,26 @@ class SafeDataRetentionTest extends TestCase
             $auditCountBefore + 1,
             DB::table('audit_logs')->where('event', 'operations.data_retention_pruned')->count(),
         );
+    }
+
+    public function test_dataset_failure_is_isolated_and_operation_summary_is_still_audited(): void
+    {
+        [$application] = $this->application('failure-isolation.example', 'failure-isolation@retention.example');
+        $expiredId = (string) Str::ulid();
+        $this->insertProbe($expiredId, $application->organization_id, now()->subDays(200));
+
+        $datasets = config('data-retention.datasets');
+        $datasets['unsupported_future_dataset'] = [
+            'table' => 'unsupported_future_dataset',
+            'category' => 'EPHEMERAL',
+            'retention_days' => 1,
+        ];
+        Config::set('data-retention.datasets', $datasets);
+
+        $this->artisan('data-retention:prune', ['--execute' => true])->assertExitCode(1);
+
+        $this->assertDatabaseMissing('synthetic_probe_results', ['id' => $expiredId]);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'operations.data_retention_pruned']);
     }
 
     public function test_permanent_identity_application_legal_contract_finance_and_payout_history_survives_forever(): void
@@ -257,6 +412,8 @@ class SafeDataRetentionTest extends TestCase
         $permanent = config('data-retention.permanent_business_tables');
         foreach ([
             'seller_declarations',
+            'bidder_ads_txt_records',
+            'platform_ads_txt_records',
             'publisher_application_revisions',
             'publisher_application_legal_acceptances',
             'publisher_contracts',
@@ -265,6 +422,7 @@ class SafeDataRetentionTest extends TestCase
             'publisher_payments',
             'publisher_payment_settlements',
             'publisher_quality_decisions',
+            'global_settings',
         ] as $table) {
             $this->assertContains($table, $permanent);
             $this->assertArrayNotHasKey($table, config('data-retention.datasets'));
@@ -300,6 +458,40 @@ class SafeDataRetentionTest extends TestCase
             'checks' => json_encode(['safe' => true], JSON_THROW_ON_ERROR),
             'release' => 'retention-test',
             'observed_at' => $observedAt,
+            'created_at' => $observedAt,
+            'updated_at' => $observedAt,
+        ]);
+    }
+
+    private function insertPrivacyEvidence(
+        string $id,
+        string $organizationId,
+        string $siteId,
+        ?string $tokenId,
+        mixed $observedAt,
+    ): void {
+        DB::table('privacy_diagnostic_evidence')->insert([
+            'id' => $id,
+            'organization_id' => $organizationId,
+            'site_id' => $siteId,
+            'privacy_diagnostic_token_id' => $tokenId,
+            'environment' => 'PRODUCTION',
+            'result_status' => 'PASS',
+            'loader_version' => 'retention-test',
+            'config_version' => 1,
+            'hostname' => 'ephemeral.example',
+            'tcf_api_detected' => true,
+            'tcf_api_responded' => true,
+            'gpp_api_detected' => false,
+            'gpp_api_responded' => false,
+            'gpc_detected' => false,
+            'configured_timeout_action' => 'NO_ADS',
+            'prebid_consent_configured' => true,
+            'prebid_storage_control_configured' => true,
+            'prebid_activity_controls_configured' => true,
+            'privacy_gate_respected' => true,
+            'observed_at' => $observedAt,
+            'result_hash' => hash('sha256', $id),
             'created_at' => $observedAt,
             'updated_at' => $observedAt,
         ]);
