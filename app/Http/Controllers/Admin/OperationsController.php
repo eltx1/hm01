@@ -269,7 +269,6 @@ class OperationsController extends Controller
             'GAM' => 'DISABLE PLATFORM GAM',
             'PREBID' => 'DISABLE PLATFORM PREBID',
             'DIRECT_JS', 'NATIVE_DEMAND' => 'DISABLE PLATFORM DIRECT JS',
-            'TRAFFIC_GATE' => 'DISABLE PLATFORM CLIENT TRAFFIC GATE',
             default => null,
         };
     }
