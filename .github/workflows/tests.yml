@@ -12,8 +12,9 @@ permissions:
   contents: read
 
 env:
-  # Keep dependency downloads bounded across the PHP matrix. This changes only
-  # transport concurrency; package versions, exit codes, and test coverage stay intact.
+  # GitHub codeload ZIP downloads can be rate-limited independently of the
+  # repository transport. CI therefore installs the exact locked source commits.
+  # Package versions, exit codes, and test coverage remain unchanged.
   COMPOSER_MAX_PARALLEL_HTTP: 2
 
 jobs:
@@ -35,7 +36,7 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
           coverage: none
       - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+        run: composer install --prefer-source --no-interaction --no-progress
       - name: Copy environment file
         run: cp .env.example .env
       - name: Generate app key
@@ -92,7 +93,7 @@ jobs:
           extensions: mbstring, pdo_mysql, openssl, soap
           coverage: none
       - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+        run: composer install --prefer-source --no-interaction --no-progress
       - name: Copy environment file
         run: cp .env.example .env
       - name: Run MySQL migrations and tests
@@ -127,7 +128,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+      - run: composer install --no-dev --prefer-source --no-interaction --optimize-autoloader
       - run: npm ci && npm run test:browser && npm run build
       - name: Verify compiled Prebid release files
         run: test -s public/assets/prebid/horus-prebid.min.js && test -s public/assets/prebid/horus-prebid.sha256
