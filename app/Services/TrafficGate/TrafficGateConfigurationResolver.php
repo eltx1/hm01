@@ -31,7 +31,9 @@ final class TrafficGateConfigurationResolver
         $policy = $sitePolicy === TrafficGateSitePolicy::Inherit
             ? TrafficGatePolicy::from((string) $this->settings->get('traffic_gate.policy'))
             : TrafficGatePolicy::from($sitePolicy->value);
-        $origin = trim((string) config('traffic_gate.origin'));
+        $configuredOrigin = trim((string) config('traffic_gate.origin'));
+        $originValid = $this->validOrigin($configuredOrigin);
+        $publicOrigin = $originValid ? rtrim($configuredOrigin, '/') : null;
         $siteKey = trim((string) ($this->settings->get('traffic_gate.site_key') ?? '')) ?: null;
         $initial = (int) $this->settings->get('traffic_gate.initial_wait_ms');
         $maximum = (int) $this->settings->get('traffic_gate.max_wait_ms');
@@ -45,7 +47,7 @@ final class TrafficGateConfigurationResolver
         if ($requestedEnabled && ! $emergencyDisabled) {
             $readiness = $siteKey === null
                 ? TrafficGateReadiness::ConfigurationRequired
-                : ($this->validOrigin($origin) && $validTimings
+                : ($originValid && $validTimings
                     ? TrafficGateReadiness::Ready
                     : TrafficGateReadiness::InvalidConfiguration);
         }
@@ -53,7 +55,7 @@ final class TrafficGateConfigurationResolver
         return new TrafficGateConfiguration(
             enabled: $requestedEnabled && ! $emergencyDisabled && $readiness === TrafficGateReadiness::Ready,
             provider: (string) config('traffic_gate.provider', 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY'),
-            gateOrigin: $origin,
+            gateOrigin: $publicOrigin,
             siteKey: $siteKey,
             policy: $policy,
             initialWaitMs: $initial,
