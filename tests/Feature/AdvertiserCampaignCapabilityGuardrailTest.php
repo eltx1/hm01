@@ -267,6 +267,11 @@ class AdvertiserCampaignCapabilityGuardrailTest extends TestCase
             ->put(route('admin.settings.update', ['key' => 'advertiser_campaigns.enabled']), ['value' => false])
             ->assertForbidden();
 
+        // Restore an internal Horus identity after the explicit cross-role denial.
+        // Tenant global scopes use the authenticated organization even when the
+        // subsequent domain service receives an explicit actor argument.
+        $this->actingAs($fx['admin']);
+
         app(GlobalSettingsService::class)->set($fx['admin'], 'advertiser_campaigns.enabled', false, 'Task 41 pilot control');
         $this->assertDatabaseHas('audit_logs', [
             'event' => 'advertiser_campaigns.enabled_changed',
