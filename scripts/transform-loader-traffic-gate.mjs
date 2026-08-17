@@ -271,9 +271,8 @@ const trafficGateRuntime = String.raw`
             return;
         }
         // PERMISSIVE technical failures remain blocked until the bounded max-wait
-        // timer soft-allows. The terminal gate frame itself can be removed now.
+        // timer soft-allows. Keep the bounded decision pending until that fallback.
         trafficGateCleanup({ preserveMaxTimer: true });
-        settleTrafficGateDecision();
     }
 
     function trafficGateOnInitialWait() {
