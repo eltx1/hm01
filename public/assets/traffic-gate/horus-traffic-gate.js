@@ -7,6 +7,7 @@
     const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     const PROVIDER = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
     const MAX_RETRIES = 1;
+    const HARD_BOOT_TIMEOUT_MS = 15000;
     const DEFAULT_TEST_TIMINGS = Object.freeze({
         initialWaitMs: 1500,
         maxWaitMs: 6000,
@@ -35,6 +36,7 @@
 
     let state = STATES.booting;
     let handshakeLocked = false;
+    let handshakeStartedAt = null;
     let boundParent = null;
     let widgetId = null;
     let challengeTimer = null;
@@ -105,6 +107,27 @@
             clearTimeout(retryTimer);
             retryTimer = null;
         }
+    }
+
+    function armDeadline(delayMs, category) {
+        if (terminal) {
+            return;
+        }
+        if (challengeTimer !== null) {
+            clearTimeout(challengeTimer);
+        }
+        challengeTimer = setTimeout(() => timeout(category), Math.max(1, delayMs));
+    }
+
+    function applyConfiguredDeadline(maxWaitMs) {
+        const elapsed = handshakeStartedAt === null ? 0 : Math.max(0, Date.now() - handshakeStartedAt);
+        const remaining = maxWaitMs - elapsed;
+        if (remaining <= 0) {
+            timeout('GATE_MAX_WAIT');
+            return false;
+        }
+        armDeadline(remaining, 'GATE_MAX_WAIT');
+        return true;
     }
 
     function removeWidget() {
@@ -244,6 +267,9 @@
     }
 
     function renderTurnstile(siteKey, timings, testMode) {
+        if (terminal) {
+            return;
+        }
         if (!widgetContainer || typeof window.turnstile?.render !== 'function') {
             fail('TURNSTILE_API_UNAVAILABLE');
             return;
@@ -251,10 +277,9 @@
 
         setState(STATES.challengeRunning);
         post(TYPES.ready, { provider: PROVIDER, testMode });
-        challengeTimer = setTimeout(() => timeout('GATE_MAX_WAIT'), timings.maxWaitMs);
 
         try {
-            widgetId = window.turnstile.render(widgetContainer, {
+            const renderedWidgetId = window.turnstile.render(widgetContainer, {
                 sitekey: siteKey,
                 execution: 'render',
                 retry: 'never',
@@ -264,6 +289,10 @@
                 'timeout-callback': () => timeout('TURNSTILE_TIMEOUT'),
                 'unsupported-callback': () => fail('UNSUPPORTED_BROWSER'),
             });
+            widgetId = renderedWidgetId;
+            if (terminal) {
+                removeWidget();
+            }
         } catch {
             fail('TURNSTILE_RENDER_ERROR');
         }
@@ -278,6 +307,7 @@
             return;
         }
 
+        if (terminal) return;
         if (!config || !originAuthorized(config, parentUrl)) {
             deny();
             return;
@@ -291,6 +321,9 @@
             fail('GATE_NOT_READY');
             return;
         }
+        if (!applyConfiguredDeadline(timings.maxWaitMs)) {
+            return;
+        }
 
         setState(STATES.parentValidated);
         try {
@@ -299,6 +332,7 @@
             fail('TURNSTILE_SCRIPT_ERROR');
             return;
         }
+        if (terminal) return;
         renderTurnstile(gate.siteKey, timings, false);
     }
 
@@ -312,6 +346,9 @@
             fail('INVALID_TEST_SITE_KEY');
             return;
         }
+        if (!applyConfiguredDeadline(DEFAULT_TEST_TIMINGS.maxWaitMs)) {
+            return;
+        }
 
         setState(STATES.parentValidated);
         try {
@@ -320,6 +357,7 @@
             fail('TURNSTILE_SCRIPT_ERROR');
             return;
         }
+        if (terminal) return;
         renderTurnstile(data.candidateSiteKey, DEFAULT_TEST_TIMINGS, true);
     }
 
@@ -341,12 +379,14 @@
         }
 
         handshakeLocked = true;
+        handshakeStartedAt = Date.now();
         boundParent = {
             source: event.source,
             origin: event.origin,
             pageNonce: data.pageNonce,
             sitePublicKey: data.sitePublicKey,
         };
+        armDeadline(HARD_BOOT_TIMEOUT_MS, 'GATE_BOOT_TIMEOUT');
 
         if (window.location.origin !== GATE_ORIGIN) {
             deny('INVALID_GATE_ORIGIN');
