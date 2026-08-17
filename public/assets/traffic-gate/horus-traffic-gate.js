@@ -212,7 +212,6 @@
             script.src = TURNSTILE_SCRIPT_URL;
             script.async = true;
             script.defer = true;
-            script.crossOrigin = 'anonymous';
             script.addEventListener('load', () => {
                 typeof window.turnstile?.render === 'function' ? resolve() : reject(new Error('TURNSTILE_API_UNAVAILABLE'));
             }, { once: true });
