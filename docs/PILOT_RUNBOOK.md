@@ -1,101 +1,117 @@
 # Horus Media Controlled Pilot Runbook
 
-The pilot proves the complete path with minimal external risk. It is not a
-substitute for production security or financial approval.
+This runbook follows the four independent launch profiles in `FINAL_LAUNCH_READINESS.md`. A Publisher-only pilot does not need an advertiser campaign, and a GAM-less Publisher pilot must not be given a fake GAM dependency.
 
-## Scope
+## Recommended first controlled production sequence
 
-Use one Horus Media administrator, one publisher website, one test advertiser,
-one GAM network, one or two placements, and a small capped campaign. Keep
-HORUS_GAM as the serving default unless the pilot explicitly tests an alternative
-connection.
+1. Public Publisher/Application smoke validation.
+2. Approve one Publisher through the human review path.
+3. Create one Website only after approval/onboarding.
+4. Verify HMP/HMS, live ads.txt, root sellers.json, and site SChain.
+5. Enable exactly one chosen Publisher monetization profile.
+6. Import real aggregated reporting and reconcile revenue.
+7. Prove pause/rollback and obtain Operations/Finance sign-off.
+8. Only then broaden traffic, providers, sites, or product profiles.
 
-## Before enabling traffic
+Do not force a Direct Advertiser Campaign into a Publisher-only pilot when `advertiser_campaigns.enabled` is disabled or when the production GAM campaign backend has not been verified.
 
-1. Complete GO_LIVE_CHECKLIST.md Gates 0–3.
-2. Create the publisher organization, contract, payment profile, website, and authorized domain.
-3. Review the revenue-share terms and record the effective contract version.
-4. Create local ad units and placements; synchronize GAM in dry-run first.
-5. Publish and checksum the production static configuration.
-6. Install the permanent Loader tag on the publisher test page.
-7. Verify hostname authorization, GPT loading, house-ad targeting, pause, and rollback.
-8. Create the advertiser, billing profile, creative, targeting, dates, and capped budget.
-9. Preview the deterministic per-network campaign plan.
-10. Obtain administrator and finance approval before external writes.
+## Common preparation
 
-## Controlled activation
+- Complete the Common Release, Infrastructure, and Security/Recovery gates in `GO_LIVE_CHECKLIST.md`.
+- Record production release SHA and artifact checksum.
+- Verify DNS/TLS, production MySQL, stable APP_KEY, APP_DEBUG=false, SMTP, scheduler, cache lock, backup, restore drill, and Admin TOTP.
+- Use one Publisher and one Website initially.
+- Keep every credential out of screenshots, logs, and public static artifacts.
+- Record static configuration checksum, deployment evidence, and rollback point before enabling traffic.
 
-- Activate one placement first.
-- Confirm direct browser-to-GAM requests and a valid test impression.
-- Activate the second placement only after the first is stable.
-- Enable Prebid or native demand separately, one change at a time.
-- Record every configuration version, GAM operation, report import, and rollback point.
-- Keep a daily comparison of Horus aggregates versus GAM/network aggregates.
+## Profile A — Public Publisher Application smoke
 
-## Daily review
+1. Open `https://app.horusmedia.net/register/publisher` on the production hostname.
+2. If Turnstile is enabled, verify the production hostname and server-side Siteverify result.
+3. Register a controlled applicant mailbox and prove email verification.
+4. Confirm the identity can access only the applicant application portal.
+5. Complete profile/legal acceptance.
+6. Record the reserved HMP and website HMS without creating a Site.
+7. Publish both exact real records on the applicant Website:
+   - `horusmedia.net, HMP-..., DIRECT`
+   - `horusmedia.net, HMS-..., DIRECT`
+8. Run Horus ads.txt verification.
+9. If THOTH is enabled, run one provider connection test and one verified-domain website review; confirm it remains advisory.
+10. Perform the human Admin decision.
+11. Confirm approval grants the existing Publisher onboarding path but still creates zero Sites/placements/serving deployments.
 
-- delivery status, fill, impressions, clicks, revenue, and errors;
-- GAM operation ledger and unresolved errors;
-- campaign drift and network-instance status;
-- CDN configuration checksum and cache freshness;
-- scheduler heartbeat and failed jobs;
-- tenant isolation and administrator audit events;
-- advertiser report and invoice balance;
-- publisher statement and payment readiness.
+Stop on cross-tenant access, fake/temporary seller IDs, failed ads.txt ownership evidence, or any automatic serving activation during approval.
 
-## Stop conditions
+## Profile B — GAM-backed Publisher pilot
 
-Pause the site or campaign if any of these occurs:
+Use only after Profile A/common gates or an already approved Publisher satisfy equivalent evidence.
 
-- public configuration contains a secret or wrong network;
-- a tenant can access another tenant's data;
-- GAM objects duplicate or drift unexpectedly;
-- a browser request reaches Laravel's impression path;
-- reporting variance cannot be explained;
-- a creative or provider tag violates approval policy;
-- scheduler, CDN, or rollback behavior is unreliable.
+1. Create/approve one Website and authorized domain.
+2. Confirm HMP/HMS supply-chain state and live public artifacts.
+3. Select one real eligible GAM connection and verify network permissions.
+4. Create one placement; dry-run/sync required GAM inventory before writes.
+5. Publish the production static configuration and install the permanent Loader.
+6. Verify browser-direct GPT/GAM requests and no Laravel impression proxy.
+7. Enable Prebid `GAM_BRIDGE` only if required for this pilot; verify bidder IDs/consent/mappings.
+8. Enable Direct JS only on a separately owned placement if required.
+9. Run live privacy evidence appropriate to the traffic geography and active engines.
+10. Import real aggregated reporting, reconcile to the provider/GAM source, and verify financial finality.
+11. Prove site pause/static rollback.
+12. Obtain Operations and Finance sign-off.
 
-Use the emergency site pause, preserve logs and operation IDs, and open an
-incident record before attempting a repair.
+Prebid or Direct JS are optional; unused engines do not become blockers.
 
-## Exit criteria
+## Profile C — GAM-less `HORUS_DIRECT` Publisher pilot
 
-End the pilot only after:
+1. Set the Website to `HORUS_DIRECT`; do not configure a fake GAM connection or network code.
+2. Choose the smallest real engine profile:
+   - standalone Prebid only;
+   - Direct JS only;
+   - standalone Prebid + Direct JS on different placements.
+3. Configure only real reviewed provider/bidder identifiers.
+4. Publish static configuration and install the same permanent Loader.
+5. Verify pure GAM-less pages generate **zero GPT/GAM requests**.
+6. Confirm each physical DOM surface has one owner and no GAM/standalone/direct double render.
+7. Verify privacy controls and the explicit live privacy probe.
+8. Verify live ads.txt/sellers.json/SChain requirements for the demand actually used.
+9. Import source-aware aggregated reporting and reconcile realized revenue; Prebid bid estimates are not payout evidence.
+10. Prove engine kill switches, site pause, and static rollback.
+11. Obtain Operations and Finance sign-off.
 
-- seven consecutive days of stable delivery;
-- no unresolved high-severity security or isolation findings;
-- reports reconcile within the agreed tolerance;
-- invoices and publisher statements are reproducible;
-- backup and restore evidence is current;
-- publisher and advertiser owners sign off;
-- the next release has a documented rollback path.
+Stop immediately on unexpected GPT, a renderer collision, an unreviewed third-party script, secret exposure, or unreconciled revenue.
 
-The exit decision belongs to Horus Media operations and finance, not to the
-automated deployment job.
+## Profile D — Direct Advertiser Campaign pilot
 
-## GAM-less and regression pilot profiles (Task 20)
+Do **not** start this profile while its Task-42 decision is NOT READY. It may begin only after a real production GAM campaign backend has been externally verified.
 
-Use the smallest profile that proves the intended deployment; do not configure a
-fake GAM connection. All IDs below are deployment-time provider values and must
-never be copied from tests.
+When that blocker is cleared:
 
-- **PILOT A — Standalone Prebid only:** `HORUS_DIRECT`, GAM absent, one approved
-  banner placement owned by `PREBID_STANDALONE`. Verify no GPT request.
-- **PILOT B — Direct JS only:** `HORUS_DIRECT`, Prebid absent, one approved Direct
-  placement. Verify only approved provider scripts load.
-- **PILOT C — Standalone Prebid + Direct JS:** independent placements on one page.
-  Verify parallel startup and no global yield competition.
-- **PILOT D — GAM + Prebid GAM_BRIDGE:** regression profile for the established
-  GAM path. Verify GPT, targeting, GAM refresh and setup mappings.
-- **PILOT E — GAM + GAM_BRIDGE + Direct JS:** bridge placement remains GAM-owned
-  while Direct JS owns a separate non-GAM-managed placement.
+1. Intentionally review and record `advertiser_campaigns.enabled`.
+2. Create one small capped advertiser campaign and keep the initial state Draft.
+3. Confirm customer-facing readiness is safe and Admin-facing capability identifies the exact selected GAM backend/blockers.
+4. Verify all selected campaign sites resolve to eligible production GAM connections and valid planner mappings.
+5. Preview/dry-run the plan, then authorize one controlled external deployment.
+6. Verify repeated deployment/retry is idempotent.
+7. Verify loss of capability blocks submit/approve/schedule/resume/deploy before new external writes.
+8. Verify emergency pause still works for an already deployed campaign without deleting remote history or rewriting finance.
+9. Reconcile advertiser reporting/invoice and Publisher revenue for the pilot interval.
+10. Prove rollback and obtain Ad Ops/Finance sign-off.
 
-For OneTag, use the provider-issued `pubId` through the normal Prebid account
-workflow. For ExoClick, import the exact asynchronous tag and review the public
-zone/container values. For Adsterra, obtain and review the actual operator tag;
-do not infer a script host or zone.
+Never substitute standalone Prebid or Direct JS as a fake advertiser campaign backend.
 
-Stop immediately on secret exposure, cross-tenant access, same-container double
-render, consent/Click Guard bypass, unexpected GPT in a GAM-less profile, or an
-uncontrolled top-window third-party script.
+## Daily review for an active monetization pilot
 
+- serving/engine state and static manifest checksum;
+- impressions, clicks, realized revenue, and errors by real reporting source;
+- scheduler/static-delivery health and unresolved jobs;
+- supply-chain/public artifact drift;
+- privacy evidence freshness;
+- tenant-isolation/security events;
+- reconciliation and payout-readiness blockers;
+- rollback readiness.
+
+## Universal stop conditions
+
+Stop the affected profile on credential exposure, cross-tenant access, wrong public seller identity, unexpected GAM traffic in a pure GAM-less profile, renderer collision, uncontrolled provider tag, unexplained reporting variance, failed safety pause, or failed rollback. Preserve immutable audit/operation evidence and open a scoped incident/remediation item.
+
+The pilot is production evidence collection, not proof that every Horus profile is live.

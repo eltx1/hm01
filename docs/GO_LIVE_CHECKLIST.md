@@ -1,126 +1,120 @@
 # Horus Media Go-Live Checklist
 
-This checklist separates repository evidence from external production evidence.
-A checked code item does not mean that the live service has been configured.
+This checklist is profile-aware. A repository check does not substitute for live production evidence. The authoritative current verdict is `FINAL_LAUNCH_READINESS.md`.
 
-## Gate 0 — Release evidence
+## Common Gate 1 — Release
 
-- [x] Main branch contains the Laravel control plane and documented serving boundary.
-- [x] PHP 8.2, 8.3, and 8.4 test matrix passed in the latest release validation.
-- [x] MySQL integration tests passed.
-- [x] Horus Loader browser suite passed.
-- [x] Production Composer install, frontend build, release ZIP, and secret scan passed.
-- [ ] A named release owner has recorded the production commit SHA and artifact checksum.
-- [ ] A rollback release and database backup have been identified.
+- [x] PHP 8.2 / 8.3 / 8.4 repository test matrix exists.
+- [x] MySQL 8 fresh migration + full suite exists.
+- [x] MySQL latest migration rollback/reapply is part of Task 42 CI.
+- [x] SQLite fresh + latest rollback/reapply is validated by production release workflow.
+- [x] Loader browser tests, npm audit, Vite/Prebid/Loader production build are release gates.
+- [x] Production Composer install, static analysis, release validation, secret guards, and archive build are release gates.
+- [x] Static Edge deterministic snapshot workflow exists.
+- [ ] Record the exact production release SHA, artifact checksum, artifact ID, and release owner.
 
-Evidence: release commit, workflow run, artifact ID, ZIP checksum, owner.
+## Common Gate 2 — Infrastructure
 
-## Gate 1 — Infrastructure
+- [ ] `app.horusmedia.net` DNS/routing reaches the Laravel production public root.
+- [ ] `cdn.horusmedia.net` is the intended Cloudflare Pages custom domain.
+- [ ] TLS is valid on all production origins.
+- [ ] Production MySQL and least-privilege credentials are configured.
+- [ ] Production `APP_KEY` is stable and private.
+- [ ] `APP_DEBUG=false` is externally verified.
+- [ ] SMTP delivery is verified.
+- [ ] Scheduler heartbeat is verified.
+- [ ] Production database cache lock is verified.
+- [ ] GitHub/Cloudflare deployment credentials are exercised by one controlled production deployment without exposing values.
 
-- [ ] app.horusmedia.net points to the Laravel public/ directory.
-- [ ] cdn.horusmedia.net is verified as the Cloudflare Pages custom domain and does not point to Hostinger.
-- [ ] TLS is valid on all production domains.
-- [ ] MySQL production database and least-privilege user exist.
-- [ ] .env is private, APP_DEBUG=false, and APP_KEY is stable.
-- [ ] storage/ and bootstrap/cache/ are writable; no Hostinger CDN document root is required.
-- [ ] SMTP delivery works for invitations, password reset, and operational alerts.
-- [ ] The once-per-minute scheduler is installed and healthy.
-- [ ] Static delivery uses 30-minute UTC normal boundaries and the production database cache lock store is healthy.
-- [ ] CDN cache and CORS headers match CLOUDFLARE_SETUP.md.
-- [ ] GitHub Pages workflow has least-privilege Cloudflare Secrets and the control plane uses a private token reference.
+## Common Gate 3 — Security / recovery
 
-Evidence: URLs, screenshots or command output, hosting configuration, and
-scheduler heartbeat.
+- [ ] First Admin bootstrap and TOTP are verified.
+- [ ] Security headers are checked on the live origin.
+- [ ] No credential file is in a public document root.
+- [ ] Database backup is current.
+- [ ] Private storage is in backup scope.
+- [ ] An isolated restore drill succeeded.
+- [ ] Rollback owner, incident owner, and escalation path are named.
+- [ ] Live tenant-isolation smoke checks pass.
 
-## Gate 2 — Security and recovery
+## Profile A — Public Publisher Application
 
-- [ ] First administrator uses the protected bootstrap command and completes TOTP.
-- [ ] No credential file is under a public document root.
-- [ ] GAM and provider references use encrypted env: or file: references.
-- [ ] Authentication, export, loader configuration, and administrative write rate limits are enabled or consciously accepted.
-- [ ] Security headers, CSP, HSTS, clickjacking, and MIME-sniffing policy are verified.
-- [ ] MySQL backup completed before migration.
-- [ ] A restore drill succeeded on an isolated database.
-- [ ] Contract files and private storage are included in backup scope.
-- [ ] Retention, access review, incident owner, and escalation path are documented.
-- [ ] If public Publisher registration is enabled, SMTP verification, public
-      registration/submission throttles, applicant-only authorization, duplicate
-      domain handling, Admin review permissions, and decision notifications are
-      verified in production.
-- [ ] A public application approval test proves that Publisher access begins only
-      after Admin approval and that zero Sites, static publications, or serving
-      activations are created by the approval transaction.
+**Repository decision:** READY WITH EXTERNAL EVIDENCE.
 
-Evidence: security-header scan, backup ID, restore timestamp, and access-review record.
+- [x] Public registration route and application-only identity model are implemented.
+- [x] Email verification and applicant-only authorization are enforced.
+- [x] Legal evidence is versioned.
+- [x] HMP and HMS are reserved before approval without creating a Site.
+- [x] Application verification requires both real Horus DIRECT ads.txt records.
+- [x] Verified website evidence can feed THOTH without exposing HMP/HMS to the model.
+- [x] THOTH remains advisory; human Admin decision is authoritative.
+- [x] Approval does not create Site, placement, serving config, static deployment, or monetization activation.
+- [ ] Production SMTP proves verification/decision delivery.
+- [ ] If Turnstile is enabled, production hostname + Siteverify pass.
+- [ ] One real application publishes and verifies both HMP/HMS ads.txt records.
+- [ ] Root `horusmedia.net/sellers.json` live origin is validated.
+- [ ] If THOTH is enabled, one real provider credential/model connection test passes.
 
-## Gate 3 — Ad delivery
+## Profile B — GAM-backed Publisher monetization
 
-- [ ] HORUS_GAM is connected, enabled, and passes a dry-run health check.
-- [ ] Network permissions and root ad unit configuration are validated.
-- [ ] A test website has an authorized domain and one test placement.
-- [ ] Its production batch is confirmed DEPLOYED with manifest hash, workflow run, and Pages evidence.
-- [ ] Operations → Static Delivery shows budget/reserve, last remote evidence, snapshot limits, and the next normal boundary.
-- [ ] Deploy Now with an empty queue is verified as an audited no-op, while an emergency pause is verified as immediate URGENT work.
-- [ ] The permanent loader works on the authorized hostname.
-- [ ] GPT requests reach the selected GAM network directly from the browser.
-- [ ] House-ad testing proves slot rendering and empty-slot behavior.
-- [ ] Pause and rollback are tested using a non-critical site.
-- [ ] Browser Network evidence shows zero requests to app.horusmedia.net across load, refresh, and SPA navigation.
-- [ ] Prebid is enabled only after bidder consent, IDs, timeout, and GAM setup are reviewed.
-- [ ] Privacy Readiness shows CONFIGURED separately from current LIVE_VERIFIED evidence.
-- [ ] Required TCF/GPP APIs respond on the authorized production hostname and the active Prebid build/config contains the required privacy modules and controls.
-- [ ] Where the runtime policy explicitly requires Google CMP evidence, an Admin has recorded current operator verification; a CMP ID alone is not accepted as proof.
-- [ ] Native fallback is tested for script failure, timeout, and no-render cases.
+**Repository decision:** READY WITH EXTERNAL EVIDENCE.
 
-Evidence: site key, config checksum, browser/network captures, GAM test report,
-and rollback result.
+- [x] Approved/onboarded Publisher and Site lifecycle are implemented.
+- [x] Supply-chain HMP/HMS, ads.txt, sellers.json, and SChain contracts are tested.
+- [x] `HORUS_GAM` remains the established GAM path.
+- [x] Prebid `GAM_BRIDGE` is optional and independently controlled.
+- [x] Direct JS is optional and independently controlled.
+- [x] Edge kill switches and static rollback are tested.
+- [ ] Real selected GAM connection/network/permissions are eligible.
+- [ ] Real Publisher domain authorization and live `/ads.txt` pass.
+- [ ] Live root sellers.json and site SChain are cross-consistent.
+- [ ] Permanent Loader runs on the real Publisher hostname.
+- [ ] Browser network evidence shows direct GPT/GAM traffic and no ad traffic proxy through Laravel.
+- [ ] Privacy/CMP live evidence is current where applicable.
+- [ ] Real reporting import, reconciliation, rollback drill, and Finance sign-off pass.
 
-## Gate 4 — Commercial pilot
+Prebid and Direct JS are **not** mandatory when unused.
 
-- [ ] One publisher contract and revenue-share rule are approved.
-- [ ] One advertiser billing profile and test invoice are approved.
-- [ ] A small campaign is approved with explicit dates, budget, targeting, and creative.
-- [ ] Campaign deployment is previewed, confirmed, and reconciled per network.
-- [ ] Aggregated delivery reporting matches the source network for the pilot period.
-- [ ] Advertiser report and invoice balance are reviewed.
-- [ ] Publisher statement and payment readiness are reviewed.
-- [ ] Finance owner signs off before any real payment is executed.
+## Profile C — GAM-less `HORUS_DIRECT` Publisher monetization
 
-Evidence: signed pilot record, campaign ID, report comparison, invoice, statement,
-and finance approval.
+**Repository decision:** READY WITH EXTERNAL EVIDENCE.
 
-## Task 41 — Direct Advertiser Campaign delivery pilot gate
+- [x] `HORUS_DIRECT` requires no GAM connection or fake network code.
+- [x] Standalone Prebid can operate without GAM.
+- [x] Direct JS can operate without GAM or a Prebid auction.
+- [x] One physical slot has one rendering owner at a time.
+- [x] Pure GAM-less browser profiles are tested for zero GPT/GAM requests.
+- [x] GAM/PREBID/DIRECT_JS global controls are independent under AD_SERVING master control.
+- [ ] Real Publisher domain and permanent Loader deployment are verified.
+- [ ] Real bidder/provider IDs and reviewed provider tags are configured only for engines used.
+- [ ] Live ads.txt/sellers.json/SChain requirements are satisfied.
+- [ ] Live privacy probe passes.
+- [ ] Source-aware reporting import/reconciliation passes.
+- [ ] Static CDN rollback and Operations/Finance sign-off pass.
 
-Publisher GAM-less readiness is not sufficient evidence for advertiser campaign delivery. Before enabling new customer-facing Direct Advertiser Campaign delivery in a production pilot:
+**Do not add GAM as a Profile-C gate.**
 
-- [ ] `advertiser_campaigns.enabled` is intentionally reviewed by an authorized Horus Admin; deployment of Task 41 itself is not treated as product-owner approval.
-- [ ] The pilot campaign reports `AVAILABLE` from the campaign delivery capability service.
-- [ ] Every selected campaign site resolves to the intended eligible GAM-backed delivery connection; an unrelated GAM connection elsewhere in the database is not accepted.
-- [ ] Selected GAM connections are enabled, usable by the configured connector and not in a failed/disabled health state.
-- [ ] Platform/site/connection `GAM` and `AD_SERVING` operational controls permit new delivery.
-- [ ] `CampaignNetworkPlanner` can represent the selected inventory and required ad-unit/country/device mappings without blockers.
-- [ ] Advertiser UI shows only customer-safe delivery readiness; Admin UI shows the exact GAM-backed capability and blockers.
-- [ ] A forced unavailable-backend test proves submit/approve/schedule/resume/deploy fail closed before external GAM writes.
-- [ ] A deployed-campaign recovery test proves remote pause remains possible where the connector is usable and does not delete remote objects or rewrite historical finance.
-- [ ] Action Center warning deduplication is verified for an Approved/Scheduled/Active campaign whose delivery backend becomes unavailable.
-- [ ] `HORUS_DIRECT`, standalone Prebid and Direct JS Publisher monetization remain independently verified and are not presented as advertiser campaign delivery backends.
+## Profile D — Direct Advertiser Campaign delivery
 
-Evidence: campaign ID, capability projection, selected connection/network, planner preview, operational controls, blocked-transition test, safe-pause result, notification evidence and CI run.
+**Repository decision:** NOT READY until a production GAM campaign backend is externally verified.
 
-## Go / No-Go
+- [x] Current campaign delivery truth is GAM-backed.
+- [x] `HORUS_DIRECT`, standalone Prebid, and Direct JS are not represented as advertiser campaign backends.
+- [x] `advertiser_campaigns.enabled` is a high-impact runtime control.
+- [x] Drafts may exist without capability.
+- [x] Submit/approve/schedule/activate/resume/deploy fail closed without `AVAILABLE` capability.
+- [x] Deployment repeats capability validation before external GAM writes.
+- [x] Pause/complete remain safe lifecycle actions.
+- [ ] Product owner intentionally records the production feature-flag state.
+- [ ] A real selected GAM campaign network/connection is eligible and healthy.
+- [ ] Planner/inventory mappings are verified against production IDs.
+- [ ] Controlled preview/dry-run then external GAM campaign deployment succeeds idempotently.
+- [ ] Retry and emergency remote pause are proven.
+- [ ] Advertiser reporting/invoice and Publisher-side revenue reconciliation pass.
+- [ ] Rollback plus Ad Ops/Finance sign-off pass.
 
-Go only when Gates 0–3 are complete and Gate 4 has an owner and a rollback plan.
-Start with one publisher and one controlled campaign. Stop immediately on
-credential exposure, cross-tenant access, incorrect public configuration,
-unreconciled GAM writes, unexplained reporting variance, or failed rollback.
+**Do not claim no-GAM advertiser campaign serving. No such backend exists in current architecture.**
 
-## Task 20 GAM-less pilot gate
+## Final go/no-go rule
 
-Before enabling a GAM-less site, require: production static config checksum;
-`HORUS_DIRECT`; at least one healthy standalone-Prebid or Direct-JS placement;
-zero renderer conflicts; privacy and Click Guard gates verified; no GPT request
-for pure no-GAM profiles; provider account/site/placement approvals; canonical
-ads.txt where required; source-aware aggregated reporting configured; rollback
-validated; and Operations sign-off. The production-release workflow now executes
-migration fresh, rollback of the latest migration, and reapply before the full
-PHP suite and release archive validation.
+A profile may be enabled only when its Common gates and its own external evidence are complete. A green repository does not make another profile ready and does not mean Horus is already live. Record production evidence in the matrix in `FINAL_LAUNCH_READINESS.md` using `VERIFIED`, `NOT_VERIFIED`, `NOT_APPLICABLE`, or `FAILED`.
