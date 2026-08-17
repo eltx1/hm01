@@ -22,6 +22,9 @@ on:
 permissions:
   contents: read
 
+env:
+  COMPOSER_MAX_PARALLEL_HTTP: 2
+
 concurrency:
   group: cloudflare-pages-production
   cancel-in-progress: false
@@ -41,7 +44,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: composer install --prefer-source --no-interaction --no-progress
       - run: npm ci && npm run build
       - name: Build deterministic static snapshot
         env:
