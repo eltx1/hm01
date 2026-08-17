@@ -7,7 +7,7 @@ use App\Http\Controllers\Account\SessionController;
 use App\Http\Controllers\Account\TwoFactorController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware('auth')->prefix('account')->name('account.')->group(function (): void {
+Route::middleware(['auth', 'admin.2fa'])->prefix('account')->name('account.')->group(function (): void {
     Route::get('/', AccountController::class)->name('index');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
