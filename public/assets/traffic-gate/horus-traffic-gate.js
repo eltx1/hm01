@@ -34,6 +34,7 @@
     });
 
     let state = STATES.booting;
+    let handshakeLocked = false;
     let boundParent = null;
     let widgetId = null;
     let challengeTimer = null;
@@ -65,7 +66,7 @@
     function parsedHttpsOrigin(origin) {
         try {
             const url = new URL(origin);
-            if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password) {
+            if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password || url.port !== '') {
                 return null;
             }
 
@@ -323,7 +324,7 @@
     }
 
     async function onParentMessage(event) {
-        if (state !== STATES.booting || event.source !== window.parent) {
+        if (handshakeLocked || state !== STATES.booting || event.source !== window.parent) {
             return;
         }
 
@@ -339,6 +340,7 @@
             return;
         }
 
+        handshakeLocked = true;
         boundParent = {
             source: event.source,
             origin: event.origin,
