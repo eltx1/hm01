@@ -29,7 +29,7 @@ $required = [
 ];
 foreach ($required as $path) {
     if (! is_file($root.DIRECTORY_SEPARATOR.$path)) {
-        fwrite(STDERR, "Missing static delivery file: {$path}\n");
+        fwrite(STDERR, "Missing static delivery file: {$path}.\n");
         exit(1);
     }
 }
@@ -117,6 +117,31 @@ foreach (['HORUS_TRAFFIC_GATE_HELLO', 'HORUS_TRAFFIC_GATE_READY', 'HORUS_TRAFFIC
         fwrite(STDERR, "Traffic Gate protocol message missing: {$messageType}.\n");
         exit(1);
     }
+}
+
+$loader = $files['hm-loader.js'];
+foreach ([
+    'HORUS_TRAFFIC_GATE_HELLO',
+    'HORUS_TRAFFIC_GATE_PASS',
+    'HORUS_TRAFFIC_GATE_DENIED',
+    'WAITING_FOR_ACTIVITY',
+    'SOFT_ALLOWED',
+    'trafficGateDisabled',
+    'verify.horusmedia.net',
+    'getRandomValues',
+] as $loaderContract) {
+    if (! str_contains($loader, $loaderContract)) {
+        fwrite(STDERR, "Compiled Loader Traffic Gate contract missing: {$loaderContract}.\n");
+        exit(1);
+    }
+}
+if (preg_match('/postMessage\s*\([^,]+,\s*[\'\"]\*[\'\"]\s*\)/', $loader)) {
+    fwrite(STDERR, "Compiled Loader must not use wildcard postMessage for Traffic Gate communication.\n");
+    exit(1);
+}
+if (str_contains(strtolower($loader), 'turnstile/v0/siteverify')) {
+    fwrite(STDERR, "Compiled Loader must not contain Turnstile Siteverify.\n");
+    exit(1);
 }
 
 $headers = $files['_headers'];
