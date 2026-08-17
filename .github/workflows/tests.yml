@@ -85,7 +85,10 @@ jobs:
           php-version: '8.2'
           extensions: mbstring, pdo_mysql, openssl, soap
           coverage: none
-      - run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Copy environment file
+        run: cp .env.example .env
       - name: Run MySQL migrations and tests
         env:
           APP_ENV: testing
@@ -97,6 +100,7 @@ jobs:
           DB_USERNAME: horus
           DB_PASSWORD: horus_test_password
         run: |
+          php scripts/assert-database-connection.php mysql
           php artisan migrate:fresh --seed --force
           php artisan migrate:rollback --step=1 --force
           php artisan migrate --force
