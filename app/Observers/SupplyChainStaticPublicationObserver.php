@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\Enums\PublisherApplicationStatus;
 use App\Enums\SiteManagementRole;
 use App\Models\BidderAdsTxtRecord;
 use App\Models\BidderSiteMapping;
@@ -9,6 +10,8 @@ use App\Models\DemandAdsTxtRecord;
 use App\Models\DemandSite;
 use App\Models\PlatformAdsTxtRecord;
 use App\Models\Publisher;
+use App\Models\PublisherApplication;
+use App\Models\PublisherApplicationDomainClaim;
 use App\Models\SellerDeclaration;
 use App\Models\Site;
 use App\Models\SiteDomain;
@@ -31,7 +34,7 @@ final class SupplyChainStaticPublicationObserver
 
     public function updated(Model $model): void
     {
-        if (! $this->touchesSupplyChain($model)) {
+        if (! $this->updateChangesPublicArtifacts($model)) {
             return;
         }
 
@@ -83,6 +86,18 @@ final class SupplyChainStaticPublicationObserver
         };
     }
 
+    private function updateChangesPublicArtifacts(Model $model): bool
+    {
+        if ($model instanceof PublisherApplicationDomainClaim) {
+            return $this->claimPublicationEligibilityChanged($model);
+        }
+        if ($model instanceof PublisherApplication) {
+            return $this->applicationAuthorizationWasRevoked($model);
+        }
+
+        return $this->touchesSupplyChain($model);
+    }
+
     private function touchesSupplyChain(Model $model): bool
     {
         $fields = match (true) {
@@ -104,6 +119,12 @@ final class SupplyChainStaticPublicationObserver
 
     private function isSafetyRevocation(Model $model): bool
     {
+        if ($model instanceof PublisherApplicationDomainClaim) {
+            return $this->claimWasPublishable($model) && ! $this->claimIsPublishable($model);
+        }
+        if ($model instanceof PublisherApplication) {
+            return $this->applicationAuthorizationWasRevoked($model);
+        }
         if ($model instanceof SellerDeclaration) {
             return $this->transitionedFromActiveToDisabled($model, 'status');
         }
@@ -115,6 +136,39 @@ final class SupplyChainStaticPublicationObserver
         }
 
         return false;
+    }
+
+    private function claimPublicationEligibilityChanged(PublisherApplicationDomainClaim $claim): bool
+    {
+        return $this->claimWasPublishable($claim) !== $this->claimIsPublishable($claim);
+    }
+
+    private function claimWasPublishable(PublisherApplicationDomainClaim $claim): bool
+    {
+        return strtoupper((string) $claim->getRawOriginal('claim_status')) === 'CLAIMED'
+            && strtoupper((string) $claim->getRawOriginal('verification_status')) === 'VERIFIED';
+    }
+
+    private function claimIsPublishable(PublisherApplicationDomainClaim $claim): bool
+    {
+        return $this->enumValue($claim->claim_status) === 'CLAIMED'
+            && $this->enumValue($claim->verification_status) === 'VERIFIED';
+    }
+
+    private function applicationAuthorizationWasRevoked(PublisherApplication $application): bool
+    {
+        if (! $application->wasChanged('status')) {
+            return false;
+        }
+
+        $terminal = [PublisherApplicationStatus::Rejected->value, PublisherApplicationStatus::Withdrawn->value];
+        $before = strtoupper((string) $application->getRawOriginal('status'));
+        $after = $this->enumValue($application->status);
+        if (in_array($before, $terminal, true) || ! in_array($after, $terminal, true)) {
+            return false;
+        }
+
+        return $application->domainClaims()->where('verification_status', 'VERIFIED')->exists();
     }
 
     private function transitionedFromActiveToDisabled(Model $model, string $field): bool
