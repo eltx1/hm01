@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Account;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Identity\SessionInvalidator;
 use App\Services\Identity\TwoFactorService;
@@ -127,7 +128,7 @@ final class TwoFactorController extends Controller
     }
 
     private function assertConfirmedFactor(
-        object $user,
+        User $user,
         string $password,
         string $code,
         TwoFactorService $twoFactor,
