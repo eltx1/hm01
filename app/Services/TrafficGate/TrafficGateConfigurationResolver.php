@@ -31,7 +31,7 @@ final class TrafficGateConfigurationResolver
         $policy = $sitePolicy === TrafficGateSitePolicy::Inherit
             ? TrafficGatePolicy::from((string) $this->settings->get('traffic_gate.policy'))
             : TrafficGatePolicy::from($sitePolicy->value);
-        $origin = trim((string) $this->settings->get('traffic_gate.gate_origin'));
+        $origin = trim((string) config('traffic_gate.origin'));
         $siteKey = trim((string) ($this->settings->get('traffic_gate.site_key') ?? '')) ?: null;
         $initial = (int) $this->settings->get('traffic_gate.initial_wait_ms');
         $maximum = (int) $this->settings->get('traffic_gate.max_wait_ms');
