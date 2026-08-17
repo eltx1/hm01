@@ -157,7 +157,7 @@ class AdvertiserCampaignCapabilityGuardrailTest extends TestCase
         } catch (ValidationException $exception) {
             $this->assertArrayHasKey('delivery_capability', $exception->errors());
         }
-        $this->assertSame(CampaignStatus::Submitted, $submitted->fresh()->status);
+        $this->assertSame(CampaignStatus::PendingReview, $submitted->fresh()->status);
         $this->assertDatabaseMissing('advertiser_invoices', ['campaign_id' => $submitted->id]);
 
         $scheduling = $this->fixture();
@@ -257,7 +257,7 @@ class AdvertiserCampaignCapabilityGuardrailTest extends TestCase
         $fx = $this->fixture();
         $this->seed(SettingsAccessSeeder::class);
         $definition = app(TypedSettingsRegistry::class)->get('advertiser_campaigns.enabled');
-        $this->assertSame('bool', $definition->type);
+        $this->assertSame('boolean', $definition->type);
         $this->assertTrue($definition->runtimeEditable);
         $this->assertTrue($definition->highImpact);
 
