@@ -4,6 +4,7 @@ namespace App\Services\TrafficGate;
 
 use App\Enums\TrafficGatePolicy;
 use App\Enums\TrafficGateReadiness;
+use App\Enums\TrafficGateSitePolicy;
 use App\Enums\TrafficGateSiteState;
 use App\Models\Site;
 use App\Services\Operations\PlatformControlService;
@@ -20,17 +21,16 @@ final class TrafficGateConfigurationResolver
     {
         $site->loadMissing('servingSettings');
         $siteState = $site->servingSettings?->traffic_gate_state ?? TrafficGateSiteState::Inherit;
-        $sitePolicy = $site->servingSettings?->traffic_gate_policy;
-        $globalEnabled = (bool) $this->settings->get('traffic_gate.enabled');
+        $sitePolicy = $site->servingSettings?->traffic_gate_policy ?? TrafficGateSitePolicy::Inherit;
         $requestedEnabled = match ($siteState) {
             TrafficGateSiteState::Enabled => true,
             TrafficGateSiteState::Disabled => false,
-            default => $globalEnabled,
+            default => (bool) $this->settings->get('traffic_gate.enabled'),
         };
         $emergencyDisabled = $this->controls->disabled('PLATFORM', null, 'TRAFFIC_GATE');
-        $policy = $sitePolicy instanceof TrafficGatePolicy
-            ? $sitePolicy
-            : TrafficGatePolicy::from((string) $this->settings->get('traffic_gate.policy'));
+        $policy = $sitePolicy === TrafficGateSitePolicy::Inherit
+            ? TrafficGatePolicy::from((string) $this->settings->get('traffic_gate.policy'))
+            : TrafficGatePolicy::from($sitePolicy->value);
         $origin = trim((string) $this->settings->get('traffic_gate.gate_origin'));
         $siteKey = trim((string) ($this->settings->get('traffic_gate.site_key') ?? '')) ?: null;
         $initial = (int) $this->settings->get('traffic_gate.initial_wait_ms');
