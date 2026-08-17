@@ -24,6 +24,8 @@ $required = [
     'configs/_global/control.json',
     'sellers.json',
     'supply/sellers.json',
+    'traffic-gate/index.html',
+    'assets/traffic-gate/horus-traffic-gate.js',
 ];
 foreach ($required as $path) {
     if (! is_file($root.DIRECTORY_SEPARATOR.$path)) {
@@ -89,6 +91,34 @@ foreach ($files as $path => $contents) {
     }
 }
 
+$gateHtml = $files['traffic-gate/index.html'];
+$gateJs = $files['assets/traffic-gate/horus-traffic-gate.js'];
+$gateCombined = strtolower($gateHtml."\n".$gateJs);
+foreach (['siteverify', 'turnstile/v0/siteverify', 'cloudflare_api_token', 'worker secret', 'turnstile secret'] as $forbiddenGateValue) {
+    if (str_contains($gateCombined, $forbiddenGateValue)) {
+        fwrite(STDERR, "Forbidden backend/secret concept in Traffic Gate static implementation: {$forbiddenGateValue}.\n");
+        exit(1);
+    }
+}
+if (! str_contains($gateJs, 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit')) {
+    fwrite(STDERR, "Traffic Gate must load the official explicit-render Turnstile script directly from Cloudflare.\n");
+    exit(1);
+}
+if (preg_match('/postMessage\s*\([^,]+,\s*[\'\"]\*[\'\"]\s*\)/', $gateJs)) {
+    fwrite(STDERR, "Traffic Gate must not use wildcard postMessage for parent communication.\n");
+    exit(1);
+}
+if (! str_contains($gateJs, "'response-field': false")) {
+    fwrite(STDERR, "Traffic Gate must disable Turnstile response-field token storage.\n");
+    exit(1);
+}
+foreach (['HORUS_TRAFFIC_GATE_HELLO', 'HORUS_TRAFFIC_GATE_READY', 'HORUS_TRAFFIC_GATE_PASS', 'HORUS_TRAFFIC_GATE_ERROR', 'HORUS_TRAFFIC_GATE_TIMEOUT', 'HORUS_TRAFFIC_GATE_DENIED'] as $messageType) {
+    if (! str_contains($gateJs, $messageType)) {
+        fwrite(STDERR, "Traffic Gate protocol message missing: {$messageType}.\n");
+        exit(1);
+    }
+}
+
 $headers = $files['_headers'];
 foreach (['Access-Control-Allow-Origin: *', 'X-Content-Type-Options: nosniff', 'immutable', 'stale-while-revalidate', 'X-Robots-Tag: noindex'] as $header) {
     if (! str_contains($headers, $header)) {
@@ -101,6 +131,16 @@ foreach (['/sellers.json', '/supply/sellers.json', 'Content-Type: application/js
         fwrite(STDERR, "sellers.json _headers policy missing: {$header}.\n");
         exit(1);
     }
+}
+foreach (['/traffic-gate/*', "script-src 'self' https://challenges.cloudflare.com", 'frame-src https://challenges.cloudflare.com', 'frame-ancestors https:', '/assets/traffic-gate/*'] as $header) {
+    if (! str_contains($headers, $header)) {
+        fwrite(STDERR, "Traffic Gate _headers policy missing: {$header}.\n");
+        exit(1);
+    }
+}
+if (str_contains($headers, 'X-Frame-Options: DENY') || str_contains($headers, 'X-Frame-Options: SAMEORIGIN')) {
+    fwrite(STDERR, "Traffic Gate cannot be served with a frame-blocking X-Frame-Options policy.\n");
+    exit(1);
 }
 
 fwrite(STDOUT, "Validated ".count($files)." static files; manifest {$manifest['manifestHash']}.\n");

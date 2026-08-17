@@ -130,6 +130,8 @@ final class StaticDeliverySnapshotBuilder
         $loaderHash = hash('sha256', $loader);
         $prebid = $this->readRequired(public_path('assets/prebid/horus-prebid.min.js'));
         $prebidHash = hash('sha256', $prebid);
+        $trafficGateHtml = $this->readRequired(public_path('traffic-gate/index.html'));
+        $trafficGateJs = $this->readRequired(public_path('assets/traffic-gate/horus-traffic-gate.js'));
 
         return [
             'hm-loader.js' => $loader,
@@ -138,6 +140,8 @@ final class StaticDeliverySnapshotBuilder
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
             'assets/prebid/horus-prebid.sha256' => $prebidHash."\n",
+            'traffic-gate/index.html' => $trafficGateHtml,
+            'assets/traffic-gate/horus-traffic-gate.js' => $trafficGateJs,
             '_headers' => $this->headers(),
             '404.html' => "<!doctype html><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><title>Not found</title>\n",
         ];
@@ -221,6 +225,19 @@ final class StaticDeliverySnapshotBuilder
 /assets/prebid/horus-prebid.min.js
   Cache-Control: public, max-age=300, stale-while-revalidate=86400
   Content-Type: application/javascript; charset=utf-8
+
+/traffic-gate/*
+  Cache-Control: public, max-age=300, must-revalidate
+  Content-Type: text/html; charset=utf-8
+  Content-Security-Policy: default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:
+  X-Content-Type-Options: nosniff
+  X-Robots-Tag: noindex, nofollow
+
+/assets/traffic-gate/*
+  Cache-Control: public, max-age=300, must-revalidate
+  Content-Type: application/javascript; charset=utf-8
+  X-Content-Type-Options: nosniff
+  X-Robots-Tag: noindex
 
 /configs/_global/control.json
   Cache-Control: public, max-age=10, must-revalidate, stale-while-revalidate=30
