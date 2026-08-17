@@ -129,6 +129,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->post('/login', ['email' => $user->email, 'password' => 'Secure-Password-2026!'])->assertRedirect(route('publisher-application.show'));
         $this->get(route('publisher-application.show'))->assertSee('Original independent reporting');
         $this->verifyWebsite($user);
+        $this->acceptCurrentLegal();
 
         $this->post(route('publisher-application.submit'), ['confirm' => 1])->assertSessionHasNoErrors();
         $application = PublisherApplication::withoutGlobalScopes()->firstOrFail();
@@ -341,12 +342,25 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertTrue($verification->verify($application->fresh(), $user)['verified']);
     }
 
+    private function acceptCurrentLegal(): void
+    {
+        $this->put(route('publisher-application.update'), [
+            'step' => 4,
+            'legal' => [
+                'TERMS_OF_SERVICE' => 1,
+                'PRIVACY_POLICY' => 1,
+                'PUBLISHER_TERMS' => 1,
+            ],
+        ])->assertSessionHasNoErrors();
+    }
+
     /** @return array{0: User, 1: PublisherApplication} */
     private function submittedApplication(): array
     {
         $user = $this->readyDraft();
         $this->put(route('publisher-application.update'), $this->applicationPayload())->assertSessionHasNoErrors();
         $this->verifyWebsite($user);
+        $this->acceptCurrentLegal();
         $this->post(route('publisher-application.submit'), ['confirm' => 1])->assertSessionHasNoErrors();
 
         return [$user, PublisherApplication::withoutGlobalScopes()->firstOrFail()];
@@ -405,11 +419,6 @@ class PublicPublisherApplicationTest extends TestCase
             'has_cmp' => 1,
             'prior_policy_incidents' => 0,
             'monetization_history' => 'Previously used direct sponsorships.',
-            'legal' => [
-                'TERMS_OF_SERVICE' => 1,
-                'PRIVACY_POLICY' => 1,
-                'PUBLISHER_TERMS' => 1,
-            ],
             'application_notes' => 'Available for manual verification.',
         ], $overrides);
     }
