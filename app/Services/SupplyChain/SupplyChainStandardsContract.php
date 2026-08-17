@@ -393,6 +393,7 @@ final class SupplyChainStandardsContract
             $claim = $declaration->applicationDomainClaim;
 
             return $claim?->claim_status === 'CLAIMED'
+                && $claim->verification_status === 'VERIFIED'
                 && $claim->application
                 && ! in_array($claim->application->status->value, $terminal, true);
         }
@@ -400,6 +401,7 @@ final class SupplyChainStandardsContract
         return PublisherApplicationDomainClaim::query()
             ->where('publisher_seller_declaration_id', $declaration->id)
             ->where('claim_status', 'CLAIMED')
+            ->where('verification_status', 'VERIFIED')
             ->whereHas('application', fn ($query) => $query->whereNotIn('status', $terminal))
             ->exists();
     }
