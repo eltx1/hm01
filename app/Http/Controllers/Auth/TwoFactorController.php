@@ -165,25 +165,53 @@ class TwoFactorController extends Controller
 
     public function regenerate(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
+        $data = $request->validate([
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string'],
+        ]);
+        $user = $request->user();
+        if (! $user->two_factor_secret
+            || ! $user->two_factor_confirmed_at
+            || ! Hash::check($data['password'], $user->password)) {
+            throw ValidationException::withMessages(['code' => 'Password or authentication code is invalid.']);
+        }
+
+        $factorValid = $twoFactor->verify($user->two_factor_secret, $data['code']);
+        if (! $factorValid) {
+            $factorValid = $twoFactor->consumeRecoveryCode($user, $data['code']);
+        }
+        if (! $factorValid) {
+            throw ValidationException::withMessages(['code' => 'Password or authentication code is invalid.']);
+        }
+
         $codes = $twoFactor->generateRecoveryCodes();
-        $request->user()->forceFill(['two_factor_recovery_codes' => $twoFactor->hashRecoveryCodes($codes)])->save();
-        $audit->record('auth.two_factor.recovery_regenerated', $request->user()->organization_id, $request->user());
+        $user->forceFill(['two_factor_recovery_codes' => $twoFactor->hashRecoveryCodes($codes)])->save();
+        $audit->record('auth.two_factor.recovery_regenerated', $user->organization_id, $user);
 
         return redirect()->route('two-factor.recovery-codes')->with('recovery_codes', $codes);
     }
 
     public function disable(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
-        $data = $request->validate(['password' => ['required'], 'code' => ['required', 'string']]);
         $user = $request->user();
-        if (! Hash::check($data['password'], $user->password) || ! $twoFactor->verify($user->two_factor_secret, $data['code'])) {
+        if ($user->isHorusAdministrator()) {
+            throw ValidationException::withMessages([
+                'two_factor' => 'Two-factor authentication is required for Horus Media staff accounts and cannot be disabled.',
+            ]);
+        }
+
+        $data = $request->validate(['password' => ['required'], 'code' => ['required', 'string']]);
+        if (! $user->two_factor_secret
+            || ! $user->two_factor_confirmed_at
+            || ! Hash::check($data['password'], $user->password)
+            || ! $twoFactor->verify($user->two_factor_secret, $data['code'])) {
             throw ValidationException::withMessages(['code' => 'Password or authentication code is invalid.']);
         }
         $user->forceFill(['two_factor_secret' => null, 'two_factor_recovery_codes' => null, 'two_factor_confirmed_at' => null])->save();
         $request->session()->forget('two_factor_passed_at');
         $audit->record('auth.two_factor.disabled', $user->organization_id, $user);
 
-        return redirect()->route('two-factor.setup');
+        return redirect()->route('account.security')->with('status', 'Two-factor authentication disabled.');
     }
 
     private function safeAdminIntendedDestination(Request $request): string

@@ -25,6 +25,7 @@
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
                 <small>{{ auth()->user()->email }}</small>
+                <a class="text-link" href="{{ route('account.index') }}">Account &amp; Security</a>
                 <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button" type="submit">Sign out</button></form>
             </div>
         </aside>
