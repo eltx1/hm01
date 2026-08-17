@@ -11,11 +11,20 @@ on:
 permissions:
   contents: read
 
+env:
+  # Authenticate Composer to GitHub at runtime so locked dependency fetches are
+  # not subject to the lower anonymous GitHub API limit. The token is ephemeral
+  # and never written to repository files or release artifacts.
+  COMPOSER_AUTH: >-
+    {"github-oauth":{"github.com":"${{ github.token }}"}}
+  COMPOSER_MAX_PARALLEL_HTTP: 2
+
 jobs:
   tests:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
+      max-parallel: 1
       matrix:
         php: [8.2, 8.3, 8.4]
     name: PHP ${{ matrix.php }}
@@ -29,7 +38,7 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
           coverage: none
       - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+        run: bash scripts/install-composer-ci.sh
       - name: Copy environment file
         run: cp .env.example .env
       - name: Generate app key
@@ -86,7 +95,7 @@ jobs:
           extensions: mbstring, pdo_mysql, openssl, soap
           coverage: none
       - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+        run: bash scripts/install-composer-ci.sh
       - name: Copy environment file
         run: cp .env.example .env
       - name: Run MySQL migrations and tests
@@ -121,7 +130,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+      - run: bash scripts/install-composer-ci.sh --no-dev
       - run: npm ci && npm run test:browser && npm run build
       - name: Verify compiled Prebid release files
         run: test -s public/assets/prebid/horus-prebid.min.js && test -s public/assets/prebid/horus-prebid.sha256

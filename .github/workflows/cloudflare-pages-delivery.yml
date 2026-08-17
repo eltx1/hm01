@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+env:
+  COMPOSER_AUTH: >-
+    {"github-oauth":{"github.com":"${{ github.token }}"}}
+  COMPOSER_MAX_PARALLEL_HTTP: 2
+
 concurrency:
   group: cloudflare-pages-production
   cancel-in-progress: false
@@ -41,7 +46,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: bash scripts/install-composer-ci.sh
       - run: npm ci && npm run build
       - name: Build deterministic static snapshot
         env:
