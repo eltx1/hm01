@@ -2,8 +2,6 @@
 
 namespace Tests\Unit;
 
-require_once __DIR__.'/../fixtures/Gam/FakeSoapTypes.php';
-
 use App\Services\Gam\GamSoapPayloadHydrator;
 use App\Services\Gam\GamSoapVersionResolver;
 use Tests\Fixtures\Gam\FakeCreativeService;

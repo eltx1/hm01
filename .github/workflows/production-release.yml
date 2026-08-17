@@ -37,6 +37,11 @@ jobs:
           php scripts/static-analysis.php
           npm run test:browser
           npm run build
+          test -s public/assets/hm-loader.js
+          test -s public/assets/hm-loader.min.js
+          test -s public/assets/prebid/horus-prebid.js
+          test -s public/assets/prebid/horus-prebid.min.js
+          test -s public/assets/prebid/horus-prebid.sha256
           cp .env.example .env
           php artisan key:generate
           touch database/database.sqlite
