@@ -60,6 +60,7 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
       - name: Install production PHP dependencies and validate ZIP
         run: |
+          rm -rf vendor
           bash scripts/install-composer-ci.sh --no-dev
           ./scripts/build-release.sh
           ./scripts/validate-release.sh
