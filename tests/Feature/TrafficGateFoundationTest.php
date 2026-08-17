@@ -269,14 +269,16 @@ class TrafficGateFoundationTest extends TestCase
         [$site, $admin] = $this->fixture(active: true);
         $this->configureReadyGlobal($admin);
 
-        $this->actingAs($admin)->post(route('admin.operations.controls'), [
-            'scope_type' => 'PLATFORM',
-            'scope_id' => null,
-            'control_key' => 'TRAFFIC_GATE',
-            'is_disabled' => '1',
-            'reason' => 'Task 48 production traffic gate incident.',
-            'current_password' => self::PASSWORD,
-        ])->assertRedirect();
+        $this->actingAs($admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.operations.controls'), [
+                'scope_type' => 'PLATFORM',
+                'scope_id' => null,
+                'control_key' => 'TRAFFIC_GATE',
+                'is_disabled' => '1',
+                'reason' => 'Task 48 production traffic gate incident.',
+                'current_password' => self::PASSWORD,
+            ])->assertRedirect();
 
         $urgent = StaticDeliveryItem::withoutGlobalScopes()
             ->where('site_id', $site->id)
