@@ -9,8 +9,8 @@ Cloudflare directly.
 
 | Mode | Eligibility | Budget | Intended use |
 | --- | --- | --- | --- |
-| `NORMAL` | Next deterministic UTC boundary (`HH:00` or `HH:30` by default) | Normal capacity only | Routine configuration and monetization changes |
-| `URGENT` | Immediate | Total capacity, including emergency reserve when required | Existing safety events such as emergency pause and platform engine kill switches |
+| `NORMAL` | Next deterministic UTC boundary (`HH:00` or `HH:30` by default) | Normal capacity only | Routine configuration and monetization changes, including Client Traffic Gate settings and Site overrides |
+| `URGENT` | Immediate | Total capacity, including emergency reserve when required | Existing safety events such as emergency pause, platform engine kill switches, and a platform Client Traffic Gate emergency disable |
 | Deploy Now | Immediately accelerates currently pending `NORMAL` items | Still normal capacity only | Intentional Admin testing or an operational need to publish before the boundary |
 | No changes | No batch and no remote action | No consumption | Scheduler wake-up or Deploy Now against an empty queue |
 
@@ -27,6 +27,12 @@ was still waiting for its boundary. Snapshot selection includes confirmed state
 plus the versions owned by the current batch, so a later normal window cannot be
 published early merely because the scheduler started after a boundary. The
 remote artifact remains a complete deterministic snapshot.
+
+The platform `TRAFFIC_GATE` operational control is additive to the existing
+static edge-control artifact. Disabling it is an incident-recovery action and is
+eligible immediately as `URGENT`; changing normal gate enablement, policy,
+timings, public site key, activity-recovery setting, or Site override remains
+`NORMAL`. The Traffic Gate never creates a separate deployment backend.
 
 ## Deploy Now safeguards
 
