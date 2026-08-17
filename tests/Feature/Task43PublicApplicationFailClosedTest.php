@@ -7,7 +7,6 @@ use App\Enums\PublisherApplicationStatus;
 use App\Enums\RoleName;
 use App\Enums\StaticDeliveryPriority;
 use App\Models\PublisherApplication;
-use App\Models\SellerDeclaration;
 use App\Models\StaticGlobalArtifactChange;
 use App\Models\User;
 use App\Services\Network\Contracts\DnsResolver;
@@ -97,32 +96,22 @@ class Task43PublicApplicationFailClosedTest extends TestCase
         $this->assertFalse($ids->contains($reserved['website_seller']->seller_id));
     }
 
-    public function test_rejection_and_withdrawal_remove_verified_reservations_and_queue_urgent_without_deleting_identities(): void
+    public function test_rejection_removes_verified_reservations_and_queues_urgent_without_deleting_identities(): void
     {
-        foreach ([PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn] as $terminal) {
-            [$application, $user] = $this->application($terminal === PublisherApplicationStatus::Rejected ? 'reject.example' : 'withdraw.example', $terminal === PublisherApplicationStatus::Rejected ? 'reject@example.test' : 'withdraw@example.test');
-            $reserved = $this->verify($application, $user);
-            StaticGlobalArtifactChange::query()->delete();
+        $this->assertTerminalRevocation(
+            PublisherApplicationStatus::Rejected,
+            'reject.example',
+            'reject@example.test',
+        );
+    }
 
-            if ($terminal === PublisherApplicationStatus::Rejected) {
-                $application->update(['status' => PublisherApplicationStatus::Submitted, 'submitted_at' => now(), 'current_revision' => 1]);
-                $application->update(['status' => PublisherApplicationStatus::UnderReview, 'review_started_at' => now()]);
-                $application->update(['status' => PublisherApplicationStatus::Rejected, 'rejected_at' => now()]);
-            } else {
-                $application->update(['status' => PublisherApplicationStatus::Withdrawn, 'withdrawn_at' => now()]);
-            }
-
-            $this->assertSame('RELEASED', $application->fresh()->domainClaim()->firstOrFail()->claim_status);
-            $change = StaticGlobalArtifactChange::query()->firstOrFail();
-            $this->assertSame(StaticDeliveryPriority::Urgent, $change->priority);
-            foreach ([$reserved['publisher_seller'], $reserved['website_seller']] as $seller) {
-                $this->assertDatabaseHas('seller_declarations', ['id' => $seller->id, 'seller_id' => $seller->seller_id]);
-            }
-            $ids = collect(app(SupplyChainArtifactBuilder::class)->sellersJsonPayload()['sellers'])->pluck('seller_id');
-            $this->assertFalse($ids->contains($reserved['publisher_seller']->seller_id));
-            $this->assertFalse($ids->contains($reserved['website_seller']->seller_id));
-            StaticGlobalArtifactChange::query()->delete();
-        }
+    public function test_withdrawal_removes_verified_reservations_and_queues_urgent_without_deleting_identities(): void
+    {
+        $this->assertTerminalRevocation(
+            PublisherApplicationStatus::Withdrawn,
+            'withdraw.example',
+            'withdraw@example.test',
+        );
     }
 
     public function test_direct_claim_release_revokes_publication_but_retains_immutable_hmp_hms_records(): void
@@ -161,28 +150,18 @@ class Task43PublicApplicationFailClosedTest extends TestCase
         $this->assertDatabaseCount('static_global_artifact_changes', 0);
     }
 
-    public function test_missing_required_legal_version_or_url_blocks_public_registration_without_partial_rows(): void
+    public function test_missing_required_legal_version_blocks_public_registration_without_partial_rows(): void
     {
-        foreach ([
-            ['publisher-applications.legal_documents.TERMS_OF_SERVICE.version', '', 'Legal Terms Version Missing'],
-            ['publisher-applications.legal_documents.PRIVACY_POLICY.url', '', 'Legal Privacy Url Missing'],
-        ] as [$key, $value, $adminReason]) {
-            Config::set($key, $value);
-            $beforeApplications = PublisherApplication::withoutGlobalScopes()->count();
-            $beforeUsers = User::count();
+        Config::set('publisher-applications.legal_documents.TERMS_OF_SERVICE.version', '');
 
-            $this->get('/register/publisher')->assertStatus(503)->assertSee('temporarily unavailable');
-            $this->post('/register/publisher', $this->registrationPayload())->assertStatus(503);
-            $this->assertSame($beforeApplications, PublisherApplication::withoutGlobalScopes()->count());
-            $this->assertSame($beforeUsers, User::count());
+        $this->assertPublicRegistrationBlocked('Legal Terms Version Missing');
+    }
 
-            $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media '.$adminReason), RoleName::SuperAdmin);
-            $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
-                ->get(route('admin.publisher-applications.index'))
-                ->assertOk()->assertSee('Publisher Application — BLOCKED')->assertSee($adminReason);
+    public function test_missing_required_legal_url_blocks_public_registration_without_partial_rows(): void
+    {
+        Config::set('publisher-applications.legal_documents.PRIVACY_POLICY.url', '');
 
-            $this->setValidLegalConfig();
-        }
+        $this->assertPublicRegistrationBlocked('Legal Privacy Url Missing');
     }
 
     public function test_current_legal_contract_requires_explicit_exact_acceptance_and_ready_config_allows_it(): void
@@ -250,6 +229,46 @@ class Task43PublicApplicationFailClosedTest extends TestCase
         return $reserved;
     }
 
+    private function assertTerminalRevocation(PublisherApplicationStatus $terminal, string $domain, string $email): void
+    {
+        [$application, $user] = $this->application($domain, $email);
+        $reserved = $this->verify($application, $user);
+        StaticGlobalArtifactChange::query()->delete();
+
+        if ($terminal === PublisherApplicationStatus::Rejected) {
+            $application->update(['status' => PublisherApplicationStatus::Submitted, 'submitted_at' => now(), 'current_revision' => 1]);
+            $application->update(['status' => PublisherApplicationStatus::UnderReview, 'review_started_at' => now()]);
+            $application->update(['status' => PublisherApplicationStatus::Rejected, 'rejected_at' => now()]);
+        } else {
+            $application->update(['status' => PublisherApplicationStatus::Withdrawn, 'withdrawn_at' => now()]);
+        }
+
+        $this->assertSame('RELEASED', $application->fresh()->domainClaim()->firstOrFail()->claim_status);
+        $this->assertSame(StaticDeliveryPriority::Urgent, StaticGlobalArtifactChange::query()->firstOrFail()->priority);
+        foreach ([$reserved['publisher_seller'], $reserved['website_seller']] as $seller) {
+            $this->assertDatabaseHas('seller_declarations', ['id' => $seller->id, 'seller_id' => $seller->seller_id]);
+        }
+        $ids = collect(app(SupplyChainArtifactBuilder::class)->sellersJsonPayload()['sellers'])->pluck('seller_id');
+        $this->assertFalse($ids->contains($reserved['publisher_seller']->seller_id));
+        $this->assertFalse($ids->contains($reserved['website_seller']->seller_id));
+    }
+
+    private function assertPublicRegistrationBlocked(string $adminReason): void
+    {
+        $beforeApplications = PublisherApplication::withoutGlobalScopes()->count();
+        $beforeUsers = User::count();
+
+        $this->get('/register/publisher')->assertStatus(503)->assertSee('temporarily unavailable');
+        $this->post('/register/publisher', $this->registrationPayload())->assertStatus(503);
+        $this->assertSame($beforeApplications, PublisherApplication::withoutGlobalScopes()->count());
+        $this->assertSame($beforeUsers, User::count());
+
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media '.$adminReason), RoleName::SuperAdmin);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.publisher-applications.index'))
+            ->assertOk()->assertSee('Publisher Application — BLOCKED')->assertSee($adminReason);
+    }
+
     /** @return array<string, mixed> */
     private function registrationPayload(): array
     {
@@ -261,15 +280,5 @@ class Task43PublicApplicationFailClosedTest extends TestCase
             'password' => 'Secure-Password-2026!',
             'password_confirmation' => 'Secure-Password-2026!',
         ];
-    }
-
-    private function setValidLegalConfig(): void
-    {
-        Config::set('publisher-applications.legal_documents.TERMS_OF_SERVICE.version', 'test-terms-v1');
-        Config::set('publisher-applications.legal_documents.TERMS_OF_SERVICE.url', 'https://horus.test/legal/terms');
-        Config::set('publisher-applications.legal_documents.PRIVACY_POLICY.version', 'test-privacy-v1');
-        Config::set('publisher-applications.legal_documents.PRIVACY_POLICY.url', 'https://horus.test/legal/privacy');
-        Config::set('publisher-applications.legal_documents.PUBLISHER_TERMS.version', 'test-publisher-terms-v1');
-        Config::set('publisher-applications.legal_documents.PUBLISHER_TERMS.url', 'https://horus.test/legal/publisher-terms');
     }
 }
