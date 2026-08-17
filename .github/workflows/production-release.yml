@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Bound dependency-download concurrency only; validation commands and failure
+  # behavior remain unchanged.
+  COMPOSER_MAX_PARALLEL_HTTP: 2
+
 jobs:
   production-release:
     runs-on: ubuntu-latest
