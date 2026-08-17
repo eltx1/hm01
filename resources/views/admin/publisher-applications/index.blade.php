@@ -2,6 +2,19 @@
 @section('title', 'Publisher Applications')
 @section('heading', 'Publisher Applications')
 @section('content')
+<article class="workspace-section" aria-label="Publisher application operational readiness">
+    <div class="workspace-heading"><div><p class="eyebrow">Operational readiness</p><h2>Publisher Application — {{ $publisherApplicationReadiness['status'] }}</h2><p class="muted">Fail-closed readiness for new public Publisher applications. Existing accounts and invitations are unaffected.</p></div></div>
+    @if($publisherApplicationReadiness['status'] === 'BLOCKED')
+        <div class="notice error"><strong>Public application readiness is blocked.</strong> Resolve the safe configuration reasons below before enabling or accepting new applications.</div>
+        <ul>
+            @foreach($publisherApplicationReadiness['reasons'] as $reason)
+                <li>{{ str($reason)->replace('_', ' ')->headline() }}</li>
+            @endforeach
+        </ul>
+    @else
+        <div class="notice"><strong>READY</strong> — required legal and production security readiness checks passed.</div>
+    @endif
+</article>
 <section class="metric-grid" aria-label="Application counts">
     @foreach([\App\Enums\PublisherApplicationStatus::Submitted, \App\Enums\PublisherApplicationStatus::UnderReview, \App\Enums\PublisherApplicationStatus::MoreInfoRequired, \App\Enums\PublisherApplicationStatus::Approved, \App\Enums\PublisherApplicationStatus::Rejected] as $state)
     <article><p class="eyebrow">{{ str($state->value)->replace('_', ' ')->headline() }}</p><strong class="metric">{{ $counts[$state->value] ?? 0 }}</strong></article>
