@@ -405,6 +405,11 @@ class PublicPublisherApplicationTest extends TestCase
             'has_cmp' => 1,
             'prior_policy_incidents' => 0,
             'monetization_history' => 'Previously used direct sponsorships.',
+            'legal' => [
+                'TERMS_OF_SERVICE' => 1,
+                'PRIVACY_POLICY' => 1,
+                'PUBLISHER_TERMS' => 1,
+            ],
             'application_notes' => 'Available for manual verification.',
         ], $overrides);
     }
