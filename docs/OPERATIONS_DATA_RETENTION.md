@@ -19,7 +19,7 @@ Every relevant dataset inspected on the current schema is classified into one of
 
 ## Schema inventory and classification
 
-The inventory below was built from the model directory and the migration schema on the Task 47 base (`main` at Task 46 merge). Table names are taken from the schema rather than inferred.
+The inventory below was built from the model directory and migration schema on the Task 47 base (`main` at the Task 46 merge). Table names are taken from the schema rather than inferred.
 
 ### PERMANENT / BUSINESS RECORD
 
@@ -39,7 +39,7 @@ Application revisions and legal acceptances are historical evidence and are neve
 
 **Supply-chain and HMP/HMS identity truth**
 
-`seller_declarations`, `demand_ads_txt_records`, and platform/bidder ads.txt records introduced by the later supply-chain migrations are preserved. In particular, Horus-managed HMP/HMS seller declarations are immutable/non-recyclable identity history and are permanently excluded from automated retention.
+`seller_declarations`, `bidder_ads_txt_records`, `platform_ads_txt_records`, and `demand_ads_txt_records` are preserved. In particular, Horus-managed HMP/HMS seller declarations are immutable/non-recyclable identity history and are permanently excluded from automated retention.
 
 **Inventory, serving configuration and rollback history**
 
@@ -67,6 +67,10 @@ Finalized periods, statements, payouts/payments, settlement history, revenue-rul
 
 `support_sla_policies`, `support_tickets`, `support_ticket_messages`, `support_ticket_attachments`, `support_ticket_events` are preserved as customer/support history. Closing a ticket does not make its thread disposable.
 
+**Platform configuration**
+
+`global_settings` is current governed platform configuration and is not a retention candidate.
+
 ### LONG-LIVED EVIDENCE
 
 The following records are intentionally not part of the Task 47 automated delete allowlist:
@@ -74,9 +78,9 @@ The following records are intentionally not part of the Task 47 automated delete
 - `audit_logs` — existing independent security/audit lifecycle. The current default is **2555 days**, now exposed as `DATA_RETENTION_AUDIT_LOGS_DAYS`; `audit-logs:prune` remains the only command that deletes audit rows.
 - `login_events` — security/authentication investigation evidence. Task 47 does not introduce a new deletion age.
 - `failed_jobs` — failure evidence may contain the only operational explanation for an incident; not age-pruned here.
-- `horus_notifications` — notification content and delivery/read state share the same record; there is no separate disposable delivery-state table in the current schema.
-- `supply_chain_checks` and later supply-chain origin/check history — compliance/identity evidence, preserved.
-- `static_delivery_batches`, `static_delivery_items`, `static_global_artifact_changes` — deployment and rollback evidence, preserved.
+- `horus_notifications` and `notification_preferences` — notification content/delivery/read state and user channel choices are not treated as disposable delivery metadata in the current schema.
+- `supply_chain_checks`, `supply_chain_origin_checks` — compliance/identity/origin evidence, preserved.
+- `static_delivery_batches`, `static_delivery_items`, `static_global_artifact_changes` — deployment, queue and rollback evidence, preserved.
 - `gam_sync_runs`, `gam_sync_logs`, `gam_api_operations`, `gam_errors`, `prebid_setup_runs`, `prebid_errors`, `demand_sync_logs`, `demand_errors`, `demand_report_imports` — operational/provider history with references and investigation value; not automatically deleted until a separate referential policy is proven safe.
 - `report_import_jobs`, `report_import_files`, `report_errors` — retained because imports can support financial/reconciliation history.
 - `google_cmp_evidence` — current operator/CMP evidence, not an append-only disposable diagnostic stream.
