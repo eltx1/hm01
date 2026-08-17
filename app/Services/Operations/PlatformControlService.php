@@ -97,6 +97,18 @@ final class PlatformControlService
             ],
         );
 
+        if ($scopeType === 'PLATFORM' && $control === 'TRAFFIC_GATE') {
+            $this->audit->record(
+                $disabled ? 'traffic_gate.emergency_disabled' : 'traffic_gate.emergency_disable_cleared',
+                $actor->organization_id,
+                $actor,
+                $record,
+                ['disabled' => (bool) ($oldValues['is_disabled'] ?? false)],
+                ['disabled' => $disabled],
+                ['reason' => mb_substr($reason, 0, 2000), 'client_only' => true],
+            );
+        }
+
         return $record;
     }
 
