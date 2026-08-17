@@ -14,6 +14,8 @@ final class TurnstileVerifier
             return;
         }
 
+        $this->assertProductionConfiguration();
+
         $token = trim((string) $token);
         if ($token === '' || strlen($token) > 2048) {
             $this->fail();
@@ -43,7 +45,7 @@ final class TurnstileVerifier
         }
 
         $replayKey = 'publisher-turnstile:'.hash('sha256', $token);
-        if (! Cache::add ($replayKey, true, now()->addMinutes(5))) {
+        if (! Cache::add($replayKey, true, now()->addMinutes(5))) {
             $this->fail();
         }
     }
@@ -51,7 +53,7 @@ final class TurnstileVerifier
     /** @return array<string, mixed> */
     private function siteverify(string $token): array
     {
-        $secret = (string) config('publisher-applications.turnstile.secret_key');
+        $secret = trim((string) config('publisher-applications.turnstile.secret_key'));
         if ($secret === '') {
             $this->fail();
         }
@@ -77,9 +79,28 @@ final class TurnstileVerifier
         return is_array($payload) ? $payload : [];
     }
 
+    private function assertProductionConfiguration(): void
+    {
+        if (! app()->environment('production')) {
+            return;
+        }
+
+        $provider = strtolower(trim((string) config('publisher-applications.turnstile.provider')));
+        $secret = trim((string) config('publisher-applications.turnstile.secret_key'));
+        $hostname = trim((string) config('publisher-applications.turnstile.expected_hostname'));
+        $action = trim((string) config('publisher-applications.turnstile.action'));
+        if ($provider !== 'cloudflare' || $secret === '' || $hostname === '' || $action === '') {
+            $this->fail();
+        }
+    }
+
     private function usesDeterministicProvider(): bool
     {
-        return config('publisher-applications.turnstile.provider') === 'fake'
+        if (app()->environment('production')) {
+            return false;
+        }
+
+        return strtolower(trim((string) config('publisher-applications.turnstile.provider'))) === 'fake'
             || app()->environment(['local', 'testing']);
     }
 
