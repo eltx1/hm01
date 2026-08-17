@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 env:
-  # Bound dependency-download concurrency only; validation commands and failure
-  # behavior remain unchanged.
+  # Avoid the independently rate-limited GitHub codeload ZIP path while keeping
+  # the exact composer.lock commits and the same validation/failure semantics.
   COMPOSER_MAX_PARALLEL_HTTP: 2
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
           cache: npm
       - name: Install and audit dependencies
         run: |
-          composer install --prefer-dist --no-interaction --no-progress
+          composer install --prefer-source --no-interaction --no-progress
           npm ci
           npm audit --audit-level=moderate
       - name: Static, browser, and PHP validation
@@ -58,7 +58,7 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
       - name: Install production PHP dependencies and validate ZIP
         run: |
-          composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+          composer install --no-dev --prefer-source --no-interaction --no-progress --optimize-autoloader
           ./scripts/build-release.sh
           ./scripts/validate-release.sh
       - uses: actions/upload-artifact@v7
