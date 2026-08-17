@@ -5,6 +5,7 @@ namespace App\Services\Settings;
 use App\Models\GlobalSetting;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\TrafficGate\TrafficGateSettingsValidator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -20,6 +21,7 @@ final class GlobalSettingsService
     public function __construct(
         private readonly TypedSettingsRegistry $registry,
         private readonly AuditRecorder $audit,
+        private readonly TrafficGateSettingsValidator $trafficGateValidator,
     ) {
         foreach ($this->registry->all() as $key => $definition) {
             $this->fallbacks[$key] = config($definition->configPath);
@@ -68,6 +70,7 @@ final class GlobalSettingsService
         $definition = $this->registry->get($key);
         $value = $this->registry->normalize($key, $rawValue);
         $before = $this->get($key);
+        $this->validateTrafficGateProspectiveValue($key, $value);
 
         $row = DB::transaction(function () use ($actor, $key, $value): GlobalSetting {
             return GlobalSetting::query()->updateOrCreate(
@@ -94,15 +97,17 @@ final class GlobalSettingsService
     {
         $definition = $this->registry->get($key);
         $before = $this->get($key);
+        $fallback = $this->fallbacks[$key];
+        $this->validateTrafficGateProspectiveValue($key, $fallback);
         GlobalSetting::query()->whereKey($key)->delete();
         $this->invalidate();
-        config([$definition->configPath => $this->fallbacks[$key]]);
+        config([$definition->configPath => $fallback]);
         $this->audit->record('settings.global.reset', null, $actor, null,
             ['key' => $key, 'value' => $before],
-            ['key' => $key, 'value' => $this->fallbacks[$key]],
+            ['key' => $key, 'value' => $fallback],
             ['setting_key' => $key, 'group' => $definition->group, 'reason' => $reason ? mb_substr($reason, 0, 500) : null],
         );
-        $this->auditAdvertiserCampaignFeatureChange($actor, $key, $before, $this->fallbacks[$key], $reason);
+        $this->auditAdvertiserCampaignFeatureChange($actor, $key, $before, $fallback, $reason);
     }
 
     public function invalidate(): void
@@ -153,6 +158,20 @@ final class GlobalSettingsService
         } catch (Throwable) {
             return collect();
         }
+    }
+
+    private function validateTrafficGateProspectiveValue(string $key, mixed $value): void
+    {
+        if (! in_array($key, TrafficGateSettingsValidator::KEYS, true)) {
+            return;
+        }
+
+        $prospective = [];
+        foreach (TrafficGateSettingsValidator::KEYS as $trafficGateKey) {
+            $prospective[$trafficGateKey] = $trafficGateKey === $key ? $value : $this->get($trafficGateKey);
+        }
+
+        $this->trafficGateValidator->validate($prospective);
     }
 
     private function auditAdvertiserCampaignFeatureChange(User $actor, string $key, mixed $before, mixed $after, ?string $reason): void

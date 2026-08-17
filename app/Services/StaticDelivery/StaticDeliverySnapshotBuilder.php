@@ -149,18 +149,25 @@ final class StaticDeliverySnapshotBuilder
         $changedAt = $records->max('changed_at');
         $timestamp = $changedAt ? Carbon::parse($changedAt)->utc() : Carbon::createFromTimestampUTC(0);
         $legacyNativeDisabled = (bool) $records->get('NATIVE_DEMAND')?->is_disabled;
+        $controls = [
+            'adServingDisabled' => (bool) $records->get('AD_SERVING')?->is_disabled,
+            'gamDisabled' => (bool) $records->get('GAM')?->is_disabled,
+            'prebidDisabled' => (bool) $records->get('PREBID')?->is_disabled,
+            'directJsDisabled' => (bool) $records->get('DIRECT_JS')?->is_disabled || $legacyNativeDisabled,
+            'nativeDemandDisabled' => $legacyNativeDisabled,
+        ];
+        // Additive compatibility: virgin deployments retain the exact schema-v2
+        // control object. Once the Traffic Gate control has been operated, its
+        // explicit effective state is carried by the same global control file.
+        if ($records->has('TRAFFIC_GATE')) {
+            $controls['trafficGateDisabled'] = (bool) $records->get('TRAFFIC_GATE')?->is_disabled;
+        }
 
         return [
             'schemaVersion' => 2,
             'version' => $timestamp->getTimestampMs(),
             'generatedAt' => $timestamp->toIso8601String(),
-            'controls' => [
-                'adServingDisabled' => (bool) $records->get('AD_SERVING')?->is_disabled,
-                'gamDisabled' => (bool) $records->get('GAM')?->is_disabled,
-                'prebidDisabled' => (bool) $records->get('PREBID')?->is_disabled,
-                'directJsDisabled' => (bool) $records->get('DIRECT_JS')?->is_disabled || $legacyNativeDisabled,
-                'nativeDemandDisabled' => $legacyNativeDisabled,
-            ],
+            'controls' => $controls,
         ];
     }
 

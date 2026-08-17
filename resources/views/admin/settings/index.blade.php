@@ -7,6 +7,12 @@
     <h2>Controlled global settings</h2>
     <p class="muted">Only registered safe business/product settings are editable here. Credentials, deployment configuration, emergency controls, contracts, publisher-specific commercial terms, and payment destinations remain in their dedicated systems.</p>
 </section>
+<section>
+    <p class="eyebrow">Client Traffic Gate</p>
+    <h2>Fixed gate origin</h2>
+    <p><code>{{ $trafficGateOrigin }}</code></p>
+    <p class="muted">This HTTPS Horus-controlled origin comes from constrained server configuration and is read-only here. The Client Traffic Gate is a client-only soft traffic filter; it is not described as human verification, valid-traffic verification, bot verification, or IVT clearance.</p>
+</section>
 
 @foreach(collect($settings)->groupBy(fn($row) => $row['definition']->group) as $group => $rows)
 <section>
@@ -39,7 +45,7 @@
                             <label>Value<input type="{{ $definition->type === 'integer' ? 'number' : ($definition->type === 'email' ? 'email' : 'text') }}" name="value" value="{{ $row['value'] }}" @if(!in_array('nullable', $definition->rules, true)) required @endif></label>
                         @endif
                         @if($definition->highImpact)
-                            <label>Reason<textarea name="reason" required maxlength="500" placeholder="Why this platform identity change is required"></textarea></label>
+                            <label>Reason<textarea name="reason" required maxlength="500" placeholder="Why this high-impact change is required"></textarea></label>
                             <label>Current password<input type="password" name="current_password" required autocomplete="current-password"></label>
                             <label>Confirmation<input name="impact_confirmation" required autocomplete="off" placeholder="CHANGE {{ strtoupper(str_replace(['.', '_'], ' ', $definition->key)) }}"></label>
                         @endif

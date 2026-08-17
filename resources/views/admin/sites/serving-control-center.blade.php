@@ -11,6 +11,8 @@
             ['key' => 'PREBID', 'title' => 'PREBID', 'state' => $servingOverview['prebid']['status'], 'health' => $servingOverview['prebid']['health'], 'detail' => 'Configured '.$servingOverview['prebid']['configured_mode'].' · resolved '.$servingOverview['prebid']['resolved_mode'].' · build '.($servingOverview['prebid']['build'] ?: '—')],
             ['key' => 'DIRECT_JS', 'title' => 'DIRECT JS', 'state' => $servingOverview['direct_js']['status'], 'health' => $servingOverview['direct_js']['health'], 'detail' => count((array) $servingOverview['direct_js']['networks']).' network(s) · '.$servingOverview['direct_js']['placements'].' placement(s)'],
         ];
+        $trafficGateSiteState = $site->servingSettings?->traffic_gate_state?->value ?? 'INHERIT';
+        $trafficGateSitePolicy = $site->servingSettings?->traffic_gate_policy?->value ?? 'INHERIT';
     @endphp
 
     <div class="health-grid">
@@ -34,6 +36,52 @@
                 @endif
             </div>
         @endforeach
+    </div>
+
+    <div class="workspace-heading" style="margin-top:1.5rem">
+        <div>
+            <p class="eyebrow">Client-only soft traffic filter</p>
+            <h3>Client Traffic Gate</h3>
+            <p class="muted">Task 48 publishes configuration only. No Turnstile script, iframe, browser blocking, Siteverify, Worker validation, visitor Laravel request, or traffic telemetry is executed.</p>
+        </div>
+        <x-status-badge :status="$trafficGate->readiness->value" />
+    </div>
+    <div class="detail-grid">
+        <div>
+            <dl>
+                <dt>Effective state</dt><dd>{{ $trafficGate->enabled ? 'ENABLED' : 'DISABLED' }}</dd>
+                <dt>Readiness</dt><dd>{{ $trafficGate->readiness->value }}</dd>
+                <dt>Effective policy</dt><dd>{{ $trafficGate->policy->value }}</dd>
+                <dt>Provider</dt><dd>{{ $trafficGate->provider }}</dd>
+                <dt>Fixed gate origin</dt><dd><code>{{ $trafficGate->gateOrigin }}</code></dd>
+                <dt>Global timings</dt><dd>{{ $trafficGate->initialWaitMs }} / {{ $trafficGate->maxWaitMs }} / {{ $trafficGate->retryIntervalMs }} ms</dd>
+            </dl>
+        </div>
+        <div>
+            @if(auth()->user()->hasPermission('sites.serving.manage'))
+                <form method="POST" action="{{ route('admin.sites.traffic-gate', $site) }}" class="form-stack">
+                    @csrf
+                    <label>Site gate state
+                        <select class="hm-input" name="traffic_gate_state">
+                            @foreach(\App\Enums\TrafficGateSiteState::cases() as $state)
+                                <option value="{{ $state->value }}" @selected($trafficGateSiteState === $state->value)>{{ $state->value }}</option>
+                            @endforeach
+                        </select>
+                    </label>
+                    <label>Site policy
+                        <select class="hm-input" name="traffic_gate_policy">
+                            @foreach(\App\Enums\TrafficGateSitePolicy::cases() as $policy)
+                                <option value="{{ $policy->value }}" @selected($trafficGateSitePolicy === $policy->value)>{{ $policy->value }}</option>
+                            @endforeach
+                        </select>
+                    </label>
+                    <label>Required reason<input class="hm-input" name="reason" minlength="8" maxlength="2000" required></label>
+                    <button class="hm-button-secondary">Save Client Traffic Gate override</button>
+                </form>
+            @else
+                <p class="muted">Your role has read-only Client Traffic Gate access.</p>
+            @endif
+        </div>
     </div>
 
     <div class="workspace-heading" style="margin-top:1.5rem"><div><p class="eyebrow">Renderer ownership</p><h3>Placement Matrix</h3></div><span class="muted">Production config v{{ $servingOverview['production_config']['version'] ?: '—' }}</span></div>

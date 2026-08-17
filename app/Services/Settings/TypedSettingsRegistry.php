@@ -28,6 +28,55 @@ final class TypedSettingsRegistry
                 'Turning this off blocks new Advertiser campaign creation/submission and new or resumed delivery while preserving existing campaigns, history, finance, and emergency pause/complete actions.'
             ),
             new SettingDefinition(
+                'traffic_gate.enabled', 'CLIENT TRAFFIC GATE', 'Client Traffic Gate Enabled', 'boolean', 'traffic_gate.enabled',
+                ['required', 'boolean'], [],
+                'Requests the optional client-only soft traffic filter globally. Incomplete or invalid configuration remains inactive.',
+                'SAFE', true, true,
+                'Changing this setting republishes active website static configuration. It does not verify humans, clear IVT, or contact Laravel per visitor.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.site_key', 'CLIENT TRAFFIC GATE', 'Cloudflare Turnstile public site key', 'string', 'traffic_gate.site_key',
+                ['nullable', 'string', 'min:3', 'max:255', 'regex:/^[A-Za-z0-9_-]+$/'], [],
+                'Public client-side Turnstile site key for the Client Traffic Gate. This is not a secret and no Turnstile secret exists in this feature.',
+                'PUBLIC', true, true,
+                'Replacing the public site key republishes active website static configuration through normal batching.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.policy', 'CLIENT TRAFFIC GATE', 'Client Traffic Gate policy', 'enum', 'traffic_gate.policy',
+                ['required', 'string'], ['STRICT', 'BALANCED', 'PERMISSIVE'],
+                'Constrained client behavior preset. Task 48 publishes the contract only; browser behavior is not implemented here.',
+                'SAFE', true, true,
+                'Policy changes alter future client gate behavior once a later runtime task activates the gate.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.initial_wait_ms', 'CLIENT TRAFFIC GATE', 'Initial wait (ms)', 'integer', 'traffic_gate.initial_wait_ms',
+                ['required', 'integer', 'min:500', 'max:5000'], [],
+                'Bounded initial client wait. Allowed range: 500–5000 ms.',
+                'SAFE', true, true,
+                'Timing changes republish active website static configuration and remain bounded to prevent unbounded blocking.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.max_wait_ms', 'CLIENT TRAFFIC GATE', 'Maximum wait (ms)', 'integer', 'traffic_gate.max_wait_ms',
+                ['required', 'integer', 'min:2000', 'max:15000'], [],
+                'Bounded maximum client wait. Allowed range: 2000–15000 ms and must be at least the initial wait.',
+                'SAFE', true, true,
+                'Timing changes republish active website static configuration and remain bounded to prevent unbounded blocking.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.retry_interval_ms', 'CLIENT TRAFFIC GATE', 'Retry interval (ms)', 'integer', 'traffic_gate.retry_interval_ms',
+                ['required', 'integer', 'min:500', 'max:10000'], [],
+                'Bounded client retry interval. Allowed range: 500–10000 ms.',
+                'SAFE', true, true,
+                'Timing changes republish active website static configuration and remain bounded to prevent excessive retry behavior.'
+            ),
+            new SettingDefinition(
+                'traffic_gate.activity_recovery_enabled', 'CLIENT TRAFFIC GATE', 'Activity recovery enabled', 'boolean', 'traffic_gate.activity_recovery_enabled',
+                ['required', 'boolean'], [],
+                'Publishes whether the BALANCED policy may later use trusted browser activity recovery. No recovery logic is executed by Task 48.',
+                'SAFE', true, true,
+                'Changing this setting republishes active website static configuration through normal batching.'
+            ),
+            new SettingDefinition(
                 'supply_chain.manager_domain', 'SUPPLY CHAIN', 'Manager domain', 'domain', 'supply-chain.manager_domain',
                 ['required', 'string', 'max:253'], [],
                 'Advertising-system domain used by MANAGERDOMAIN and the Horus schain node.', 'PUBLIC', true, true,

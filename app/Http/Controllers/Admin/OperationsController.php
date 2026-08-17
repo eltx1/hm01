@@ -65,7 +65,7 @@ class OperationsController extends Controller
             ->with('actor')
             ->where('scope_type', 'PLATFORM')
             ->where('scope_id', 'GLOBAL')
-            ->whereIn('control_key', ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'])
+            ->whereIn('control_key', ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND', 'TRAFFIC_GATE'])
             ->get()
             ->keyBy('control_key');
 
@@ -82,6 +82,7 @@ class OperationsController extends Controller
                 'GAM' => 'GAM',
                 'PREBID' => 'Prebid',
                 'DIRECT_JS' => 'Direct JS',
+                'TRAFFIC_GATE' => 'Client Traffic Gate',
             ])->map(function (string $label, string $key) use ($globalControlRecords): array {
                 $record = $globalControlRecords->get($key);
                 if ($key === 'DIRECT_JS' && ! $record?->is_disabled) {
@@ -134,7 +135,7 @@ class OperationsController extends Controller
             : null;
         if ($confirmation && ($data['impact_confirmation'] ?? '') !== $confirmation) {
             throw ValidationException::withMessages([
-                'impact_confirmation' => "Type {$confirmation} to confirm the platform-wide engine impact.",
+                'impact_confirmation' => "Type {$confirmation} to confirm the platform-wide control impact.",
             ]);
         }
 
@@ -151,7 +152,7 @@ class OperationsController extends Controller
         if ($changed) {
             $urgent = $data['scope_type'] === 'PLATFORM'
                 && (bool) $data['is_disabled']
-                && in_array($data['control_key'], ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND'], true);
+                && in_array($data['control_key'], ['AD_SERVING', 'GAM', 'PREBID', 'DIRECT_JS', 'NATIVE_DEMAND', 'TRAFFIC_GATE'], true);
             $this->republishAffectedSites($data['scope_type'], $data['scope_id'] ?? null, $publisher, $request, $urgent);
         }
 

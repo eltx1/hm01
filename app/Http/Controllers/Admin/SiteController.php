@@ -16,6 +16,7 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteLifecycleService;
+use App\Services\TrafficGate\TrafficGateConfigurationResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -33,7 +34,7 @@ class SiteController extends Controller
         return view('admin.sites.index', ['sites' => $sites, 'activeStatus' => $status]);
     }
 
-    public function show(Request $request, Site $site): View
+    public function show(Request $request, Site $site, TrafficGateConfigurationResolver $trafficGateResolver): View
     {
         $site->load([
             'publisher.organization',
@@ -55,6 +56,7 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'trafficGate' => $trafficGateResolver->resolve($site),
             'auditEvents' => $request->user()->hasPermission('audit.view')
                 ? AuditLog::query()->where('organization_id', $site->organization_id)->where('auditable_id', $site->id)->latest()->limit(30)->get()
                 : collect(),

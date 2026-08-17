@@ -17,6 +17,7 @@ use App\Services\StaticDelivery\CanonicalJson;
 use App\Services\StaticDelivery\PublicPayloadGuard;
 use App\Services\StaticDelivery\StaticDeliveryWindow;
 use App\Services\StaticDelivery\StaticPathGuard;
+use App\Services\TrafficGate\TrafficGateConfigurationResolver;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -29,11 +30,12 @@ final class SiteConfigPublisher
         private readonly PublicPayloadGuard $payloadGuard,
         private readonly StaticPathGuard $pathGuard,
         private readonly StaticDeliveryWindow $deliveryWindow,
+        private readonly TrafficGateConfigurationResolver $trafficGate,
     ) {}
 
     public function preview(Site $site, ConfigEnvironment $environment): array
     {
-        return $this->builder->build($site->refresh(), $environment, $this->nextVersion($site, $environment));
+        return $this->buildPayload($site->refresh(), $environment, $this->nextVersion($site, $environment));
     }
 
     public function publish(Site $site, ConfigEnvironment $environment, User $actor): ConfigVersion
@@ -110,9 +112,17 @@ final class SiteConfigPublisher
         StaticDeliveryPriority $priority = StaticDeliveryPriority::Normal,
     ): ConfigVersion {
         $version = $this->nextVersion($site, $environment);
-        $payload = $this->builder->build($site->refresh(), $environment, $version);
+        $payload = $this->buildPayload($site->refresh(), $environment, $version);
 
         return $this->storePendingVersion($site, $environment, $version, $payload, $actor, $priority);
+    }
+
+    private function buildPayload(Site $site, ConfigEnvironment $environment, int $version): array
+    {
+        $payload = $this->builder->build($site, $environment, $version);
+        $payload['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
+
+        return $payload;
     }
 
     private function storePendingVersion(
