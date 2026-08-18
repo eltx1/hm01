@@ -9,6 +9,7 @@ use App\Models\PlatformControl;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
@@ -41,6 +42,10 @@ final class PlatformControlService
     {
         $scopeType = strtoupper($scopeType);
         $control = strtoupper($control);
+        if ($scopeType === 'PLATFORM' && $control === 'TRAFFIC_GATE' && ! $actor->hasPermission('traffic_gate.emergency_disable')) {
+            throw new AuthorizationException('You are not authorized to change the Client Traffic Gate emergency control.');
+        }
+
         $allowed = (array) config('operations.controls.'.$scopeType, []);
         if (! in_array($control, $allowed, true)) {
             throw ValidationException::withMessages(['control_key' => 'The requested operational control is not supported for this scope.']);

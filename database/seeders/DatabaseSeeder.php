@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             IdentityAccessSeeder::class,
             SettingsAccessSeeder::class,
+            TrafficGateAccessSeeder::class,
             InventoryDeliverySeeder::class,
             AdFormatSeeder::class,
             PrebidSeeder::class,
