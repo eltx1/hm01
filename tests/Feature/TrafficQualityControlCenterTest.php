@@ -45,7 +45,7 @@ class TrafficQualityControlCenterTest extends TestCase
         [$admin, $publisherUser] = $this->identityFixture();
         $finance = $this->makeUser($admin->organization, RoleName::FinanceAdmin, ['email_verified_at' => now()]);
 
-        $this->get(route('admin.operations.traffic-quality'))->assertRedirect(route('login'));
+        $this->get(route('admin.operations.traffic-quality'))->assertRedirect(route('admin.login'));
         $this->actingAs($publisherUser)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.operations.traffic-quality'))->assertForbidden();
         $this->actingAs($finance)->withSession(['two_factor_passed_at' => now()->timestamp])
