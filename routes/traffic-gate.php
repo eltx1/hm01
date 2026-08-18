@@ -4,7 +4,7 @@ use App\Http\Controllers\Admin\TrafficGateController;
 use App\Http\Controllers\Admin\TrafficQualityController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->group(function (): void {
+Route::middleware(['auth', 'active', 'verified', 'horus', 'admin.2fa'])->group(function (): void {
     Route::middleware('permission:traffic_gate.manage')->group(function (): void {
         Route::get('/admin/operations/traffic-quality', [TrafficQualityController::class, 'index'])
             ->name('admin.operations.traffic-quality');
