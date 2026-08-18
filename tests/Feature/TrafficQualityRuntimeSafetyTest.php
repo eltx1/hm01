@@ -41,6 +41,10 @@ class TrafficQualityRuntimeSafetyTest extends TestCase
     {
         [$admin] = $this->fixture();
 
+        $this->asAdmin($admin)->post(route('admin.operations.traffic-quality.sitekey.candidate'), [
+            'candidate_sitekey' => '0x4AAAAA_task51_csp_candidate',
+        ])->assertRedirect();
+
         $trafficQuality = $this->asAdmin($admin)->get(route('admin.operations.traffic-quality'));
         $trafficQuality->assertOk()->assertSee('id="traffic-gate-client-test"', false);
         $trafficCsp = (string) $trafficQuality->headers->get('Content-Security-Policy');
