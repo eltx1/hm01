@@ -69,7 +69,8 @@ final class ControlPlaneNavigation
                 $this->item('Advertiser accounts', 'admin.advertisers.index', 'advertisers.view', ['admin.advertisers.*']),
             ]),
             $this->group('Operations', [
-                $this->item('Production operations', 'admin.operations.index', 'operations.view', ['admin.operations.*']),
+                $this->item('Production operations', 'admin.operations.index', 'operations.view', ['admin.operations.index', 'admin.operations.controls', 'admin.operations.static-delivery.*', 'admin.operations.loader.*']),
+                $this->item('Traffic Quality', 'admin.operations.traffic-quality', 'traffic_gate.manage', ['admin.operations.traffic-quality*']),
             ]),
             $this->group('Settings', [
                 $this->item('Global settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
