@@ -13,6 +13,9 @@
         ];
         $trafficGateSiteState = $site->servingSettings?->traffic_gate_state?->value ?? 'INHERIT';
         $trafficGateSitePolicy = $site->servingSettings?->traffic_gate_policy?->value ?? 'INHERIT';
+        $trafficGateGlobalState = config('traffic_gate.enabled') ? 'ENABLED' : 'DISABLED';
+        $trafficGateLastUpdate = $site->servingSettings?->updated_at ?? $site->siteConfig?->updated_at;
+        $trafficGateStaticStatus = $productionVersion?->deliveryItem?->status?->value ?? 'NOT PUBLISHED';
     @endphp
 
     <div class="health-grid">
@@ -41,24 +44,27 @@
     <div class="workspace-heading" style="margin-top:1.5rem">
         <div>
             <p class="eyebrow">Client-only soft traffic filter</p>
-            <h3>Client Traffic Gate</h3>
-            <p class="muted">Task 48 publishes configuration only. No Turnstile script, iframe, browser blocking, Siteverify, Worker validation, visitor Laravel request, or traffic telemetry is executed.</p>
+            <h3>Traffic Gate</h3>
+            <p class="muted">This client gate is a soft browser traffic filter. Horus does not perform server-side Turnstile token validation for ad serving.</p>
         </div>
-        <x-status-badge :status="$trafficGate->readiness->value" />
+        <div class="status-row"><x-status-badge :status="$trafficGate->enabled ? 'ENABLED' : 'DISABLED'" /><x-status-badge :status="$trafficGate->readiness->value" /></div>
     </div>
     <div class="detail-grid">
         <div>
             <dl>
+                <dt>Global state</dt><dd>{{ $trafficGateGlobalState }}</dd>
+                <dt>Site override</dt><dd>{{ $trafficGateSiteState }}</dd>
                 <dt>Effective state</dt><dd>{{ $trafficGate->enabled ? 'ENABLED' : 'DISABLED' }}</dd>
-                <dt>Readiness</dt><dd>{{ $trafficGate->readiness->value }}</dd>
                 <dt>Effective policy</dt><dd>{{ $trafficGate->policy->value }}</dd>
-                <dt>Provider</dt><dd>{{ $trafficGate->provider }}</dd>
-                <dt>Fixed gate origin</dt><dd><code>{{ $trafficGate->gateOrigin }}</code></dd>
-                <dt>Global timings</dt><dd>{{ $trafficGate->initialWaitMs }} / {{ $trafficGate->maxWaitMs }} / {{ $trafficGate->retryIntervalMs }} ms</dd>
+                <dt>Gate origin</dt><dd><code>{{ $trafficGate->gateOrigin ?: 'Not ready' }}</code></dd>
+                <dt>Last configuration update</dt><dd>{{ $trafficGateLastUpdate ?: 'No Site override update recorded' }}</dd>
+                <dt>Static publication status</dt><dd><x-status-badge :status="$trafficGateStaticStatus" /></dd>
+                <dt>Global timings</dt><dd>{{ $trafficGate->initialWaitMs }} / {{ $trafficGate->maxWaitMs }} / {{ $trafficGate->retryIntervalMs }} milliseconds</dd>
             </dl>
+            @if(auth()->user()->hasPermission('traffic_gate.manage'))<a class="hm-button-secondary button-link" href="{{ route('admin.operations.traffic-quality') }}">Open Traffic Quality Control Center</a>@endif
         </div>
         <div>
-            @if(auth()->user()->hasPermission('sites.serving.manage'))
+            @if(auth()->user()->hasPermission('traffic_gate.manage'))
                 <form method="POST" action="{{ route('admin.sites.traffic-gate', $site) }}" class="form-stack">
                     @csrf
                     <label>Site gate state
@@ -76,10 +82,10 @@
                         </select>
                     </label>
                     <label>Required reason<input class="hm-input" name="reason" minlength="8" maxlength="2000" required></label>
-                    <button class="hm-button-secondary">Save Client Traffic Gate override</button>
+                    <button class="hm-button-secondary">Save Traffic Gate override</button>
                 </form>
             @else
-                <p class="muted">Your role has read-only Client Traffic Gate access.</p>
+                <p class="muted">Traffic Gate is managed by Horus Media. Your role has read-only Site status access.</p>
             @endif
         </div>
     </div>
