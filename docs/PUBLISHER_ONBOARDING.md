@@ -74,6 +74,40 @@ Media serving-control workflow can change the site revenue share. Changes to
 publisher-visible Prebid or native-demand preferences increment the site's
 configuration version for future loader configuration publication.
 
+## Optional Client Traffic Gate integration
+
+Horus Media may enable the optional **Client Traffic Gate** for a Site as a
+client-only soft traffic filter before monetization. When enabled, the permanent
+Horus Loader may create a hidden cross-origin frame at:
+
+```text
+https://verify.horusmedia.net/traffic-gate/
+```
+
+and that Horus-owned frame may run a Cloudflare Turnstile Invisible client
+challenge. Horus does not perform server-side Turnstile token validation for ad
+serving and does not describe the browser result as human verification, valid
+traffic, bot verification, fraud prevention, or IVT clearance.
+
+A Publisher with a restrictive Content Security Policy must permit the Horus
+gate frame, for example:
+
+```text
+frame-src https://verify.horusmedia.net
+```
+
+The Publisher does **not** need to add `https://challenges.cloudflare.com` to
+its own CSP merely because Turnstile runs inside the separate Horus-owned gate
+document. The gate document carries its own Cloudflare CSP allowances.
+
+Publishers should ensure their visitor-facing privacy notice accurately states
+that Horus may execute a client-side Cloudflare traffic challenge before ad
+monetization when this optional control is enabled. Cloudflare's current
+Invisible-mode documentation requires operators to reference the
+[Cloudflare Turnstile Privacy Addendum](https://www.cloudflare.com/turnstile-privacy-policy/)
+in their own privacy policy. This documentation is operational guidance, not a
+legal certification or legal opinion.
+
 ## Domain verification
 
 - Meta tag: `horus-site-verification` token in the home page.
