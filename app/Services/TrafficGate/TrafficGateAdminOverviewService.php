@@ -122,16 +122,20 @@ final class TrafficGateAdminOverviewService
             ->unique('site_id');
 
         $failed = $latest->where('status', StaticDeliveryStatus::Failed)->count();
-        $pending = $latest->filter(fn (StaticDeliveryItem $item): bool => in_array($item->status, [
+        $pendingItems = $latest->filter(fn (StaticDeliveryItem $item): bool => in_array($item->status, [
             StaticDeliveryStatus::Pending,
             StaticDeliveryStatus::Batching,
             StaticDeliveryStatus::Uploading,
             StaticDeliveryStatus::RetryScheduled,
-        ], true))->count();
+        ], true));
+        $pending = $pendingItems->count();
+        $urgentPending = $pendingItems->contains(fn (StaticDeliveryItem $item): bool => $item->priority->value === 'URGENT');
         $deployed = $latest->where('status', StaticDeliveryStatus::Deployed)->count();
 
         return [
-            'state' => $failed > 0 ? 'FAILED' : ($pending > 0 ? 'PENDING NORMAL BATCH' : 'DEPLOYED'),
+            'state' => $failed > 0
+                ? 'FAILED'
+                : ($pending > 0 ? ($urgentPending ? 'PENDING URGENT' : 'PENDING NORMAL BATCH') : 'DEPLOYED'),
             'pending' => $pending,
             'failed' => $failed,
             'deployed' => $deployed,
