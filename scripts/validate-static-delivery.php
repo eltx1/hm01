@@ -19,6 +19,7 @@ foreach ($forbidden as $entry) {
 $required = [
     'hm-loader.js',
     '_headers',
+    '_routes.json',
     '404.html',
     'delivery-manifest.json',
     'configs/_global/control.json',
@@ -65,6 +66,19 @@ $manifest = json_decode($files['delivery-manifest.json'], true, 512, JSON_THROW_
 foreach ((array) ($manifest['files'] ?? []) as $path => $sha) {
     if (! isset($files[$path]) || ! hash_equals((string) $sha, hash('sha256', $files[$path]))) {
         fwrite(STDERR, "Manifest checksum mismatch: {$path}.\n");
+        exit(1);
+    }
+}
+
+$routes = json_decode($files['_routes.json'], true, 512, JSON_THROW_ON_ERROR);
+if (($routes['version'] ?? null) !== 1 || ($routes['include'] ?? null) !== ['/*']) {
+    fwrite(STDERR, "Cloudflare Pages _routes.json schema/include contract is invalid.\n");
+    exit(1);
+}
+$routeExclusions = array_values((array) ($routes['exclude'] ?? []));
+foreach (['/traffic-gate/*', '/assets/traffic-gate/*'] as $excludedRoute) {
+    if (! in_array($excludedRoute, $routeExclusions, true)) {
+        fwrite(STDERR, "Traffic Gate Pages Function exclusion missing: {$excludedRoute}.\n");
         exit(1);
     }
 }
@@ -118,6 +132,12 @@ foreach (['HORUS_TRAFFIC_GATE_HELLO', 'HORUS_TRAFFIC_GATE_READY', 'HORUS_TRAFFIC
         exit(1);
     }
 }
+foreach (['1x00000000000000000000BB', '2x00000000000000000000BB'] as $testSitekey) {
+    if (str_contains($gateJs, $testSitekey)) {
+        fwrite(STDERR, "Cloudflare deterministic test Sitekey must not ship in the production Traffic Gate asset.\n");
+        exit(1);
+    }
+}
 
 $loader = $files['hm-loader.js'];
 foreach ([
@@ -143,6 +163,12 @@ if (str_contains(strtolower($loader), 'turnstile/v0/siteverify')) {
     fwrite(STDERR, "Compiled Loader must not contain Turnstile Siteverify.\n");
     exit(1);
 }
+foreach (['1x00000000000000000000BB', '2x00000000000000000000BB'] as $testSitekey) {
+    if (str_contains($loader, $testSitekey)) {
+        fwrite(STDERR, "Cloudflare deterministic test Sitekey must not ship in the compiled Loader.\n");
+        exit(1);
+    }
+}
 
 $headers = $files['_headers'];
 foreach (['Access-Control-Allow-Origin: *', 'X-Content-Type-Options: nosniff', 'immutable', 'stale-while-revalidate', 'X-Robots-Tag: noindex'] as $header) {
@@ -164,7 +190,7 @@ foreach (['/traffic-gate/*', "script-src 'self' https://challenges.cloudflare.co
     }
 }
 if (str_contains($headers, 'X-Frame-Options: DENY') || str_contains($headers, 'X-Frame-Options: SAMEORIGIN')) {
-    fwrite(STDERR, "Traffic Gate cannot be served with a frame-blocking X-Frame-Options policy.\n");
+    fwrite(STDERR, "Traffic Gate static snapshot cannot carry a frame-blocking X-Frame-Options policy.\n");
     exit(1);
 }
 

@@ -143,6 +143,7 @@ final class StaticDeliverySnapshotBuilder
             'traffic-gate/index.html' => $trafficGateHtml,
             'assets/traffic-gate/horus-traffic-gate.js' => $trafficGateJs,
             '_headers' => $this->headers(),
+            '_routes.json' => $this->routes(),
             '404.html' => "<!doctype html><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><title>Not found</title>\n",
         ];
     }
@@ -160,9 +161,6 @@ final class StaticDeliverySnapshotBuilder
             'directJsDisabled' => (bool) $records->get('DIRECT_JS')?->is_disabled || $legacyNativeDisabled,
             'nativeDemandDisabled' => $legacyNativeDisabled,
         ];
-        // Additive compatibility: virgin deployments retain the exact schema-v2
-        // control object. Once the Traffic Gate control has been operated, its
-        // explicit effective state is carried by the same global control file.
         if ($records->has('TRAFFIC_GATE')) {
             $controls['trafficGateDisabled'] = (bool) $records->get('TRAFFIC_GATE')?->is_disabled;
         }
@@ -197,6 +195,15 @@ final class StaticDeliverySnapshotBuilder
             'probeCount' => $latest->count(),
             'lastObservedAt' => $latest->max('observed_at')?->utc()->toIso8601String(),
         ];
+    }
+
+    private function routes(): string
+    {
+        return $this->canonicalJson->encode([
+            'version' => 1,
+            'include' => ['/*'],
+            'exclude' => ['/traffic-gate/*', '/assets/traffic-gate/*'],
+        ]);
     }
 
     private function headers(): string

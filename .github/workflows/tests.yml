@@ -72,6 +72,26 @@ jobs:
           test -s public/assets/prebid/horus-prebid.min.js
           test -s public/assets/prebid/horus-prebid.sha256
 
+  traffic-gate-real-browsers:
+    runs-on: ubuntu-latest
+    name: Traffic Gate Chromium + WebKit
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install pinned CI-only Playwright runner
+        run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - name: Install Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
+      - name: Execute deterministic Traffic Gate real-browser matrix
+        run: npx playwright test --config=playwright.traffic-gate.config.js
+
   mysql:
     runs-on: ubuntu-latest
     services:
@@ -117,7 +137,7 @@ jobs:
 
   release-artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [tests, mysql, frontend]
+    needs: [tests, mysql, frontend, traffic-gate-real-browsers]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
