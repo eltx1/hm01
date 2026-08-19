@@ -31,8 +31,8 @@ test('central pre-monetization predicate remains ahead of GAM, Prebid bridge/sta
     assert.match(loader, /function canRequestAds\(config\)[\s\S]*if \(!trafficGateAllowsMonetization\(\)\) return false;/);
     assert.match(loader, /function scan\(config\) \{\s*if \(!canRequestAds\(config\)\) return Promise\.resolve\(\[\]\);/);
     assert.match(loader, /function requestEntries\(config, googletag, pubads, entries\)/, 'GAM + Prebid GAM bridge path must remain in the centrally gated Loader');
-    assert.match(loader, /function runStandaloneAuction/, 'standalone Prebid path must remain in the centrally gated Loader');
-    assert.match(loader, /function renderNative|function attemptNative|DIRECT_JS/, 'Direct JS path must remain in the centrally gated Loader');
+    assert.match(loader, /function (?:requestStandaloneEntry|runStandaloneEntry)\(/, 'standalone Prebid path must remain in the centrally gated Loader');
+    assert.match(loader, /function (?:loadDirectScript|runDirectInitialization|directCandidates)\(/, 'Direct JS path must remain in the centrally gated Loader');
 });
 
 test('BALANCED initial stall keeps the bound gate channel alive so a late valid PASS can still win before activity soft-allow', () => {
