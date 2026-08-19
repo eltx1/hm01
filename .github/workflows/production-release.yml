@@ -38,11 +38,14 @@ jobs:
           bash scripts/install-composer-ci.sh
           npm ci
           npm audit --audit-level=moderate
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
       - name: Static, browser, and PHP validation
         run: |
           find app bootstrap config database routes tests scripts -name '*.php' -print0 | xargs -0 -n1 php -l
           php scripts/static-analysis.php
           npm run test:browser
+          npx playwright test --config=playwright.traffic-gate.config.js
           npm run build
           test -s public/assets/hm-loader.js
           test -s public/assets/hm-loader.min.js
