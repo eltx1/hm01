@@ -57,6 +57,32 @@ clicks, or ad delivery events. Ordinary web-server request handling may still
 observe network metadata under the platform's normal security/logging policy;
 the privacy evidence record does not derive or persist an identifier from it.
 
+## Client Traffic Gate / Cloudflare Turnstile
+
+When the optional Horus Client Traffic Gate is enabled for a Site, the browser
+may load the Horus-owned cross-origin gate at `verify.horusmedia.net` before ad
+monetization. That static gate may execute a Cloudflare Turnstile **Invisible**
+client challenge.
+
+Cloudflare's current Turnstile documentation states that operators using
+Invisible mode must reference Cloudflare's Turnstile Privacy Addendum in their
+own privacy policy. The current addendum describes Cloudflare-side processing
+of Turnstile client signals, including network/browser-related signals. Horus
+therefore treats the following as the required operational privacy reference:
+
+- [Cloudflare Turnstile Privacy Addendum](https://www.cloudflare.com/turnstile-privacy-policy/)
+- [Cloudflare Turnstile documentation](https://developers.cloudflare.com/turnstile/)
+
+Horus does not treat these references as a legal certification. Publishers and
+website operators remain responsible for their own notices, lawful-basis
+assessment, and other jurisdiction-specific obligations.
+
+For this ad gate Horus intentionally does not perform Siteverify. Horus stores
+no Turnstile token, PASS/FAIL event, activity event, browser fingerprint,
+visitor identifier, or per-page gate record. Cloudflare challenge analytics,
+if available, are external operational data and are not Horus finance,
+reporting, payout, or validated-human-traffic evidence.
+
 ## Google CMP operator evidence
 
 When a site's runtime policy explicitly requires Google-related CMP evidence,
@@ -84,6 +110,7 @@ general provider compatibility matrix.
 - [Prebid activity controls](https://docs.prebid.org/dev-docs/activity-controls.html)
 - [Prebid Storage Control module](https://docs.prebid.org/dev-docs/modules/storageControl.html)
 - [Google publisher CMP requirements](https://support.google.com/adsense/answer/13554116)
+- [Cloudflare Turnstile Privacy Addendum](https://www.cloudflare.com/turnstile-privacy-policy/)
 
 These sources describe technical requirements and vendor programs. They do not
 make Horus configuration or evidence a legal-compliance determination.
