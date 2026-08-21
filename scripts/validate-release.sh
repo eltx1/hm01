@@ -7,6 +7,8 @@ unzip -t "$ZIP" >/dev/null
 
 required=(
   'horus-media-platform/vendor/autoload.php'
+  'horus-media-platform/bootstrap/cache/packages.php'
+  'horus-media-platform/bootstrap/cache/services.php'
   'horus-media-platform/public/build/manifest.json'
   'horus-media-platform/public/assets/hm-loader.min.js'
   'horus-media-platform/public/assets/prebid/horus-prebid.min.js'
@@ -49,8 +51,8 @@ for forbidden_dir in \
   fi
 done
 
-if unzip -Z1 "$ZIP" | grep -Eq '^horus-media-platform/bootstrap/cache/[^/]+\.php$'; then
-  echo 'Release must not contain Laravel bootstrap cache files generated on the CI host.' >&2
+if unzip -Z1 "$ZIP" | grep -Eq '^horus-media-platform/bootstrap/cache/(config|events|compiled|routes-[^/]+)\.php$'; then
+  echo 'Release contains host/runtime-specific Laravel bootstrap cache generated before deployment.' >&2
   exit 1
 fi
 
