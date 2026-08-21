@@ -37,7 +37,10 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'release/CHECKSUMS.txt' \
   --exclude 'database/database.sqlite' \
   --exclude 'public/cdn/' \
-  --exclude 'bootstrap/cache/*.php' \
+  --exclude 'bootstrap/cache/config.php' \
+  --exclude 'bootstrap/cache/events.php' \
+  --exclude 'bootstrap/cache/routes-*.php' \
+  --exclude 'bootstrap/cache/compiled.php' \
   --exclude 'storage/logs/*' \
   --exclude 'storage/framework/cache/*' \
   --exclude 'storage/framework/sessions/*' \
