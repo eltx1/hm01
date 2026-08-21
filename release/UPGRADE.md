@@ -34,6 +34,12 @@ certificate and the configured path exists.
 bash horus-atomic-deploy.sh /path/to/horus-media-platform.zip EXPECTED_SHA256
 ```
 
+TLS verification remains enabled by default. If an explicit internal
+direct-origin resolve target uses a self-signed HTTPS certificate, add
+`HORUS_DEPLOY_HEALTH_INSECURE_TLS=1` to the runner environment. The value must be
+exactly `0` or `1`, is invalid without the direct-origin resolve target, and does
+not apply to the separate public production health check.
+
 The runner performs the checksum check, immutable release preparation, shared
 links, Laravel preflight, MySQL/`.env`/`storage/app` backup, maintenance mode,
 forward migrations, `storage:link`, final-path `optimize`, atomic application

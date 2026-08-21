@@ -16,7 +16,7 @@ assert_eq() {
 }
 
 assert_file_contains() {
-    grep -Fq "$2" "$1" || fail "Expected $1 to contain: $2"
+    grep -Fq -- "$2" "$1" || fail "Expected $1 to contain: $2"
 }
 
 create_fake_php() {
@@ -104,19 +104,29 @@ prepare_environment() {
 
 create_fake_php "$TMP/bin"
 FAKE_PHP="$TMP/bin/php"
+cat > "$TMP/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${HORUS_TEST_CURL_LOG:?}"
+SH
+chmod +x "$TMP/bin/curl"
 
 # Successful deployment must build Laravel caches only after the release has its
 # immutable final path, switch the symlink atomically, and preserve shared state.
 IFS='|' read -r SUCCESS_BASE SUCCESS_HOME SUCCESS_OLD SUCCESS_CURRENT SUCCESS_ZIP <<< "$(prepare_environment success)"
 SUCCESS_LOG="$SUCCESS_BASE/artisan.log"
+SUCCESS_CURL_LOG="$SUCCESS_BASE/curl.log"
 : > "$SUCCESS_LOG"
+: > "$SUCCESS_CURL_LOG"
 SUCCESS_SHA="$(sha256sum "$SUCCESS_ZIP" | awk '{print $1}')"
 
+PATH="$TMP/bin:$PATH" \
 HORUS_TEST_ARTISAN_LOG="$SUCCESS_LOG" \
+HORUS_TEST_CURL_LOG="$SUCCESS_CURL_LOG" \
 HORUS_DEPLOY_HOME="$SUCCESS_HOME" \
 HORUS_DEPLOY_PHP_BIN="$FAKE_PHP" \
 HORUS_DEPLOY_FPM_RELOAD_COMMAND=true \
-HORUS_DEPLOY_HEALTHCHECK_COMMAND=true \
+HORUS_DEPLOY_HEALTH_INSECURE_TLS=1 \
 HORUS_DEPLOY_SKIP_BACKUP=1 \
 HORUS_DEPLOY_KEEP_RELEASES=5 \
 HORUS_DEPLOY_HEALTH_ATTEMPTS=1 \
@@ -133,7 +143,33 @@ if grep -Fq '/.staging-' "$SUCCESS_NEW/bootstrap/cache/config.php"; then
 fi
 assert_file_contains "$SUCCESS_LOG" "$SUCCESS_NEW|migrate --force"
 assert_file_contains "$SUCCESS_LOG" "$SUCCESS_NEW|optimize "
+assert_file_contains "$SUCCESS_CURL_LOG" '--resolve app.horusmedia.net:443:127.0.0.1'
+assert_file_contains "$SUCCESS_CURL_LOG" '--insecure'
 [[ ! -e "$SUCCESS_HOME/shared/storage/framework/down" ]] || fail 'Maintenance mode remained enabled after success.'
+
+# Invalid flag values must fail before a release is prepared or the active
+# application is changed.
+IFS='|' read -r INVALID_BASE INVALID_HOME INVALID_OLD INVALID_CURRENT INVALID_ZIP <<< "$(prepare_environment invalid-flag)"
+INVALID_LOG="$INVALID_BASE/artisan.log"
+: > "$INVALID_LOG"
+INVALID_SHA="$(sha256sum "$INVALID_ZIP" | awk '{print $1}')"
+
+set +e
+HORUS_TEST_ARTISAN_LOG="$INVALID_LOG" \
+HORUS_DEPLOY_HOME="$INVALID_HOME" \
+HORUS_DEPLOY_PHP_BIN="$FAKE_PHP" \
+HORUS_DEPLOY_FPM_RELOAD_COMMAND=true \
+HORUS_DEPLOY_HEALTH_INSECURE_TLS=true \
+HORUS_DEPLOY_SKIP_BACKUP=1 \
+HORUS_RELEASE_ID=release-invalid-flag \
+bash "$DEPLOY_SCRIPT" "$INVALID_ZIP" "$INVALID_SHA"
+invalid_status=$?
+set -e
+
+(( invalid_status != 0 )) || fail 'Invalid TLS flag unexpectedly passed validation.'
+assert_eq "$(readlink -f "$INVALID_CURRENT")" "$INVALID_OLD"
+[[ ! -e "$INVALID_HOME/releases/release-invalid-flag" ]] || fail 'Invalid TLS flag prepared a release.'
+[[ ! -e "$INVALID_HOME/shared/storage/framework/down" ]] || fail 'Invalid TLS flag enabled maintenance mode.'
 
 # A failed post-switch health check must restore the previous release and clear
 # maintenance mode without attempting a destructive database rollback.
