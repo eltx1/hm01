@@ -1,26 +1,48 @@
 # Database Backup and Restore
 
-## Backup
+## Deployment backups
 
-Use Hostinger hPanel export or a hosting-provided `mysqldump` binary before every deployment and financial close:
+After the one-time Task 54 atomic-layout bootstrap, every normal production
+deployment creates a private backup directory before maintenance and migration:
 
-```bash
-mysqldump --single-transaction --quick --routines --triggers \
-  -h DB_HOST -u DB_USER -p DB_NAME | gzip > horus-$(date +%Y%m%d-%H%M%S).sql.gz
+```text
+/home/horusapp/backups/<release-id>/
+├── .env
+├── database.sql.gz
+├── storage-app.tar.gz
+└── manifest.txt
 ```
 
-Also back up `.env`, the protected credential directory, `storage/app/private`, and the CDN `configs` directory. Encrypt backups at rest and restrict access to authorized Horus Media administrators.
+The deployment helper reads database credentials from the shared `.env`, writes
+a temporary mode-0600 MySQL client file, and removes that file after the dump.
+Credentials are not placed in process arguments or deployment logs.
 
-## Restore rehearsal
+By default the newest 10 deployment backups are retained. Adjust
+`HORUS_DEPLOY_KEEP_BACKUPS` only with an explicit storage/retention policy.
 
-Restore to a separate database first:
+A deployment backup complements provider-level snapshots; it does not replace a
+separate tested disaster-recovery backup policy.
 
-```bash
-gunzip -c horus-BACKUP.sql.gz | mysql -h DB_HOST -u RESTORE_USER -p RESTORE_DATABASE
-```
+## Independent backup / restore rehearsal
 
-Run `php artisan migrate:status`, application health checks, reporting totals, statement hashes, and login tests against the restored copy. A backup is not accepted until a restore rehearsal succeeds.
+For an independent rehearsal, create a consistent MySQL/MariaDB dump using the
+hosting provider's supported tooling and back up shared `.env` plus
+`storage/app`. Store backups encrypted at rest with access limited to authorized
+Horus Media operators.
 
-## Emergency production restore
+Restore a verified dump to a **separate database**, never production first. Then
+run migration status, application health, login, reporting totals, statement
+hashes, and relevant integration checks against the restored copy. A backup is
+not considered proven until an isolated restore rehearsal succeeds.
 
-Enable maintenance mode, stop scheduled imports temporarily, restore the verified database, restore matching application/private files, clear and rebuild Laravel caches, then re-enable cron and check the operations heartbeat. Record the incident and restore reference in the audit/incident log.
+## Emergency production recovery
+
+Use a maintenance window. Pause scheduled operations, restore the verified
+matching database/private files, restore a compatible retained application
+release, rebuild Laravel caches in that final release path, atomically select the
+release, reload PHP-FPM, exit maintenance, and verify `/up`, login, scheduler
+heartbeat, failed jobs, reporting, and finance state.
+
+Record the incident, backup manifest, restored application release, and health
+evidence. Do not use a production restore as a substitute for an isolated restore
+drill.
