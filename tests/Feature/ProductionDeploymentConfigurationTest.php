@@ -58,6 +58,7 @@ class ProductionDeploymentConfigurationTest extends TestCase
             $this->assertStringContainsString('HORUS_DEPLOY_HEALTH_INSECURE_TLS', $script);
             $this->assertStringContainsString("HEALTH_INSECURE_TLS\" == '0' || \"\$HEALTH_INSECURE_TLS\" == '1'", $script);
             $this->assertStringContainsString('requires an explicit HORUS_DEPLOY_HEALTH_RESOLVE_IP', $script);
+            $this->assertStringContainsString("--noproxy '*' --resolve", $script);
             $this->assertMatchesRegularExpression('/\b(?:curl_)?args\+=\(--insecure\)/', $script);
         }
 

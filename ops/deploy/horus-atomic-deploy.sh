@@ -97,7 +97,7 @@ health_check_once() {
 
     local curl_args=(-fsS --max-time 12)
     if [[ -n "$HEALTH_RESOLVE_IP" ]]; then
-        curl_args+=(--resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
+        curl_args+=(--noproxy '*' --resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
         if [[ "$HEALTH_INSECURE_TLS" == '1' ]]; then
             curl_args+=(--insecure)
         fi

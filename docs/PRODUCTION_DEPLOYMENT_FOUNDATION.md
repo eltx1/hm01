@@ -81,7 +81,8 @@ explicit `HORUS_DEPLOY_HEALTH_RESOLVE_IP` target and that origin presents a
 self-signed certificate. Any other value fails before maintenance or release
 switching. The flag is rejected for custom health-check commands and never
 applies to the separate public health check. Do not use it to bypass public TLS
-verification.
+verification. Direct-origin checks also force `--noproxy '*'` so host proxy
+environment variables cannot redirect the probe away from the selected origin.
 
 ## Normal deployment
 

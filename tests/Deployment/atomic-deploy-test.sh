@@ -143,6 +143,7 @@ if grep -Fq '/.staging-' "$SUCCESS_NEW/bootstrap/cache/config.php"; then
 fi
 assert_file_contains "$SUCCESS_LOG" "$SUCCESS_NEW|migrate --force"
 assert_file_contains "$SUCCESS_LOG" "$SUCCESS_NEW|optimize "
+assert_file_contains "$SUCCESS_CURL_LOG" '--noproxy *'
 assert_file_contains "$SUCCESS_CURL_LOG" '--resolve app.horusmedia.net:443:127.0.0.1'
 assert_file_contains "$SUCCESS_CURL_LOG" '--insecure'
 [[ ! -e "$SUCCESS_HOME/shared/storage/framework/down" ]] || fail 'Maintenance mode remained enabled after success.'

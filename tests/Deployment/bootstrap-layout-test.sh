@@ -105,6 +105,7 @@ assert_eq "$(readlink -f "$TARGET/public/storage")" "$APP_HOME/shared/storage/ap
 grep -Fq "$TARGET" "$TARGET/bootstrap/cache/config.php" || fail 'Bootstrap cache was not generated in the final release path.'
 [[ ! -e "$APP_HOME/shared/storage/framework/down" ]] || fail 'Maintenance mode remained enabled after bootstrap.'
 grep -Fq "$TARGET|optimize " "$ARTISAN_LOG" || fail 'Final optimize did not run from the immutable release path.'
+grep -Fq -- '--noproxy *' "$CURL_LOG" || fail 'Bootstrap did not bypass configured proxies for its direct-origin check.'
 grep -Fq -- '--resolve app.horusmedia.net:443:127.0.0.1' "$CURL_LOG" || fail 'Bootstrap did not use the direct-origin resolve target.'
 if grep -Fq -- '--insecure' "$CURL_LOG"; then
     fail 'Bootstrap disabled TLS verification without the explicit opt-in flag.'

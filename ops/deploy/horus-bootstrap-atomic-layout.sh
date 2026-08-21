@@ -73,7 +73,7 @@ health_check() {
 
     local args=(-fsS --max-time 12)
     if [[ -n "$HEALTH_RESOLVE_IP" ]]; then
-        args+=(--resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
+        args+=(--noproxy '*' --resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
         if [[ "$HEALTH_INSECURE_TLS" == '1' ]]; then
             args+=(--insecure)
         fi
