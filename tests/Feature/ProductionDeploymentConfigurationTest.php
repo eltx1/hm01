@@ -20,7 +20,7 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/^(SESSION_COOKIE|DB_CACHE_TABLE|DB_CACHE_LOCK_TABLE)=\s*$/m', $environment);
     }
 
-    public function test_runtime_config_defends_against_blank_cache_table_and_session_cookie_values(): void
+    public function test_runtime_config_defends_against_blank_cache_table_session_cookie_and_ssl_ca_values(): void
     {
         $cache = file_get_contents(config_path('cache.php'));
         $session = file_get_contents(config_path('session.php'));
@@ -33,7 +33,7 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertStringContainsString("env('DB_CACHE_TABLE') ?: 'cache'", $cache);
         $this->assertStringContainsString("env('DB_CACHE_LOCK_TABLE') ?: 'cache_locks'", $cache);
         $this->assertStringContainsString("env('SESSION_COOKIE') ?: Str::slug", $session);
-        $this->assertStringContainsString("$value !== null && $value !== ''", $database);
+        $this->assertStringContainsString('$value !== null && $value !== \'\'', $database);
     }
 
     public function test_atomic_deployment_assets_are_versioned_with_the_repository(): void
