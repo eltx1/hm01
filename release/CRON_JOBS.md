@@ -1,21 +1,32 @@
 # Required Cron Jobs
 
-The minimum Hostinger cron entry runs every minute:
+Horus Media requires exactly one Laravel scheduler entry every minute. It does
+not require a permanent queue worker, Redis, Supervisor, Docker, or WebSockets.
+
+For the production CloudPanel installation the stable command is:
 
 ```cron
-* * * * * cd /home/ACCOUNT/domains/app.horusmedia.net/application && /usr/bin/php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /home/horusapp/htdocs/app.horusmedia.net && /usr/bin/php8.4 artisan schedule:run >> /home/horusapp/logs/horus-scheduler.log 2>&1
 ```
 
-If Hostinger exposes a PHP selector path, use the PHP 8.2+ binary shown in hPanel. Do not start a permanent worker. The scheduler starts a database queue worker with `--stop-when-empty`, records a heartbeat, imports reports, closes periods, and prunes audit logs.
+The Task 54 deployment foundation keeps
+`/home/horusapp/htdocs/app.horusmedia.net` as the stable active-application
+symlink, so this cron command does not change between releases.
 
-Verification commands:
+For another provider, use the equivalent absolute PHP binary and stable atomic
+application path. Keep scheduler logs outside public web roots.
+
+The scheduler starts bounded database queue work with `--stop-when-empty`,
+records the scheduler heartbeat, processes static delivery, reconciles campaigns,
+imports reports, closes periods, and runs the registered retention jobs.
+
+Verification:
 
 ```bash
 php artisan schedule:list
-php artisan operations:heartbeat manual-check
-php artisan queue:monitor database:default --max=100
+php artisan queue:failed
+tail -n 50 /home/horusapp/logs/horus-scheduler.log
 ```
 
-The scheduler also batches and reconciles Cloudflare Pages delivery. The
-Operations dashboard marks the scheduler stale when no heartbeat has been
-recorded within `HEARTBEAT_STALE_AFTER_SECONDS`.
+Verify the Operations dashboard reports a fresh scheduler heartbeat within three
+minutes. Do not create a second scheduler entry during a deployment or rollback.

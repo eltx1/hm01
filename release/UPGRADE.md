@@ -1,26 +1,69 @@
 # Upgrade Procedure
 
-1. Download and verify the new ZIP using `CHECKSUMS.txt`.
-2. Back up database, `.env`, private credentials, private uploads, and CDN configurations.
-3. Inspect migrations with `php artisan migrate:status` and release notes.
-4. Confirm the private production `.env` preserves the intended authentication policy:
+For a production installation that has completed the one-time Task 54 atomic
+layout bootstrap, use the validated atomic deployment runner. Do not manually
+replace the active application directory.
+
+## Preconditions
+
+- the active application path is the stable atomic symlink;
+- shared `.env` and `storage/` are healthy and private;
+- exactly one Laravel scheduler entry uses the stable application path;
+- the site user has only the narrow PHP-FPM reload sudo privilege documented in
+  `PRODUCTION_DEPLOYMENT_FOUNDATION.md`;
+- the new ZIP comes from a successful **Production release validation** run on
+  `main` and its SHA-256 is known.
+
+Preserve the intended production authentication policy unless intentionally
+changed:
 
 ```dotenv
 AUTH_EMAIL_VERIFICATION_REQUIRED=false
 AUTH_ADMIN_2FA_REQUIRED=false
 SESSION_COOKIE=horus-media-session
+DB_CACHE_TABLE=cache
+DB_CACHE_LOCK_TABLE=cache_locks
 ```
 
-Do not define `MYSQL_ATTR_SSL_CA` unless the database explicitly requires a CA certificate and the configured path exists.
-5. Enable maintenance mode with a random secret.
-6. Deploy to a new directory when the host permits atomic directory switching; otherwise replace application code while preserving `.env`, private storage, and credentials.
-7. Preserve `.env`, `storage/app/private`, and the protected credential directory.
-8. Run `composer install --no-dev --prefer-dist --optimize-autoloader` only when vendor was not supplied.
-9. Run `php artisan migrate --force`.
-10. Run `php artisan optimize`.
-11. Publish versioned loader/Prebid assets through the configured static-delivery pipeline, retaining rollback artifacts.
-12. Disable maintenance mode and execute health, login, Publisher application, GAM dry-run, loader, reporting, and cron checks.
+Do not define `MYSQL_ATTR_SSL_CA` unless the database explicitly requires a CA
+certificate and the configured path exists.
 
-For Task 53 and later, verify that staff login reaches the control plane directly and a test Publisher registration reaches the Publisher application directly when both authentication requirement switches are `false`.
+## Supported upgrade command
 
-Never use `migrate:fresh`, destructive schema commands, or an unreviewed SQL import in production.
+```bash
+bash horus-atomic-deploy.sh /path/to/horus-media-platform.zip EXPECTED_SHA256
+```
+
+The runner performs the checksum check, immutable release preparation, shared
+links, Laravel preflight, MySQL/`.env`/`storage/app` backup, maintenance mode,
+forward migrations, `storage:link`, final-path `optimize`, atomic application
+switch, PHP-FPM reload, maintenance exit, direct-origin `/up` retries, old
+release retention, and bounded backup retention.
+
+If the new application fails its post-switch HTTP health check, the runner
+restores the previous application symlink automatically and reloads PHP-FPM.
+
+## Critical path rule
+
+Never run `php artisan optimize` in a temporary extraction/staging directory and
+then move that optimized application to another path. Laravel bootstrap cache
+may contain absolute paths. The Task 54 deployment runner moves code into its
+final immutable release path **before** generating Laravel caches.
+
+## Prohibited upgrade actions
+
+Normal upgrades never run:
+
+```text
+php artisan key:generate
+php artisan db:seed
+php artisan migrate:fresh
+php artisan migrate:rollback
+```
+
+Do not rotate `APP_KEY` as part of deployment. Do not automatically reverse
+production database migrations during an application rollback.
+
+After a successful deployment verify the public `/up` endpoint, login, scheduler
+heartbeat, `queue:failed`, and any integration changed by that release. GAM
+writes remain dry-run until explicitly enabled by production evidence.

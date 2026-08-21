@@ -21,6 +21,7 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'README.md' \
   --exclude 'design/' \
   --exclude 'docs/' \
+  --exclude 'ops/' \
   --exclude 'scripts/' \
   --exclude 'node_modules/' \
   --exclude 'cloudflare-pages-dist/' \
@@ -36,6 +37,10 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'release/CHECKSUMS.txt' \
   --exclude 'database/database.sqlite' \
   --exclude 'public/cdn/' \
+  --exclude 'bootstrap/cache/config.php' \
+  --exclude 'bootstrap/cache/events.php' \
+  --exclude 'bootstrap/cache/routes-*.php' \
+  --exclude 'bootstrap/cache/compiled.php' \
   --exclude 'storage/logs/*' \
   --exclude 'storage/framework/cache/*' \
   --exclude 'storage/framework/sessions/*' \
@@ -43,6 +48,8 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'storage/framework/views/*'
 
 cp "$ROOT/.env.production.example" "$STAGE/horus-media-platform/.env.example"
+cp "$ROOT/docs/PRODUCTION_DEPLOYMENT_FOUNDATION.md" \
+  "$STAGE/horus-media-platform/release/PRODUCTION_DEPLOYMENT_FOUNDATION.md"
 find "$STAGE/horus-media-platform" -type f \( -name '*.log' -o -name '.DS_Store' \) -delete
 find "$STAGE/horus-media-platform/storage" -type f ! -name '.gitignore' ! -name '.htaccess' -delete 2>/dev/null || true
 

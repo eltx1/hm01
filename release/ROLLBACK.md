@@ -1,21 +1,48 @@
 # Rollback Procedure
 
-## Application rollback
+## Automatic application rollback
 
-1. Enable maintenance mode.
-2. Restore the previous application directory or previous release ZIP.
-3. Restore the previous `.env` only if environment settings changed.
-4. Run `php artisan optimize`.
-5. Disable maintenance mode and test `/up` and administrator login.
+The Task 54 atomic deploy runner automatically restores the previous application
+symlink when the newly switched release fails its HTTP health check. It then
+reloads PHP-FPM, clears maintenance mode on the restored application, and checks
+health again.
+
+Automatic application rollback does **not** reverse database migrations.
+Production migrations must therefore remain compatible with the immediately
+previous application release whenever application-only rollback is expected.
+
+## Manual application rollback
+
+Use a retained release only after confirming it is compatible with the current
+database schema.
+
+1. identify the current and intended retained release paths;
+2. enter maintenance mode through the stable application path;
+3. atomically repoint the stable application symlink to the retained release;
+4. reload PHP-FPM to clear realpath/opcache state;
+5. exit maintenance mode;
+6. verify direct-origin and public `/up`, administrator login, scheduler
+   heartbeat, and failed jobs.
+
+Do not rebuild a retained release in a temporary path and then move it after
+`artisan optimize`. Do not rotate `APP_KEY` during rollback.
 
 ## Loader rollback
 
-Use **Admin → Operations → Loader rollback**. The action requires the administrator's current password, verifies the stored SHA-256 checksum, activates the selected release, and writes an audit event. Republish affected site configurations afterward.
+Use **Admin → Operations → Loader rollback**. The action requires the
+administrator's current password, verifies the stored SHA-256 checksum, activates
+the selected release, and writes an audit event. Republish affected site
+configurations afterward.
 
 ## Configuration rollback
 
-Use the existing website configuration version history. A rollback creates a new immutable version pointing to the source version; it never rewrites historical financial or configuration records.
+Use website configuration version history. A rollback creates a new immutable
+version pointing to the source version; it never rewrites historical financial
+or configuration records.
 
-## Database rollback
+## Database recovery
 
-Prefer forward-fix migrations. Restore a verified pre-deployment database backup when a schema rollback is unavoidable. Do not run `migrate:rollback` unless every migration in the batch has been reviewed for data loss.
+Prefer a reviewed forward-fix migration. Restore a verified pre-deployment
+backup only when database recovery is unavoidable and under a maintenance
+window. Do not run `migrate:rollback` merely because an application release was
+rolled back, and never target the live database with an untested restore drill.
