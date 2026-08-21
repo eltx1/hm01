@@ -114,7 +114,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function hasVerifiedEmail(): bool
     {
-        if (! config('security.authentication.email_verification_required', false)) {
+        if (! config('security.authentication.email_verification_required', true)) {
             return true;
         }
 
