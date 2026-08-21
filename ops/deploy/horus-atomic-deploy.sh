@@ -17,6 +17,7 @@ PHP_BIN="${HORUS_DEPLOY_PHP_BIN:-/usr/bin/php8.4}"
 FPM_RELOAD_COMMAND="${HORUS_DEPLOY_FPM_RELOAD_COMMAND:-sudo -n /usr/bin/systemctl reload php8.4-fpm}"
 HEALTH_URL="${HORUS_DEPLOY_HEALTH_URL:-https://app.horusmedia.net/up}"
 HEALTH_RESOLVE_IP="${HORUS_DEPLOY_HEALTH_RESOLVE_IP:-127.0.0.1}"
+HEALTH_INSECURE_TLS="${HORUS_DEPLOY_HEALTH_INSECURE_TLS:-0}"
 HEALTH_ATTEMPTS="${HORUS_DEPLOY_HEALTH_ATTEMPTS:-6}"
 HEALTH_DELAY_SECONDS="${HORUS_DEPLOY_HEALTH_DELAY_SECONDS:-2}"
 KEEP_RELEASES="${HORUS_DEPLOY_KEEP_RELEASES:-5}"
@@ -97,6 +98,9 @@ health_check_once() {
     local curl_args=(-fsS --max-time 12)
     if [[ -n "$HEALTH_RESOLVE_IP" ]]; then
         curl_args+=(--resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
+    fi
+    if [[ "$scheme" == 'https' && "$HEALTH_INSECURE_TLS" == '1' ]]; then
+        curl_args+=(--insecure)
     fi
 
     curl "${curl_args[@]}" "$HEALTH_URL" >/dev/null
@@ -246,6 +250,10 @@ trap 'recover $?' EXIT
 [[ -d "$SHARED_STORAGE" ]] || die "Shared storage directory is missing: $SHARED_STORAGE"
 [[ "$HEALTH_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die 'HORUS_DEPLOY_HEALTH_ATTEMPTS must be a positive integer.'
 [[ "$HEALTH_DELAY_SECONDS" =~ ^[0-9]+$ ]] || die 'HORUS_DEPLOY_HEALTH_DELAY_SECONDS must be a non-negative integer.'
+[[ "$HEALTH_INSECURE_TLS" =~ ^[01]$ ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS must be 0 or 1.'
+if [[ "$HEALTH_INSECURE_TLS" == '1' && -z "$HEALTH_RESOLVE_IP" && -z "$HEALTHCHECK_COMMAND" ]]; then
+    die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS=1 is allowed only for an explicitly resolved direct-origin health check.'
+fi
 
 require_command unzip
 require_command sha256sum
