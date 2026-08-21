@@ -11,7 +11,7 @@ class EnsureAdministratorTwoFactor
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! config('security.authentication.administrator_2fa_required', false)) {
+        if (! config('security.authentication.administrator_2fa_required', true)) {
             return $next($request);
         }
 
