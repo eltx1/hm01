@@ -216,8 +216,12 @@ recover() {
             reload_fpm || true
         fi
 
-        if (( MAINTENANCE_ENABLED == 1 )) && [[ -e "$CURRENT_LINK/artisan" ]]; then
-            run_artisan_in "$CURRENT_LINK" up || true
+        # Always target the known previous immutable release directly when
+        # clearing maintenance mode. This avoids depending on symlink path
+        # resolution during a rollback switch and makes recovery deterministic.
+        if (( MAINTENANCE_ENABLED == 1 )) && [[ -n "$PREVIOUS_TARGET" && -f "$PREVIOUS_TARGET/artisan" ]]; then
+            run_artisan_in "$PREVIOUS_TARGET" up || true
+            MAINTENANCE_ENABLED=0
         fi
 
         if (( SWITCHED == 1 )); then
@@ -335,6 +339,9 @@ run_artisan_in "$CURRENT_LINK" up
 MAINTENANCE_ENABLED=0
 
 if ! health_check; then
+    # Ensure recovery explicitly brings the previous immutable release up after
+    # switching back, even though the shared maintenance marker may already be
+    # cleared by the failed release.
     MAINTENANCE_ENABLED=1
     die "New release failed health check: $HEALTH_URL"
 fi
