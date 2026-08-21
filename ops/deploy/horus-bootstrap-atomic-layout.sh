@@ -13,6 +13,7 @@ PHP_BIN="${HORUS_DEPLOY_PHP_BIN:-/usr/bin/php8.4}"
 FPM_RELOAD_COMMAND="${HORUS_DEPLOY_FPM_RELOAD_COMMAND:-sudo -n /usr/bin/systemctl reload php8.4-fpm}"
 HEALTH_URL="${HORUS_DEPLOY_HEALTH_URL:-https://app.horusmedia.net/up}"
 HEALTH_RESOLVE_IP="${HORUS_DEPLOY_HEALTH_RESOLVE_IP:-127.0.0.1}"
+HEALTH_INSECURE_TLS="${HORUS_DEPLOY_HEALTH_INSECURE_TLS:-0}"
 HEALTHCHECK_COMMAND="${HORUS_DEPLOY_HEALTHCHECK_COMMAND:-}"
 BACKUP_CONFIRMED="${HORUS_BOOTSTRAP_CONFIRMED_BACKUP:-0}"
 LOCK_FILE="$APP_HOME/.horus-deploy.lock"
@@ -74,6 +75,9 @@ health_check() {
     if [[ -n "$HEALTH_RESOLVE_IP" ]]; then
         args+=(--resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
     fi
+    if [[ "$scheme" == 'https' && "$HEALTH_INSECURE_TLS" == '1' ]]; then
+        args+=(--insecure)
+    fi
 
     curl "${args[@]}" "$HEALTH_URL" >/dev/null
 }
@@ -131,6 +135,10 @@ trap 'rollback_bootstrap $?' EXIT
 [[ ! -e "$SHARED_ENV" ]] || die "Shared .env already exists: $SHARED_ENV"
 [[ ! -e "$SHARED_STORAGE" ]] || die "Shared storage already exists: $SHARED_STORAGE"
 [[ ! -e "$RELEASE_DIR" ]] || die "Bootstrap release already exists: $RELEASE_DIR"
+[[ "$HEALTH_INSECURE_TLS" =~ ^[01]$ ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS must be 0 or 1.'
+if [[ "$HEALTH_INSECURE_TLS" == '1' && -z "$HEALTH_RESOLVE_IP" && -z "$HEALTHCHECK_COMMAND" ]]; then
+    die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS=1 is allowed only for an explicitly resolved direct-origin health check.'
+fi
 
 command -v flock >/dev/null 2>&1 || die 'flock is required.'
 command -v curl >/dev/null 2>&1 || die 'curl is required.'
