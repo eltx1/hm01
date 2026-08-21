@@ -23,7 +23,7 @@ env:
 jobs:
   production-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
         with:
@@ -44,9 +44,16 @@ jobs:
           npm audit --audit-level=moderate
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           npx playwright install --with-deps chromium webkit
+      - name: Validate deployment foundation
+        run: |
+          bash -n ops/deploy/horus-atomic-deploy.sh
+          bash -n ops/deploy/horus-bootstrap-atomic-layout.sh
+          php -l ops/deploy/write-mysql-client-config.php
+          bash tests/Deployment/bootstrap-layout-test.sh
+          bash tests/Deployment/atomic-deploy-test.sh
       - name: Static, browser, and PHP validation
         run: |
-          find app bootstrap config database routes tests scripts -name '*.php' -print0 | xargs -0 -n1 php -l
+          find app bootstrap config database routes tests scripts ops -name '*.php' -print0 | xargs -0 -n1 php -l
           php scripts/static-analysis.php
           npm run test:browser
           npx playwright test --config=playwright.traffic-gate.config.js
@@ -65,6 +72,18 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan route:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan schedule:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
+      - name: Smoke-test production environment template
+        run: |
+          rm -f .env database/production-smoke.sqlite
+          cp .env.production.example .env
+          php artisan key:generate --force
+          touch database/production-smoke.sqlite
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan migrate:fresh --seed --force
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan schedule:list
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan route:list >/dev/null
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan config:cache
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan config:clear
+          rm -f database/production-smoke.sqlite
       - name: Install production PHP dependencies and validate ZIP
         run: |
           rm -rf vendor
