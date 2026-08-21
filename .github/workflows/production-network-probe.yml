@@ -1,0 +1,20 @@
+name: Production SSH network probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/production-network-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify TCP reachability only
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 15 bash -c 'exec 3<>/dev/tcp/13.52.116.200/22'
