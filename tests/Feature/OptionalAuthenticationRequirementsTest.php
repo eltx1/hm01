@@ -86,6 +86,19 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->assertFalse(session()->has('two_factor_user_id'));
     }
 
+    public function test_two_factor_surfaces_are_not_available_when_two_factor_is_disabled(): void
+    {
+        Config::set('security.authentication.administrator_2fa_required', false);
+        $admin = $this->makeUser(
+            $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media'),
+            RoleName::SuperAdmin,
+            ['password' => 'correct-password'],
+        );
+
+        $this->actingAs($admin)->get('/two-factor/setup')->assertNotFound();
+        $this->get('/two-factor/challenge')->assertNotFound();
+    }
+
     public function test_publisher_registration_skips_email_verification_and_opens_application_when_disabled(): void
     {
         Config::set('security.authentication.email_verification_required', false);
@@ -108,6 +121,8 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->assertTrue($user->hasVerifiedEmail());
         $this->assertSame(PublisherApplicationStatus::Draft, $application->status);
         $this->get(route('publisher-application.show'))->assertOk();
+        $this->get('/verify-email')->assertRedirect(route('publisher-application.show'));
+        $this->post('/email/verification-notification')->assertRedirect(route('publisher-application.show'));
         Mail::assertNothingSent();
     }
 
