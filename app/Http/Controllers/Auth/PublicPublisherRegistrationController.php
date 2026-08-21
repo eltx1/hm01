@@ -64,6 +64,13 @@ final class PublicPublisherRegistrationController extends Controller
         $user = $application->applicant;
         Auth::login($user);
         $request->session()->regenerate();
+
+        if (! config('security.authentication.email_verification_required', true)) {
+            $applications->emailVerified($user);
+
+            return redirect()->route('publisher-application.show')->with('status', 'Application started.');
+        }
+
         $status = 'Application started. Verify your email to continue.';
         try {
             $emails->sendVerification($user);

@@ -62,14 +62,20 @@ class CreateSuperAdministrator extends Command
             'email' => $email,
             'password' => Hash::make($password),
             'status' => UserStatus::Active,
+        ]);
+        $user->forceFill([
             'activated_at' => now(),
             'email_verified_at' => now(),
-        ]);
+        ])->save();
         $role = Role::whereNull('organization_id')->where('name', RoleName::SuperAdmin->value)->firstOrFail();
         $user->roles()->attach($role->id, ['assigned_by' => $user->id]);
         $audit->record('bootstrap.super_admin.created', $organization->id, $user, $user, metadata: ['source' => 'artisan'], request: Request::create('/artisan/horus:create-super-admin', 'CLI', server: ['HTTP_X_REQUEST_ID' => (string) Str::uuid()]));
 
-        $this->info('Super administrator created. Two-factor enrollment is required on first sign-in.');
+        $this->info(
+            config('security.authentication.administrator_2fa_required', true)
+                ? 'Super administrator created. Two-factor enrollment is required on first sign-in.'
+                : 'Super administrator created.'
+        );
 
         return self::SUCCESS;
     }

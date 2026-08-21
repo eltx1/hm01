@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   # Authenticate Composer to GitHub at runtime so locked dependency fetches are
   # not subject to the lower anonymous GitHub API limit. The token is ephemeral

@@ -11,6 +11,10 @@ class EnsureAdministratorTwoFactor
 {
     public function handle(Request $request, Closure $next): Response
     {
+        if (! config('security.authentication.administrator_2fa_required', true)) {
+            return $next($request);
+        }
+
         $user = $request->user();
         if (! $user?->isHorusAdministrator()) {
             return $next($request);
