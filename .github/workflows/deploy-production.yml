@@ -29,9 +29,13 @@ concurrency:
 
 jobs:
   deploy:
+    # Manual dispatch is always available for the first controlled deployment.
+    # Automatic workflow_run deployment remains fail-safe OFF until the owner
+    # explicitly enables HORUS_PRODUCTION_DEPLOY_ENABLED after that drill.
     if: >-
-      ${{ vars.HORUS_PRODUCTION_DEPLOY_ENABLED == 'true' &&
-          (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (vars.HORUS_PRODUCTION_DEPLOY_ENABLED == 'true' &&
+           github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -61,22 +65,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd artifact
-          sha256sum -c release/CHECKSUMS.txt
-          sha="$(sha256sum release/horus-media-platform.zip | awk '{print $1}')"
-          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          test -s artifact/horus-media-platform.zip
+          test -s artifact/CHECKSUMS.txt
+          expected="$(awk 'NF >= 1 {print $1; exit}' artifact/CHECKSUMS.txt)"
+          actual="$(sha256sum artifact/horus-media-platform.zip | awk '{print $1}')"
+          test -n "$expected"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Validated artifact checksum mismatch." >&2
+            exit 1
+          fi
+          echo "sha256=$actual" >> "$GITHUB_OUTPUT"
 
       - name: Configure pinned SSH trust
         shell: bash
         env:
           SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
           KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
           test -n "${SSH_KEY:-}"
           test -n "${KNOWN_HOSTS:-}"
-          test -n "${{ secrets.HORUS_PRODUCTION_HOST }}"
-          test -n "${{ secrets.HORUS_PRODUCTION_SSH_USER }}"
+          test -n "${HOST:-}"
+          test -n "${USER:-}"
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
@@ -92,7 +104,7 @@ jobs:
           set -euo pipefail
           remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
           ssh -p "$SSH_PORT" "$USER@$HOST" "mkdir -p '$remote_dir' && chmod 700 '$REMOTE_HOME/incoming' '$remote_dir'"
-          scp -P "$SSH_PORT" artifact/release/horus-media-platform.zip \
+          scp -P "$SSH_PORT" artifact/horus-media-platform.zip \
             ops/deploy/horus-atomic-deploy.sh \
             ops/deploy/write-mysql-client-config.php \
             "$USER@$HOST:$remote_dir/"
