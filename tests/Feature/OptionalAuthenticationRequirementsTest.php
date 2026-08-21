@@ -9,7 +9,7 @@ use App\Models\PublisherApplication;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Mail;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\TestCase;
 
@@ -21,7 +21,7 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
     {
         parent::setUp();
         $this->seedIdentity();
-        Notification::fake();
+        Mail::fake();
     }
 
     public function test_dedicated_admin_login_goes_directly_to_control_plane_when_two_factor_is_disabled(): void
@@ -108,7 +108,7 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->assertTrue($user->hasVerifiedEmail());
         $this->assertSame(PublisherApplicationStatus::Draft, $application->status);
         $this->get(route('publisher-application.show'))->assertOk();
-        Notification::assertNothingSent();
+        Mail::assertNothingSent();
     }
 
     public function test_production_template_defaults_to_simple_auth_and_safe_session_bootstrap(): void
