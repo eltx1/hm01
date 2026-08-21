@@ -18,6 +18,7 @@ class TwoFactorController extends Controller
 {
     public function setup(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): View
     {
+        $this->ensureEnabled();
         $user = $request->user();
         abort_unless($user->isHorusAdministrator(), 403);
         if (! $user->two_factor_secret) {
@@ -33,6 +34,7 @@ class TwoFactorController extends Controller
 
     public function confirm(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
+        $this->ensureEnabled();
         $data = $request->validate(['code' => ['required', 'digits:6']]);
         $user = $request->user();
         abort_unless($user->isHorusAdministrator() && $user->two_factor_secret, 403);
@@ -53,6 +55,7 @@ class TwoFactorController extends Controller
 
     public function challenge(): View
     {
+        $this->ensureEnabled();
         abort_unless(session()->has('two_factor_user_id'), 403);
 
         return view('auth.two-factor-challenge');
@@ -60,6 +63,7 @@ class TwoFactorController extends Controller
 
     public function verifyChallenge(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
+        $this->ensureEnabled();
         $data = $request->validate(['code' => ['required', 'string']]);
         $context = $request->session()->get('two_factor_context');
         $user = User::with('organization')->find($request->session()->get('two_factor_user_id'));
@@ -158,6 +162,7 @@ class TwoFactorController extends Controller
 
     public function recoveryCodes(): View
     {
+        $this->ensureEnabled();
         abort_unless(session()->has('recovery_codes'), 404);
 
         return view('auth.two-factor-recovery-codes', ['codes' => session('recovery_codes')]);
@@ -165,6 +170,7 @@ class TwoFactorController extends Controller
 
     public function regenerate(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
+        $this->ensureEnabled();
         $data = $request->validate([
             'password' => ['required', 'string'],
             'code' => ['required', 'string'],
@@ -193,6 +199,7 @@ class TwoFactorController extends Controller
 
     public function disable(Request $request, TwoFactorService $twoFactor, AuditRecorder $audit): RedirectResponse
     {
+        $this->ensureEnabled();
         $user = $request->user();
         if ($user->isHorusAdministrator()) {
             throw ValidationException::withMessages([
@@ -212,6 +219,11 @@ class TwoFactorController extends Controller
         $audit->record('auth.two_factor.disabled', $user->organization_id, $user);
 
         return redirect()->route('account.security')->with('status', 'Two-factor authentication disabled.');
+    }
+
+    private function ensureEnabled(): void
+    {
+        abort_unless(config('security.authentication.administrator_2fa_required', true), 404);
     }
 
     private function safeAdminIntendedDestination(Request $request): string
