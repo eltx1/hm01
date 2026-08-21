@@ -22,6 +22,7 @@ required=(
   'horus-media-platform/release/GAM_SETUP.md'
   'horus-media-platform/release/PREBID_SETUP.md'
   'horus-media-platform/release/CLOUDFLARE_SETUP.md'
+  'horus-media-platform/release/PRODUCTION_DEPLOYMENT_FOUNDATION.md'
   'horus-media-platform/release/SECURITY_REPORT.md'
   'horus-media-platform/release/TEST_REPORT.md'
   'horus-media-platform/release/PILOT_PLAN.md'
