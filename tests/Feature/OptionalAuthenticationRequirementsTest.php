@@ -110,4 +110,14 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->get(route('publisher-application.show'))->assertOk();
         Notification::assertNothingSent();
     }
+
+    public function test_production_template_defaults_to_simple_auth_and_safe_session_bootstrap(): void
+    {
+        $template = file_get_contents(base_path('.env.production.example'));
+        $this->assertIsString($template);
+        $this->assertStringContainsString('AUTH_EMAIL_VERIFICATION_REQUIRED=false', $template);
+        $this->assertStringContainsString('AUTH_ADMIN_2FA_REQUIRED=false', $template);
+        $this->assertStringContainsString('SESSION_COOKIE=horus-media-session', $template);
+        $this->assertStringNotContainsString("\nMYSQL_ATTR_SSL_CA=\n", $template);
+    }
 }
