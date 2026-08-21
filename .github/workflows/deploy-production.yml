@@ -87,7 +87,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: horus-media-platform-${{ env.RELEASE_SHA }}
-          path: artifact
+          path: ${{ runner.temp }}/horus-artifact
           run-id: ${{ env.RELEASE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -96,10 +96,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s artifact/horus-media-platform.zip
-          test -s artifact/CHECKSUMS.txt
-          expected="$(awk 'NF >= 1 {print $1; exit}' artifact/CHECKSUMS.txt)"
-          actual="$(sha256sum artifact/horus-media-platform.zip | awk '{print $1}')"
+          artifact_dir="$RUNNER_TEMP/horus-artifact"
+          test -s "$artifact_dir/horus-media-platform.zip"
+          test -s "$artifact_dir/CHECKSUMS.txt"
+          expected="$(awk 'NF >= 1 {print $1; exit}' "$artifact_dir/CHECKSUMS.txt")"
+          actual="$(sha256sum "$artifact_dir/horus-media-platform.zip" | awk '{print $1}')"
           [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
           if [[ "$actual" != "$expected" ]]; then
             echo "Validated artifact checksum mismatch." >&2
@@ -134,8 +135,9 @@ jobs:
         run: |
           set -euo pipefail
           remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
+          artifact_dir="$RUNNER_TEMP/horus-artifact"
           ssh -p "$SSH_PORT" "$USER@$HOST" "mkdir -p '$remote_dir' && chmod 700 '$REMOTE_HOME/incoming' '$remote_dir'"
-          scp -P "$SSH_PORT" artifact/horus-media-platform.zip \
+          scp -P "$SSH_PORT" "$artifact_dir/horus-media-platform.zip" \
             ops/deploy/horus-atomic-deploy.sh \
             ops/deploy/write-mysql-client-config.php \
             "$USER@$HOST:$remote_dir/"
