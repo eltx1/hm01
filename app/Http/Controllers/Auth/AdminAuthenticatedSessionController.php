@@ -60,8 +60,9 @@ final class AdminAuthenticatedSessionController extends Controller
 
         $intended = $this->safeIntendedDestination($request);
         $request->session()->put('url.intended', $intended);
+        $twoFactorRequired = (bool) config('security.authentication.administrator_2fa_required', true);
 
-        if ($user->two_factor_confirmed_at) {
+        if ($twoFactorRequired && $user->two_factor_confirmed_at) {
             $request->session()->regenerate();
             $request->session()->put([
                 'two_factor_user_id' => $user->id,
@@ -81,11 +82,17 @@ final class AdminAuthenticatedSessionController extends Controller
             'admin_auth.succeeded',
             $user->organization_id,
             $user,
-            metadata: ['two_factor' => 'enrollment_required'],
+            metadata: ['two_factor' => $twoFactorRequired ? 'enrollment_required' : 'disabled'],
             request: $request,
         );
 
-        return redirect()->route('two-factor.setup');
+        if ($twoFactorRequired) {
+            return redirect()->route('two-factor.setup');
+        }
+
+        $request->session()->forget('url.intended');
+
+        return redirect()->to($intended);
     }
 
     private function safeIntendedDestination(Request $request): string
