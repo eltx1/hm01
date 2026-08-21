@@ -20,6 +20,7 @@ HEALTH_RESOLVE_IP="${HORUS_DEPLOY_HEALTH_RESOLVE_IP:-127.0.0.1}"
 HEALTH_ATTEMPTS="${HORUS_DEPLOY_HEALTH_ATTEMPTS:-6}"
 HEALTH_DELAY_SECONDS="${HORUS_DEPLOY_HEALTH_DELAY_SECONDS:-2}"
 KEEP_RELEASES="${HORUS_DEPLOY_KEEP_RELEASES:-5}"
+KEEP_BACKUPS="${HORUS_DEPLOY_KEEP_BACKUPS:-10}"
 SKIP_BACKUP="${HORUS_DEPLOY_SKIP_BACKUP:-0}"
 HEALTHCHECK_COMMAND="${HORUS_DEPLOY_HEALTHCHECK_COMMAND:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,6 +186,24 @@ cleanup_old_releases() {
     done
 }
 
+cleanup_old_backups() {
+    [[ "$SKIP_BACKUP" == '1' ]] && return 0
+    [[ "$KEEP_BACKUPS" =~ ^[0-9]+$ ]] || return 0
+    (( KEEP_BACKUPS > 0 )) || return 0
+
+    mapfile -t backup_paths < <(
+        find "$BACKUPS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+            | sort -nr | cut -d' ' -f2-
+    )
+
+    local index candidate
+    for ((index = KEEP_BACKUPS; index < ${#backup_paths[@]}; index++)); do
+        candidate="${backup_paths[$index]}"
+        rm -rf "$candidate"
+        log "Removed old deployment backup: $candidate"
+    done
+}
+
 recover() {
     local status="$1"
     trap - EXIT
@@ -221,6 +240,8 @@ trap 'recover $?' EXIT
 [[ -L "$CURRENT_LINK" ]] || die "Current application path must be an atomic symlink: $CURRENT_LINK"
 [[ -f "$SHARED_ENV" ]] || die "Shared environment file is missing: $SHARED_ENV"
 [[ -d "$SHARED_STORAGE" ]] || die "Shared storage directory is missing: $SHARED_STORAGE"
+[[ "$HEALTH_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die 'HORUS_DEPLOY_HEALTH_ATTEMPTS must be a positive integer.'
+[[ "$HEALTH_DELAY_SECONDS" =~ ^[0-9]+$ ]] || die 'HORUS_DEPLOY_HEALTH_DELAY_SECONDS must be a non-negative integer.'
 
 require_command unzip
 require_command sha256sum
@@ -320,6 +341,7 @@ fi
 
 log "Deployment healthy: $RELEASE_ID"
 cleanup_old_releases
+cleanup_old_backups
 
 trap - EXIT
 exit 0
