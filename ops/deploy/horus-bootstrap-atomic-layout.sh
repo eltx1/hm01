@@ -164,6 +164,8 @@ rm -rf "$RELEASE_DIR/public/storage"
 run_artisan_in "$RELEASE_DIR" optimize:clear
 run_artisan_in "$RELEASE_DIR" storage:link
 run_artisan_in "$RELEASE_DIR" optimize
+run_artisan_in "$RELEASE_DIR" route:list >/dev/null
+run_artisan_in "$RELEASE_DIR" schedule:list >/dev/null
 
 ln -s "$RELEASE_DIR" "$CURRENT_PATH"
 LINKED=1
