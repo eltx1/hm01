@@ -8,6 +8,7 @@ use App\Enums\RoleName;
 use App\Models\PublisherApplication;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Mail;
 use Tests\Concerns\InteractsWithIdentity;
@@ -96,6 +97,8 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         );
 
         $this->actingAs($admin)->get('/two-factor/setup')->assertNotFound();
+
+        Auth::logout();
         $this->get('/two-factor/challenge')->assertNotFound();
     }
 
