@@ -51,7 +51,7 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->forget(['two_factor_user_id', 'two_factor_remember', 'two_factor_context', 'auth_surface']);
 
-        if ($user->two_factor_confirmed_at) {
+        if (config('security.authentication.administrator_2fa_required', false) && $user->two_factor_confirmed_at) {
             $request->session()->regenerate();
             $request->session()->put([
                 'two_factor_user_id' => $user->id,
@@ -81,7 +81,7 @@ class AuthenticatedSessionController extends Controller
         $user = $request->user();
         $surface = $request->session()->get('auth_surface');
         if ($user) {
-            $audit->record('auth.logout', $user->organization_id, $user, metadata: ['surface' => $surface ?: 'public']);
+            $audit->record('auth.logout', $user->organization_id, $user, metadata: ['source' => $surface ?: 'public']);
         }
         Auth::logout();
         $request->session()->invalidate();
