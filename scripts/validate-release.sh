@@ -39,7 +39,7 @@ for forbidden_file in \
 done
 
 for forbidden_dir in \
-  'node_modules/' 'tests/' '.git/' '.github/' 'design/' 'docs/' 'scripts/' \
+  'node_modules/' 'tests/' '.git/' '.github/' 'design/' 'docs/' 'ops/' 'scripts/' \
   'cloudflare-pages-dist/' \
   'resources/js/' 'resources/css/' 'resources/prebid/' 'public/cdn/' \
   'storage/framework/testing/'; do
@@ -49,8 +49,31 @@ for forbidden_dir in \
   fi
 done
 
-if unzip -p "$ZIP" 'horus-media-platform/.env.example' | grep -Eq '(^|_)(PASSWORD|SECRET|TOKEN|KEY)=.+$'; then
+if unzip -Z1 "$ZIP" | grep -Eq '^horus-media-platform/bootstrap/cache/[^/]+\.php$'; then
+  echo 'Release must not contain Laravel bootstrap cache files generated on the CI host.' >&2
+  exit 1
+fi
+
+env_template="$(unzip -p "$ZIP" 'horus-media-platform/.env.example')"
+if printf '%s\n' "$env_template" | grep -Eq '(^|_)(PASSWORD|SECRET|TOKEN|KEY)=.+$'; then
   echo 'Environment template appears to contain a populated secret.' >&2
+  exit 1
+fi
+
+for required_line in \
+  'SESSION_COOKIE=horus-media-session' \
+  'DB_CACHE_TABLE=cache' \
+  'DB_CACHE_LOCK_TABLE=cache_locks' \
+  'AUTH_EMAIL_VERIFICATION_REQUIRED=false' \
+  'AUTH_ADMIN_2FA_REQUIRED=false'; do
+  if ! printf '%s\n' "$env_template" | grep -Fxq "$required_line"; then
+    echo "Production environment template is missing required line: $required_line" >&2
+    exit 1
+  fi
+done
+
+if printf '%s\n' "$env_template" | grep -Eq '^(SESSION_COOKIE|DB_CACHE_TABLE|DB_CACHE_LOCK_TABLE|MYSQL_ATTR_SSL_CA)=\s*$'; then
+  echo 'Production environment template contains a runtime-critical blank value.' >&2
   exit 1
 fi
 
