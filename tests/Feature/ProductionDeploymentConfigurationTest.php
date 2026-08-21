@@ -33,7 +33,7 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertStringContainsString("env('DB_CACHE_TABLE') ?: 'cache'", $cache);
         $this->assertStringContainsString("env('DB_CACHE_LOCK_TABLE') ?: 'cache_locks'", $cache);
         $this->assertStringContainsString("env('SESSION_COOKIE') ?: Str::slug", $session);
-        $this->assertStringContainsString('$value !== null && $value !== \'\'', $database);
+        $this->assertStringContainsString("\$value !== null && \$value !== ''", $database);
     }
 
     public function test_atomic_deployment_assets_are_versioned_with_the_repository(): void
