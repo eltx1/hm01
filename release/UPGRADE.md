@@ -10,7 +10,7 @@ replace the active application directory.
 - shared `.env` and `storage/` are healthy and private;
 - exactly one Laravel scheduler entry uses the stable application path;
 - the site user has only the narrow PHP-FPM reload sudo privilege documented in
-  `docs/PRODUCTION_DEPLOYMENT_FOUNDATION.md`;
+  `PRODUCTION_DEPLOYMENT_FOUNDATION.md`;
 - the new ZIP comes from a successful **Production release validation** run on
   `main` and its SHA-256 is known.
 
