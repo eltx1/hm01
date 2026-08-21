@@ -56,6 +56,28 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
 
+      - name: Require successful main production validation
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runId = Number(process.env.RELEASE_RUN_ID);
+            const expectedSha = process.env.RELEASE_SHA;
+            const { data } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+
+            const failures = [];
+            if (data.name !== 'Production release validation') failures.push(`workflow=${data.name}`);
+            if (data.conclusion !== 'success') failures.push(`conclusion=${data.conclusion}`);
+            if (data.head_branch !== 'main') failures.push(`branch=${data.head_branch}`);
+            if (data.head_sha !== expectedSha) failures.push(`sha=${data.head_sha}`);
+
+            if (failures.length > 0) {
+              core.setFailed(`Release run is not an approved successful main validation: ${failures.join(', ')}`);
+            }
+
       - name: Checkout trusted deployment tooling
         uses: actions/checkout@v6
         with:
