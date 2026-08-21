@@ -112,6 +112,15 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasOne(PublisherApplication::class, 'applicant_user_id');
     }
 
+    public function hasVerifiedEmail(): bool
+    {
+        if (! config('security.authentication.email_verification_required', false)) {
+            return true;
+        }
+
+        return $this->email_verified_at !== null;
+    }
+
     public function isActive(): bool
     {
         return $this->status === UserStatus::Active && $this->organization?->isActive() && ! $this->isLocked();
