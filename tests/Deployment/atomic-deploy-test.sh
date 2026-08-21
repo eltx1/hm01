@@ -27,6 +27,9 @@ create_fake_php() {
 set -euo pipefail
 script="$1"
 shift
+if [[ "$script" != */* ]]; then
+    script="./$script"
+fi
 exec "$script" "$@"
 SH
     chmod +x "$bin_dir/php"
