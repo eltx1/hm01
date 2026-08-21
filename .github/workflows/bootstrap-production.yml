@@ -71,6 +71,16 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Verify administrator key material
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprint="$(ssh-keygen -y -f "$HOME/.ssh/id_ed25519" \
+            | ssh-keygen -lf - -E sha256 \
+            | awk '{print $2}')"
+          [[ "$fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
+          printf 'administrator_key_fingerprint=%s\n' "$fingerprint"
+
       - name: Verify pinned server host identity
         shell: bash
         run: |
