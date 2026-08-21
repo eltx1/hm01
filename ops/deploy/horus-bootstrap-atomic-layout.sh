@@ -13,6 +13,7 @@ PHP_BIN="${HORUS_DEPLOY_PHP_BIN:-/usr/bin/php8.4}"
 FPM_RELOAD_COMMAND="${HORUS_DEPLOY_FPM_RELOAD_COMMAND:-sudo -n /usr/bin/systemctl reload php8.4-fpm}"
 HEALTH_URL="${HORUS_DEPLOY_HEALTH_URL:-https://app.horusmedia.net/up}"
 HEALTH_RESOLVE_IP="${HORUS_DEPLOY_HEALTH_RESOLVE_IP:-127.0.0.1}"
+HEALTHCHECK_COMMAND="${HORUS_DEPLOY_HEALTHCHECK_COMMAND:-}"
 BACKUP_CONFIRMED="${HORUS_BOOTSTRAP_CONFIRMED_BACKUP:-0}"
 LOCK_FILE="$APP_HOME/.horus-deploy.lock"
 
@@ -20,6 +21,7 @@ RELEASE_ID="bootstrap-$(date -u '+%Y%m%dT%H%M%SZ')"
 RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
 MOVED=0
 LINKED=0
+MAINTENANCE_ENABLED=0
 
 log() {
     printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -40,10 +42,18 @@ run_artisan_in() {
 }
 
 reload_fpm() {
+    if [[ -z "$FPM_RELOAD_COMMAND" ]]; then
+        return 0
+    fi
     bash -lc "$FPM_RELOAD_COMMAND"
 }
 
 health_check() {
+    if [[ -n "$HEALTHCHECK_COMMAND" ]]; then
+        bash -lc "$HEALTHCHECK_COMMAND"
+        return
+    fi
+
     local scheme rest authority host port
     scheme="${HEALTH_URL%%://*}"
     rest="${HEALTH_URL#*://}"
@@ -96,7 +106,11 @@ rollback_bootstrap() {
             run_artisan_in "$CURRENT_PATH" optimize:clear || true
             run_artisan_in "$CURRENT_PATH" optimize || true
             run_artisan_in "$CURRENT_PATH" up || true
+            MAINTENANCE_ENABLED=0
             reload_fpm || true
+        elif (( MAINTENANCE_ENABLED == 1 )) && [[ -f "$CURRENT_PATH/artisan" ]]; then
+            run_artisan_in "$CURRENT_PATH" up || true
+            MAINTENANCE_ENABLED=0
         fi
     fi
 
@@ -123,6 +137,7 @@ flock -n 9 || die 'Another Horus deployment is already running.'
 
 log "Converting current production directory into atomic release layout: $RELEASE_ID"
 run_artisan_in "$CURRENT_PATH" down --retry=10
+MAINTENANCE_ENABLED=1
 
 mv "$CURRENT_PATH" "$RELEASE_DIR"
 MOVED=1
@@ -154,8 +169,10 @@ ln -s "$RELEASE_DIR" "$CURRENT_PATH"
 LINKED=1
 reload_fpm
 run_artisan_in "$CURRENT_PATH" up
+MAINTENANCE_ENABLED=0
 
 if ! health_check; then
+    MAINTENANCE_ENABLED=1
     die "Bootstrap release failed health check: $HEALTH_URL"
 fi
 
