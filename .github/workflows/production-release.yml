@@ -49,6 +49,7 @@ jobs:
           bash -n ops/deploy/horus-atomic-deploy.sh
           bash -n ops/deploy/horus-bootstrap-atomic-layout.sh
           php -l ops/deploy/write-mysql-client-config.php
+          bash tests/Deployment/mysql-client-config-test.sh
           bash tests/Deployment/bootstrap-layout-test.sh
           bash tests/Deployment/atomic-deploy-test.sh
       - name: Static, browser, and PHP validation
