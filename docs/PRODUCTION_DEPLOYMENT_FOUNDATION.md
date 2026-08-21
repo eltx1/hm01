@@ -65,6 +65,7 @@ Run the repository bootstrap script as `horusapp`:
 
 ```bash
 HORUS_BOOTSTRAP_CONFIRMED_BACKUP=1 \
+  HORUS_DEPLOY_HEALTH_INSECURE_TLS=1 \
   bash ops/deploy/horus-bootstrap-atomic-layout.sh
 ```
 
@@ -73,6 +74,15 @@ It briefly enters Laravel maintenance mode, moves the existing application into
 Laravel caches in the final release path, replaces the original application
 path with a symlink, reloads PHP-FPM, exits maintenance, and verifies `/up`.
 If conversion fails after maintenance begins, it restores the directory layout.
+
+`HORUS_DEPLOY_HEALTH_INSECURE_TLS` defaults to `0`. Set it to exactly `1` only
+when the script is performing its internal HTTPS direct-origin check through an
+explicit `HORUS_DEPLOY_HEALTH_RESOLVE_IP` target and that origin presents a
+self-signed certificate. Any other value fails before maintenance or release
+switching. The flag is rejected for custom health-check commands and never
+applies to the separate public health check. Do not use it to bypass public TLS
+verification. Direct-origin checks also force `--noproxy '*'` so host proxy
+environment variables cannot redirect the probe away from the selected origin.
 
 ## Normal deployment
 
@@ -133,7 +143,16 @@ Optional repository variables:
 HORUS_PRODUCTION_SSH_PORT=22
 HORUS_PRODUCTION_HOME=/home/horusapp
 HORUS_PRODUCTION_HEALTH_URL=https://app.horusmedia.net/up
+HORUS_PRODUCTION_ORIGIN_HEALTH_RESOLVE_IP=127.0.0.1
+HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS=0
 ```
+
+For the current `app.horusmedia.net` origin, set
+`HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS=1` in the protected `production`
+environment because the local direct-origin certificate is self-signed. The
+workflow passes that opt-in only to the remote atomic runner. Its final public
+`https://app.horusmedia.net/up` request always retains normal certificate and
+hostname verification.
 
 The workflow downloads the exact artifact produced by the successful validation
 run, verifies `CHECKSUMS.txt`, transfers only the validated ZIP and deployment

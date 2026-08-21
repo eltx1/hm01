@@ -70,20 +70,29 @@ fi
 exec "$script" "$@"
 SH
 chmod +x "$BIN/php"
+cat > "$BIN/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${HORUS_TEST_CURL_LOG:?}"
+SH
+chmod +x "$BIN/curl"
 
 # Successful conversion preserves runtime state and builds caches only after the
 # application has reached its immutable release path.
 APP_HOME="$TMP/home"
 CURRENT="$APP_HOME/htdocs/app.horusmedia.net"
 ARTISAN_LOG="$TMP/artisan.log"
+CURL_LOG="$TMP/curl.log"
 create_app "$CURRENT"
 : > "$ARTISAN_LOG"
+: > "$CURL_LOG"
 
+PATH="$BIN:$PATH" \
 HORUS_TEST_ARTISAN_LOG="$ARTISAN_LOG" \
+HORUS_TEST_CURL_LOG="$CURL_LOG" \
 HORUS_DEPLOY_HOME="$APP_HOME" \
 HORUS_DEPLOY_PHP_BIN="$BIN/php" \
 HORUS_DEPLOY_FPM_RELOAD_COMMAND=true \
-HORUS_DEPLOY_HEALTHCHECK_COMMAND=true \
 HORUS_BOOTSTRAP_CONFIRMED_BACKUP=1 \
 bash "$BOOTSTRAP_SCRIPT"
 
@@ -96,6 +105,35 @@ assert_eq "$(readlink -f "$TARGET/public/storage")" "$APP_HOME/shared/storage/ap
 grep -Fq "$TARGET" "$TARGET/bootstrap/cache/config.php" || fail 'Bootstrap cache was not generated in the final release path.'
 [[ ! -e "$APP_HOME/shared/storage/framework/down" ]] || fail 'Maintenance mode remained enabled after bootstrap.'
 grep -Fq "$TARGET|optimize " "$ARTISAN_LOG" || fail 'Final optimize did not run from the immutable release path.'
+grep -Fq -- '--noproxy *' "$CURL_LOG" || fail 'Bootstrap did not bypass configured proxies for its direct-origin check.'
+grep -Fq -- '--resolve app.horusmedia.net:443:127.0.0.1' "$CURL_LOG" || fail 'Bootstrap did not use the direct-origin resolve target.'
+if grep -Fq -- '--insecure' "$CURL_LOG"; then
+    fail 'Bootstrap disabled TLS verification without the explicit opt-in flag.'
+fi
+
+# Invalid flag values fail before maintenance mode or any layout conversion.
+INVALID_HOME="$TMP/invalid-home"
+INVALID_CURRENT="$INVALID_HOME/htdocs/app.horusmedia.net"
+INVALID_LOG="$TMP/invalid-artisan.log"
+create_app "$INVALID_CURRENT"
+: > "$INVALID_LOG"
+
+set +e
+HORUS_TEST_ARTISAN_LOG="$INVALID_LOG" \
+HORUS_DEPLOY_HOME="$INVALID_HOME" \
+HORUS_DEPLOY_PHP_BIN="$BIN/php" \
+HORUS_DEPLOY_FPM_RELOAD_COMMAND=true \
+HORUS_DEPLOY_HEALTH_INSECURE_TLS=enabled \
+HORUS_BOOTSTRAP_CONFIRMED_BACKUP=1 \
+bash "$BOOTSTRAP_SCRIPT"
+invalid_status=$?
+set -e
+
+(( invalid_status != 0 )) || fail 'Invalid bootstrap TLS flag unexpectedly passed validation.'
+[[ -d "$INVALID_CURRENT" && ! -L "$INVALID_CURRENT" ]] || fail 'Invalid TLS flag changed the application layout.'
+[[ -f "$INVALID_CURRENT/.env" ]] || fail 'Invalid TLS flag moved the application environment.'
+[[ -d "$INVALID_CURRENT/storage" ]] || fail 'Invalid TLS flag moved application storage.'
+[[ ! -e "$INVALID_CURRENT/storage/framework/down" ]] || fail 'Invalid TLS flag enabled maintenance mode.'
 
 # A failure after .env has moved but before storage can move must restore the
 # original non-symlink layout with both runtime assets intact and maintenance off.

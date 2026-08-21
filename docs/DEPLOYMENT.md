@@ -66,6 +66,12 @@ that deployment pattern can produce a production 500 after the move.
 Normal upgrades never run `key:generate`, `db:seed`, `migrate:fresh`, or an
 automatic migration rollback.
 
+Direct-origin HTTPS health checks verify certificates by default. A host whose
+explicit local resolve target presents a self-signed certificate may opt in with
+`HORUS_DEPLOY_HEALTH_INSECURE_TLS=1`; the deployment scripts reject other values
+and reject use without a direct-origin resolve target. This narrowly scoped
+setting never weakens the independent public health check.
+
 ## Scheduler
 
 Configure one scheduler only:

@@ -43,4 +43,32 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertFileExists(base_path('ops/deploy/write-mysql-client-config.php'));
         $this->assertFileExists(base_path('.github/workflows/deploy-production.yml'));
     }
+
+    public function test_direct_origin_tls_override_is_narrow_and_public_health_remains_strict(): void
+    {
+        $deploy = file_get_contents(base_path('ops/deploy/horus-atomic-deploy.sh'));
+        $bootstrap = file_get_contents(base_path('ops/deploy/horus-bootstrap-atomic-layout.sh'));
+        $workflow = file_get_contents(base_path('.github/workflows/deploy-production.yml'));
+
+        $this->assertIsString($deploy);
+        $this->assertIsString($bootstrap);
+        $this->assertIsString($workflow);
+
+        foreach ([$deploy, $bootstrap] as $script) {
+            $this->assertStringContainsString('HORUS_DEPLOY_HEALTH_INSECURE_TLS', $script);
+            $this->assertStringContainsString("HEALTH_INSECURE_TLS\" == '0' || \"\$HEALTH_INSECURE_TLS\" == '1'", $script);
+            $this->assertStringContainsString('requires an explicit HORUS_DEPLOY_HEALTH_RESOLVE_IP', $script);
+            $this->assertStringContainsString("--noproxy '*' --resolve", $script);
+            $this->assertMatchesRegularExpression('/\b(?:curl_)?args\+=\(--insecure\)/', $script);
+        }
+
+        $this->assertStringContainsString('HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS', $workflow);
+        $this->assertStringContainsString("HORUS_DEPLOY_HEALTH_INSECURE_TLS='\$ORIGIN_HEALTH_INSECURE_TLS'", $workflow);
+
+        preg_match('/- name: Verify public production health(?<step>.*?)(?:\n\s{6}- name:|\z)/s', $workflow, $matches);
+        $this->assertArrayHasKey('step', $matches);
+        $this->assertStringContainsString('curl -fsS', $matches['step']);
+        $this->assertStringNotContainsString('--insecure', $matches['step']);
+        $this->assertStringNotContainsString('-k ', $matches['step']);
+    }
 }

@@ -45,6 +45,8 @@ jobs:
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
       HEALTH_URL: ${{ vars.HORUS_PRODUCTION_HEALTH_URL || 'https://app.horusmedia.net/up' }}
+      ORIGIN_HEALTH_RESOLVE_IP: ${{ vars.HORUS_PRODUCTION_ORIGIN_HEALTH_RESOLVE_IP || '127.0.0.1' }}
+      ORIGIN_HEALTH_INSECURE_TLS: ${{ vars.HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS || '0' }}
 
     steps:
       - name: Validate deployment identifiers
@@ -55,6 +57,8 @@ jobs:
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
+          [[ "$ORIGIN_HEALTH_RESOLVE_IP" =~ ^[0-9A-Fa-f:.]+$ ]]
+          [[ "$ORIGIN_HEALTH_INSECURE_TLS" == '0' || "$ORIGIN_HEALTH_INSECURE_TLS" == '1' ]]
 
       - name: Require successful main production validation
         uses: actions/github-script@v8
@@ -155,12 +159,16 @@ jobs:
             "chmod 700 '$remote_dir/horus-atomic-deploy.sh' && \
              HORUS_RELEASE_ID='$RELEASE_SHA' \
              HORUS_DEPLOY_HOME='$REMOTE_HOME' \
+             HORUS_DEPLOY_HEALTH_RESOLVE_IP='$ORIGIN_HEALTH_RESOLVE_IP' \
+             HORUS_DEPLOY_HEALTH_INSECURE_TLS='$ORIGIN_HEALTH_INSECURE_TLS' \
              HORUS_DEPLOY_MYSQL_CONFIG_HELPER='$remote_dir/write-mysql-client-config.php' \
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
 
       - name: Verify public production health
         shell: bash
+        # This is deliberately a normal public TLS check. The narrowly scoped
+        # direct-origin override is passed only to the remote deployment runner.
         run: curl -fsS --retry 5 --retry-delay 2 --max-time 15 "$HEALTH_URL" >/dev/null
 
       - name: Remove transferred package

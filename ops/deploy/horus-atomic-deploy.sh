@@ -17,6 +17,7 @@ PHP_BIN="${HORUS_DEPLOY_PHP_BIN:-/usr/bin/php8.4}"
 FPM_RELOAD_COMMAND="${HORUS_DEPLOY_FPM_RELOAD_COMMAND:-sudo -n /usr/bin/systemctl reload php8.4-fpm}"
 HEALTH_URL="${HORUS_DEPLOY_HEALTH_URL:-https://app.horusmedia.net/up}"
 HEALTH_RESOLVE_IP="${HORUS_DEPLOY_HEALTH_RESOLVE_IP:-127.0.0.1}"
+HEALTH_INSECURE_TLS="${HORUS_DEPLOY_HEALTH_INSECURE_TLS:-0}"
 HEALTH_ATTEMPTS="${HORUS_DEPLOY_HEALTH_ATTEMPTS:-6}"
 HEALTH_DELAY_SECONDS="${HORUS_DEPLOY_HEALTH_DELAY_SECONDS:-2}"
 KEEP_RELEASES="${HORUS_DEPLOY_KEEP_RELEASES:-5}"
@@ -96,7 +97,10 @@ health_check_once() {
 
     local curl_args=(-fsS --max-time 12)
     if [[ -n "$HEALTH_RESOLVE_IP" ]]; then
-        curl_args+=(--resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
+        curl_args+=(--noproxy '*' --resolve "${host}:${port}:${HEALTH_RESOLVE_IP}")
+        if [[ "$HEALTH_INSECURE_TLS" == '1' ]]; then
+            curl_args+=(--insecure)
+        fi
     fi
 
     curl "${curl_args[@]}" "$HEALTH_URL" >/dev/null
@@ -244,6 +248,12 @@ trap 'recover $?' EXIT
 [[ -L "$CURRENT_LINK" ]] || die "Current application path must be an atomic symlink: $CURRENT_LINK"
 [[ -f "$SHARED_ENV" ]] || die "Shared environment file is missing: $SHARED_ENV"
 [[ -d "$SHARED_STORAGE" ]] || die "Shared storage directory is missing: $SHARED_STORAGE"
+[[ "$HEALTH_INSECURE_TLS" == '0' || "$HEALTH_INSECURE_TLS" == '1' ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS must be exactly 0 or 1.'
+if [[ "$HEALTH_INSECURE_TLS" == '1' ]]; then
+    [[ -z "$HEALTHCHECK_COMMAND" ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS cannot be used with HORUS_DEPLOY_HEALTHCHECK_COMMAND.'
+    [[ -n "$HEALTH_RESOLVE_IP" ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS requires an explicit HORUS_DEPLOY_HEALTH_RESOLVE_IP.'
+    [[ "$HEALTH_URL" == https://* ]] || die 'HORUS_DEPLOY_HEALTH_INSECURE_TLS is allowed only for an HTTPS direct-origin health check.'
+fi
 [[ "$HEALTH_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die 'HORUS_DEPLOY_HEALTH_ATTEMPTS must be a positive integer.'
 [[ "$HEALTH_DELAY_SECONDS" =~ ^[0-9]+$ ]] || die 'HORUS_DEPLOY_HEALTH_DELAY_SECONDS must be a non-negative integer.'
 
