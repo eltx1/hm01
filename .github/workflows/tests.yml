@@ -50,6 +50,27 @@ jobs:
       - name: Execute tests
         run: php artisan test
 
+  deployment-foundation:
+    runs-on: ubuntu-latest
+    name: Atomic deployment foundation
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Validate deployment tooling syntax
+        run: |
+          bash -n ops/deploy/horus-atomic-deploy.sh
+          bash -n ops/deploy/horus-bootstrap-atomic-layout.sh
+          php -l ops/deploy/write-mysql-client-config.php
+      - name: Execute atomic deployment regression tests
+        run: |
+          bash tests/Deployment/bootstrap-layout-test.sh
+          bash tests/Deployment/atomic-deploy-test.sh
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -141,7 +162,7 @@ jobs:
 
   release-artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [tests, mysql, frontend, traffic-gate-real-browsers]
+    needs: [tests, mysql, frontend, traffic-gate-real-browsers, deployment-foundation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -158,10 +179,15 @@ jobs:
       - run: npm ci && npm run test:browser && npm run build
       - name: Verify compiled Prebid release files
         run: test -s public/assets/prebid/horus-prebid.min.js && test -s public/assets/prebid/horus-prebid.sha256
-      - name: Create portable production release
-        run: zip -qr horus-media-release.zip . -x '.git/*' '.github/*' 'node_modules/*' 'tests/*' '.env' '*.log'
+      - name: Create and validate canonical production release
+        run: |
+          ./scripts/build-release.sh
+          ./scripts/validate-release.sh
       - uses: actions/upload-artifact@v7
         with:
           name: horus-media-release-${{ github.sha }}
-          path: horus-media-release.zip
+          path: |
+            release/horus-media-platform.zip
+            release/CHECKSUMS.txt
+            release/*.md
           retention-days: 14
