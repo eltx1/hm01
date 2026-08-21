@@ -21,6 +21,8 @@ RELEASE_ID="bootstrap-$(date -u '+%Y%m%dT%H%M%SZ')"
 RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
 MOVED=0
 LINKED=0
+ENV_SHARED=0
+STORAGE_SHARED=0
 MAINTENANCE_ENABLED=0
 
 log() {
@@ -90,16 +92,18 @@ rollback_bootstrap() {
         if (( MOVED == 1 )) && [[ -d "$RELEASE_DIR" ]]; then
             if [[ -L "$RELEASE_DIR/.env" ]]; then
                 rm -f "$RELEASE_DIR/.env"
-                if [[ -f "$SHARED_ENV" ]]; then
-                    mv "$SHARED_ENV" "$RELEASE_DIR/.env"
-                fi
+            fi
+            if (( ENV_SHARED == 1 )) && [[ -f "$SHARED_ENV" ]] && [[ ! -e "$RELEASE_DIR/.env" ]]; then
+                mv "$SHARED_ENV" "$RELEASE_DIR/.env" || true
+                ENV_SHARED=0
             fi
 
             if [[ -L "$RELEASE_DIR/storage" ]]; then
                 rm -f "$RELEASE_DIR/storage"
-                if [[ -d "$SHARED_STORAGE" ]]; then
-                    mv "$SHARED_STORAGE" "$RELEASE_DIR/storage"
-                fi
+            fi
+            if (( STORAGE_SHARED == 1 )) && [[ -d "$SHARED_STORAGE" ]] && [[ ! -e "$RELEASE_DIR/storage" ]]; then
+                mv "$SHARED_STORAGE" "$RELEASE_DIR/storage" || true
+                STORAGE_SHARED=0
             fi
 
             mv "$RELEASE_DIR" "$CURRENT_PATH" || true
@@ -143,8 +147,10 @@ mv "$CURRENT_PATH" "$RELEASE_DIR"
 MOVED=1
 
 mv "$RELEASE_DIR/.env" "$SHARED_ENV"
+ENV_SHARED=1
 chmod 600 "$SHARED_ENV"
 mv "$RELEASE_DIR/storage" "$SHARED_STORAGE"
+STORAGE_SHARED=1
 
 ln -s "$SHARED_ENV" "$RELEASE_DIR/.env"
 ln -s "$SHARED_STORAGE" "$RELEASE_DIR/storage"
