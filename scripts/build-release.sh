@@ -21,6 +21,7 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'README.md' \
   --exclude 'design/' \
   --exclude 'docs/' \
+  --exclude 'ops/' \
   --exclude 'scripts/' \
   --exclude 'node_modules/' \
   --exclude 'cloudflare-pages-dist/' \
