@@ -10,21 +10,19 @@ The package supports PHP 8.2+, the PHP SOAP extension, MySQL 8/MariaDB-compatibl
 
 ## 1. Create the subdomains
 
-Create `app.horusmedia.net` and `cdn.horusmedia.net` in Hostinger. Enable valid TLS certificates before enabling HSTS. Point the application subdomain document root to `public/`. Point the CDN subdomain to a separate public directory such as:
+Create `app.horusmedia.net` on the application host. Enable a valid TLS certificate before enabling HSTS and point the application subdomain document root to `public/`.
 
-```text
-/home/ACCOUNT/domains/cdn.horusmedia.net/public_html
-```
+`cdn.horusmedia.net` is delivered separately through the configured static-delivery pipeline; it must not share the Laravel application document root.
 
 ## 2. Upload the application
 
-Extract `horus-media-platform.zip` outside the public web root when the panel permits it. Only the Laravel `public/` directory may be web-accessible. If Hostinger forces the project under `public_html`, keep framework directories above the subdomain document root and adjust `public/index.php` paths only when necessary.
+Extract `horus-media-platform.zip` outside the public web root when the panel permits it. Only the Laravel `public/` directory may be web-accessible.
 
-The ZIP already contains production Composer dependencies and compiled browser assets. Do not run Node.js on the server.
+The ZIP already contains production Composer dependencies and compiled browser assets. Do not run Node.js on the production application server.
 
 ## 3. Create MySQL
 
-Create a database and least-privilege user in hPanel. Grant that user access only to the Horus Media database. Record host, port, database, username, and password in the private `.env` file.
+Create a database and least-privilege user. Grant that user access only to the Horus Media database. Record host, port, database, username, and password in the private `.env` file.
 
 ## 4. Configure the environment
 
@@ -38,12 +36,14 @@ DB_HOST=...
 DB_DATABASE=...
 DB_USERNAME=...
 DB_PASSWORD=...
+SESSION_COOKIE=horus-media-session
+AUTH_EMAIL_VERIFICATION_REQUIRED=false
+AUTH_ADMIN_2FA_REQUIRED=false
 MAIL_MAILER=smtp
 MAIL_HOST=...
 MAIL_PORT=587
 MAIL_USERNAME=...
 MAIL_PASSWORD=...
-MAIL_ENCRYPTION=tls
 MAIL_FROM_ADDRESS=operations@horusmedia.net
 HORUS_CDN_URL=https://cdn.horusmedia.net
 HORUS_STATIC_DELIVERY_DRIVER=cloudflare-pages-pipeline
@@ -54,24 +54,25 @@ GAM_HORUS_SERVICE_ACCOUNT_PATH=/home/ACCOUNT/private/gam-horus-service-account.j
 GAM_SOAP_VERSION_OVERRIDE=
 ```
 
-Never place GAM JSON inside either public document root.
-Confirm the `soap` PHP extension is enabled in hPanel before enabling live
-Direct or automatic Prebid writes. The production ZIP already contains the
-Composer-locked official Google Ads PHP library.
+Horus production currently uses email + password authentication without mandatory email verification or mandatory administrator 2FA. Both capabilities remain implemented and can be re-enabled explicitly with the two `AUTH_*` switches above.
+
+Do not define `MYSQL_ATTR_SSL_CA` unless the database server explicitly requires a CA certificate and the value is an absolute path to the deployed CA file.
+
+Never place GAM JSON inside a public document root. Confirm the `soap` PHP extension is enabled before enabling live Direct or automatic Prebid writes. The production ZIP already contains the Composer-locked official Google Ads PHP library.
 
 ## 5. Generate the Laravel key
 
-From Hostinger SSH or terminal:
+From SSH or terminal:
 
 ```bash
 php artisan key:generate --force
 ```
 
-Never rotate `APP_KEY` after encrypted credentials or two-factor secrets are stored without first performing a planned re-encryption migration.
+Never rotate `APP_KEY` after encrypted credentials or optional two-factor secrets are stored without first performing a planned re-encryption migration.
 
-## 6. Permissions without root
+## 6. Permissions
 
-Use the hosting account user only:
+Use the application account user:
 
 ```bash
 chmod -R u=rwX,go=rX .
@@ -81,8 +82,7 @@ chmod 700 /home/ACCOUNT/private
 chmod 600 /home/ACCOUNT/private/gam-horus-service-account.json
 ```
 
-The application writes only `storage/` and `bootstrap/cache/`. Cloudflare Pages
-files use the scheduled GitHub pipeline; there is no Hostinger CDN document root.
+The application writes only `storage/` and `bootstrap/cache/`. Cloudflare Pages files use the scheduled GitHub pipeline; there is no application-server CDN document root.
 
 ## 7. Safe initial migration
 
@@ -90,8 +90,7 @@ files use the scheduled GitHub pipeline; there is no Hostinger CDN document root
 php artisan down --secret="GENERATE-A-RANDOM-SECRET"
 php artisan config:clear
 php artisan migrate --force
-php artisan db:seed --class=IdentityAccessSeeder --force
-php artisan db:seed --class=ReportingSeeder --force
+php artisan db:seed --force
 php artisan optimize
 php artisan up
 ```
@@ -102,25 +101,11 @@ Create the first super administrator with the protected interactive command:
 php artisan horus:create-super-admin admin@horusmedia.net --name="Horus Media Administrator"
 ```
 
-The command securely prompts for a password containing at least 14 characters, uppercase and lowercase letters, a number, and a symbol. Administrator two-factor authentication is mandatory before dashboard access.
+The command securely prompts for a password containing at least 14 characters, uppercase and lowercase letters, a number, and a symbol. With the production authentication switches above set to `false`, the administrator signs in with email and password and proceeds directly to the control plane.
 
 ## 8. Publish browser files to the CDN
 
-Copy these built files from the package to the CDN root:
-
-```text
-public/assets/hm-loader.js        -> cdn public_html/hm-loader.js
-public/assets/hm-loader.min.js    -> cdn public_html/hm-loader.min.js
-public/assets/prebid/*            -> cdn public_html/assets/prebid/
-```
-
-Create the writable directory:
-
-```text
-cdn public_html/configs/
-```
-
-Use Cloudflare cache rules from `CLOUDFLARE_SETUP.md`.
+Use the static-delivery pipeline documented in `CLOUDFLARE_SETUP.md`. The production application server is the control plane, not the publisher ad-request path.
 
 ## 9. Configure cron
 
@@ -130,7 +115,7 @@ Install the exact commands in `CRON_JOBS.md`. The scheduler heartbeat must becom
 
 1. Open `https://app.horusmedia.net/up` and confirm HTTP 200.
 2. Confirm security headers with browser developer tools.
-3. Sign in as the super administrator and complete 2FA.
+3. Sign in as the super administrator with email and password and confirm direct dashboard/control-plane access.
 4. Open **Operations** and confirm the scheduler heartbeat is healthy.
 5. Add the Horus GAM connection, keeping `HORUS_GAM` primary and enabled.
 6. Run the GAM connection test in dry-run mode.
