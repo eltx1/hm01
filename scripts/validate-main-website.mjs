@@ -3,6 +3,8 @@ import { extname, join, relative, resolve } from "node:path";
 
 const root = resolve(process.argv[2] || "website");
 const failures = [];
+const deploymentConfigPath = resolve("wrangler.website.jsonc");
+const deploymentWorkflowPath = resolve(".github/workflows/website-cloudflare-pages.yml");
 const required = [
   "index.html",
   "terms/index.html",
@@ -20,6 +22,25 @@ const required = [
 
 for (const path of required) {
   if (!existsSync(join(root, path))) failures.push(`Missing required file: ${path}`);
+}
+
+if (!existsSync(deploymentConfigPath)) {
+  failures.push("Missing Worker static-assets deployment configuration: wrangler.website.jsonc");
+} else {
+  const deploymentConfig = JSON.parse(readFileSync(deploymentConfigPath, "utf8"));
+  if (deploymentConfig.name !== "plain-truth-6412") failures.push("Worker deployment name must be plain-truth-6412");
+  if (deploymentConfig.assets?.directory !== "./website") failures.push("Worker assets directory must be ./website");
+  if (deploymentConfig.assets?.html_handling !== "auto-trailing-slash") failures.push("Worker HTML routing must use auto-trailing-slash");
+  if (deploymentConfig.assets?.not_found_handling !== "none") failures.push("Worker missing assets must return a real 404");
+}
+
+if (!existsSync(deploymentWorkflowPath)) {
+  failures.push("Missing main website deployment workflow");
+} else {
+  const deploymentWorkflow = readFileSync(deploymentWorkflowPath, "utf8");
+  if (!deploymentWorkflow.includes("cloudflare/wrangler-action@v4")) failures.push("Main website deployment must use Wrangler Action v4");
+  if (!deploymentWorkflow.includes("command: deploy --config wrangler.website.jsonc --keep-vars")) failures.push("Main website deployment must target the existing Worker service");
+  if (/command:\s+pages deploy\b/.test(deploymentWorkflow)) failures.push("Pages deployment command cannot target a Worker service");
 }
 
 function walk(directory) {
