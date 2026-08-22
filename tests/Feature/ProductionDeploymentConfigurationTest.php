@@ -67,7 +67,10 @@ class ProductionDeploymentConfigurationTest extends TestCase
 
         preg_match('/- name: Verify public production health(?<step>.*?)(?:\n\s{6}- name:|\z)/s', $workflow, $matches);
         $this->assertArrayHasKey('step', $matches);
-        $this->assertStringContainsString('curl -fsS', $matches['step']);
+        $this->assertStringContainsString('curl -sS', $matches['step']);
+        $this->assertStringContainsString("--write-out '%{http_code}'", $matches['step']);
+        $this->assertStringContainsString('403)', $matches['step']);
+        $this->assertStringContainsString('authoritative origin health passed', $matches['step']);
         $this->assertStringNotContainsString('--insecure', $matches['step']);
         $this->assertStringNotContainsString('-k ', $matches['step']);
     }
