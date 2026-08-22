@@ -7,10 +7,10 @@ THOTH is an advisory subsystem used from **Publisher 360 → Quality Review** an
 `PublisherQualityReviewService` creates an explicit allowlisted evidence envelope, then resolves exactly one adapter through `AiProviderManager`:
 
 - `OpenAiResponsesProvider` uses the official OpenAI Responses API, strict JSON Schema output, `store: false`, and no tools. The default model is `gpt-5-mini`.
-- `GeminiStructuredOutputProvider` uses the official Gemini `generateContent` API with `application/json` and `responseJsonSchema`, and no tools. The default Gemini model is `gemini-2.5-flash`.
+- `GeminiStructuredOutputProvider` uses the official Gemini `generateContent` API with `application/json` and `responseJsonSchema`, and no tools. The default Gemini model is the lowest-cost stable allowlisted model, `gemini-2.5-flash-lite`.
 - `FakePublisherQualityAiProvider` exists only for deterministic automated tests and is neither registered in the production manager nor selectable in Admin.
 
-Both adapters normalize into `PublisherQualityAiResult` and validate the same server-owned schema. Provider-specific response objects never reach controllers. There is no automatic provider failover.
+Both adapters normalize into `PublisherQualityAiResult` and validate the same server-owned schema. Provider-specific response objects never reach controllers. There is no automatic provider failover. The Gemini allowlist is ordered from the lowest-cost lightweight model upward. If Google reports the selected Gemini model as unavailable, the Gemini adapter reads the authenticated account's official model inventory, retries once with the cheapest available allowlisted `generateContent` model, and saves that working model after a successful connection test. It never switches providers or uses a model outside the server allowlist.
 
 ## Two explicit evidence contexts
 

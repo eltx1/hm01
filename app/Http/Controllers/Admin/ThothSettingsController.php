@@ -89,9 +89,12 @@ final class ThothSettingsController extends Controller
                 throw new ThothProviderException('MODEL_INCOMPATIBLE');
             }
             $settings = ThothSetting::current();
-            $providers->for($connection->provider)->analyze(new PublisherQualityAiRequest(['synthetic_test' => true, 'website_evidence' => [], 'evidence_gaps' => ['Connection validation only.']], config('thoth.policy_version'), config('thoth.schema_version')), $connection->model, $connection->credential(), $settings->timeout_seconds, min(800, $settings->max_output_tokens));
-            $connection->update(['status' => 'CONNECTED', 'last_connected_at' => now(), 'last_test_latency_ms' => (int) ((hrtime(true) - $started) / 1_000_000), 'last_error_code' => null]);
-            $message = 'Provider connection verified.';
+            $result = $providers->for($connection->provider)->analyze(new PublisherQualityAiRequest(['synthetic_test' => true, 'website_evidence' => [], 'evidence_gaps' => ['Connection validation only.']], config('thoth.policy_version'), config('thoth.schema_version')), $connection->model, $connection->credential(), $settings->timeout_seconds, min(800, $settings->max_output_tokens));
+            $modelChanged = $result->model !== $connection->model;
+            $connection->update(['model' => $result->model, 'status' => 'CONNECTED', 'last_connected_at' => now(), 'last_test_latency_ms' => (int) ((hrtime(true) - $started) / 1_000_000), 'last_error_code' => null]);
+            $message = $modelChanged
+                ? 'Provider connection verified; unavailable model was replaced automatically with '.$result->model.'.'
+                : 'Provider connection verified.';
         } catch (Throwable $exception) {
             $code = $exception instanceof ThothProviderException ? $exception->safeCode : 'CONNECTION_TEST_FAILED';
             $connection->update(['status' => 'ERROR', 'last_test_latency_ms' => (int) ((hrtime(true) - $started) / 1_000_000), 'last_error_code' => $code]);

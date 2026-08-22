@@ -28,17 +28,18 @@ final class GeminiStructuredOutputProvider implements AiQualityProvider
         if (! $this->supportsModel($model)) {
             throw new ThothProviderException('MODEL_INCOMPATIBLE');
         }
-        try {
-            $response = Http::withHeaders(['x-goog-api-key' => $credential])->acceptJson()->timeout($timeout)->connectTimeout(min(5, $timeout))->post('https://generativelanguage.googleapis.com/v1beta/models/'.rawurlencode($model).':generateContent', [
-                'systemInstruction' => ['parts' => [['text' => self::instructions()]]],
-                'contents' => [['role' => 'user', 'parts' => [['text' => json_encode($request->toArray(), JSON_THROW_ON_ERROR)]]]],
-                'generationConfig' => ['responseMimeType' => 'application/json', 'responseJsonSchema' => QualityResultSchema::jsonSchema(), 'maxOutputTokens' => $maxOutputTokens],
-            ]);
-        } catch (ConnectionException) {
-            throw new ThothProviderException('TIMED_OUT');
-        } catch (Throwable) {
-            throw new ThothProviderException('PROVIDER_UNREACHABLE');
+
+        $response = $this->generate($request, $model, $credential, $timeout, $maxOutputTokens);
+
+        if ($response->status() === 404) {
+            $fallback = $this->availableFallbackModel($model, $credential, $timeout);
+
+            if ($fallback !== null) {
+                $model = $fallback;
+                $response = $this->generate($request, $model, $credential, $timeout, $maxOutputTokens);
+            }
         }
+
         if (! $response->successful()) {
             throw new ThothProviderException(self::code($response->status()));
         }
@@ -57,6 +58,49 @@ final class GeminiStructuredOutputProvider implements AiQualityProvider
         }
 
         return new PublisherQualityAiResult($result, 'GEMINI', $model, $response->header('x-request-id'), is_array($json['usageMetadata'] ?? null) ? $json['usageMetadata'] : [], now()->toIso8601String());
+    }
+
+    private function generate(PublisherQualityAiRequest $request, string $model, string $credential, int $timeout, int $maxOutputTokens): \Illuminate\Http\Client\Response
+    {
+        try {
+            return Http::withHeaders(['x-goog-api-key' => $credential])->acceptJson()->timeout($timeout)->connectTimeout(min(5, $timeout))->post('https://generativelanguage.googleapis.com/v1beta/models/'.rawurlencode($model).':generateContent', [
+                'systemInstruction' => ['parts' => [['text' => self::instructions()]]],
+                'contents' => [['role' => 'user', 'parts' => [['text' => json_encode($request->toArray(), JSON_THROW_ON_ERROR)]]]],
+                'generationConfig' => ['responseMimeType' => 'application/json', 'responseJsonSchema' => QualityResultSchema::jsonSchema(), 'maxOutputTokens' => $maxOutputTokens],
+            ]);
+        } catch (ConnectionException) {
+            throw new ThothProviderException('TIMED_OUT');
+        } catch (Throwable) {
+            throw new ThothProviderException('PROVIDER_UNREACHABLE');
+        }
+    }
+
+    private function availableFallbackModel(string $unavailableModel, string $credential, int $timeout): ?string
+    {
+        try {
+            $response = Http::withHeaders(['x-goog-api-key' => $credential])
+                ->acceptJson()
+                ->timeout($timeout)
+                ->connectTimeout(min(5, $timeout))
+                ->get('https://generativelanguage.googleapis.com/v1beta/models', ['pageSize' => 1000]);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $available = collect($response->json('models', []))
+            ->filter(fn ($candidate) => is_array($candidate)
+                && in_array('generateContent', $candidate['supportedGenerationMethods'] ?? [], true))
+            ->map(fn ($candidate) => preg_replace('#^models/#', '', (string) ($candidate['name'] ?? '')))
+            ->filter()
+            ->all();
+
+        return collect(config('thoth.models.GEMINI', []))
+            ->reject(fn ($candidate) => $candidate === $unavailableModel)
+            ->first(fn ($candidate) => in_array($candidate, $available, true));
     }
 
     private static function instructions(): string

@@ -103,6 +103,19 @@ class ThothPublisherQualityAdvisorTest extends TestCase
         $this->assertEqualsCanonicalizing(['GEMINI', 'OPENAI'], AiProviderConnection::query()->pluck('provider')->all());
     }
 
+    public function test_model_refresh_repairs_only_unavailable_or_unconfigured_legacy_gemini_connections(): void
+    {
+        $unavailable = AiProviderConnection::create(['provider' => 'GEMINI', 'model' => 'gemini-2.5-flash-lite', 'credential_source' => 'DATABASE', 'encrypted_credential' => 'secret', 'status' => 'ERROR', 'last_error_code' => 'MODEL_UNAVAILABLE']);
+
+        $migration = require database_path('migrations/2026_08_22_230000_refresh_unavailable_thoth_gemini_model.php');
+        $migration->up();
+
+        $this->assertSame('gemini-3.1-flash-lite', $unavailable->fresh()->model);
+        $this->assertSame('UNTESTED', $unavailable->fresh()->status);
+        $this->assertNull($unavailable->fresh()->last_error_code);
+        $this->assertTrue($unavailable->fresh()->hasAdminCredential());
+    }
+
     public function test_singleton_settings_keep_canonical_id_after_auto_increment_has_advanced(): void
     {
         $transient = ThothSetting::create(['enabled' => true, 'active_provider' => 'GEMINI', 'timeout_seconds' => 10, 'max_output_tokens' => 900]);
@@ -163,6 +176,31 @@ class ThothPublisherQualityAdvisorTest extends TestCase
         $this->assertTrue($connection->fresh()->isReady());
         $this->put(route('admin.thoth.settings.update'), ['enabled' => 1, 'active_provider' => 'OPENAI', 'timeout_seconds' => 20, 'max_output_tokens' => 1800])->assertSessionHasNoErrors();
         $this->assertTrue(ThothSetting::current()->fresh()->enabled);
+    }
+
+    public function test_gemini_connection_test_repairs_an_unavailable_model_automatically(): void
+    {
+        $connection = AiProviderConnection::create(['provider' => 'GEMINI', 'model' => 'gemini-2.5-flash-lite', 'encrypted_credential' => 'gemini-secret-key', 'credential_source' => 'DATABASE', 'status' => 'UNTESTED']);
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), 'gemini-2.5-flash-lite:generateContent')) {
+                return Http::response([], 404);
+            }
+            if (str_contains($request->url(), '/v1beta/models?')) {
+                return Http::response(['models' => [
+                    ['name' => 'models/gemini-3.1-flash-lite', 'supportedGenerationMethods' => ['generateContent']],
+                ]]);
+            }
+
+            return Http::response($this->geminiResponse());
+        });
+
+        $this->actingAs($this->admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.thoth.connections.test', 'GEMINI'))
+            ->assertSessionHas('status', fn ($message) => str_contains($message, 'gemini-3.1-flash-lite'));
+
+        $this->assertSame('gemini-3.1-flash-lite', $connection->fresh()->model);
+        $this->assertTrue($connection->fresh()->isReady());
     }
 
     public function test_profile_requires_traffic_and_device_totals_of_one_hundred(): void
@@ -339,6 +377,11 @@ class ThothPublisherQualityAdvisorTest extends TestCase
     private function openAiResponse(): array
     {
         return ['id' => 'resp_test', 'output' => [['content' => [['type' => 'output_text', 'text' => json_encode($this->advisoryResult())]]]], 'usage' => ['input_tokens' => 50, 'output_tokens' => 100]];
+    }
+
+    private function geminiResponse(): array
+    {
+        return ['candidates' => [['content' => ['parts' => [['text' => json_encode($this->advisoryResult())]]]]], 'usageMetadata' => ['promptTokenCount' => 50, 'candidatesTokenCount' => 100]];
     }
 
     private function profilePayload(): array
