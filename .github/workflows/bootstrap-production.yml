@@ -161,7 +161,10 @@ jobs:
 
           if [[ "$sql_file" == *.gz ]]; then
             gzip -t "$sql_file"
-            gzip -cd "$sql_file" | grep -aEq 'CREATE TABLE|INSERT INTO|SQL dump|MariaDB dump'
+            gzip -cd "$sql_file" | awk '
+              /CREATE TABLE|INSERT INTO|SQL dump|MariaDB dump/ { found = 1 }
+              END { exit(found ? 0 : 1) }
+            '
           else
             grep -aEq 'CREATE TABLE|INSERT INTO|SQL dump|MariaDB dump' "$sql_file"
           fi
