@@ -234,6 +234,7 @@ jobs:
           test -n "$TRAFFIC_GATE_SITEKEY"
 
           curl --fail-with-body --silent --show-error \
+            --retry 12 --retry-all-errors --retry-delay 10 \
             "https://$CLOUDFLARE_PAGES_PROJECT.pages.dev/hm-loader.js" \
             --output /dev/null
           echo 'Authoritative Pages endpoint returned the loader successfully.'
