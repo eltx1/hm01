@@ -1,0 +1,574 @@
+/*
+ * Compact responsive workspace layer.
+ * Loaded last so every Admin, Publisher, Advertiser and Partner workspace uses
+ * the same density and breakpoint contract without changing the brand system.
+ */
+
+body {
+    font-size: 0.8125rem;
+    line-height: 1.42;
+}
+
+.admin-shell {
+    grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.sidebar {
+    padding: 1rem 0.75rem;
+}
+
+.brand-product-lockup {
+    gap: 0.55rem;
+}
+
+.brand-product-mark {
+    width: 2.55rem;
+    max-height: 2.55rem;
+}
+
+.brand-product-copy strong {
+    font-size: 0.94rem;
+}
+
+.control-navigation {
+    gap: 0.7rem;
+    margin-top: 0.8rem;
+}
+
+.navigation-group,
+.navigation-links {
+    gap: 0.18rem;
+}
+
+.navigation-label {
+    margin: 0 0 0.08rem 0.55rem;
+    font-size: 0.62rem;
+}
+
+.navigation-links a {
+    border-radius: 0.55rem;
+    padding: 0.42rem 0.52rem;
+    font-size: 0.76rem;
+    line-height: 1.28;
+}
+
+.sidebar-account {
+    padding: 0.8rem 0.55rem 0;
+}
+
+main {
+    padding: 0.95rem clamp(0.8rem, 1.8vw, 1.55rem) 1.75rem;
+}
+
+.topbar,
+.hero {
+    gap: 0.7rem;
+}
+
+h1 {
+    margin: 0.12rem 0 0.82rem;
+    font-size: clamp(1.4rem, 1.8vw, 1.68rem);
+    line-height: 1.12;
+}
+
+h2 {
+    font-size: clamp(1.02rem, 1.4vw, 1.22rem);
+    line-height: 1.2;
+}
+
+h3 {
+    font-size: 0.94rem;
+    line-height: 1.28;
+}
+
+.eyebrow {
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+}
+
+.status,
+.pill {
+    padding: 0.34rem 0.58rem;
+    font-size: 0.72rem;
+}
+
+.hero {
+    border-radius: 0.78rem;
+    padding: 0.82rem 0.92rem;
+}
+
+.hero h2 {
+    margin: 0.08rem 0 0.35rem;
+    font-size: clamp(1.15rem, 1.75vw, 1.65rem);
+    line-height: 1.12;
+}
+
+.hero p {
+    margin-block: 0.3rem;
+}
+
+.hero p:last-child,
+article p:last-child {
+    line-height: 1.42;
+}
+
+.cards,
+.split-grid,
+.detail-grid,
+.summary-grid,
+.action-center-grid,
+.ai-provider-grid {
+    gap: 0.65rem;
+    margin-top: 0.65rem;
+}
+
+.cards {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+
+article,
+.hm-panel {
+    border-radius: 0.78rem;
+}
+
+article {
+    padding: 0.74rem;
+}
+
+article h2,
+article h3 {
+    margin: 0.22rem 0 0.35rem;
+}
+
+.metric-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+    gap: 0.52rem;
+}
+
+.metric,
+.metric-small {
+    font-size: clamp(1.22rem, 1.8vw, 1.62rem);
+}
+
+.metric {
+    margin-top: 0.22rem;
+}
+
+.form-stack,
+.form-grid {
+    gap: 0.52rem;
+}
+
+.form-stack label,
+.form-grid label {
+    gap: 0.28rem;
+}
+
+.hm-input,
+select.hm-input,
+textarea.hm-input {
+    min-height: 2.25rem;
+    padding: 0.48rem 0.62rem;
+    border-radius: 0.6rem;
+}
+
+textarea.hm-input {
+    min-height: 4.75rem;
+}
+
+select[multiple].hm-input {
+    min-height: 6rem;
+    max-height: 8rem;
+}
+
+:where(button, .hm-button-primary, .hm-button-secondary, .hm-button-danger, .mobile-nav-toggle, summary) {
+    min-height: 2.25rem;
+}
+
+.hm-button-primary,
+.hm-button-secondary,
+.hm-button-danger {
+    padding: 0.48rem 0.72rem;
+}
+
+.text-link,
+.text-button,
+.section-anchor {
+    min-height: 1.75rem;
+}
+
+.field-help,
+.field-error {
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+
+.notice {
+    margin: 0.65rem 0;
+    padding: 0.65rem 0.72rem;
+    line-height: 1.4;
+}
+
+.table-wrap {
+    margin-top: 0.65rem;
+}
+
+.table-wrap table {
+    min-width: 36rem;
+}
+
+th,
+td {
+    padding: 0.48rem 0.55rem;
+}
+
+th {
+    font-size: 0.72rem;
+}
+
+.workspace-tabs {
+    margin: 0.55rem 0 0.65rem;
+    padding: 0.24rem;
+}
+
+.workspace-tabs a {
+    min-height: 2rem;
+    padding: 0.38rem 0.58rem;
+    font-size: 0.75rem;
+}
+
+.workspace-section {
+    margin-top: 0.62rem;
+}
+
+.workspace-heading {
+    gap: 0.65rem;
+    margin-bottom: 0.62rem;
+}
+
+.compact-list {
+    gap: 0.45rem;
+}
+
+.compact-row {
+    gap: 0.65rem;
+    padding: 0.6rem 0;
+}
+
+.health-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+    gap: 0.52rem;
+}
+
+.health-grid > div {
+    gap: 0.24rem;
+    padding: 0.68rem;
+}
+
+.action-center {
+    margin: 0.65rem 0;
+}
+
+.action-center-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.action-card {
+    min-height: 104px;
+    gap: 0.65rem;
+    padding: 0.78rem;
+    border-radius: 0.75rem;
+}
+
+.action-count {
+    width: 2.25rem;
+    height: 2.25rem;
+    font-size: 1rem;
+}
+
+.action-card h3 {
+    margin: 0.08rem 0 0.25rem;
+}
+
+.action-card p {
+    line-height: 1.4;
+}
+
+.status-badge {
+    padding: 0.28rem 0.5rem;
+    font-size: 0.69rem;
+}
+
+.wizard-card {
+    padding: clamp(0.75rem, 2vw, 1.1rem);
+}
+
+.wizard-steps {
+    gap: 0.42rem;
+    margin-bottom: 0.65rem;
+}
+
+.wizard-steps span {
+    width: 1.75rem;
+    height: 1.75rem;
+}
+
+.wizard-actions {
+    margin-top: 0.65rem;
+}
+
+.summary-grid div,
+.selection-grid,
+.support-message,
+.notification-popover,
+.import-options,
+.import-confirmation,
+.import-report {
+    padding: 0.68rem;
+}
+
+.installation-code,
+.compliance-code {
+    padding: 0.72rem;
+}
+
+.ai-dashboard-card {
+    gap: 0.65rem;
+    margin: 0.65rem 0;
+    padding: 0.72rem 0.8rem;
+    border-radius: 0.78rem;
+}
+
+.ai-setup-progress {
+    gap: 0.52rem;
+    margin: 0.62rem 0;
+}
+
+.ai-step {
+    gap: 0.52rem;
+    padding: 0.62rem;
+    border-radius: 0.7rem;
+}
+
+.ai-step > span,
+.ai-config-number {
+    width: 1.7rem;
+    height: 1.7rem;
+}
+
+.ai-provider-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+}
+
+.ai-provider-card {
+    gap: 0.62rem;
+}
+
+.ai-provider-health {
+    gap: 0.4rem;
+}
+
+.ai-provider-health > div {
+    padding: 0.5rem;
+}
+
+.ai-config-block {
+    gap: 0.52rem;
+    padding-top: 0.62rem;
+}
+
+.ai-config-block > div {
+    gap: 0.48rem;
+}
+
+.ai-enable-check {
+    min-height: 2.35rem;
+    padding: 0.48rem 0.62rem;
+}
+
+.import-textarea {
+    min-height: 8.5rem;
+}
+
+.hero-stat {
+    min-width: 7rem;
+}
+
+.hero-stat strong {
+    font-size: clamp(1.35rem, 2.2vw, 1.8rem);
+}
+
+@media (min-width: 1500px) {
+    .admin-shell {
+        grid-template-columns: 216px minmax(0, 1fr);
+    }
+
+    main {
+        padding-inline: 1.8rem;
+    }
+}
+
+@media (max-width: 1100px) {
+    .admin-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: min(84vw, 280px);
+        padding: 0.9rem;
+        transform: translateX(-105%);
+        transition: transform 0.2s ease;
+        box-shadow: var(--hm-shadow);
+    }
+
+    .sidebar.is-open {
+        transform: translateX(0);
+    }
+
+    .sidebar-scrim {
+        position: fixed;
+        inset: 0;
+        border: 0;
+        background: rgba(2, 5, 15, 0.72);
+        z-index: 20;
+    }
+
+    .sidebar-scrim.is-open {
+        display: block;
+    }
+
+    .mobile-nav-toggle {
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 auto;
+        width: 2.35rem;
+        height: 2.35rem;
+        border: 1px solid var(--hm-line-gold);
+        border-radius: 0.65rem;
+        color: var(--hm-gold-highlight);
+        background: var(--hm-glass);
+        font-size: 1rem;
+    }
+
+    .mobile-product-lockup {
+        display: inline-flex;
+    }
+
+    .mobile-product-lockup .brand-product-mark {
+        width: 2.35rem;
+        max-height: 2.35rem;
+    }
+
+    .topbar {
+        align-items: flex-start;
+    }
+
+    .topbar .status {
+        display: none;
+    }
+
+    body.navigation-open {
+        overflow: hidden;
+    }
+}
+
+@media (max-width: 760px) {
+    main {
+        padding: 0.75rem max(0.65rem, env(safe-area-inset-left)) 1.25rem max(0.65rem, env(safe-area-inset-right));
+    }
+
+    .topbar {
+        gap: 0.5rem;
+    }
+
+    .topbar-title {
+        flex-basis: 100%;
+        order: 3;
+    }
+
+    h1 {
+        margin-bottom: 0.6rem;
+        font-size: 1.32rem;
+    }
+
+    .hero {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 0.7rem;
+    }
+
+    .hero h2 {
+        font-size: 1.16rem;
+    }
+
+    .cards,
+    .metric-grid,
+    .split-grid,
+    .detail-grid,
+    .form-grid,
+    .summary-grid,
+    .action-center-grid,
+    .health-grid,
+    .compliance-diff-grid,
+    .selection-grid,
+    .lifecycle-boundaries,
+    .ai-provider-grid,
+    .ai-setup-progress {
+        grid-template-columns: 1fr;
+    }
+
+    .form-grid .full {
+        grid-column: auto;
+    }
+
+    .hero-stat {
+        justify-items: start;
+        min-width: 0;
+        text-align: left;
+    }
+
+    .workspace-heading,
+    .section-heading,
+    .compact-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .ai-provider-health {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .table-wrap {
+        margin-inline: -0.2rem;
+    }
+}
+
+@media (max-width: 430px) {
+    body {
+        font-size: 0.79rem;
+    }
+
+    .mobile-product-lockup .brand-product-mark {
+        width: 2.2rem;
+        max-height: 2.2rem;
+    }
+
+    .ai-provider-health {
+        grid-template-columns: 1fr;
+    }
+
+    .form-stack > :is(.hm-button-primary, .hm-button-secondary, .hm-button-danger),
+    .wizard-actions > *,
+    .compliance-actions > *,
+    .inline-form > button {
+        width: 100%;
+    }
+
+    .status-row > *,
+    .button-row > *,
+    .button-group > * {
+        max-width: 100%;
+    }
+}
