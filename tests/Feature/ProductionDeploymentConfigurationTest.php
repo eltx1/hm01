@@ -65,7 +65,7 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertStringContainsString('HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS', $workflow);
         $this->assertStringContainsString("HORUS_DEPLOY_HEALTH_INSECURE_TLS='\$ORIGIN_HEALTH_INSECURE_TLS'", $workflow);
 
-        preg_match('/- name: Verify public production health(?<step>.*?)(?:\n\s{6}- name:|\z)/s', $workflow, $matches);
+        preg_match('/- name: Probe public production edge(?<step>.*?)(?:\n\s{6}- name:|\z)/s', $workflow, $matches);
         $this->assertArrayHasKey('step', $matches);
         $this->assertStringContainsString('curl -sS', $matches['step']);
         $this->assertStringContainsString("--write-out '%{http_code}'", $matches['step']);
