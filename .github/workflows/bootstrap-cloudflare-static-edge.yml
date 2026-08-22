@@ -1,0 +1,247 @@
+name: Bootstrap Cloudflare static edge
+
+on:
+  push:
+    branches: [ops/bootstrap-static-edge]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: horus-cloudflare-static-edge-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Create and verify Horus static edge
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:TjdJVrvlPuNPVt+Rh3VHiJyInFSQGaWPYIhDf49E48M=
+      DB_CONNECTION: sqlite
+      DB_DATABASE: database/database.sqlite
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: horus-media-cdn
+      TRAFFIC_GATE_WIDGET_NAME: Horus Ad Traffic Gate
+      COMPOSER_AUTH: >-
+        {"github-oauth":{"github.com":"${{ github.token }}"}}
+      COMPOSER_MAX_PARALLEL_HTTP: 2
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate required credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'CLOUDFLARE_API_TOKEN is missing from the production environment.'; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'CLOUDFLARE_ACCOUNT_ID is missing from the production environment.'; exit 1; }
+
+      - name: Verify Cloudflare API access
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          curl --fail-with-body --silent --show-error \
+            "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --output "$response_file"
+          jq -e '.success == true and .result.status == "active"' "$response_file" >/dev/null || {
+            jq '{errors, messages}' "$response_file"
+            exit 1
+          }
+          echo 'Cloudflare API token is active.'
+
+      - name: Ensure Direct Upload Pages project exists
+        id: pages_project
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_root="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api_root/pages/projects?per_page=100" --output "$response_file"
+          jq -e '.success == true' "$response_file" >/dev/null || {
+            jq '{errors, messages}' "$response_file"
+            exit 1
+          }
+
+          if jq -e --arg project "$CLOUDFLARE_PAGES_PROJECT" '.result[] | select(.name == $project)' "$response_file" >/dev/null; then
+            echo "Cloudflare Pages project $CLOUDFLARE_PAGES_PROJECT already exists."
+          else
+            payload="$(jq -cn --arg name "$CLOUDFLARE_PAGES_PROJECT" '{name:$name,production_branch:"main"}')"
+            curl --fail-with-body --silent --show-error "${headers[@]}" \
+              --request POST --data "$payload" "$api_root/pages/projects" --output "$response_file"
+            jq -e '.success == true' "$response_file" >/dev/null || {
+              jq '{errors, messages}' "$response_file"
+              exit 1
+            }
+            echo "Created Direct Upload Pages project $CLOUDFLARE_PAGES_PROJECT."
+          fi
+          echo "pages_url=https://$CLOUDFLARE_PAGES_PROJECT.pages.dev" >> "$GITHUB_OUTPUT"
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo, sqlite, pdo_sqlite, mbstring, soap
+          coverage: none
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build clean deterministic baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/install-composer-ci.sh
+          npm ci
+          npm run build
+          touch database/database.sqlite
+          php artisan migrate --force
+          php artisan static-delivery:build cloudflare-pages-dist
+          php scripts/validate-static-delivery.php cloudflare-pages-dist
+
+      - name: Deploy baseline to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy cloudflare-pages-dist --project-name=horus-media-cdn --branch=main
+
+      - name: Attach advertising CDN and verification domains
+        id: domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_root="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api_root/pages/projects/$CLOUDFLARE_PAGES_PROJECT/domains" --output "$response_file"
+          jq -e '.success == true' "$response_file" >/dev/null || {
+            jq '{errors, messages}' "$response_file"
+            exit 1
+          }
+
+          for domain in cdn.horusmedia.net verify.horusmedia.net; do
+            if jq -e --arg domain "$domain" '.result[] | select(.name == $domain)' "$response_file" >/dev/null; then
+              echo "$domain is already attached to the Pages project."
+              continue
+            fi
+
+            payload="$(jq -cn --arg name "$domain" '{name:$name}')"
+            domain_response="$(mktemp)"
+            curl --fail-with-body --silent --show-error "${headers[@]}" \
+              --request POST --data "$payload" \
+              "$api_root/pages/projects/$CLOUDFLARE_PAGES_PROJECT/domains" \
+              --output "$domain_response"
+            if ! jq -e '.success == true' "$domain_response" >/dev/null; then
+              jq '{errors, messages}' "$domain_response"
+              rm -f "$domain_response"
+              exit 1
+            fi
+            status="$(jq -r '.result.status // "initializing"' "$domain_response")"
+            echo "Attached $domain (status: $status)."
+            rm -f "$domain_response"
+          done
+
+      - name: Ensure invisible Turnstile widget exists
+        id: turnstile
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_root="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api_root/challenges/widgets?per_page=100" --output "$response_file"
+          jq -e '.success == true' "$response_file" >/dev/null || {
+            jq '{errors, messages}' "$response_file"
+            exit 1
+          }
+
+          sitekey="$(jq -r --arg name "$TRAFFIC_GATE_WIDGET_NAME" '
+            [.result[] | select(
+              .name == $name and
+              .mode == "invisible" and
+              (.domains | index("verify.horusmedia.net"))
+            )][0].sitekey // empty
+          ' "$response_file")"
+
+          if [[ -z "$sitekey" ]]; then
+            payload="$(jq -cn --arg name "$TRAFFIC_GATE_WIDGET_NAME" '{
+              name:$name,
+              domains:["verify.horusmedia.net"],
+              mode:"invisible",
+              clearance_level:"no_clearance",
+              bot_fight_mode:false,
+              ephemeral_id:false,
+              region:"world"
+            }')"
+            curl --fail-with-body --silent --show-error "${headers[@]}" \
+              --request POST --data "$payload" "$api_root/challenges/widgets" \
+              --output "$response_file"
+            jq -e '.success == true' "$response_file" >/dev/null || {
+              jq '{errors, messages}' "$response_file"
+              exit 1
+            }
+            sitekey="$(jq -r '.result.sitekey' "$response_file")"
+            echo 'Created invisible Horus Ad Traffic Gate widget.'
+          else
+            echo 'Reusing existing invisible Horus Ad Traffic Gate widget.'
+          fi
+
+          test -n "$sitekey"
+          echo "sitekey=$sitekey" >> "$GITHUB_OUTPUT"
+          echo "PUBLIC HORUS_TRAFFIC_GATE_SITE_KEY=$sitekey"
+          {
+            echo '### Cloudflare static edge bootstrap'
+            echo
+            echo "- Pages project: \`$CLOUDFLARE_PAGES_PROJECT\`"
+            echo '- Custom domains: `cdn.horusmedia.net`, `verify.horusmedia.net`'
+            echo "- Public Traffic Gate sitekey: \`$sitekey\`"
+            echo '- The Turnstile secret was not logged or persisted.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Capture safe Cloudflare status evidence
+        shell: bash
+        env:
+          TRAFFIC_GATE_SITEKEY: ${{ steps.turnstile.outputs.sitekey }}
+        run: |
+          set -euo pipefail
+          api_root="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api_root/pages/projects/$CLOUDFLARE_PAGES_PROJECT" --output "$response_file"
+          jq -e '.success == true' "$response_file" >/dev/null
+          jq '{project:.result.name, subdomain:.result.subdomain, domains:.result.domains, uses_functions:.result.uses_functions}' "$response_file"
+          test -n "$TRAFFIC_GATE_SITEKEY"
+
+          curl --fail-with-body --silent --show-error \
+            "https://$CLOUDFLARE_PAGES_PROJECT.pages.dev/hm-loader.js" \
+            --output /dev/null
+          echo 'Authoritative Pages endpoint returned the loader successfully.'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cloudflare-static-edge-bootstrap-${{ github.sha }}
+          path: |
+            cloudflare-pages-dist/delivery-manifest.json
+            cloudflare-pages-dist/_headers
+          retention-days: 30
