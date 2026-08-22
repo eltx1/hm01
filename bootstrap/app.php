@@ -12,7 +12,6 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -55,7 +54,11 @@ return Application::configure(basePath: dirname(__DIR__))
             '_company_website',
         ]);
         $exceptions->report(function (Throwable $exception): void {
-            Log::error('unhandled_exception', [
+            if (! app()->bound('log')) {
+                return;
+            }
+
+            app('log')->error('unhandled_exception', [
                 'exception' => $exception::class,
                 'message' => $exception->getMessage(),
                 'request_id' => app()->bound('request') ? request()->header('X-Request-ID') : null,
