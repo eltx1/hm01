@@ -49,7 +49,7 @@ jobs:
           if [[ "${{ inputs.operation }}" == 'bootstrap' ]]; then
             [[ "${{ inputs.confirmed_verified_backups }}" == 'true' ]]
           fi
-          [[ -n "$HOST" ]]
+          [[ "$HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == '/home/horusapp' ]]
           [[ "$ORIGIN_HEALTH_RESOLVE_IP" =~ ^[0-9A-Fa-f:.]+$ ]]
@@ -66,16 +66,39 @@ jobs:
           test -n "${ADMIN_SSH_KEY:-}"
           test -n "${KNOWN_HOSTS:-}"
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$ADMIN_SSH_KEY" > "$HOME/.ssh/id_ed25519"
-          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$ADMIN_SSH_KEY" > "$HOME/.ssh/horus-bootstrap-admin"
+          chmod 600 "$HOME/.ssh/horus-bootstrap-admin"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
+          {
+            printf 'Host horus-production-admin\n'
+            printf '  HostName %s\n' "$HOST"
+            printf '  HostKeyAlias %s\n' "$HOST"
+            printf '  User ubuntu\n'
+            printf '  Port %s\n' "$SSH_PORT"
+            printf '  IdentityFile %s\n' "$HOME/.ssh/horus-bootstrap-admin"
+            printf '  IdentitiesOnly yes\n'
+            printf '  BatchMode yes\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  ConnectTimeout 15\n'
+          } > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Verify administrator key material
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprint="$(ssh-keygen -y -f "$HOME/.ssh/horus-bootstrap-admin" \
+            | ssh-keygen -lf - -E sha256 \
+            | awk '{print $2}')"
+          [[ "$fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
+          printf 'administrator_key_fingerprint=%s\n' "$fingerprint"
 
       - name: Verify pinned server host identity
         shell: bash
         run: |
           set -euo pipefail
-          actual="$(ssh -p "$SSH_PORT" ubuntu@"$HOST" \
+          actual="$(ssh horus-production-admin \
             "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256 | awk '{print \$2}'")"
           [[ "$actual" == "$EXPECTED_HOST_FINGERPRINT" ]]
 
@@ -83,7 +106,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" 'bash -s' <<'REMOTE'
+          ssh horus-production-admin 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           current=/home/horusapp/htdocs/app.horusmedia.net
           test -d "$current"
@@ -113,7 +136,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" 'bash -s' <<'REMOTE'
+          ssh horus-production-admin 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           backup_root=/home/horusapp/backups
           test -d "$backup_root"
@@ -150,8 +173,8 @@ jobs:
           key_file="$RUNNER_TEMP/horus-production-deploy.pub"
           printf '%s\n' "$DEPLOY_PUBLIC_KEY" > "$key_file"
           chmod 600 "$key_file"
-          scp -P "$SSH_PORT" "$key_file" ubuntu@"$HOST":/tmp/horus-production-deploy.pub
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" 'bash -s' <<'REMOTE'
+          scp "$key_file" horus-production-admin:/tmp/horus-production-deploy.pub
+          ssh horus-production-admin 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           sudo install -d -m 700 -o horusapp -g horusapp /home/horusapp/.ssh
           sudo touch /home/horusapp/.ssh/authorized_keys
@@ -169,11 +192,11 @@ jobs:
         run: |
           set -euo pipefail
           remote_dir="$REMOTE_HOME/incoming/bootstrap-${{ github.sha }}"
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" \
+          ssh horus-production-admin \
             "sudo -u horusapp -H mkdir -p '$remote_dir' && sudo -u horusapp -H chmod 700 '$REMOTE_HOME/incoming' '$remote_dir'"
-          scp -P "$SSH_PORT" ops/deploy/horus-bootstrap-atomic-layout.sh \
-            ubuntu@"$HOST":/tmp/horus-bootstrap-atomic-layout.sh
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" \
+          scp ops/deploy/horus-bootstrap-atomic-layout.sh \
+            horus-production-admin:/tmp/horus-bootstrap-atomic-layout.sh
+          ssh horus-production-admin \
             "sudo install -m 700 -o horusapp -g horusapp /tmp/horus-bootstrap-atomic-layout.sh \
               '$remote_dir/horus-bootstrap-atomic-layout.sh' && rm -f /tmp/horus-bootstrap-atomic-layout.sh"
 
@@ -183,7 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           remote_script="$REMOTE_HOME/incoming/bootstrap-${{ github.sha }}/horus-bootstrap-atomic-layout.sh"
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" \
+          ssh horus-production-admin \
             "sudo -u horusapp -H env \
              HORUS_BOOTSTRAP_CONFIRMED_BACKUP=1 \
              HORUS_DEPLOY_HOME='$REMOTE_HOME' \
@@ -196,7 +219,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -p "$SSH_PORT" ubuntu@"$HOST" 'bash -s' <<'REMOTE'
+          ssh horus-production-admin 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           current=/home/horusapp/htdocs/app.horusmedia.net
           test -L "$current"
