@@ -57,6 +57,7 @@ jobs:
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
+          [[ "$HEALTH_URL" == 'https://app.horusmedia.net/up' ]]
           [[ "$ORIGIN_HEALTH_RESOLVE_IP" =~ ^[0-9A-Fa-f:.]+$ ]]
           [[ "$ORIGIN_HEALTH_INSECURE_TLS" == '0' || "$ORIGIN_HEALTH_INSECURE_TLS" == '1' ]]
 
@@ -169,7 +170,15 @@ jobs:
         shell: bash
         # This is deliberately a normal public TLS check. The narrowly scoped
         # direct-origin override is passed only to the remote deployment runner.
-        run: curl -fsS --retry 5 --retry-delay 2 --max-time 15 "$HEALTH_URL" >/dev/null
+        # Run it from the production host because Cloudflare intentionally blocks
+        # some ephemeral GitHub-hosted runner IPs with HTTP 403.
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "curl -fsS --retry 5 --retry-delay 2 --max-time 15 '$HEALTH_URL' >/dev/null"
 
       - name: Remove transferred package
         if: always()
