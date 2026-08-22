@@ -1,5 +1,7 @@
 <?php
 
+$isProduction = strtolower((string) env('APP_ENV', 'production')) === 'production';
+
 return [
     'headers' => [
         'content_security_policy' => env('SECURITY_CSP', "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests"),
@@ -15,10 +17,10 @@ return [
         // Owner policy: simple account activation and password authentication only.
         // Keep the implementation available for tests/future migrations, but production
         // environment values must not silently re-enable either workflow.
-        'email_verification_required' => app()->environment('production')
+        'email_verification_required' => $isProduction
             ? false
             : (bool) env('AUTH_EMAIL_VERIFICATION_REQUIRED', true),
-        'administrator_2fa_required' => app()->environment('production')
+        'administrator_2fa_required' => $isProduction
             ? false
             : (bool) env('AUTH_ADMIN_2FA_REQUIRED', true),
     ],
