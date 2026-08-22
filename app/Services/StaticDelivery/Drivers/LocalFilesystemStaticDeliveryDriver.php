@@ -50,8 +50,11 @@ final class LocalFilesystemStaticDeliveryDriver implements StaticDeliveryDriverI
 
     private function managedPath(string $path): bool
     {
-        return in_array($path, ['hm-loader.js', '_headers', '404.html', 'delivery-manifest.json'], true)
+        return in_array($path, ['hm-loader.js', '_headers', '_routes.json', '404.html', 'delivery-manifest.json', 'sellers.json'], true)
             || str_starts_with($path, 'configs/')
-            || str_starts_with($path, 'assets/');
+            || str_starts_with($path, 'assets/')
+            || str_starts_with($path, 'health/')
+            || str_starts_with($path, 'supply/')
+            || str_starts_with($path, 'traffic-gate/');
     }
 }

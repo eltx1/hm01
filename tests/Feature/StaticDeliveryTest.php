@@ -153,6 +153,27 @@ class StaticDeliveryTest extends TestCase
         app(PublicPayloadGuard::class)->validate(['nested' => ['api_key' => 'should-never-be-public']]);
     }
 
+    public function test_local_driver_removes_stale_supply_chain_and_runtime_artifacts(): void
+    {
+        config(['static-delivery.local_root' => $this->dist]);
+        File::ensureDirectoryExists($this->dist.'/supply/domains/removed.example');
+        File::ensureDirectoryExists($this->dist.'/traffic-gate');
+        File::put($this->dist.'/supply/domains/removed.example/ads.txt', "stale\n");
+        File::put($this->dist.'/traffic-gate/obsolete.html', "stale\n");
+        File::put($this->dist.'/operator-note.txt', "preserve\n");
+
+        $snapshot = new StaticDeliverySnapshot([
+            'sellers.json' => "{\"version\":\"1.0\",\"sellers\":[]}\n",
+        ], str_repeat('b', 64), 35, false);
+
+        app(LocalFilesystemStaticDeliveryDriver::class)->deliver($snapshot, new StaticDeliveryBatch);
+
+        $this->assertFileDoesNotExist($this->dist.'/supply/domains/removed.example/ads.txt');
+        $this->assertFileDoesNotExist($this->dist.'/traffic-gate/obsolete.html');
+        $this->assertFileExists($this->dist.'/operator-note.txt');
+        $this->assertFileExists($this->dist.'/sellers.json');
+    }
+
     public function test_snapshot_retention_hashing_and_file_budget_are_enforced(): void
     {
         [$site, $admin] = $this->siteWithPrimaryHorus();
