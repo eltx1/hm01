@@ -115,7 +115,7 @@ final class AdsTxtComplianceController extends Controller
             $parts[] = (string) $data['ads_txt_records'];
         }
         if ($request->hasFile('ads_txt_file')) {
-            $parts[] = (string) $request->file('ads_txt_file')->get();
+            $parts[] = $request->file('ads_txt_file')->getContent();
         }
         $result = $manager->bulkImport(implode("\n", $parts), $data['demand_account_id'], $data['site_id'] ?? null, $request->user());
         $summary = $result['created'].' created, '.$result['skipped'].' existing, '.count($result['invalid']).' invalid.';
