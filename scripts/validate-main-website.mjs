@@ -40,6 +40,8 @@ if (!existsSync(deploymentWorkflowPath)) {
   const deploymentWorkflow = readFileSync(deploymentWorkflowPath, "utf8");
   if (!deploymentWorkflow.includes("cloudflare/wrangler-action@v4")) failures.push("Main website deployment must use Wrangler Action v4");
   if (!deploymentWorkflow.includes("command: deploy --config wrangler.website.jsonc --keep-vars")) failures.push("Main website deployment must target the existing Worker service");
+  if (!deploymentWorkflow.includes("https://plain-truth-6412.mohamed-wahieed.workers.dev")) failures.push("Main website deployment must verify the authoritative Worker endpoint");
+  if (!deploymentWorkflow.includes("Cloudflare security denied the GitHub runner")) failures.push("Custom-domain verification must tolerate an intentional Cloudflare 403 after authoritative Worker success");
   if (/command:\s+pages deploy\b/.test(deploymentWorkflow)) failures.push("Pages deployment command cannot target a Worker service");
 }
 
