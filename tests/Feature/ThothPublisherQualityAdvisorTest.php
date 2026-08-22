@@ -55,6 +55,7 @@ class ThothPublisherQualityAdvisorTest extends TestCase
 
     public function test_ai_control_center_is_prominent_and_explains_gemini_setup(): void
     {
+        $this->withoutExceptionHandling();
         $session = ['two_factor_passed_at' => now()->timestamp];
 
         $this->actingAs($this->admin)->withSession($session)
