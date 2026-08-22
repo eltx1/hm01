@@ -47,7 +47,7 @@ jobs:
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
           curl --fail-with-body --silent --show-error \
-            "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" \
             --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             --output "$response_file"
           jq -e '.success == true and .result.status == "active"' "$response_file" >/dev/null || {
