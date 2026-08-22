@@ -56,7 +56,7 @@
             <p class="notice error">Connection error: {{ $connection->last_error_code }}</p>
         @endif
 
-        @can('thoth.credentials.manage')
+        @if(auth()->user()->hasPermission('thoth.credentials.manage'))
         <section class="ai-config-block">
             <span class="ai-config-number">1</span>
             <div>
@@ -78,9 +78,9 @@
                 @endif
             </div>
         </section>
-        @endcan
+        @endif
 
-        @can('thoth.settings.manage')
+        @if(auth()->user()->hasPermission('thoth.settings.manage'))
         <section class="ai-config-block">
             <span class="ai-config-number">2</span>
             <div>
@@ -108,14 +108,14 @@
                 @endif
             </div>
         </section>
-        @endcan
+        @endif
 
         <p class="muted">Credential source: {{ $connection?->effectiveCredentialSource() ?? 'NOT_CONFIGURED' }}. Provider changes affect future reviews only.</p>
     </article>
 @endforeach
 </section>
 
-@can('thoth.settings.manage')
+@if(auth()->user()->hasPermission('thoth.settings.manage'))
 <article class="ai-activation-panel workspace-section">
     <div class="workspace-heading">
         <div><p class="eyebrow">Final step</p><h2>Activate AI reviews</h2></div>
@@ -147,7 +147,7 @@
         <div class="full"><button class="hm-button-primary" type="submit">Save and activate</button></div>
     </form>
 </article>
-@endcan
+@endif
 
 <article class="workspace-section">
     <p class="eyebrow">Safety boundary</p>
