@@ -66,8 +66,8 @@ jobs:
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
 
-          curl --fail-with-body --silent --show-error "${headers[@]}" \
-            "$api_root/pages/projects?per_page=50" --output "$response_file"
+          curl --silent --show-error "${headers[@]}" \
+            "$api_root/pages/projects" --output "$response_file"
           jq -e '.success == true' "$response_file" >/dev/null || {
             jq '{errors, messages}' "$response_file"
             exit 1
