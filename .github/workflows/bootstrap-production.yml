@@ -30,6 +30,7 @@ jobs:
     environment: production
     env:
       HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+      USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
       EXPECTED_HOST_FINGERPRINT: ${{ vars.HORUS_PRODUCTION_SSH_HOST_ED25519_FINGERPRINT }}
@@ -55,28 +56,30 @@ jobs:
           [[ "$ORIGIN_HEALTH_RESOLVE_IP" =~ ^[0-9A-Fa-f:.]+$ ]]
           [[ "$ORIGIN_HEALTH_INSECURE_TLS" == '0' || "$ORIGIN_HEALTH_INSECURE_TLS" == '1' ]]
           [[ "$EXPECTED_HOST_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
+          [[ "$DEPLOY_PUBLIC_KEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+\ github-actions@horusmedia.net$ ]]
 
-      - name: Configure pinned administrator SSH
+      - name: Configure pinned deployment SSH
         shell: bash
         env:
-          ADMIN_SSH_KEY: ${{ secrets.HORUS_BOOTSTRAP_ADMIN_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
           KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          test -n "${ADMIN_SSH_KEY:-}"
+          test -n "${DEPLOY_SSH_KEY:-}"
           test -n "${KNOWN_HOSTS:-}"
+          [[ "$USER" == 'horusapp' ]]
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$ADMIN_SSH_KEY" > "$HOME/.ssh/horus-bootstrap-admin"
-          chmod 600 "$HOME/.ssh/horus-bootstrap-admin"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/horus-production-deploy"
+          chmod 600 "$HOME/.ssh/horus-production-deploy"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
           {
-            printf 'Host horus-production-admin\n'
+            printf 'Host horus-production\n'
             printf '  HostName %s\n' "$HOST"
             printf '  HostKeyAlias %s\n' "$HOST"
-            printf '  User ubuntu\n'
+            printf '  User %s\n' "$USER"
             printf '  Port %s\n' "$SSH_PORT"
-            printf '  IdentityFile %s\n' "$HOME/.ssh/horus-bootstrap-admin"
+            printf '  IdentityFile %s\n' "$HOME/.ssh/horus-production-deploy"
             printf '  IdentitiesOnly yes\n'
             printf '  BatchMode yes\n'
             printf '  StrictHostKeyChecking yes\n'
@@ -84,21 +87,25 @@ jobs:
           } > "$HOME/.ssh/config"
           chmod 600 "$HOME/.ssh/config"
 
-      - name: Verify administrator key material
+      - name: Verify deployment key pair
         shell: bash
         run: |
           set -euo pipefail
-          fingerprint="$(ssh-keygen -y -f "$HOME/.ssh/horus-bootstrap-admin" \
+          private_fingerprint="$(ssh-keygen -y -f "$HOME/.ssh/horus-production-deploy" \
             | ssh-keygen -lf - -E sha256 \
             | awk '{print $2}')"
-          [[ "$fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
-          printf 'administrator_key_fingerprint=%s\n' "$fingerprint"
+          public_fingerprint="$(printf '%s\n' "$DEPLOY_PUBLIC_KEY" \
+            | ssh-keygen -lf - -E sha256 \
+            | awk '{print $2}')"
+          [[ "$private_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]
+          [[ "$private_fingerprint" == "$public_fingerprint" ]]
+          printf 'deployment_key_fingerprint=%s\n' "$private_fingerprint"
 
       - name: Verify pinned server host identity
         shell: bash
         run: |
           set -euo pipefail
-          actual="$(ssh horus-production-admin \
+          actual="$(ssh horus-production \
             "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256 | awk '{print \$2}'")"
           [[ "$actual" == "$EXPECTED_HOST_FINGERPRINT" ]]
 
@@ -106,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh horus-production-admin 'bash -s' <<'REMOTE'
+          ssh horus-production 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           current=/home/horusapp/htdocs/app.horusmedia.net
           test -d "$current"
@@ -119,9 +126,9 @@ jobs:
           else
             printf 'application_layout=directory\n'
           fi
-          sudo -u horusapp -H /usr/bin/php8.4 "$current/artisan" about --only=environment >/dev/null
-          sudo -u horusapp -H /usr/bin/php8.4 "$current/artisan" schedule:list >/dev/null
-          sudo -u horusapp -H /usr/bin/php8.4 "$current/artisan" queue:failed
+          /usr/bin/php8.4 "$current/artisan" about --only=environment >/dev/null
+          /usr/bin/php8.4 "$current/artisan" schedule:list >/dev/null
+          /usr/bin/php8.4 "$current/artisan" queue:failed
           curl -kfsS --noproxy '*' --resolve app.horusmedia.net:443:127.0.0.1 \
             https://app.horusmedia.net/up >/dev/null
           printf 'origin_health=ok\n'
@@ -136,7 +143,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh horus-production-admin 'bash -s' <<'REMOTE'
+          ssh horus-production 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           backup_root=/home/horusapp/backups
           test -d "$backup_root"
@@ -164,41 +171,18 @@ jobs:
           printf 'verified_storage_backup=%s\n' "$storage_file"
           REMOTE
 
-      - name: Install dedicated deployment public key
-        if: inputs.operation == 'bootstrap'
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$DEPLOY_PUBLIC_KEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+\ github-actions@horusmedia.net$ ]]
-          key_file="$RUNNER_TEMP/horus-production-deploy.pub"
-          printf '%s\n' "$DEPLOY_PUBLIC_KEY" > "$key_file"
-          chmod 600 "$key_file"
-          scp "$key_file" horus-production-admin:/tmp/horus-production-deploy.pub
-          ssh horus-production-admin 'bash -s' <<'REMOTE'
-          set -Eeuo pipefail
-          sudo install -d -m 700 -o horusapp -g horusapp /home/horusapp/.ssh
-          sudo touch /home/horusapp/.ssh/authorized_keys
-          sudo chown horusapp:horusapp /home/horusapp/.ssh/authorized_keys
-          sudo chmod 600 /home/horusapp/.ssh/authorized_keys
-          if ! sudo grep -qxF -f /tmp/horus-production-deploy.pub /home/horusapp/.ssh/authorized_keys; then
-            sudo tee -a /home/horusapp/.ssh/authorized_keys < /tmp/horus-production-deploy.pub >/dev/null
-          fi
-          rm -f /tmp/horus-production-deploy.pub
-          REMOTE
-
       - name: Transfer exact merged bootstrap script
         if: inputs.operation == 'bootstrap'
         shell: bash
         run: |
           set -euo pipefail
           remote_dir="$REMOTE_HOME/incoming/bootstrap-${{ github.sha }}"
-          ssh horus-production-admin \
-            "sudo -u horusapp -H mkdir -p '$remote_dir' && sudo -u horusapp -H chmod 700 '$REMOTE_HOME/incoming' '$remote_dir'"
+          ssh horus-production \
+            "mkdir -p '$remote_dir' && chmod 700 '$REMOTE_HOME/incoming' '$remote_dir'"
           scp ops/deploy/horus-bootstrap-atomic-layout.sh \
-            horus-production-admin:/tmp/horus-bootstrap-atomic-layout.sh
-          ssh horus-production-admin \
-            "sudo install -m 700 -o horusapp -g horusapp /tmp/horus-bootstrap-atomic-layout.sh \
-              '$remote_dir/horus-bootstrap-atomic-layout.sh' && rm -f /tmp/horus-bootstrap-atomic-layout.sh"
+            "horus-production:$remote_dir/horus-bootstrap-atomic-layout.sh"
+          ssh horus-production \
+            "chmod 700 '$remote_dir/horus-bootstrap-atomic-layout.sh'"
 
       - name: Convert production to the atomic layout
         if: inputs.operation == 'bootstrap'
@@ -206,8 +190,8 @@ jobs:
         run: |
           set -euo pipefail
           remote_script="$REMOTE_HOME/incoming/bootstrap-${{ github.sha }}/horus-bootstrap-atomic-layout.sh"
-          ssh horus-production-admin \
-            "sudo -u horusapp -H env \
+          ssh horus-production \
+            "env \
              HORUS_BOOTSTRAP_CONFIRMED_BACKUP=1 \
              HORUS_DEPLOY_HOME='$REMOTE_HOME' \
              HORUS_DEPLOY_HEALTH_RESOLVE_IP='$ORIGIN_HEALTH_RESOLVE_IP' \
@@ -219,7 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh horus-production-admin 'bash -s' <<'REMOTE'
+          ssh horus-production 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           current=/home/horusapp/htdocs/app.horusmedia.net
           test -L "$current"
@@ -228,8 +212,8 @@ jobs:
           [[ "$(readlink -f "$current/.env")" == /home/horusapp/shared/.env ]]
           [[ "$(readlink -f "$current/storage")" == /home/horusapp/shared/storage ]]
           [[ "$(readlink -f "$current/public/storage")" == /home/horusapp/shared/storage/app/public ]]
-          sudo -u horusapp -H /usr/bin/php8.4 "$current/artisan" schedule:list >/dev/null
-          sudo -u horusapp -H /usr/bin/php8.4 "$current/artisan" queue:failed
+          /usr/bin/php8.4 "$current/artisan" schedule:list >/dev/null
+          /usr/bin/php8.4 "$current/artisan" queue:failed
           curl -kfsS --noproxy '*' --resolve app.horusmedia.net:443:127.0.0.1 \
             https://app.horusmedia.net/up >/dev/null
           printf 'active_release=%s\n' "$target"
