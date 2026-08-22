@@ -5,6 +5,7 @@ const root = resolve(process.argv[2] || "website");
 const failures = [];
 const deploymentConfigPath = resolve("wrangler.website.jsonc");
 const deploymentWorkflowPath = resolve(".github/workflows/website-cloudflare-pages.yml");
+const workerEntrypointPath = resolve("website-worker.mjs");
 const required = [
   "index.html",
   "terms/index.html",
@@ -29,9 +30,20 @@ if (!existsSync(deploymentConfigPath)) {
 } else {
   const deploymentConfig = JSON.parse(readFileSync(deploymentConfigPath, "utf8"));
   if (deploymentConfig.name !== "plain-truth-6412") failures.push("Worker deployment name must be plain-truth-6412");
+  if (deploymentConfig.main !== "./website-worker.mjs") failures.push("Worker entrypoint must be ./website-worker.mjs");
   if (deploymentConfig.assets?.directory !== "./website") failures.push("Worker assets directory must be ./website");
+  if (deploymentConfig.assets?.binding !== "ASSETS") failures.push("Worker assets binding must be ASSETS");
   if (deploymentConfig.assets?.html_handling !== "auto-trailing-slash") failures.push("Worker HTML routing must use auto-trailing-slash");
   if (deploymentConfig.assets?.not_found_handling !== "none") failures.push("Worker missing assets must return a real 404");
+}
+
+if (!existsSync(workerEntrypointPath)) {
+  failures.push("Missing main website Worker entrypoint");
+} else {
+  const workerEntrypoint = readFileSync(workerEntrypointPath, "utf8");
+  if (!workerEntrypoint.includes('"/sellers.json"')) failures.push("Worker must route the canonical sellers.json endpoint");
+  if (!workerEntrypoint.includes("https://cdn.horusmedia.net/sellers.json")) failures.push("Worker sellers.json target must use the Horus CDN");
+  if (!workerEntrypoint.includes("env.ASSETS.fetch(request)")) failures.push("Worker must delegate website requests to the ASSETS binding");
 }
 
 if (!existsSync(deploymentWorkflowPath)) {
