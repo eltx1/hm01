@@ -8,6 +8,7 @@ use App\Models\DemandAdsTxtRecord;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\SupplyChain\AdsTxtBulkParser;
 use App\Services\SupplyChain\SupplyChainInvariantService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -16,6 +17,7 @@ final class AdsTxtRecordManager
 {
     public function __construct(
         private readonly SupplyChainInvariantService $invariants,
+        private readonly AdsTxtBulkParser $bulkParser,
         private readonly AuditRecorder $audit,
     ) {}
 
@@ -29,6 +31,9 @@ final class AdsTxtRecordManager
                 'site_id' => $site?->id,
                 'status' => 'ACTIVE',
                 'source' => 'MANUAL',
+                'review_status' => SupplyChainReviewStatus::Verified,
+                'reviewed_at' => now(),
+                'reviewed_by' => $actor->id,
             ]);
             $this->audit->record('supply_chain.ads_txt.record_created', $record->organization_id, $actor, $record, newValues: $this->auditValues($record));
 
@@ -47,9 +52,9 @@ final class AdsTxtRecordManager
                 'demand_account_id' => $account->id,
                 'site_id' => $site?->id,
                 'status' => 'ACTIVE',
-                'review_status' => SupplyChainReviewStatus::ReviewRequired,
-                'reviewed_at' => null,
-                'reviewed_by' => null,
+                'review_status' => SupplyChainReviewStatus::Verified,
+                'reviewed_at' => now(),
+                'reviewed_by' => $actor->id,
                 'last_verified_at' => null,
             ]);
             $this->audit->record('supply_chain.ads_txt.record_updated', $record->organization_id, $actor, $record, $before, $this->auditValues($record));
@@ -98,6 +103,9 @@ final class AdsTxtRecordManager
                     'site_id' => $site->id,
                     'status' => 'ACTIVE',
                     'source' => 'MANUAL',
+                    'review_status' => SupplyChainReviewStatus::Verified,
+                    'reviewed_at' => now(),
+                    'reviewed_by' => $actor->id,
                 ]);
                 $created++;
             }
@@ -110,6 +118,79 @@ final class AdsTxtRecordManager
         });
 
         return compact('created', 'skipped');
+    }
+
+    /** @return array{created: int, skipped: int, invalid: list<array{line: int, content: string, message: string}>, ignored: int, duplicates: int, total_lines: int} */
+    public function bulkImport(string $contents, string $accountId, ?string $siteId, User $actor): array
+    {
+        $parsed = $this->bulkParser->parse($contents);
+        $account = DemandAccount::withoutGlobalScopes()->findOrFail($accountId);
+        $site = filled($siteId) ? Site::withoutGlobalScopes()->findOrFail($siteId) : null;
+        $created = 0;
+        $skipped = 0;
+        $invalid = $parsed['invalid'];
+
+        DB::transaction(function () use ($parsed, $account, $site, $actor, &$created, &$skipped, &$invalid): void {
+            foreach ($parsed['records'] as $item) {
+                try {
+                    $normalized = $this->invariants->normalizeDemandRecord($account, $site, [
+                        'domain' => $item['domain'],
+                        'publisher_account_id' => $item['publisher_account_id'],
+                        'relationship' => $item['relationship'],
+                        'certification_authority_id' => $item['certification_authority_id'],
+                    ]);
+                } catch (ValidationException $exception) {
+                    $invalid[] = [
+                        'line' => $item['source_line'],
+                        'content' => $item['raw_record'],
+                        'message' => collect($exception->errors())->flatten()->first() ?: 'Record is not valid for the selected demand scope.',
+                    ];
+
+                    continue;
+                }
+
+                $exists = DemandAdsTxtRecord::withoutGlobalScopes()
+                    ->where('demand_account_id', $account->id)
+                    ->where('site_id', $site?->id)
+                    ->where('record_hash', $normalized['record_hash'])
+                    ->exists();
+                if ($exists) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                DemandAdsTxtRecord::withoutGlobalScopes()->create($normalized + [
+                    'demand_account_id' => $account->id,
+                    'site_id' => $site?->id,
+                    'status' => 'ACTIVE',
+                    'source' => 'MANUAL',
+                    'review_status' => SupplyChainReviewStatus::Verified,
+                    'reviewed_at' => now(),
+                    'reviewed_by' => $actor->id,
+                ]);
+                $created++;
+            }
+
+            $this->audit->record('supply_chain.ads_txt.bulk_imported', $account->organization_id, $actor, $account, newValues: [
+                'site_id' => $site?->id,
+                'created' => $created,
+                'skipped' => $skipped,
+                'invalid_count' => count($invalid),
+                'ignored' => $parsed['ignored'],
+                'input_duplicates' => $parsed['duplicates'],
+                'total_lines' => $parsed['total_lines'],
+            ]);
+        });
+
+        return [
+            'created' => $created,
+            'skipped' => $skipped,
+            'invalid' => $invalid,
+            'ignored' => $parsed['ignored'],
+            'duplicates' => $parsed['duplicates'],
+            'total_lines' => $parsed['total_lines'],
+        ];
     }
 
     /** @return array{DemandAccount, ?Site, array<string, mixed>} */

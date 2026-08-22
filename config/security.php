@@ -1,5 +1,7 @@
 <?php
 
+$isProduction = strtolower((string) env('APP_ENV', 'production')) === 'production';
+
 return [
     'headers' => [
         'content_security_policy' => env('SECURITY_CSP', "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; upgrade-insecure-requests"),
@@ -12,8 +14,15 @@ return [
     'authentication' => [
         'max_failed_attempts' => (int) env('AUTH_MAX_FAILED_ATTEMPTS', 8),
         'lock_minutes' => (int) env('AUTH_LOCK_MINUTES', 30),
-        'email_verification_required' => (bool) env('AUTH_EMAIL_VERIFICATION_REQUIRED', true),
-        'administrator_2fa_required' => (bool) env('AUTH_ADMIN_2FA_REQUIRED', true),
+        // Owner policy: simple account activation and password authentication only.
+        // Keep the implementation available for tests/future migrations, but production
+        // environment values must not silently re-enable either workflow.
+        'email_verification_required' => $isProduction
+            ? false
+            : (bool) env('AUTH_EMAIL_VERIFICATION_REQUIRED', true),
+        'administrator_2fa_required' => $isProduction
+            ? false
+            : (bool) env('AUTH_ADMIN_2FA_REQUIRED', true),
     ],
     'uploads' => [
         'contract_max_bytes' => (int) env('UPLOAD_CONTRACT_MAX_BYTES', 10485760),

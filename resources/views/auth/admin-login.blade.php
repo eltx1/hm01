@@ -2,7 +2,7 @@
 @section('title', 'Staff sign in')
 @section('content')
 <h1>Staff Control Plane</h1>
-<p class="muted">Sign in with your canonical Horus Media staff account. Access remains subject to account eligibility, Horus organization membership, RBAC, and required two-factor authentication.</p>
+<p class="muted">Sign in with your canonical Horus Media staff account. Access remains subject to account eligibility, Horus organization membership, RBAC, and audit controls.</p>
 <form method="POST" action="{{ route('admin.login.store') }}" class="form-stack">
     @csrf
     <label for="staff-email"><span class="field-label">Email <span class="required-marker" aria-hidden="true">Required</span></span></label>

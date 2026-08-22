@@ -102,6 +102,31 @@ final class AdsTxtComplianceController extends Controller
         return back()->with('status', $result['created'].' managed record(s) assigned; '.$result['skipped'].' existing record(s) skipped.');
     }
 
+    public function bulkImport(Request $request, AdsTxtRecordManager $manager): RedirectResponse
+    {
+        $data = $request->validate([
+            'demand_account_id' => ['required', 'ulid', 'exists:demand_accounts,id'],
+            'site_id' => ['nullable', 'ulid', 'exists:sites,id'],
+            'ads_txt_records' => ['nullable', 'string', 'max:2097152', 'required_without:ads_txt_file'],
+            'ads_txt_file' => ['nullable', 'file', 'max:2048', 'mimes:txt,csv', 'required_without:ads_txt_records'],
+        ]);
+        $parts = [];
+        if (filled($data['ads_txt_records'] ?? null)) {
+            $parts[] = (string) $data['ads_txt_records'];
+        }
+        if ($request->hasFile('ads_txt_file')) {
+            $parts[] = $request->file('ads_txt_file')->getContent();
+        }
+        $result = $manager->bulkImport(implode("\n", $parts), $data['demand_account_id'], $data['site_id'] ?? null, $request->user());
+        $summary = $result['created'].' created, '.$result['skipped'].' existing, '.count($result['invalid']).' invalid.';
+
+        return back()->with('status', 'Demand ads.txt import completed: '.$summary)
+            ->with('ads_txt_import_report', array_merge($result, [
+                'invalid' => array_slice($result['invalid'], 0, 50),
+                'invalid_total' => count($result['invalid']),
+            ]));
+    }
+
     /** @return array<string, mixed> */
     private function recordData(Request $request, bool $bulk = false): array
     {

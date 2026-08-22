@@ -17,7 +17,7 @@
                 <x-brand.emblem class="auth-context-emblem" />
                 <p class="eyebrow">Horus Media · Staff Control Plane</p>
                 <h2>Secure staff access.<span>Operational authority stays enforced.</span></h2>
-                <p class="auth-context-lead">This entry point is reserved for eligible Horus Media staff. Authentication, Horus organization membership, RBAC, two-factor authentication, middleware, and audit remain the enforceable security boundaries.</p>
+                <p class="auth-context-lead">This entry point is reserved for eligible Horus Media staff. Authentication, Horus organization membership, RBAC, middleware, and audit remain the enforceable security boundaries.</p>
                 <ul class="auth-context-points" aria-label="Staff access protections">
                     <li><strong>Identity</strong>Canonical Horus Media account credentials</li>
                     <li><strong>Second factor</strong>TOTP required before operational access</li>

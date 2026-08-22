@@ -4,7 +4,7 @@
 <div class="application-intro">
     <p class="eyebrow">Publisher partnerships</p>
     <h1>Apply as a Publisher</h1>
-    <p class="muted">Start your secure Horus Media application. After email verification, you can save each step and return at any time.</p>
+    <p class="muted">Start your secure Horus Media application. You can save each step and return at any time.</p>
 </div>
 <ol class="publisher-application-steps" aria-label="Publisher application steps">
     <li class="active" aria-current="step"><span>1</span><strong>Account</strong></li>

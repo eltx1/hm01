@@ -6,7 +6,6 @@
 
 <div class="summary-grid security-summary" aria-label="Security summary">
     <div><span>Password last changed</span><strong>{{ $user->password_changed_at?->diffForHumans() ?? 'No recorded change date' }}</strong></div>
-    <div><span>Two-factor authentication</span><strong>{{ $twoFactorEnabled ? 'Enabled' : 'Disabled' }}</strong></div>
     <div><span>Current session</span><strong>Active</strong></div>
     <div><span>Other active sessions</span><strong>{{ $otherSessionCount }}</strong></div>
 </div>
@@ -28,6 +27,7 @@
     </article>
 </section>
 
+@if(config('security.authentication.administrator_2fa_required'))
 <section class="workspace-section" id="two-factor" aria-labelledby="two-factor-heading">
     <div class="workspace-heading">
         <div><p class="eyebrow">Two-factor authentication</p><h2 id="two-factor-heading">Authenticator protection</h2><p class="muted">Horus uses the existing TOTP authenticator and single-use recovery-code system.</p></div>
@@ -70,6 +70,7 @@
         </div>
     @endif
 </section>
+@endif
 
 <section class="workspace-section" id="sessions" aria-labelledby="sessions-heading">
     <div class="workspace-heading">

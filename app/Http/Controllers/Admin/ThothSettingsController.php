@@ -20,7 +20,23 @@ final class ThothSettingsController extends Controller
 {
     public function index(): View
     {
-        return view('admin.thoth.settings', ['settings' => ThothSetting::current(), 'connections' => AiProviderConnection::query()->get()->keyBy('provider'), 'models' => config('thoth.models')]);
+        $settings = ThothSetting::current();
+
+        foreach (['OPENAI', 'GEMINI'] as $provider) {
+            AiProviderConnection::query()->firstOrCreate(
+                ['provider' => $provider],
+                ['model' => config('thoth.default_models.'.$provider), 'credential_source' => 'NONE', 'status' => 'NOT_CONFIGURED'],
+            );
+        }
+
+        $connections = AiProviderConnection::query()->get()->keyBy('provider');
+
+        return view('admin.thoth.settings', [
+            'settings' => $settings,
+            'connections' => $connections,
+            'activeConnection' => $connections->get($settings->active_provider),
+            'models' => config('thoth.models'),
+        ]);
     }
 
     public function updateConnection(Request $request, string $provider, AuditRecorder $audit): RedirectResponse
@@ -42,13 +58,13 @@ final class ThothSettingsController extends Controller
     {
         $provider = strtoupper($provider);
         abort_unless(in_array($provider, ['OPENAI', 'GEMINI'], true), 404);
-        $data = $request->validate(['credential' => ['required', 'string', 'min:10', 'max:1000']]);
+        $data = $request->validate(['credential' => ['required', 'string', 'min:10', 'max:1000', 'regex:/^\S+$/']]);
         $connection = AiProviderConnection::query()->firstOrCreate(['provider' => $provider], ['model' => config('thoth.default_models.'.$provider)]);
         $replacing = $connection->hasAdminCredential();
-        $connection->update(['encrypted_credential' => $data['credential'], 'credential_source' => 'DATABASE', 'status' => 'UNTESTED', 'last_error_code' => null, 'updated_by' => $request->user()->id]);
+        $connection->update(['encrypted_credential' => trim($data['credential']), 'credential_source' => 'DATABASE', 'status' => 'UNTESTED', 'last_error_code' => null, 'updated_by' => $request->user()->id]);
         $audit->record($replacing ? 'thoth.credential.replaced' : 'thoth.credential.added', null, $request->user(), $connection, metadata: ['provider' => $provider, 'source' => 'SECURE_ADMIN_CREDENTIAL']);
 
-        return back()->with('status', $provider.' credential securely replaced.');
+        return back()->with('status', $provider.' API key encrypted and saved. Test the connection before activation.');
     }
 
     public function removeCredential(Request $request, string $provider, AuditRecorder $audit): RedirectResponse

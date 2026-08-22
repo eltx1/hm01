@@ -10,16 +10,20 @@ use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Enums\SiteStatus;
 use App\Enums\SupplyChainReviewStatus;
+use App\Models\AuditLog;
 use App\Models\DemandAccount;
 use App\Models\DemandAdsTxtRecord;
 use App\Models\DemandNetwork;
 use App\Models\DemandSite;
 use App\Models\PlatformAdsTxtRecord;
 use App\Models\PrebidBidder;
+use App\Models\StaticGlobalArtifactChange;
 use App\Services\Compliance\AdsTxtComplianceService;
+use App\Services\Compliance\AdsTxtRecordManager;
 use App\Services\Network\Contracts\DnsResolver;
 use App\Services\Prebid\BidderAdsTxtService;
 use App\Services\Prebid\PrebidManager;
+use App\Services\SupplyChain\AdsTxtBulkParser;
 use App\Services\SupplyChain\PlatformAdsTxtService;
 use App\Services\SupplyChain\SupplyChainArtifactBuilder;
 use App\Services\SupplyChain\SupplyChainStandardsContract;
@@ -182,6 +186,94 @@ class PlatformMasterAdsTxtTest extends TestCase
                 'impact_confirmation' => 'ENABLE '.$impact.' SITES',
             ])->assertRedirect();
         $this->assertSame('ACTIVE', $record->refresh()->status);
+    }
+
+    public function test_master_bulk_import_accepts_full_file_activates_valid_rows_and_reports_bad_rows(): void
+    {
+        StaticGlobalArtifactChange::query()->delete();
+        $contents = implode("\n", [
+            '# supplied by demand partner',
+            'OWNERDOMAIN=publisher.example',
+            'alpha.exchange.com, seat-1, DIRECT, ca-one',
+            'beta.exchange.com, seat-2, reseller',
+            'alpha.exchange.com, seat-1, DIRECT, ca-one',
+            'broken row',
+        ]);
+
+        $response = $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.compliance.ads-txt.master.import'), [
+                'ads_txt_records' => $contents,
+                'activate' => '1',
+                'current_password' => 'password',
+                'reason' => 'Import partner-authorized master seller file.',
+                'confirm_platform_scope' => '1',
+            ]);
+
+        $response->assertRedirect()->assertSessionHas('ads_txt_import_report', fn (array $report): bool =>
+            $report['created'] === 2
+            && $report['duplicates'] === 1
+            && $report['invalid_total'] === 1
+        );
+        $this->assertDatabaseCount('platform_ads_txt_records', 2);
+        $this->assertSame(2, PlatformAdsTxtRecord::query()->where('status', 'ACTIVE')->where('review_status', SupplyChainReviewStatus::Verified->value)->count());
+        $this->assertContains('alpha.exchange.com, seat-1, DIRECT, ca-one', app(SupplyChainStandardsContract::class)->adsTxtForSite($this->site)['lines']);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'supply_chain.platform_ads_txt.bulk_imported', 'actor_id' => $this->admin->id]);
+        $this->assertDatabaseCount('static_global_artifact_changes', 1);
+        $files = app(SupplyChainArtifactBuilder::class)->files();
+        $this->assertArrayHasKey('sellers.json', $files);
+        $this->assertArrayHasKey('supply/sellers.json', $files);
+        $this->assertSame($files['sellers.json'], $files['supply/sellers.json']);
+    }
+
+    public function test_demand_bulk_import_creates_all_valid_rows_for_one_account_scope(): void
+    {
+        $network = DemandNetwork::query()->where('code', 'MGID')->firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $this->site->organization_id,
+            'demand_network_id' => $network->id,
+            'publisher_id' => $this->site->publisher_id,
+            'name' => 'Bulk demand account',
+            'scope' => DemandAccountScope::Publisher,
+            'integration_mode' => DemandIntegrationMode::DirectJs,
+            'approval_status' => DemandApprovalStatus::Approved,
+            'is_enabled' => true,
+            'is_default' => false,
+            'created_by' => $this->admin->id,
+            'updated_by' => $this->admin->id,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $account->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $this->site->id,
+            'approval_status' => DemandApprovalStatus::Approved,
+            'is_enabled' => true,
+            'is_default' => false,
+            'integration_mode' => DemandIntegrationMode::DirectJs,
+            'created_by' => $this->admin->id,
+            'updated_by' => $this->admin->id,
+        ]);
+
+        $result = app(AdsTxtRecordManager::class)->bulkImport(implode("\n", [
+            'one.network.example, public-1, DIRECT, cert-one',
+            'two.network.example, public-2, RESELLER',
+            'not,valid',
+        ]), $account->id, null, $this->admin);
+
+        $this->assertSame(2, $result['created']);
+        $this->assertCount(1, $result['invalid']);
+        $this->assertSame(2, DemandAdsTxtRecord::withoutGlobalScopes()->where('demand_account_id', $account->id)->count());
+        $this->assertSame(2, DemandAdsTxtRecord::withoutGlobalScopes()->where('demand_account_id', $account->id)->where('review_status', SupplyChainReviewStatus::Verified->value)->count());
+        $this->assertTrue(AuditLog::query()->where('event', 'supply_chain.ads_txt.bulk_imported')->where('actor_id', $this->admin->id)->exists());
+    }
+
+    public function test_bulk_parser_enforces_large_file_limit_without_one_by_one_processing(): void
+    {
+        $contents = collect(range(1, AdsTxtBulkParser::MAX_LINES + 1))
+            ->map(fn (int $line): string => "network{$line}.example, seat-{$line}, DIRECT")
+            ->implode("\n");
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        app(AdsTxtBulkParser::class)->parse($contents);
     }
 
     private function master(string $domain, string $seller, string $relationship, ?string $authority): PlatformAdsTxtRecord
