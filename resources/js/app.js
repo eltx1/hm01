@@ -1,6 +1,7 @@
 import './bootstrap';
 import '../css/publisher-application.css';
 import '../css/ux-launch.css';
+import '../css/interface-density.css';
 
 const navigation = document.querySelector('#control-navigation');
 const navigationToggle = document.querySelector('[data-nav-toggle]');
