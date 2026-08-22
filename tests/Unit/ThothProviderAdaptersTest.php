@@ -38,6 +38,30 @@ class ThothProviderAdaptersTest extends TestCase
         });
     }
 
+    public function test_gemini_discovers_and_uses_an_available_fallback_after_model_not_found(): void
+    {
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), 'gemini-2.5-flash-lite:generateContent')) {
+                return Http::response(['error' => ['message' => 'Model not found']], 404);
+            }
+            if (str_contains($request->url(), '/v1beta/models?')) {
+                return Http::response(['models' => [
+                    ['name' => 'models/gemini-3.5-flash-lite', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/gemini-3.1-flash-lite', 'supportedGenerationMethods' => ['generateContent']],
+                    ['name' => 'models/text-embedding-004', 'supportedGenerationMethods' => ['embedContent']],
+                ]]);
+            }
+
+            return Http::response(['candidates' => [['content' => ['parts' => [['text' => json_encode($this->result)]]]]]]);
+        });
+
+        $result = app(GeminiStructuredOutputProvider::class)->analyze($this->request(), 'gemini-2.5-flash-lite', 'gem-secret', 10, 900);
+
+        $this->assertSame('gemini-3.1-flash-lite', $result->model);
+        Http::assertSentCount(3);
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'gemini-3.1-flash-lite:generateContent'));
+    }
+
     public function test_provider_errors_are_classified_without_response_body_or_secret(): void
     {
         Http::fake(['api.openai.com/*' => Http::response(['error' => ['message' => 'secret-key leaked']], 401)]);

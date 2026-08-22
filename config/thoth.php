@@ -2,10 +2,18 @@
 
 return [
     'default_provider' => env('THOTH_PROVIDER', 'OPENAI'),
-    'default_models' => ['OPENAI' => 'gpt-5-mini', 'GEMINI' => 'gemini-2.5-flash'],
+    'default_models' => ['OPENAI' => 'gpt-5-mini', 'GEMINI' => 'gemini-2.5-flash-lite'],
     'models' => [
         'OPENAI' => ['gpt-5-mini', 'gpt-4.1-mini'],
-        'GEMINI' => ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
+        'GEMINI' => [
+            'gemini-2.5-flash-lite',
+            'gemini-3.1-flash-lite',
+            'gemini-3.5-flash-lite',
+            'gemini-2.5-flash',
+            'gemini-3.5-flash',
+            'gemini-3.6-flash',
+            'gemini-2.5-pro',
+        ],
     ],
     'credentials' => [
         'OPENAI' => env('THOTH_OPENAI_API_KEY'),
