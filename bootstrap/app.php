@@ -58,7 +58,7 @@ return Application::configure(basePath: dirname(__DIR__))
             Log::error('unhandled_exception', [
                 'exception' => $exception::class,
                 'message' => $exception->getMessage(),
-                'request_id' => request()->header('X-Request-ID'),
+                'request_id' => app()->bound('request') ? request()->header('X-Request-ID') : null,
             ]);
         })->stop();
     })->create();
