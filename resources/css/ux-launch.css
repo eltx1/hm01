@@ -28,7 +28,7 @@ body { line-height: 1.5; }
 }
 
 :where(button, .hm-button-primary, .hm-button-secondary, .hm-button-danger, .mobile-nav-toggle, summary) {
-    min-height: 2.75rem;
+    min-height: 2.5rem;
 }
 :where(.hm-button-primary, .hm-button-secondary, .hm-button-danger, .text-button, .text-link, .section-anchor) {
     display: inline-flex;
@@ -37,15 +37,16 @@ body { line-height: 1.5; }
     gap: .4rem;
 }
 .text-link, .text-button, .section-anchor { min-height: 2rem; }
-.check { min-height: 2.75rem; align-items: center; grid-template-columns: auto 1fr; }
+.check { min-height: 2.5rem; align-items: center; grid-template-columns: auto 1fr; }
 .check input { width: 1.15rem; height: 1.15rem; }
 
 .hm-input, select.hm-input, textarea.hm-input {
     width: 100%;
-    min-height: 2.75rem;
+    min-height: 2.5rem;
     font: inherit;
 }
-textarea.hm-input { min-height: 7rem; resize: vertical; }
+textarea.hm-input { min-height: 6rem; resize: vertical; }
+select[multiple].hm-input { min-height: 7.5rem; max-height: 10rem; }
 .hm-input[aria-invalid="true"] { border-color: var(--hm-danger); }
 .field-label { display: inline-flex; align-items: baseline; gap: .35rem; color: var(--hm-white); font-weight: 650; }
 .required-marker { color: var(--hm-gold-highlight); font-size: .8em; }
@@ -80,10 +81,10 @@ td { vertical-align: top; }
     display: grid;
     justify-items: start;
     gap: .55rem;
-    min-height: 9rem;
+    min-height: 6.5rem;
     border: 1px dashed var(--hm-line-gold);
     border-radius: var(--hm-radius-md);
-    padding: 1.5rem;
+    padding: 1.05rem;
     background: color-mix(in srgb, var(--hm-bg-card) 72%, transparent);
 }
 .empty-state h2, .empty-state h3, .empty-state p { margin: 0; }

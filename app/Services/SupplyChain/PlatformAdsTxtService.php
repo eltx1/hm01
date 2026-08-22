@@ -11,6 +11,7 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Campaigns\RemoteUrlSafetyValidator;
 use App\Services\SupplyChain\Data\CanonicalAdsTxtSource;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -21,6 +22,7 @@ final class PlatformAdsTxtService
     public function __construct(
         private readonly DomainNormalizer $domains,
         private readonly RemoteUrlSafetyValidator $urls,
+        private readonly AdsTxtBulkParser $bulkParser,
         private readonly AuditRecorder $audit,
     ) {}
 
@@ -95,6 +97,94 @@ final class PlatformAdsTxtService
         $record->update(['status' => 'DISABLED', 'updated_by' => $actor->id]);
         $this->audit($record, 'supply_chain.platform_ads_txt.disabled', $actor, $before, $this->auditValues($record));
         return $record->refresh();
+    }
+
+    /** @return array{created: int, activated: int, skipped: int, invalid: list<array{line: int, content: string, message: string}>, ignored: int, duplicates: int, total_lines: int} */
+    public function bulkImport(string $contents, User $actor, bool $activate, ?string $reason = null): array
+    {
+        $parsed = $this->bulkParser->parse($contents);
+        $created = 0;
+        $activated = 0;
+        $skipped = 0;
+        $invalid = $parsed['invalid'];
+
+        DB::transaction(function () use ($parsed, $actor, $activate, $reason, &$created, &$activated, &$skipped, &$invalid): void {
+            foreach ($parsed['records'] as $item) {
+                $attributes = [
+                    'advertising_system_domain' => $item['domain'],
+                    'publisher_account_id' => $item['publisher_account_id'],
+                    'relationship' => $item['relationship'],
+                    'certification_authority_id' => $item['certification_authority_id'],
+                ];
+                $normalized = $this->normalize($attributes);
+                $existing = PlatformAdsTxtRecord::query()
+                    ->where('advertising_system_domain', $normalized['advertising_system_domain'])
+                    ->where('publisher_account_id', $normalized['publisher_account_id'])
+                    ->first();
+
+                if ($existing) {
+                    if (! hash_equals($existing->record_hash, $normalized['record_hash'])) {
+                        $invalid[] = [
+                            'line' => $item['source_line'],
+                            'content' => $item['raw_record'],
+                            'message' => 'This seller identity already exists with different relationship or authority fields.',
+                        ];
+
+                        continue;
+                    }
+                    if ($activate && ($existing->status !== 'ACTIVE' || $existing->review_status !== SupplyChainReviewStatus::Verified)) {
+                        $before = $this->auditValues($existing);
+                        $existing->update([
+                            'status' => 'ACTIVE',
+                            'review_status' => SupplyChainReviewStatus::Verified,
+                            'reviewed_at' => now(),
+                            'reviewed_by' => $actor->id,
+                            'updated_by' => $actor->id,
+                        ]);
+                        $this->audit($existing, 'supply_chain.platform_ads_txt.bulk_activated', $actor, $before, $this->auditValues($existing));
+                        $activated++;
+                    } else {
+                        $skipped++;
+                    }
+
+                    continue;
+                }
+
+                $record = PlatformAdsTxtRecord::create($normalized + [
+                    'status' => $activate ? 'ACTIVE' : 'DISABLED',
+                    'review_status' => $activate ? SupplyChainReviewStatus::Verified : SupplyChainReviewStatus::ReviewRequired,
+                    'remote_verification_status' => 'UNVERIFIED',
+                    'reviewed_at' => $activate ? now() : null,
+                    'reviewed_by' => $activate ? $actor->id : null,
+                    'created_by' => $actor->id,
+                    'updated_by' => $actor->id,
+                ]);
+                $this->audit($record, 'supply_chain.platform_ads_txt.bulk_created', $actor, [], $this->auditValues($record));
+                $created++;
+            }
+
+            $this->audit->record('supply_chain.platform_ads_txt.bulk_imported', $actor->organization_id, $actor, newValues: [
+                'activate' => $activate,
+                'reason' => $reason,
+                'created' => $created,
+                'activated' => $activated,
+                'skipped' => $skipped,
+                'invalid_count' => count($invalid),
+                'ignored' => $parsed['ignored'],
+                'input_duplicates' => $parsed['duplicates'],
+                'total_lines' => $parsed['total_lines'],
+            ]);
+        });
+
+        return [
+            'created' => $created,
+            'activated' => $activated,
+            'skipped' => $skipped,
+            'invalid' => $invalid,
+            'ignored' => $parsed['ignored'],
+            'duplicates' => $parsed['duplicates'],
+            'total_lines' => $parsed['total_lines'],
+        ];
     }
 
     /** @return list<CanonicalAdsTxtSource> */

@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'public_registration_enabled' => (bool) env('PUBLIC_PUBLISHER_REGISTRATION_ENABLED', false),
+    'public_registration_enabled' => true,
 
     'turnstile' => [
         'enabled' => (bool) env('TURNSTILE_ENABLED', false),
@@ -17,20 +17,20 @@ return [
     'legal_documents' => [
         'TERMS_OF_SERVICE' => [
             'label' => 'Terms of Service',
-            'version' => env('PUBLISHER_TERMS_OF_SERVICE_VERSION'),
-            'url' => env('PUBLISHER_TERMS_OF_SERVICE_URL'),
+            'version' => env('PUBLISHER_TERMS_OF_SERVICE_VERSION') ?: '2026-08-22',
+            'url' => env('PUBLISHER_TERMS_OF_SERVICE_URL') ?: 'https://horusmedia.net/terms/',
             'required' => (bool) env('PUBLISHER_TERMS_OF_SERVICE_REQUIRED', true),
         ],
         'PRIVACY_POLICY' => [
             'label' => 'Privacy Policy',
-            'version' => env('PUBLISHER_PRIVACY_POLICY_VERSION'),
-            'url' => env('PUBLISHER_PRIVACY_POLICY_URL'),
+            'version' => env('PUBLISHER_PRIVACY_POLICY_VERSION') ?: '2026-08-22',
+            'url' => env('PUBLISHER_PRIVACY_POLICY_URL') ?: 'https://horusmedia.net/privacy/',
             'required' => (bool) env('PUBLISHER_PRIVACY_POLICY_REQUIRED', true),
         ],
         'PUBLISHER_TERMS' => [
             'label' => 'Publisher Terms',
-            'version' => env('PUBLISHER_TERMS_VERSION'),
-            'url' => env('PUBLISHER_TERMS_URL'),
+            'version' => env('PUBLISHER_TERMS_VERSION') ?: '2026-08-22',
+            'url' => env('PUBLISHER_TERMS_URL') ?: 'https://horusmedia.net/publisher-terms/',
             'required' => (bool) env('PUBLISHER_TERMS_REQUIRED', true),
         ],
     ],

@@ -8,6 +8,9 @@ Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix(
         ->middleware('permission:supply_chain.ads_txt.view')->name('admin.compliance.ads-txt.master.index');
     Route::post('/master', [PlatformAdsTxtController::class, 'store'])
         ->middleware('permission:supply_chain.ads_txt.manage')->name('admin.compliance.ads-txt.master.store');
+    Route::post('/master/import', [PlatformAdsTxtController::class, 'import'])
+        ->middleware(['permission:supply_chain.ads_txt.manage', 'permission:supply_chain.sellers.review'])
+        ->name('admin.compliance.ads-txt.master.import');
     Route::put('/master/{platformAdsTxtRecord}', [PlatformAdsTxtController::class, 'update'])
         ->middleware('permission:supply_chain.ads_txt.manage')->name('admin.compliance.ads-txt.master.update');
     Route::post('/master/{platformAdsTxtRecord}/review', [PlatformAdsTxtController::class, 'review'])

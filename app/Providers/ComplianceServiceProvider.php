@@ -43,6 +43,8 @@ final class ComplianceServiceProvider extends ServiceProvider
                 ->middleware(['horus', 'permission:supply_chain.ads_txt.manage'])->name('admin.compliance.ads-txt.records.disable');
             Route::post('/admin/compliance/ads-txt/bulk-assign', [AdminAdsTxtComplianceController::class, 'bulkAssign'])
                 ->middleware(['horus', 'permission:supply_chain.ads_txt.manage'])->name('admin.compliance.ads-txt.bulk-assign');
+            Route::post('/admin/compliance/ads-txt/bulk-import', [AdminAdsTxtComplianceController::class, 'bulkImport'])
+                ->middleware(['horus', 'permission:supply_chain.ads_txt.manage'])->name('admin.compliance.ads-txt.bulk-import');
 
             Route::get('/admin/compliance/sellers', [SellerComplianceController::class, 'index'])
                 ->middleware(['horus', 'permission:supply_chain.sellers.view'])->name('admin.compliance.sellers.index');

@@ -34,7 +34,7 @@ test('launch accessibility stylesheet protects focus, target size, responsive la
     const css = read('resources/css/ux-launch.css');
     assert.match(css, /:focus-visible/);
     assert.match(css, /scroll-margin-block/);
-    assert.match(css, /min-height:\s*2\.75rem/);
+    assert.match(css, /min-height:\s*2\.5rem/);
     assert.match(css, /\.table-wrap/);
     assert.match(css, /@media \(max-width: 430px\)/);
     assert.match(css, /@media \(max-width: 768px\)/);

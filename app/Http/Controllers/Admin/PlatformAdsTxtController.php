@@ -39,6 +39,22 @@ final class PlatformAdsTxtController extends Controller
         return back()->with('status', 'Platform master authorization created disabled and awaiting review: '.$record->raw_record);
     }
 
+    public function import(Request $request, PlatformAdsTxtService $service): RedirectResponse
+    {
+        $activate = $request->boolean('activate');
+        $data = $request->validate([
+            'activate' => ['required', 'boolean'],
+            'current_password' => [Rule::requiredIf($activate), 'nullable', 'current_password'],
+            'reason' => [Rule::requiredIf($activate), 'nullable', 'string', 'min:8', 'max:1000'],
+            'confirm_platform_scope' => [Rule::requiredIf($activate), 'nullable', 'accepted'],
+        ]);
+        $result = $service->bulkImport($this->importContent($request), $request->user(), $activate, $data['reason'] ?? null);
+        $summary = $result['created'].' created, '.$result['activated'].' activated, '.$result['skipped'].' existing, '.count($result['invalid']).' invalid.';
+
+        return back()->with('status', 'Master ads.txt import completed: '.$summary)
+            ->with('ads_txt_import_report', $this->importReport($result));
+    }
+
     public function update(Request $request, PlatformAdsTxtRecord $platformAdsTxtRecord, PlatformAdsTxtService $service): RedirectResponse
     {
         $service->update($platformAdsTxtRecord, $this->validated($request), $request->user());
@@ -130,6 +146,31 @@ final class PlatformAdsTxtController extends Controller
             'effective_from' => ['nullable', 'date'],
             'effective_to' => ['nullable', 'date', 'after:effective_from'],
             'internal_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+    }
+
+    private function importContent(Request $request): string
+    {
+        $data = $request->validate([
+            'ads_txt_records' => ['nullable', 'string', 'max:2097152', 'required_without:ads_txt_file'],
+            'ads_txt_file' => ['nullable', 'file', 'max:2048', 'mimes:txt,csv', 'required_without:ads_txt_records'],
+        ]);
+        $parts = [];
+        if (filled($data['ads_txt_records'] ?? null)) {
+            $parts[] = (string) $data['ads_txt_records'];
+        }
+        if ($request->hasFile('ads_txt_file')) {
+            $parts[] = (string) $request->file('ads_txt_file')->get();
+        }
+
+        return implode("\n", $parts);
+    }
+
+    private function importReport(array $result): array
+    {
+        return array_merge($result, [
+            'invalid' => array_slice($result['invalid'], 0, 50),
+            'invalid_total' => count($result['invalid']),
         ]);
     }
 }

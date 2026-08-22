@@ -18,10 +18,36 @@
     ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
 ]" label="Supply chain compliance sections" />
 
+<x-ads-txt-import-report />
+
+@if(auth()->user()->hasPermission('supply_chain.ads_txt.manage') && auth()->user()->hasPermission('supply_chain.sellers.review'))
+<article class="workspace-section import-panel">
+    <div class="workspace-heading"><div><p class="eyebrow">Bulk import</p><h2>Import a complete master ads.txt file</h2><p class="muted">Paste or upload up to 5,000 lines. Blank lines, comments and ads.txt 1.1 directives are ignored; exact duplicates are skipped.</p></div><span class="status-badge status-badge-success">TXT / CSV</span></div>
+    <form method="POST" enctype="multipart/form-data" action="{{ route('admin.compliance.ads-txt.master.import') }}" class="form-stack">@csrf
+        <label>Paste ads.txt records<textarea class="hm-input import-textarea" name="ads_txt_records" rows="10" placeholder="exchange.example, seller-123, RESELLER, abcdef123456"></textarea></label>
+        <label>Or upload the network file<input class="hm-input" type="file" name="ads_txt_file" accept=".txt,.csv,text/plain,text/csv"></label>
+        <fieldset class="import-options">
+            <legend>Publication mode</legend>
+            <label><input type="radio" name="activate" value="1" checked> Import, approve and publish immediately</label>
+            <label><input type="radio" name="activate" value="0"> Import disabled for later review</label>
+        </fieldset>
+        <details class="import-confirmation" open>
+            <summary>Required for immediate platform-wide publication</summary>
+            <div class="form-grid">
+                <label>Reason<input class="hm-input" name="reason" minlength="8" maxlength="1000" value="Import authorized seller file supplied by demand partner"></label>
+                <label>Current password<input class="hm-input" type="password" name="current_password" autocomplete="current-password"></label>
+            </div>
+            <label class="check"><input type="checkbox" name="confirm_platform_scope" value="1"> I confirm these records may appear on every eligible Horus-managed website.</label>
+        </details>
+        <button class="hm-button-primary" data-submitting-label="Importing…">Import master file</button>
+    </form>
+</article>
+@endif
+
 @if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
-<article class="workspace-section">
+<article class="workspace-section secondary-workflow">
     <p class="eyebrow">Create safely</p><h2>Add platform master authorization</h2>
-    <p class="muted">New records start DISABLED and REVIEW_REQUIRED. Creating a row never publishes it.</p>
+    <p class="muted">Use this only for a single record. New records start disabled and awaiting review.</p>
     <form method="POST" action="{{ route('admin.compliance.ads-txt.master.store') }}" class="form-stack">@csrf
         <div class="form-grid">
             <label>Advertising system domain<input class="hm-input" name="advertising_system_domain" required placeholder="exchange.example"></label>
