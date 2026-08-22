@@ -48,6 +48,11 @@ class AiProviderConnection extends Model
         return $this->getRawOriginal('encrypted_credential') !== null;
     }
 
+    public function hasCredential(): bool
+    {
+        return $this->hasAdminCredential() || filled(config('thoth.credentials.'.$this->provider));
+    }
+
     public function isReady(): bool
     {
         return $this->status === 'CONNECTED' && $this->last_connected_at?->gt(now()->subMinutes(config('thoth.connection_max_age_minutes')));
@@ -55,7 +60,7 @@ class AiProviderConnection extends Model
 
     public function readiness(): string
     {
-        if (! $this->credential()) {
+        if (! $this->hasCredential()) {
             return 'CREDENTIAL_MISSING';
         }
         if ($this->status === 'ERROR') {

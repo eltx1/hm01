@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Enums\CampaignStatus;
 use App\Enums\OrganizationType;
+use App\Models\AiProviderConnection;
 use App\Models\Advertiser;
 use App\Models\AuditLog;
 use App\Models\Campaign;
 use App\Models\Publisher;
 use App\Models\Site;
+use App\Models\ThothSetting;
 use App\Services\ControlPlane\ActionCenter;
 use App\Services\Reporting\UnifiedReportService;
 use Illuminate\Http\Request;
@@ -47,6 +49,10 @@ class DashboardController extends Controller
             'failedJobs' => $user->hasPermission('operations.view') ? DB::table('failed_jobs')->latest('failed_at')->limit(10)->get() : collect(),
             'auditEvents' => $user->hasPermission('audit.view') ? AuditLog::query()->latest()->limit(10)->get() : collect(),
             'actionItems' => $actionCenter->items($user),
+            'aiSettings' => $user->hasPermission('thoth.settings.view') ? ThothSetting::current() : null,
+            'aiConnections' => $user->hasPermission('thoth.settings.view')
+                ? AiProviderConnection::query()->get()->keyBy('provider')
+                : collect(),
         ]);
     }
 

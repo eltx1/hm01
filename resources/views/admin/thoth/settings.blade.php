@@ -1,43 +1,157 @@
 @extends('layouts.admin')
-@section('title', 'THOTH Quality Advisor')
-@section('heading', 'THOTH AI Settings')
+@section('title', 'AI Control Center')
+@section('heading', 'AI Control Center')
 @section('content')
-<section class="hero workspace-section"><div><p class="eyebrow">Advisory AI</p><h2>Publisher Quality Review Advisor</h2><p>THOTH provides structured evidence and recommendations. It cannot approve, reject, suspend, activate, serve ads, or alter finance. A Horus administrator always makes the final decision.</p></div><x-status-badge :status="$settings->enabled ? 'ENABLED' : 'DISABLED'" /></section>
+@php
+    $providerOrder = ['GEMINI', 'OPENAI'];
+    $activeReady = $activeConnection?->isReady() ?? false;
+@endphp
 
-@can('thoth.settings.manage')
-<article class="workspace-section"><div class="workspace-heading"><div><p class="eyebrow">Master control</p><h2>Runtime settings</h2></div></div>
-<form method="POST" action="{{ route('admin.thoth.settings.update') }}" class="form-grid safe-submit">@csrf @method('PUT')
-<label><input type="checkbox" name="enabled" value="1" @checked($settings->enabled)> Enable THOTH</label>
-<label>Active provider<select name="active_provider">@foreach(['OPENAI','GEMINI'] as $provider)<option @selected($settings->active_provider === $provider)>{{ $provider }}</option>@endforeach</select></label>
-<label>Timeout seconds<input type="number" name="timeout_seconds" min="5" max="60" value="{{ $settings->timeout_seconds }}"></label>
-<label>Maximum output tokens<input type="number" name="max_output_tokens" min="500" max="8000" value="{{ $settings->max_output_tokens }}"></label>
-<button class="hm-button-primary">Save runtime settings</button></form></article>
-@endcan
+<section class="hero workspace-section">
+    <div>
+        <p class="eyebrow">THOTH AI &amp; Automation</p>
+        <h2>Connect, test, and activate AI.</h2>
+        <p>Add a Gemini or OpenAI API key securely, run a real connection test, then activate the provider for future publisher quality reviews.</p>
+    </div>
+    <x-status-badge :status="$settings->enabled && $activeReady ? 'ENABLED' : 'DISABLED'" />
+</section>
 
-@foreach(['OPENAI','GEMINI'] as $provider)
-@php($connection = $connections->get($provider))
-<article class="workspace-section"><div class="workspace-heading"><div><p class="eyebrow">Production provider</p><h2>{{ $provider === 'OPENAI' ? 'OpenAI Responses API' : 'Gemini structured output' }}</h2></div><x-status-badge :status="$connection?->status ?? 'NOT_CONFIGURED'" /></div>
-<div class="health-grid">
-    <div><span class="muted">Model</span><strong>{{ $connection?->model ?? config('thoth.default_models.'.$provider) }}</strong><small>Structured output required</small></div>
-    <div><span class="muted">Credential</span><strong>{{ ($connection?->credential() ?? config('thoth.credentials.'.$provider)) ? 'Configured · hidden' : 'Not configured' }}</strong><small>{{ $connection?->effectiveCredentialSource() ?? (config('thoth.credentials.'.$provider) ? 'SERVER_CONFIGURATION' : 'NOT_CONFIGURED') }}</small></div>
-    <div><span class="muted">Readiness</span><strong>{{ $connection?->readiness() ?? 'CREDENTIAL_MISSING' }}</strong><small>{{ $connection?->last_connected_at?->toDayDateTimeString() ?? 'Never tested' }}{{ $connection?->last_test_latency_ms ? ' · '.$connection->last_test_latency_ms.' ms' : '' }}</small></div>
-</div>
-@if($connection?->last_error_code)
-<p class="notice error">Safe error: {{ $connection->last_error_code }}</p>
-@endif
-@can('thoth.settings.manage')
-<form method="POST" action="{{ route('admin.thoth.connections.update', $provider) }}" class="form-grid safe-submit">@csrf @method('PUT')<label>Supported model<select name="model">@foreach($models[$provider] as $model)<option @selected(($connection?->model ?? config('thoth.default_models.'.$provider)) === $model)>{{ $model }}</option>@endforeach</select></label><button>Save model</button></form>
-@if($connection)
-<form method="POST" action="{{ route('admin.thoth.connections.test', $provider) }}" class="inline safe-submit">@csrf<button>Test real connection</button></form>
-@endif
-@endcan
-@can('thoth.credentials.manage')
-<form method="POST" action="{{ route('admin.thoth.credentials.update', $provider) }}" class="form-grid safe-submit" autocomplete="off">@csrf @method('PUT')<label>Replace API credential<input type="password" name="credential" required autocomplete="new-password" value=""></label><button>Encrypt and replace</button></form>
-@if($connection?->hasAdminCredential())
-<form method="POST" action="{{ route('admin.thoth.credentials.destroy', $provider) }}" class="inline safe-submit">@csrf @method('DELETE')<button>Remove Admin credential</button></form>
-@endif
-@endcan
-<p class="muted">Provider or model changes affect future reviews only. Historical advisories retain their provider, model, policy, and evidence metadata.</p>
-</article>
+<ol class="ai-setup-progress" aria-label="AI setup progress">
+    <li class="ai-step {{ $connections->contains(fn ($connection) => $connection->hasCredential()) ? 'is-complete' : '' }}">
+        <span>1</span><div><strong>Add API key</strong><small>Encrypted at rest</small></div>
+    </li>
+    <li class="ai-step {{ $connections->contains(fn ($connection) => $connection->isReady()) ? 'is-complete' : '' }}">
+        <span>2</span><div><strong>Test connection</strong><small>Real provider request</small></div>
+    </li>
+    <li class="ai-step {{ $settings->enabled && $activeReady ? 'is-complete' : '' }}">
+        <span>3</span><div><strong>Activate THOTH</strong><small>Select the live provider</small></div>
+    </li>
+</ol>
+
+<section class="ai-provider-grid" aria-label="AI providers">
+@foreach($providerOrder as $provider)
+    @php
+        $connection = $connections->get($provider);
+        $configured = $connection?->hasCredential() ?? false;
+        $ready = $connection?->isReady() ?? false;
+        $isActive = $settings->active_provider === $provider;
+        $providerName = $provider === 'GEMINI' ? 'Gemini API' : 'OpenAI API';
+    @endphp
+    <article class="ai-provider-card {{ $isActive ? 'is-active' : '' }}" id="provider-{{ strtolower($provider) }}">
+        <div class="workspace-heading">
+            <div>
+                <p class="eyebrow">{{ $provider === 'GEMINI' ? 'Google AI' : 'OpenAI' }}</p>
+                <h2>{{ $providerName }}</h2>
+            </div>
+            <x-status-badge :status="$ready ? 'READY' : ($configured ? ($connection?->status ?? 'UNTESTED') : 'NOT_CONFIGURED')" />
+        </div>
+
+        <div class="ai-provider-health">
+            <div><span>API key</span><strong>{{ $configured ? 'Configured · hidden' : 'Not configured' }}</strong></div>
+            <div><span>Model</span><strong>{{ $connection?->model ?? config('thoth.default_models.'.$provider) }}</strong></div>
+            <div><span>Last successful test</span><strong>{{ $connection?->last_connected_at?->diffForHumans() ?? 'Never' }}</strong></div>
+        </div>
+
+        @if($connection?->last_error_code)
+            <p class="notice error">Connection error: {{ $connection->last_error_code }}</p>
+        @endif
+
+        @can('thoth.credentials.manage')
+        <section class="ai-config-block">
+            <span class="ai-config-number">1</span>
+            <div>
+                <h3>{{ $configured ? 'Replace API key' : 'Add API key' }}</h3>
+                <p>The key is encrypted before storage and is never displayed again.</p>
+                <form method="POST" action="{{ route('admin.thoth.credentials.update', $provider) }}" class="form-stack safe-submit" autocomplete="off">
+                    @csrf @method('PUT')
+                    <label>
+                        {{ $providerName }} key
+                        <input class="hm-input" type="password" name="credential" required minlength="10" maxlength="1000" autocomplete="new-password" placeholder="Paste the API key here">
+                    </label>
+                    <button class="hm-button-primary" type="submit">Encrypt and save key</button>
+                </form>
+                @if($connection?->hasAdminCredential())
+                <form method="POST" action="{{ route('admin.thoth.credentials.destroy', $provider) }}" class="safe-submit">
+                    @csrf @method('DELETE')
+                    <button class="text-button" type="submit">Remove saved key</button>
+                </form>
+                @endif
+            </div>
+        </section>
+        @endcan
+
+        @can('thoth.settings.manage')
+        <section class="ai-config-block">
+            <span class="ai-config-number">2</span>
+            <div>
+                <h3>Select model and test</h3>
+                <form method="POST" action="{{ route('admin.thoth.connections.update', $provider) }}" class="form-stack safe-submit">
+                    @csrf @method('PUT')
+                    <label>
+                        Supported model
+                        <select class="hm-input" name="model">
+                        @foreach($models[$provider] as $model)
+                            <option value="{{ $model }}" @selected(($connection?->model ?? config('thoth.default_models.'.$provider)) === $model)>{{ $model }}</option>
+                        @endforeach
+                        </select>
+                    </label>
+                    <button class="hm-button-secondary" type="submit">Save model</button>
+                </form>
+                @if($configured)
+                <form method="POST" action="{{ route('admin.thoth.connections.test', $provider) }}" class="safe-submit">
+                    @csrf
+                    <button class="hm-button-primary" type="submit">Test {{ $provider === 'GEMINI' ? 'Gemini' : 'OpenAI' }} connection</button>
+                </form>
+                @else
+                    <button class="hm-button-primary" type="button" disabled>Test {{ $provider === 'GEMINI' ? 'Gemini' : 'OpenAI' }} connection</button>
+                    <p class="muted">Save an API key first to enable the connection test.</p>
+                @endif
+            </div>
+        </section>
+        @endcan
+
+        <p class="muted">Credential source: {{ $connection?->effectiveCredentialSource() ?? 'NOT_CONFIGURED' }}. Provider changes affect future reviews only.</p>
+    </article>
 @endforeach
+</section>
+
+@can('thoth.settings.manage')
+<article class="ai-activation-panel workspace-section">
+    <div class="workspace-heading">
+        <div><p class="eyebrow">Final step</p><h2>Activate AI reviews</h2></div>
+        <x-status-badge :status="$activeReady ? 'READY' : 'TEST_REQUIRED'" />
+    </div>
+    <p>Select a provider whose connection test passed. Activation remains blocked until the selected provider is ready.</p>
+    <form method="POST" action="{{ route('admin.thoth.settings.update') }}" class="form-grid safe-submit">
+        @csrf @method('PUT')
+        <label>
+            Active provider
+            <select class="hm-input" name="active_provider">
+            @foreach($providerOrder as $provider)
+                <option value="{{ $provider }}" @selected($settings->active_provider === $provider)>{{ $provider === 'GEMINI' ? 'Google Gemini' : 'OpenAI' }}</option>
+            @endforeach
+            </select>
+        </label>
+        <label>
+            Timeout seconds
+            <input class="hm-input" type="number" name="timeout_seconds" min="5" max="60" value="{{ $settings->timeout_seconds }}">
+        </label>
+        <label>
+            Maximum output tokens
+            <input class="hm-input" type="number" name="max_output_tokens" min="500" max="8000" value="{{ $settings->max_output_tokens }}">
+        </label>
+        <label class="ai-enable-check">
+            <input type="checkbox" name="enabled" value="1" @checked($settings->enabled)>
+            <span><strong>Enable THOTH</strong><small>Use the selected provider for future AI-assisted reviews.</small></span>
+        </label>
+        <div class="full"><button class="hm-button-primary" type="submit">Save and activate</button></div>
+    </form>
+</article>
+@endcan
+
+<article class="workspace-section">
+    <p class="eyebrow">Safety boundary</p>
+    <h2>AI advises. Horus administrators decide.</h2>
+    <p>THOTH cannot approve or reject publishers, suspend accounts, serve ads, change finance, or alter historical evidence. Every final decision remains human and audited.</p>
+</article>
 @endsection

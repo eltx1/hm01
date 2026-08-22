@@ -72,9 +72,11 @@ final class ControlPlaneNavigation
                 $this->item('Production operations', 'admin.operations.index', 'operations.view', ['admin.operations.index', 'admin.operations.controls', 'admin.operations.static-delivery.*', 'admin.operations.loader.*']),
                 $this->item('Traffic Quality', 'admin.operations.traffic-quality', 'traffic_gate.manage', ['admin.operations.traffic-quality*']),
             ]),
+            $this->group('AI & Automation', [
+                $this->item('AI Control Center', 'admin.thoth.settings', 'thoth.settings.view', ['admin.thoth.*']),
+            ]),
             $this->group('Settings', [
                 $this->item('Global settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
-                $this->item('THOTH Quality Advisor', 'admin.thoth.settings', 'thoth.settings.view', ['admin.thoth.*']),
             ]),
             $this->group('Security & Audit', [
                 $this->item('Audit Log', 'admin.audit.index', 'audit.view', ['admin.audit.*']),

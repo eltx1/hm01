@@ -10,6 +10,22 @@
     </div>
 </section>
 
+@if($aiSettings)
+@php($aiConnection = $aiConnections->get($aiSettings->active_provider))
+<section class="ai-dashboard-card" aria-labelledby="ai-control-center-heading">
+    <div>
+        <p class="eyebrow">AI &amp; Automation</p>
+        <h2 id="ai-control-center-heading">THOTH AI Control Center</h2>
+        <p>Configure Gemini or OpenAI, store the API key securely, test the real connection, then activate Publisher quality advisories.</p>
+    </div>
+    <div class="ai-dashboard-status">
+        <x-status-badge :status="$aiSettings->enabled && $aiConnection?->isReady() ? 'READY' : 'SETUP REQUIRED'" />
+        <span>{{ $aiSettings->active_provider }} · {{ $aiConnection?->readiness() ?? 'CREDENTIAL_MISSING' }}</span>
+        <a class="hm-button-primary" href="{{ route('admin.thoth.settings') }}">Configure AI</a>
+    </div>
+</section>
+@endif
+
 <section class="action-center" aria-labelledby="action-center-heading">
     <div class="workspace-heading">
         <div><p class="eyebrow">Prioritized work</p><h2 id="action-center-heading">Action Center</h2></div>

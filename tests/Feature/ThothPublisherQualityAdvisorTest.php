@@ -20,6 +20,7 @@ use App\Services\Thoth\PublisherQualityReviewService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use LogicException;
@@ -50,6 +51,55 @@ class ThothPublisherQualityAdvisorTest extends TestCase
         $this->assertFalse($settings->enabled);
         $this->assertSame('OPENAI', $settings->active_provider);
         $this->assertSame('gpt-5-mini', config('thoth.default_models.OPENAI'));
+    }
+
+    public function test_ai_control_center_is_prominent_and_explains_gemini_setup(): void
+    {
+        $session = ['two_factor_passed_at' => now()->timestamp];
+
+        $this->actingAs($this->admin)->withSession($session)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('THOTH AI Control Center')
+            ->assertSee(route('admin.thoth.settings'));
+
+        $this->get(route('admin.thoth.settings'))
+            ->assertOk()
+            ->assertSee('Connect, test, and activate AI.')
+            ->assertSee('Gemini API')
+            ->assertSee('Paste the API key here')
+            ->assertSee('Test Gemini connection');
+
+        $this->assertDatabaseHas('ai_provider_connections', ['provider' => 'GEMINI', 'status' => 'NOT_CONFIGURED']);
+        $this->assertDatabaseHas('ai_provider_connections', ['provider' => 'OPENAI', 'status' => 'NOT_CONFIGURED']);
+    }
+
+    public function test_production_repair_grants_ai_access_and_bootstraps_providers(): void
+    {
+        $permissionNames = [
+            'publisher_quality.review',
+            'publisher_quality.ai.run',
+            'thoth.settings.view',
+            'thoth.settings.manage',
+            'thoth.credentials.manage',
+        ];
+        $permissionIds = DB::table('permissions')->whereIn('name', $permissionNames)->pluck('id');
+        $superAdminRoleId = DB::table('roles')->whereNull('organization_id')->where('name', RoleName::SuperAdmin->value)->value('id');
+
+        DB::table('role_permissions')->where('role_id', $superAdminRoleId)->whereIn('permission_id', $permissionIds)->delete();
+        AiProviderConnection::query()->delete();
+
+        $migration = require database_path('migrations/2026_08_22_150000_repair_thoth_admin_access_and_provider_bootstrap.php');
+        $migration->up();
+
+        $granted = DB::table('role_permissions')
+            ->join('permissions', 'permissions.id', '=', 'role_permissions.permission_id')
+            ->where('role_permissions.role_id', $superAdminRoleId)
+            ->whereIn('permissions.name', $permissionNames)
+            ->count();
+
+        $this->assertSame(5, $granted);
+        $this->assertEqualsCanonicalizing(['GEMINI', 'OPENAI'], AiProviderConnection::query()->pluck('provider')->all());
     }
 
     public function test_singleton_settings_keep_canonical_id_after_auto_increment_has_advanced(): void
