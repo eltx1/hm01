@@ -2,7 +2,7 @@ name: Bootstrap Cloudflare static edge
 
 on:
   push:
-    branches: [ops/bootstrap-static-edge]
+    branches: [main, ops/bootstrap-static-edge]
   workflow_dispatch:
 
 permissions:
