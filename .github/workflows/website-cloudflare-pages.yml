@@ -58,8 +58,27 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
           command: deploy --config wrangler.website.jsonc --keep-vars
-      - name: Verify production pages
+      - name: Verify deployed Worker assets
         run: |
           for path in / /terms/ /privacy/ /publisher-terms/; do
-            curl --fail --silent --show-error --retry 8 --retry-delay 5 "https://horusmedia.net${path}" >/dev/null
+            curl --fail --silent --show-error --retry 8 --retry-delay 5 \
+              "https://plain-truth-6412.mohamed-wahieed.workers.dev${path}" >/dev/null
+          done
+      - name: Probe production custom domain
+        run: |
+          for path in / /terms/ /privacy/ /publisher-terms/; do
+            status="$(curl --silent --show-error --max-time 15 \
+              --output /dev/null --write-out '%{http_code}' \
+              "https://horusmedia.net${path}" || true)"
+            case "$status" in
+              200)
+                ;;
+              403)
+                echo "::warning::Cloudflare security denied the GitHub runner for ${path}; the authoritative Worker asset probe passed."
+                ;;
+              *)
+                echo "Unexpected production status for ${path}: HTTP ${status}" >&2
+                exit 1
+                ;;
+            esac
           done
