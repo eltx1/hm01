@@ -11,7 +11,9 @@
 </section>
 
 @if($aiSettings)
-@php($aiConnection = $aiConnections->get($aiSettings->active_provider))
+@php
+    $aiConnection = $aiConnections->get($aiSettings->active_provider);
+@endphp
 <section class="ai-dashboard-card" aria-labelledby="ai-control-center-heading">
     <div>
         <p class="eyebrow">AI &amp; Automation</p>
