@@ -77,7 +77,7 @@ jobs:
             echo "Cloudflare Pages project $CLOUDFLARE_PAGES_PROJECT already exists."
           else
             payload="$(jq -cn --arg name "$CLOUDFLARE_PAGES_PROJECT" '{name:$name,production_branch:"main"}')"
-            curl --fail-with-body --silent --show-error "${headers[@]}" \
+            curl --silent --show-error "${headers[@]}" \
               --request POST --data "$payload" "$api_root/pages/projects" --output "$response_file"
             jq -e '.success == true' "$response_file" >/dev/null || {
               jq '{errors, messages}' "$response_file"
