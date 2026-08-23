@@ -4,6 +4,8 @@ namespace App\Services\ControlPlane\Actions;
 
 use App\Enums\AdsTxtComplianceStatus;
 use App\Enums\PublisherPaymentProfileStatus;
+use App\Enums\PublisherStatementStatus;
+use App\Models\PublisherStatement;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\ControlPlane\Contracts\ActionCenterProvider;
@@ -20,7 +22,17 @@ final class PublisherActions implements ActionCenterProvider
 
         if ($user->hasPermission('finance.publisher.view_own')) {
             $profile = $publisher->paymentProfile;
-            $requiresAction = ! $profile || $profile->verification_status !== PublisherPaymentProfileStatus::Verified;
+            $paymentRelevant = PublisherStatement::withoutGlobalScopes()
+                ->where('publisher_id', $publisher->id)
+                ->where('balance_due_minor', '>', 0)
+                ->whereIn('status', [
+                    PublisherStatementStatus::PendingInvoice->value,
+                    PublisherStatementStatus::Payable->value,
+                    PublisherStatementStatus::PartiallyPaid->value,
+                ])
+                ->exists();
+            $requiresAction = $paymentRelevant
+                && (! $profile || $profile->verification_status !== PublisherPaymentProfileStatus::Verified);
             $items[] = $this->item('publisher-payment-profile', 'Payment profile action required', $requiresAction ? 1 : 0,
                 'Complete or update the payout destination before a payout can proceed.', 'publisher.finance.payment-method.edit', 10);
         }
