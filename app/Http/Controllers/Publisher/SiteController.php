@@ -37,7 +37,7 @@ class SiteController extends Controller
         $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
-        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block once, verify the two Horus records, then submit this website for review.');
+        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block and verify the two Horus records. You can submit the website for review while verification is pending; production activation will wait for verification.');
     }
 
     public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
@@ -105,7 +105,7 @@ class SiteController extends Controller
         $lifecycle->transition($site, SiteStatus::PendingReview, $request->user(), 'Submitted by publisher.');
         SiteReview::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'decision' => 'PENDING', 'submitted_at' => now()]);
 
-        return back()->with('status', 'Website submitted for review. Domain verification remains visible to the reviewer and does not alter HORUS_GAM availability.');
+        return back()->with('status', 'Website submitted for review. Horus ads.txt verification may finish during review, but both assigned HMP/HMS DIRECT records must verify before production activation.');
     }
 
     private function publisher(Request $request): Publisher
