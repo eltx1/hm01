@@ -80,9 +80,9 @@ class Publisher extends Model
 
     public function applicableRevenueShare(): string
     {
-        $contract = $this->contracts()->where('status', 'ACTIVE')->latest()->first()
-            ?? $this->contracts()->latest()->first();
+        $contract = $this->contracts()->where('status', 'ACTIVE')->latest()->first();
 
-        return (string) ($contract?->revenue_share_percent ?? '70.00');
+        return (string) ($contract?->revenue_share_percent
+            ?? number_format((int) config('reporting.default_publisher_share_bp', 7000) / 100, 2, '.', ''));
     }
 }

@@ -103,8 +103,8 @@ final class ControlPlaneNavigation
             $this->group('Reports & Earnings', [
                 $this->item('Earnings & Payments', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
             ]),
-            $this->group('Contracts', [
-                $this->item('Contracts', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
+            $this->group('Commercial', [
+                $this->item('Commercial terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
             ]),
             $this->group('Support', [
                 $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),

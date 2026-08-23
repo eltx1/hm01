@@ -6,7 +6,7 @@
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Websites', 'href' => '#websites'],
-        ['label' => 'Contracts', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
+        ['label' => 'Commercial terms', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
         ['label' => 'Monetization', 'href' => '#monetization'],
         ['label' => 'Compliance', 'href' => '#compliance'],
         ['label' => 'Quality Review', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
@@ -34,7 +34,7 @@
     <article><p class="eyebrow">Websites</p><strong class="metric">{{ $publisher->sites->count() }}</strong><span class="muted">{{ $activeSites }} active</span></article>
     <article><p class="eyebrow">Verified domains</p><strong class="metric">{{ $verifiedDomains }}</strong><span class="muted">{{ $publisher->sites->flatMap->domains->count() }} authorized</span></article>
     <article><p class="eyebrow">Users</p><strong class="metric">{{ $publisher->organization->users->count() }}</strong><span class="muted">Organization members</span></article>
-    <article><p class="eyebrow">Contracts</p><strong class="metric">{{ $publisher->contracts->count() }}</strong><span class="muted">{{ $publisher->contracts->where('status', \App\Enums\ContractStatus::Active)->count() }} active</span></article>
+    <article><p class="eyebrow">Commercial terms</p><strong class="metric">{{ $publisher->contracts->count() }}</strong><span class="muted">{{ $publisher->contracts->where('status', \App\Enums\ContractStatus::Active)->count() }} active</span></article>
     @if($reporting)<article><p class="eyebrow">Balance due</p><strong class="metric">{{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }} {{ $reporting['currency'] }}</strong><span class="muted">Latest finalized {{ $reporting['currency'] }} statement</span></article>@endif
 </section>
 
@@ -76,8 +76,8 @@
 
 @if(auth()->user()->hasPermission('contracts.view'))
 <article id="contracts" class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Commercial terms</p><h2>Contracts</h2></div><a class="section-anchor" href="{{ route('admin.publishers.contracts.index', $publisher) }}">Manage contracts</a></div>
-    @forelse($publisher->contracts as $contract)<div class="compact-row"><div><strong>{{ $contract->contract_reference }}</strong><p>{{ $contract->starts_at?->format('M j, Y') }} – {{ $contract->ends_at?->format('M j, Y') ?: 'Open ended' }} · {{ $contract->revenue_share_percent }}%</p></div><x-status-badge :status="$contract->status" /></div>@empty<p class="muted">No publisher contracts.</p>@endforelse
+    <div class="workspace-heading"><div><p class="eyebrow">Commercial terms</p><h2>Revenue and payment defaults</h2></div><a class="section-anchor" href="{{ route('admin.publishers.contracts.index', $publisher) }}">Manage terms</a></div>
+    @forelse($publisher->contracts as $contract)<div class="compact-row"><div><strong>{{ $contract->contract_reference }}</strong><p>{{ $contract->starts_at?->format('M j, Y') }} – {{ $contract->ends_at?->format('M j, Y') ?: 'Open ended' }} · Default {{ $contract->revenue_share_percent }}%</p></div><x-status-badge :status="$contract->status" /></div>@empty<p class="muted">No commercial terms.</p>@endforelse
 </article>
 @endif
 

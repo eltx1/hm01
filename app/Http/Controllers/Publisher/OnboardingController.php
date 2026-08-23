@@ -2,11 +2,9 @@
 
 namespace App\Http\Controllers\Publisher;
 
-use App\Enums\ContractStatus;
 use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Publisher;
-use App\Models\PublisherContract;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
@@ -47,7 +45,7 @@ class OnboardingController extends Controller
         match ($step) {
             1 => $this->company($request, $publisher),
             2 => $this->payment($request, $publisher, $paymentProfiles),
-            3 => $this->contract($request, $publisher),
+            3 => null,
             4 => $this->website($request, $publisher, $lifecycle, $configPublisher),
             5 => null,
             6 => $this->placements($request, $publisher),
@@ -81,17 +79,6 @@ class OnboardingController extends Controller
             'account_reference' => [Rule::requiredIf(! $profile), 'nullable', 'string', 'max:255'], 'routing_reference' => ['nullable', 'string', 'max:255'], 'tax_identifier' => ['nullable', 'string', 'max:100'],
         ]);
         $profiles->save($publisher, $data, $request->user());
-    }
-
-    private function contract(Request $request, Publisher $publisher): void
-    {
-        $contract = $publisher->contracts()->latest()->first();
-        $data = $request->validate([
-            'contract_reference' => ['required', 'string', 'max:100', Rule::unique('publisher_contracts')->where('publisher_id', $publisher->id)->ignore($contract)],
-            'starts_at' => ['nullable', 'date'], 'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'], 'auto_renews' => ['sometimes', 'boolean'],
-            'revenue_share_percent' => ['required', 'numeric', 'between:0,100'], 'payment_threshold' => ['required', 'numeric', 'min:0'], 'currency' => ['required', 'string', 'size:3'], 'payment_terms' => ['required', 'string', 'max:100'],
-        ]);
-        PublisherContract::updateOrCreate(['id' => $contract?->id], array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id, 'created_by' => $request->user()->id, 'status' => $contract?->status ?? ContractStatus::Draft]));
     }
 
     private function website(Request $request, Publisher $publisher, SiteLifecycleService $lifecycle, SiteConfigPublisher $configPublisher): void

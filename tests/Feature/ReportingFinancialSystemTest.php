@@ -122,6 +122,44 @@ class ReportingFinancialSystemTest extends TestCase
         ], $admin);
     }
 
+    public function test_publisher_and_demand_rule_overrides_demand_and_publisher_defaults(): void
+    {
+        [$admin, $publisher] = $this->reportingContext();
+        $service = app(RevenueRuleService::class);
+        $effective = now()->toDateString();
+        $source = ReportSource::query()->firstOrFail();
+
+        $service->createRule([
+            'name' => 'Publisher default', 'scope_type' => RevenueRuleScope::Publisher,
+            'scope_id' => $publisher->id, 'effective_from' => $effective,
+            'publisher_share_bp' => 7500, 'horus_share_bp' => 2500, 'mcm_partner_share_bp' => 0,
+            'priority' => 100000,
+        ], $admin);
+        $demandRule = $service->createRule([
+            'name' => 'Demand default', 'scope_type' => RevenueRuleScope::DemandSource,
+            'scope_id' => $source->id, 'effective_from' => $effective,
+            'publisher_share_bp' => 8000, 'horus_share_bp' => 2000, 'mcm_partner_share_bp' => 0,
+        ], $admin);
+        $compositeRule = $service->createRule([
+            'name' => 'Publisher demand exception', 'scope_type' => RevenueRuleScope::PublisherDemandSource,
+            'scope_id' => RevenueRuleService::publisherDemandScopeId($publisher->id, $source->id),
+            'effective_from' => $effective,
+            'publisher_share_bp' => 8500, 'horus_share_bp' => 1500, 'mcm_partner_share_bp' => 0,
+        ], $admin);
+
+        $resolved = $service->resolve($effective, [
+            'publisher_id' => $publisher->id,
+            'report_source_id' => $source->id,
+        ], 'USD');
+        $this->assertSame($compositeRule->current_version_id, $resolved->id);
+
+        $otherPublisherResolved = $service->resolve($effective, [
+            'publisher_id' => 'another-publisher',
+            'report_source_id' => $source->id,
+        ], 'USD');
+        $this->assertSame($demandRule->current_version_id, $otherPublisherResolved->id);
+    }
+
     public function test_financial_close_statements_adjustments_partial_payment_and_closed_period_protection(): void
     {
         Storage::fake('local');

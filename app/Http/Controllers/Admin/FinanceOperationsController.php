@@ -328,6 +328,11 @@ final class FinanceOperationsController extends Controller
             'rules' => $rules,
             'scopeLabels' => $this->scopeLabels($rules),
             'ruleScopes' => RevenueRuleScope::cases(),
+            'publishers' => Publisher::withoutGlobalScopes()->orderBy('display_name')->get(),
+            'sites' => Site::withoutGlobalScopes()->with('publisher')->orderBy('display_name')->get(),
+            'campaigns' => Campaign::withoutGlobalScopes()->orderBy('name')->get(),
+            'reportSources' => ReportSource::query()->orderBy('name')->get(),
+            'demandNetworks' => DemandNetwork::withoutGlobalScopes()->orderBy('name')->get(),
         ]);
     }
 
@@ -451,19 +456,52 @@ final class FinanceOperationsController extends Controller
 
     private function ruleData(Request $request, bool $includeScope = true): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => [$includeScope ? 'required' : 'sometimes', 'string', 'max:255'],
             'scope_type' => [$includeScope ? 'required' : 'sometimes', Rule::enum(RevenueRuleScope::class)],
             'scope_id' => ['nullable', 'string', 'max:64'],
+            'publisher_scope_id' => ['nullable', 'string', 'max:26'],
+            'website_scope_id' => ['nullable', 'string', 'max:26'],
+            'demand_scope_id' => ['nullable', 'string', 'max:26'],
+            'campaign_scope_id' => ['nullable', 'string', 'max:26'],
             'effective_from' => ['required', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
-            'publisher_share_bp' => ['required', 'integer', 'between:0,10000'],
-            'horus_share_bp' => ['required', 'integer', 'between:0,10000'],
+            'publisher_share_percent' => ['nullable', 'numeric', 'between:0,100', 'required_without:publisher_share_bp'],
+            'horus_share_percent' => ['nullable', 'numeric', 'between:0,100', 'required_without:horus_share_bp'],
+            'mcm_partner_share_percent' => ['nullable', 'numeric', 'between:0,100'],
+            'publisher_share_bp' => ['nullable', 'integer', 'between:0,10000'],
+            'horus_share_bp' => ['nullable', 'integer', 'between:0,10000'],
             'mcm_partner_share_bp' => ['nullable', 'integer', 'between:0,10000'],
             'priority' => ['nullable', 'integer', 'between:0,100000'],
             'currency' => ['nullable', 'string', 'size:3'],
             'reason' => [$includeScope ? 'nullable' : 'required', 'string', 'max:10000'],
         ]);
+
+        if (array_key_exists('publisher_share_percent', $data)) {
+            $data['publisher_share_bp'] = (int) round((float) $data['publisher_share_percent'] * 100);
+            $data['horus_share_bp'] = (int) round((float) $data['horus_share_percent'] * 100);
+            $data['mcm_partner_share_bp'] = (int) round((float) ($data['mcm_partner_share_percent'] ?? 0) * 100);
+        }
+
+        if ($includeScope) {
+            $scope = RevenueRuleScope::from($data['scope_type']);
+            $data['scope_id'] = match ($scope) {
+                RevenueRuleScope::Global => null,
+                RevenueRuleScope::Publisher => $data['publisher_scope_id'] ?? $data['scope_id'] ?? null,
+                RevenueRuleScope::Website => $data['website_scope_id'] ?? $data['scope_id'] ?? null,
+                RevenueRuleScope::DemandSource => $data['demand_scope_id'] ?? $data['scope_id'] ?? null,
+                RevenueRuleScope::Campaign => $data['campaign_scope_id'] ?? $data['scope_id'] ?? null,
+                RevenueRuleScope::PublisherDemandSource => RevenueRuleService::publisherDemandScopeId(
+                    (string) ($data['publisher_scope_id'] ?? ''),
+                    (string) ($data['demand_scope_id'] ?? ''),
+                ),
+            };
+        }
+
+        return collect($data)->except([
+            'publisher_scope_id', 'website_scope_id', 'demand_scope_id', 'campaign_scope_id',
+            'publisher_share_percent', 'horus_share_percent', 'mcm_partner_share_percent',
+        ])->all();
     }
 
     /** @return array<string, string> */
@@ -482,9 +520,24 @@ final class FinanceOperationsController extends Controller
                 RevenueRuleScope::Website => $sites[$rule->scope_id] ?? $rule->scope_id,
                 RevenueRuleScope::Campaign => $campaigns[$rule->scope_id] ?? $rule->scope_id,
                 RevenueRuleScope::DemandSource => $sources[$rule->scope_id] ?? $demandNetworks[$rule->scope_id] ?? $rule->scope_id,
+                RevenueRuleScope::PublisherDemandSource => $this->publisherDemandScopeLabel(
+                    $rule->scope_id,
+                    $publishers,
+                    $sources,
+                    $demandNetworks,
+                ),
             };
 
             return [$rule->id => (string) $label];
         })->all();
+    }
+
+    private function publisherDemandScopeLabel($scopeId, $publishers, $sources, $demandNetworks): string
+    {
+        [$publisherId, $demandSourceId] = RevenueRuleService::splitPublisherDemandScopeId($scopeId);
+
+        return (string) ($publishers[$publisherId] ?? $publisherId).' · '.(string) ($sources[$demandSourceId]
+            ?? $demandNetworks[$demandSourceId]
+            ?? $demandSourceId);
     }
 }
