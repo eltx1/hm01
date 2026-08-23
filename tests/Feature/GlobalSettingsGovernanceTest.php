@@ -93,7 +93,7 @@ class GlobalSettingsGovernanceTest extends TestCase
 
     public function test_persisted_override_can_be_applied_to_existing_config_consumers(): void
     {
-        GlobalSetting::query()->create(['key' => 'supply_chain.contact_email', 'value' => 'compliance@example.com', 'changed_by' => $this->admin->id]);
+        GlobalSetting::query()->updateOrCreate(['key' => 'supply_chain.contact_email'], ['value' => 'compliance@example.com', 'changed_by' => $this->admin->id]);
         $settings = app(GlobalSettingsService::class);
         $settings->invalidate();
         $settings->applyRuntimeOverrides();
