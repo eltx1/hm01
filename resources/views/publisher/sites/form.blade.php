@@ -22,7 +22,7 @@
 <label>Current GAM network code<input class="hm-input" name="current_gam_network_code" value="{{ old('current_gam_network_code', $site->current_gam_network_code) }}"></label>
 <label>AdSense status<input class="hm-input" name="current_adsense_status" value="{{ old('current_adsense_status', $site->current_adsense_status) }}"></label>
 <label>AdX status<input class="hm-input" name="current_adx_status" value="{{ old('current_adx_status', $site->current_adx_status) }}"></label>
-<label>Revenue-share agreement<input class="hm-input" value="{{ $site->exists ? $site->default_revenue_share_percent : $publisher->applicableRevenueShare() }}%" disabled><span class="muted">Controlled by your agreement and Horus Media administrators.</span></label>
+<label>Default revenue share<input class="hm-input" value="{{ $site->exists ? $site->default_revenue_share_percent : $publisher->applicableRevenueShare() }}%" disabled><span class="muted">Controlled by approved commercial terms and more-specific revenue rules.</span></label>
 <label><input type="hidden" name="prebid_enabled" value="0"><input type="checkbox" name="prebid_enabled" value="1" @checked(old('prebid_enabled', $site->prebid_enabled))> Enable Prebid when configuration is published</label>
 <label><input type="hidden" name="native_demand_enabled" value="0"><input type="checkbox" name="native_demand_enabled" value="1" @checked(old('native_demand_enabled', $site->native_demand_enabled))> Enable optional native demand</label>
 <button class="hm-button-primary">Save website</button>

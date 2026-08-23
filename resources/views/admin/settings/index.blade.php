@@ -5,7 +5,7 @@
 @if(session('status'))<section><p>{{ session('status') }}</p></section>@endif
 <section>
     <h2>Controlled global settings</h2>
-    <p class="muted">Only registered safe business/product settings are editable here. Credentials, deployment configuration, emergency controls, contracts, publisher-specific commercial terms, and payment destinations remain in their dedicated systems.</p>
+    <p class="muted">Only registered safe business/product settings are editable here. Credentials, deployment configuration, emergency controls, publisher commercial terms, and payment destinations remain in their dedicated systems.</p>
 </section>
 <section>
     <p class="eyebrow">Client Traffic Gate</p>

@@ -8,6 +8,7 @@ use App\Models\Campaign;
 use App\Models\DemandNetwork;
 use App\Models\FinancialPeriod;
 use App\Models\Publisher;
+use App\Models\PublisherContract;
 use App\Models\ReportSource;
 use App\Models\RevenueRule;
 use App\Models\RevenueRuleVersion;
@@ -20,12 +21,15 @@ use Illuminate\Validation\ValidationException;
 
 final class RevenueRuleService
 {
+    private const COMPOSITE_SCOPE_SEPARATOR = '|';
+    private const COMMERCIAL_TERMS_RULE_NAME = 'Commercial terms default';
+
     public function __construct(private readonly AuditRecorder $audit) {}
 
-    public function createRule(array $attributes, ?User $actor): RevenueRule
+    public function createRule(array $attributes, ?User $actor, bool $allowCommercialTermsManager = false): RevenueRule
     {
         if ($actor) {
-            $this->authorize($actor);
+            $this->authorize($actor, $allowCommercialTermsManager);
         }
 
         return DB::transaction(function () use ($attributes, $actor): RevenueRule {
@@ -68,9 +72,9 @@ final class RevenueRuleService
         });
     }
 
-    public function changeRule(RevenueRule $rule, array $attributes, User $actor): RevenueRuleVersion
+    public function changeRule(RevenueRule $rule, array $attributes, User $actor, bool $allowCommercialTermsManager = false): RevenueRuleVersion
     {
-        $this->authorize($actor);
+        $this->authorize($actor, $allowCommercialTermsManager);
 
         return DB::transaction(function () use ($rule, $attributes, $actor): RevenueRuleVersion {
             $rule = RevenueRule::withoutGlobalScopes()->with(['versions', 'currentVersion'])->lockForUpdate()->findOrFail($rule->id);
@@ -114,6 +118,75 @@ final class RevenueRuleService
         });
     }
 
+    public function syncPublisherCommercialTerms(PublisherContract $contract, User $actor): RevenueRule
+    {
+        $this->authorize($actor, allowCommercialTermsManager: true);
+        $publisherShare = (int) round((float) $contract->revenue_share_percent * 100);
+        $effectiveFrom = now()->toDateString();
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->with(['versions', 'currentVersion'])
+            ->where('scope_type', RevenueRuleScope::Publisher->value)
+            ->where('scope_id', $contract->publisher_id)
+            ->where('name', self::COMMERCIAL_TERMS_RULE_NAME)
+            ->first();
+
+        $attributes = [
+            'name' => self::COMMERCIAL_TERMS_RULE_NAME,
+            'scope_type' => RevenueRuleScope::Publisher,
+            'scope_id' => $contract->publisher_id,
+            'organization_id' => $contract->organization_id,
+            'effective_from' => $effectiveFrom,
+            'effective_to' => $contract->ends_at && $contract->ends_at->greaterThanOrEqualTo(today()) ? $contract->ends_at->toDateString() : null,
+            'publisher_share_bp' => $publisherShare,
+            'horus_share_bp' => 10000 - $publisherShare,
+            'mcm_partner_share_bp' => 0,
+            'currency' => $contract->currency,
+            'priority' => 50000,
+            'reason' => "Activated commercial terms {$contract->contract_reference}",
+        ];
+
+        if (! $rule) {
+            return $this->createRule($attributes, $actor, allowCommercialTermsManager: true);
+        }
+
+        if (! $rule->is_active) {
+            $rule->update(['is_active' => true, 'updated_by' => $actor->id]);
+        }
+
+        $current = $rule->currentVersion;
+        if ($current
+            && (int) $current->publisher_share_bp === $attributes['publisher_share_bp']
+            && (int) $current->horus_share_bp === $attributes['horus_share_bp']
+            && (int) $current->mcm_partner_share_bp === 0
+            && $current->currency === strtoupper((string) $contract->currency)
+            && $current->effective_to?->toDateString() === $attributes['effective_to']) {
+            return $rule->fresh(['currentVersion', 'versions']);
+        }
+
+        $this->changeRule($rule, $attributes, $actor, allowCommercialTermsManager: true);
+
+        return $rule->fresh(['currentVersion', 'versions']);
+    }
+
+    public function disablePublisherCommercialTerms(PublisherContract $contract, User $actor): void
+    {
+        $this->authorize($actor, allowCommercialTermsManager: true);
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->where('scope_type', RevenueRuleScope::Publisher->value)
+            ->where('scope_id', $contract->publisher_id)
+            ->where('name', self::COMMERCIAL_TERMS_RULE_NAME)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $rule) {
+            return;
+        }
+
+        $rule->update(['is_active' => false, 'updated_by' => $actor->id]);
+        $this->audit->record('reporting.revenue_rule.deactivated', $rule->organization_id, $actor, $rule,
+            ['is_active' => true], ['is_active' => false], ['reason' => "Commercial terms {$contract->status->value}"]);
+    }
+
     public function resolve(CarbonInterface|string $date, array $context, ?string $currency = null): RevenueRuleVersion
     {
         $date = $date instanceof CarbonInterface ? $date->toDateString() : (string) $date;
@@ -124,7 +197,11 @@ final class RevenueRuleService
             ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date))
             ->get()
             ->filter(fn (RevenueRule $rule) => $this->matches($rule, $context))
-            ->sortByDesc(fn (RevenueRule $rule) => ($rule->scope_type->specificity() * 100000) + $rule->priority);
+            ->sort(function (RevenueRule $left, RevenueRule $right): int {
+                $specificity = $right->scope_type->specificity() <=> $left->scope_type->specificity();
+
+                return $specificity !== 0 ? $specificity : $right->priority <=> $left->priority;
+            });
 
         foreach ($rules as $rule) {
             $version = $rule->versions
@@ -178,8 +255,35 @@ final class RevenueRuleService
                 (string) ($context['report_source_code'] ?? ''),
                 (string) ($context['demand_network_id'] ?? ''),
             ]), true),
+            RevenueRuleScope::PublisherDemandSource => $this->matchesPublisherDemandSource($rule, $context),
             RevenueRuleScope::Campaign => (string) ($context['campaign_id'] ?? '') === (string) $rule->scope_id,
         };
+    }
+
+    public static function publisherDemandScopeId(string $publisherId, string $demandSourceId): string
+    {
+        return $publisherId.self::COMPOSITE_SCOPE_SEPARATOR.$demandSourceId;
+    }
+
+    /** @return array{0: string, 1: string} */
+    public static function splitPublisherDemandScopeId(?string $scopeId): array
+    {
+        $parts = explode(self::COMPOSITE_SCOPE_SEPARATOR, (string) $scopeId, 2);
+
+        return [(string) ($parts[0] ?? ''), (string) ($parts[1] ?? '')];
+    }
+
+    private function matchesPublisherDemandSource(RevenueRule $rule, array $context): bool
+    {
+        [$publisherId, $demandSourceId] = self::splitPublisherDemandScopeId($rule->scope_id);
+
+        return $publisherId !== ''
+            && $publisherId === (string) ($context['publisher_id'] ?? '')
+            && in_array($demandSourceId, array_filter([
+                (string) ($context['report_source_id'] ?? ''),
+                (string) ($context['report_source_code'] ?? ''),
+                (string) ($context['demand_network_id'] ?? ''),
+            ]), true);
     }
 
     private function validateShares(array $attributes): void
@@ -225,13 +329,32 @@ final class RevenueRuleService
                 || DemandNetwork::query()->whereKey($scopeId)->exists()
                     ? null
                     : throw ValidationException::withMessages(['scope_id' => 'The demand-source target does not exist.']),
+            RevenueRuleScope::PublisherDemandSource => $this->publisherDemandScopeOrganization($scopeId),
             RevenueRuleScope::Global => null,
         };
     }
 
-    private function authorize(User $actor): void
+    private function publisherDemandScopeOrganization(string $scopeId): string
     {
-        if (! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.revenue_rules.manage')) {
+        [$publisherId, $demandSourceId] = self::splitPublisherDemandScopeId($scopeId);
+        if ($publisherId === '' || $demandSourceId === '') {
+            throw ValidationException::withMessages(['scope_id' => 'Select both a publisher and a demand source.']);
+        }
+
+        $publisher = Publisher::withoutGlobalScopes()->findOrFail($publisherId);
+        if (! ReportSource::query()->whereKey($demandSourceId)->exists()
+            && ! DemandNetwork::query()->whereKey($demandSourceId)->exists()) {
+            throw ValidationException::withMessages(['scope_id' => 'The demand-source target does not exist.']);
+        }
+
+        return $publisher->organization_id;
+    }
+
+    private function authorize(User $actor, bool $allowCommercialTermsManager = false): void
+    {
+        $hasPermission = $actor->hasPermission('finance.revenue_rules.manage')
+            || ($allowCommercialTermsManager && $actor->hasPermission('contracts.manage'));
+        if (! $actor->isHorusAdministrator() || ! $hasPermission) {
             abort(403);
         }
     }

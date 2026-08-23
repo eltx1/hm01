@@ -38,13 +38,13 @@ final class ReviewActions implements ActionCenterProvider
         }
 
         if ($user->hasPermission('contracts.view')) {
-            $items[] = $this->item('contract-actions', 'Contract actions', PublisherContract::withoutGlobalScopes()
+            $items[] = $this->item('contract-actions', 'Commercial terms actions', PublisherContract::withoutGlobalScopes()
                 ->where(function ($query): void {
                     $query->where('status', ContractStatus::Sent->value)
                         ->orWhere(fn ($active) => $active->where('status', ContractStatus::Active->value)
                             ->whereNotNull('ends_at')->whereDate('ends_at', '<=', now()->addDays(30)));
                 })->count(),
-                'Sent or expiring publisher contracts require follow-up.', 'admin.publishers.index', [], 40, 'neutral');
+                'Legacy sent or expiring commercial terms require follow-up.', 'admin.publishers.index', [], 40, 'neutral');
         }
 
         return $items;

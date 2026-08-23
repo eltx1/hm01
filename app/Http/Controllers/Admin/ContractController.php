@@ -27,7 +27,16 @@ class ContractController extends Controller
 
     public function create(Publisher $publisher): View
     {
-        return view('admin.contracts.form', ['publisher' => $publisher, 'contract' => new PublisherContract]);
+        $contract = new PublisherContract([
+            'contract_reference' => 'HM-'.now()->format('Y').'-'.str_pad((string) ($publisher->contracts()->count() + 1), 3, '0', STR_PAD_LEFT),
+            'starts_at' => now()->toDateString(),
+            'revenue_share_percent' => 70,
+            'payment_threshold' => 100,
+            'currency' => 'USD',
+            'payment_terms' => 'NET_30',
+        ]);
+
+        return view('admin.contracts.form', ['publisher' => $publisher, 'contract' => $contract, 'allowedStatuses' => []]);
     }
 
     public function store(Request $request, Publisher $publisher, AuditRecorder $audit): RedirectResponse
@@ -35,24 +44,29 @@ class ContractController extends Controller
         $contract = PublisherContract::create(array_merge($this->validated($request, $publisher), ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id, 'created_by' => $request->user()->id, 'status' => ContractStatus::Draft]));
         $audit->record('publisher_contract.created', $publisher->organization_id, $request->user(), $contract, newValues: $contract->only(['contract_reference', 'revenue_share_percent', 'payment_threshold', 'status']));
 
-        return redirect()->route('admin.publishers.contracts.edit', [$publisher, $contract])->with('status', 'Contract created.');
+        return redirect()->route('admin.publishers.contracts.edit', [$publisher, $contract])->with('status', 'Commercial terms created. Review and activate them when ready.');
     }
 
-    public function edit(Publisher $publisher, PublisherContract $contract): View
+    public function edit(Publisher $publisher, PublisherContract $contract, ContractLifecycleService $lifecycle): View
     {
         $this->belongsTo($publisher, $contract);
 
-        return view('admin.contracts.form', compact('publisher', 'contract'));
+        return view('admin.contracts.form', [
+            'publisher' => $publisher,
+            'contract' => $contract,
+            'allowedStatuses' => $lifecycle->allowedTransitions($contract->status),
+        ]);
     }
 
-    public function update(Request $request, Publisher $publisher, PublisherContract $contract, AuditRecorder $audit): RedirectResponse
+    public function update(Request $request, Publisher $publisher, PublisherContract $contract, AuditRecorder $audit, ContractLifecycleService $lifecycle): RedirectResponse
     {
         $this->belongsTo($publisher, $contract);
         $before = $contract->only(['contract_reference', 'starts_at', 'ends_at', 'auto_renews', 'revenue_share_percent', 'payment_threshold', 'payment_terms', 'internal_notes']);
         $contract->update($this->validated($request, $publisher, $contract));
         $audit->record('publisher_contract.updated', $publisher->organization_id, $request->user(), $contract, $before, $contract->only(array_keys($before)));
+        $lifecycle->syncActiveTerms($contract, $request->user());
 
-        return back()->with('status', 'Contract updated.');
+        return back()->with('status', 'Commercial terms updated. Active revenue rules were synchronized.');
     }
 
     public function status(Request $request, Publisher $publisher, PublisherContract $contract, ContractLifecycleService $lifecycle): RedirectResponse
@@ -61,7 +75,7 @@ class ContractController extends Controller
         $data = $request->validate(['status' => ['required', Rule::enum(ContractStatus::class)], 'reason' => ['nullable', 'string', 'max:2000']]);
         $lifecycle->transition($contract, ContractStatus::from($data['status']), $request->user(), $data['reason'] ?? null);
 
-        return back()->with('status', 'Contract status updated.');
+        return back()->with('status', 'Commercial terms status updated.');
     }
 
     public function upload(Request $request, Publisher $publisher, PublisherContract $contract, AuditRecorder $audit, SecureUploadService $uploads): RedirectResponse

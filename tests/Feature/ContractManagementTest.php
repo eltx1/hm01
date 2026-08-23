@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Enums\ContractStatus;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
+use App\Enums\RevenueRuleScope;
 use App\Models\PublisherContract;
+use App\Models\RevenueRule;
 use App\Services\Contracts\ContractLifecycleService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -28,11 +30,20 @@ class ContractManagementTest extends TestCase
         $contract = $this->contract($publisher->id, $publisher->organization_id, $admin->id);
         $service = app(ContractLifecycleService::class);
 
-        foreach ([ContractStatus::Sent, ContractStatus::Signed, ContractStatus::Active, ContractStatus::Expired] as $status) {
-            $service->transition($contract, $status, $admin, 'Test transition');
-        }
+        $contract->update(['revenue_share_percent' => 80]);
+        $service->transition($contract, ContractStatus::Active, $admin, 'Approved commercial terms');
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->where('scope_type', RevenueRuleScope::Publisher->value)
+            ->where('scope_id', $publisher->id)
+            ->firstOrFail();
+        $this->assertSame(8000, (int) $rule->currentVersion->publisher_share_bp);
+        $this->assertSame(2000, (int) $rule->currentVersion->horus_share_bp);
+
+        $service->transition($contract, ContractStatus::Expired, $admin, 'Terms ended');
         $this->assertSame(ContractStatus::Expired, $contract->fresh()->status);
-        $this->assertDatabaseCount('audit_logs', 4);
+        $this->assertFalse($rule->fresh()->is_active);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'publisher_contract.status.changed', 'auditable_id' => $contract->id]);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'reporting.revenue_rule.created', 'auditable_id' => $rule->id]);
 
         $this->expectException(ValidationException::class);
         $service->transition($contract, ContractStatus::Active, $admin);
