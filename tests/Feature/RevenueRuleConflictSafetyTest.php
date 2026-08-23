@@ -135,6 +135,37 @@ class RevenueRuleConflictSafetyTest extends TestCase
         ], $admin);
     }
 
+    public function test_admin_preview_uses_the_real_resolver_and_shows_the_winning_share(): void
+    {
+        [$admin, $publisher] = $this->context();
+        $effective = now()->toDateString();
+        app(RevenueRuleService::class)->createRule([
+            'name' => 'Preview winner',
+            'scope_type' => RevenueRuleScope::Publisher,
+            'scope_id' => $publisher->id,
+            'effective_from' => $effective,
+            'currency' => 'USD',
+            'publisher_share_bp' => 8250,
+            'horus_share_bp' => 1750,
+            'mcm_partner_share_bp' => 0,
+            'priority' => 10,
+        ], $admin);
+
+        $this->actingAs($admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.finance.revenue-rules.index', [
+                'preview' => 1,
+                'preview_publisher_id' => $publisher->id,
+                'preview_date' => $effective,
+                'preview_currency' => 'USD',
+            ]))
+            ->assertOk()
+            ->assertSee('Preview winner')
+            ->assertSee('82.50%')
+            ->assertSee('17.50%')
+            ->assertSee('This preview is read-only and changes nothing.');
+    }
+
     private function context(): array
     {
         $this->seedIdentity();
