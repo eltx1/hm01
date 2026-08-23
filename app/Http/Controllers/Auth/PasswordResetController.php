@@ -10,10 +10,12 @@ use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 use Illuminate\View\View;
+use Throwable;
 
 class PasswordResetController extends Controller
 {
@@ -25,7 +27,14 @@ class PasswordResetController extends Controller
     public function email(Request $request): RedirectResponse
     {
         $request->validate(['email' => ['required', 'email']]);
-        Password::sendResetLink($request->only('email'));
+        try {
+            Password::sendResetLink($request->only('email'));
+        } catch (Throwable $exception) {
+            Log::warning('password_reset_mail_delivery_failed', [
+                'exception' => $exception::class,
+                'request_id' => $request->header('X-Request-ID'),
+            ]);
+        }
 
         return back()->with('status', 'If that account exists, a reset link has been sent.');
     }
