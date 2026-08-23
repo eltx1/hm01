@@ -14,7 +14,12 @@ return [
     |
     */
 
-    'default' => env('MAIL_MAILER', 'log'),
+    // A blank MAIL_MAILER must never reach Laravel's MailManager: it would
+    // resolve to an unnamed transport and fail every mail-backed request with
+    // "Unsupported mail transport []". Production safely falls back to SMTP;
+    // non-production environments retain Laravel's log mailer default.
+    'default' => trim((string) env('MAIL_MAILER', ''))
+        ?: (env('APP_ENV') === 'production' ? 'smtp' : 'log'),
 
     /*
     |--------------------------------------------------------------------------
@@ -23,7 +28,7 @@ return [
     |
     | Here you may configure all of the mailers used by your application plus
     | their respective settings. Several examples have been configured for
-    | you and you are free to add your own as your application requires.
+    | you and you are free to add additional mailers if needed.
     |
     | Laravel supports a variety of mail "transport" drivers that can be used
     | when delivering an email. You may specify which one you're using for
@@ -39,8 +44,12 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME'),
-            'url' => env('MAIL_URL'),
+            'scheme' => in_array(strtolower(trim((string) env('MAIL_SCHEME', ''))), ['smtp', 'smtps'], true)
+                ? strtolower(trim((string) env('MAIL_SCHEME')))
+                : null,
+            'url' => str_contains((string) env('MAIL_URL', ''), '://')
+                ? env('MAIL_URL')
+                : null,
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),
             'username' => env('MAIL_USERNAME'),
@@ -55,7 +64,7 @@ return [
 
         'postmark' => [
             'transport' => 'postmark',
-            // 'message_stream_id' => env('POSTMARK_MESSAGE_STREAM_ID'),
+            // 'message_stream_id' => null,
             // 'client' => [
             //     'timeout' => 5,
             // ],
@@ -104,9 +113,9 @@ return [
     | Global "From" Address
     |--------------------------------------------------------------------------
     |
-    | You may wish for all emails sent by your application to be sent from
-    | the same address. Here you may specify a name and address that is
-    | used globally for all emails that are sent by your application.
+    | You may wish for all email messages to be sent from the same address.
+    | Here you may specify a name and address that is used globally for all
+    | email messages that are sent by your application.
     |
     */
 
