@@ -1,0 +1,85 @@
+name: Diagnose production mail
+
+on:
+  push:
+    branches:
+      - ops/mail-diagnostic-20260823
+    paths:
+      - .github/workflows/diagnose-production-mail.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Run safe SMTP diagnostic
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          diagnostic_file="$(mktemp)"
+          cat > "$diagnostic_file" <<'PHP'
+          <?php
+          $appPath = $argv[1];
+          chdir($appPath);
+          require $appPath.'/vendor/autoload.php';
+          $app = require $appPath.'/bootstrap/app.php';
+          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+          try {
+              $result = app('auth.password.broker')->sendResetLink([
+                  'email' => 'mwgads1@gmail.com',
+              ]);
+
+              echo 'MAIL_DIAGNOSTIC_RESULT='.match ($result) {
+                  'passwords.sent' => 'SENT',
+                  'passwords.user' => 'USER_NOT_FOUND',
+                  'passwords.throttled' => 'THROTTLED',
+                  default => 'UNEXPECTED_STATUS',
+              }.PHP_EOL;
+          } catch (Throwable $exception) {
+              $message = strtolower($exception->getMessage());
+              $category = match (true) {
+                  str_contains($message, 'unsupported mail transport') => 'MAILER_INVALID',
+                  str_contains($message, 'authentication failed'),
+                  str_contains($message, 'username and password not accepted'),
+                  str_contains($message, '535-5.7.8') => 'SMTP_AUTH_FAILED',
+                  str_contains($message, 'connection could not be established'),
+                  str_contains($message, 'connection refused'),
+                  str_contains($message, 'timed out') => 'SMTP_CONNECTION_FAILED',
+                  str_contains($message, 'certificate'),
+                  str_contains($message, 'tls'),
+                  str_contains($message, 'crypto') => 'SMTP_TLS_FAILED',
+                  default => 'OTHER_'.strtoupper((new ReflectionClass($exception))->getShortName()),
+              };
+
+              echo 'MAIL_DIAGNOSTIC_RESULT='.$category.PHP_EOL;
+              exit(1);
+          }
+          PHP
+
+          encoded="$(base64 -w0 "$diagnostic_file")"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "tmp_file=\$(mktemp); printf '%s' '$encoded' | base64 -d > \"\$tmp_file\"; php \"\$tmp_file\" '$REMOTE_HOME/htdocs/app.horusmedia.net'; status=\$?; rm -f \"\$tmp_file\"; exit \$status"
