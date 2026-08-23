@@ -80,9 +80,14 @@ class PublisherApplication extends Model
 
             $identities = app(HorusSellerIdentityService::class);
             if ($application->status === PublisherApplicationStatus::Approved) {
-                $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
-                $identities->ensureForPublisher($publisher);
-                $identities->markApplicationApproved($application);
+                // Express applications deliberately have no website/domain yet.
+                // Their HMP/HMS identities are issued together when the first
+                // website is added, so Publisher approval stays independent.
+                if ($application->domainClaims()->exists()) {
+                    $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
+                    $identities->ensureForPublisher($publisher);
+                    $identities->markApplicationApproved($application);
+                }
             } elseif (in_array($application->status, [PublisherApplicationStatus::Rejected, PublisherApplicationStatus::Withdrawn], true)) {
                 $application->domainClaims()->where('claim_status', 'CLAIMED')->update([
                     'claim_status' => 'RELEASED',

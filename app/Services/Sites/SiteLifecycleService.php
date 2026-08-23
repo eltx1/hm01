@@ -2,7 +2,9 @@
 
 namespace App\Services\Sites;
 
+use App\Enums\AccountStatus;
 use App\Enums\ConfigEnvironment;
+use App\Enums\PublisherApplicationStatus;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\LoaderRelease;
@@ -63,11 +65,19 @@ class SiteLifecycleService
                 'reason' => 'Website created.',
             ]);
 
-            // Task 39 extends Publishers that already participate in the canonical
-            // HORUS_MANAGED seller lifecycle. Legacy/site-test fixtures without an HMP
-            // remain unchanged; approved public applications already have their HMP.
+            // Legacy publishers that already participate in the managed identity
+            // lifecycle keep the original behavior. Express applicants receive
+            // HMP/HMS identities only after approval, when their first site supplies
+            // the canonical domain required by sellers.json.
             $publisher = $site->publisher()->withoutGlobalScopes()->firstOrFail();
-            if ($this->sellerIdentities->managedForPublisher($publisher)) {
+            $approvedApplication = $publisher->application()->withoutGlobalScopes()
+                ->where('status', PublisherApplicationStatus::Approved->value)
+                ->exists();
+            if ($this->sellerIdentities->managedForPublisher($publisher)
+                || ($publisher->status === AccountStatus::Active && $approvedApplication)) {
+                if (blank($publisher->business_domain)) {
+                    $publisher->update(['business_domain' => $site->primary_domain]);
+                }
                 $this->sellerIdentities->ensureForSite($site, $actor);
             }
 

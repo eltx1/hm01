@@ -92,6 +92,7 @@ class ExpressPublisherOnboardingTest extends TestCase
         $applications = app(PublisherApplicationService::class);
         $applications->startReview($application, $admin);
         $applications->approve($application->fresh(), $admin);
+        $this->assertDatabaseCount('seller_declarations', 0);
 
         PlatformAdsTxtRecord::create([
             'advertising_system_domain' => 'master.example',
@@ -112,6 +113,7 @@ class ExpressPublisherOnboardingTest extends TestCase
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $site = Site::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame('fast-news.example', $application->publisher()->withoutGlobalScopes()->firstOrFail()->business_domain);
         $bundle = app(SiteAdsTxtInstallationService::class)->bundle($site);
         $this->assertTrue($bundle['available']);
         $this->assertCount(2, $bundle['core_records']);
