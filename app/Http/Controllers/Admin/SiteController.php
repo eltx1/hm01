@@ -70,7 +70,7 @@ class SiteController extends Controller
         $lifecycle->transition($site, SiteStatus::Approved, $request->user(), $data['internal_reason'] ?? 'Approved by Horus Media.');
         $this->review($site, $request, 'APPROVED', $data);
 
-        return back()->with('status', 'Website approved. HORUS_GAM remains available and selected unless an administrator changes it.');
+        return back()->with('status', 'Website approved. Production activation remains blocked until the current primary domain passes Horus HMP/HMS DIRECT ads.txt verification.');
     }
 
     public function reject(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
