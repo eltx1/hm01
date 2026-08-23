@@ -219,7 +219,9 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertDatabaseCount('publisher_application_revisions', 1);
         $this->assertSame(1, AuditLog::query()->where('event', 'publisher_application.approved')->count());
 
-        $this->actingAs($second->applicant)->get(route('publisher.onboarding.show', 1))->assertOk();
+        $this->actingAs($second->applicant)
+            ->get(route('publisher.onboarding.show', 1))
+            ->assertRedirect(route('publisher.sites.index'));
     }
 
     public function test_rejection_retains_evidence_and_keeps_operational_access_disabled(): void
