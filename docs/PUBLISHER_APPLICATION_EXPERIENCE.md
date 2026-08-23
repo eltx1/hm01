@@ -1,5 +1,15 @@
 # Publisher Application Experience
 
+## Current product rule
+
+Publisher approval and website approval are separate decisions. New applicants
+complete a compact account-first form without a domain, ads.txt installation,
+or traffic-percentage arithmetic. Once approved, they add websites individually
+inside the Publisher workspace. Each website receives one complete ads.txt
+installation block, while verification is limited to its two Horus HMP/HMS
+`DIRECT` records. Existing applications with a reserved domain continue on the
+legacy evidence path without changing their immutable history.
+
 ## Scope
 
 Task 29 extends the Task 27 public Publisher application lifecycle and Task 28 Horus brand foundation. It does not create another Publisher account, onboarding, traffic-profile, review, or serving system.

@@ -16,6 +16,7 @@ class DomainVerificationService
     public function expectedValue(SiteDomain $domain, VerificationMethod $method): string
     {
         return match ($method) {
+            VerificationMethod::AdsTxt => 'The two assigned Horus HMP/HMS DIRECT records',
             VerificationMethod::DnsTxt => 'horus-site-verification='.$domain->verification_token,
             default => $domain->verification_token,
         };
@@ -24,6 +25,7 @@ class DomainVerificationService
     public function instructions(SiteDomain $domain, VerificationMethod $method): string
     {
         return match ($method) {
+            VerificationMethod::AdsTxt => 'Publish the complete Horus ads.txt installation block at https://'.$domain->domain.'/ads.txt',
             VerificationMethod::MetaTag => '<meta name="horus-site-verification" content="'.$domain->verification_token.'">',
             VerificationMethod::TextFile => 'Publish '.$domain->verification_token.' at https://'.$domain->domain.'/.well-known/horus-verification.txt',
             VerificationMethod::DnsTxt => 'Create TXT _horus-verify.'.$domain->domain.' with value '.$this->expectedValue($domain, $method),
@@ -44,6 +46,7 @@ class DomainVerificationService
 
         try {
             $verified = match ($method) {
+                VerificationMethod::AdsTxt => false,
                 VerificationMethod::MetaTag => $this->verifyMetaTag($domain),
                 VerificationMethod::TextFile => $this->verifyTextFile($domain),
                 VerificationMethod::DnsTxt => $this->verifyDns($domain),

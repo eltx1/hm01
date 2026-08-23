@@ -4,16 +4,13 @@
 <div class="application-intro">
     <p class="eyebrow">Publisher partnerships</p>
     <h1>Apply as a Publisher</h1>
-    <p class="muted">Start your secure Horus Media application. You can save each step and return at any time.</p>
+    <p class="muted">Create your Publisher account in under two minutes. Add and verify websites after approval.</p>
 </div>
-<ol class="publisher-application-steps" aria-label="Publisher application steps">
+<ol class="publisher-application-steps express-registration-steps" aria-label="Publisher application steps">
     <li class="active" aria-current="step"><span>1</span><strong>Account</strong></li>
-    <li><span>2</span><strong>Website</strong></li>
-    <li><span>3</span><strong>Quality</strong></li>
-    <li><span>4</span><strong>Agreements</strong></li>
-    <li><span>5</span><strong>Review</strong></li>
+    <li><span>2</span><strong>Company &amp; submit</strong></li>
 </ol>
-<div class="notice"><strong>Important:</strong> an application is not Publisher approval, website approval, or production monetization.</div>
+<div class="notice"><strong>Simple by design:</strong> Publisher approval is separate from website review. You can add multiple websites from your dashboard after approval.</div>
 <form method="POST" action="{{ route('publisher-registration.store') }}" class="form-stack publisher-application-form">
     @csrf
     <label for="publisher-name"><span class="field-label">Full name <span class="required-marker" aria-hidden="true">Required</span></span></label>
@@ -27,11 +24,6 @@
     <label for="publisher-company"><span class="field-label">Publisher or company name <span class="required-marker" aria-hidden="true">Required</span></span></label>
     <input id="publisher-company" class="hm-input" name="publisher_name" value="{{ old('publisher_name') }}" required autocomplete="organization" maxlength="255" @error('publisher_name') aria-invalid="true" aria-describedby="publisher-company-error" @enderror>
     @error('publisher_name')<p class="field-error" id="publisher-company-error" role="alert">{{ $message }}</p>@enderror
-
-    <label for="publisher-domain"><span class="field-label">Primary website or domain <span class="required-marker" aria-hidden="true">Required</span></span></label>
-    <input id="publisher-domain" class="hm-input" name="primary_domain" value="{{ old('primary_domain') }}" required inputmode="url" autocomplete="url" placeholder="example.com" maxlength="500" aria-describedby="publisher-domain-help{{ $errors->has('primary_domain') ? ' publisher-domain-error' : '' }}" @error('primary_domain') aria-invalid="true" @enderror>
-    <p class="field-help" id="publisher-domain-help">Enter your primary publisher domain, for example example.com.</p>
-    @error('primary_domain')<p class="field-error" id="publisher-domain-error" role="alert">{{ $message }}</p>@enderror
 
     <label for="publisher-password"><span class="field-label">Password <span class="required-marker" aria-hidden="true">Required</span></span></label>
     <input id="publisher-password" class="hm-input" type="password" name="password" required autocomplete="new-password" aria-describedby="publisher-password-help{{ $errors->has('password') ? ' publisher-password-error' : '' }}" @error('password') aria-invalid="true" @enderror>

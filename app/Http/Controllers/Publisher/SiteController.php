@@ -10,6 +10,7 @@ use App\Models\SiteDomain;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -36,12 +37,16 @@ class SiteController extends Controller
         $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
-        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created with HORUS_GAM as its serving mode.');
+        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block once, verify the two Horus records, then submit this website for review.');
     }
 
-    public function show(Site $site): View
+    public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
     {
-        return view('publisher.sites.show', ['site' => $site->load(['domains.verifications', 'reviews', 'servingSettings']), 'internal' => false]);
+        return view('publisher.sites.show', [
+            'site' => $site->load(['domains.verifications', 'reviews', 'servingSettings', 'publisher']),
+            'internal' => false,
+            'adsTxtInstallation' => $adsTxt->bundle($site),
+        ]);
     }
 
     public function edit(Request $request, Site $site): View
@@ -112,9 +117,34 @@ class SiteController extends Controller
     {
         $request->merge([
             'primary_domain' => $this->normalizeDomain((string) $request->input('primary_domain')),
+            'country' => strtoupper(trim((string) $request->input('country'))),
             'main_traffic_countries' => $this->csv((string) $request->input('main_traffic_countries')),
             'current_monetization_providers' => $this->csv((string) $request->input('current_monetization_providers')),
         ]);
+
+        if (! $site) {
+            $data = $request->validate([
+                'display_name' => ['required', 'string', 'max:255'],
+                'primary_domain' => ['required', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i', Rule::unique('sites')->where('publisher_id', $publisher->id)],
+                'content_category' => ['required', 'string', Rule::in(['NEWS', 'ENTERTAINMENT', 'SPORTS', 'TECHNOLOGY', 'LIFESTYLE', 'BUSINESS', 'OTHER'])],
+                'country' => ['required', 'string', 'size:2'],
+                'estimated_monthly_pageviews' => ['nullable', 'integer', 'min:0'],
+            ]);
+
+            $data['estimated_monthly_pageviews'] = (int) ($data['estimated_monthly_pageviews'] ?? 0);
+
+            return $data + [
+                'language' => 'en',
+                'main_traffic_countries' => [$data['country']],
+                'estimated_monthly_users' => 0,
+                'current_monetization_providers' => [],
+                'current_gam_network_code' => null,
+                'current_adsense_status' => null,
+                'current_adx_status' => null,
+                'prebid_enabled' => false,
+                'native_demand_enabled' => false,
+            ];
+        }
 
         return $request->validate([
             'display_name' => ['required', 'string', 'max:255'],
