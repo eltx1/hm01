@@ -1,12 +1,12 @@
 # Horus Media Current Product Truth
 
-**Effective:** 2026-08-23
+**Effective:** 2026-08-24
 
-This document is the product-flow authority for current Horus Media development. Historical task documents may describe earlier onboarding, contract-file, email-verification, or pre-approval website flows. When those documents disagree with this file and the current executable tests, this file and the current code win.
+This document is the product-flow authority for current Horus Media development. Historical task documents may describe earlier onboarding, contract-file, email-verification, pre-approval website, or AI-review flows. When those documents disagree with this file and the current executable tests, this file and the current code win.
 
 ## 1. Product principle
 
-Horus Media must keep Publisher onboarding short and operationally simple. A Publisher account, a Website, website authorization, monetization activation, and payout readiness are separate lifecycle concerns. Do not combine them into one long wizard.
+Horus Media must keep Publisher onboarding short and operationally simple. A Publisher account, a Website, website authorization, Website review, monetization activation, and payout readiness are separate lifecycle concerns. Do not combine them into one long wizard.
 
 The intended flow is:
 
@@ -17,12 +17,17 @@ Public registration
     -> Publisher dashboard
     -> Add Website
     -> Copy complete ads.txt block
-    -> Verify the two Horus DIRECT records
-    -> Submit Website for review
-    -> Horus approves/configures monetization
+    -> Submit Website for human review
+         + THOTH Website Review runs in parallel when AI is available
+         + Horus HMP/HMS ads.txt verification may complete before or during review
+    -> Human Horus Website approval
+    -> Production activation only after current HMP/HMS verification is also complete
+    -> Configure/activate real monetization
     -> Reporting and earnings
     -> Payment profile when payout is needed
 ```
+
+THOTH is advisory only. AI availability, success, failure, quota, timeout, provider readiness, or model availability must never become a dependency for Website submission, human review, approval, or the rest of the platform lifecycle.
 
 ## 2. Public Publisher registration
 
@@ -82,13 +87,14 @@ The old onboarding Blade view is removed.
 
 An approved Publisher creates each Website separately.
 
-The compact Website create form should request only information useful for site review and operation, such as:
+The public Publisher Website-create form requests exactly four operational fields:
 
 - Website display name;
 - primary domain;
 - content category;
-- country;
-- optional estimated pageviews.
+- primary country.
+
+Initial Website creation does **not** request estimated pageviews, estimated users, traffic-source splits, GAM/AdSense/AdX status, Prebid/native configuration, or any monetization-provider setup. Stale/manual clients must not be able to reintroduce estimated traffic collection during create; the create path persists the traffic estimates as zero defaults.
 
 The Publisher does not choose its own revenue share on the Website form. The Website inherits the applicable Publisher commercial default unless a more-specific approved Revenue Rule applies.
 
@@ -104,7 +110,9 @@ CONTACT=mohamed@horusmedia.net
 
 It then includes the two Horus DIRECT identities plus applicable reviewed master/demand records.
 
-Website ownership verification intentionally checks only the two required Horus DIRECT records. Missing unrelated master/demand lines do not make the Horus ownership check fail.
+The Publisher may submit the Website for review while Horus ads.txt verification is still pending. Human Website review and THOTH advisory work may therefore proceed in parallel with HMP/HMS verification. Production activation remains blocked until the exact current HMP/HMS verification requirement is satisfied.
+
+Website activation readiness intentionally checks only the two required current Horus DIRECT records for the current primary domain. Missing unrelated master/demand lines do not block initial Website activation. Generic/manual domain ownership verification must not bypass this HMP/HMS activation gate.
 
 ## 6. HMP/HMS and public supply chain
 
@@ -181,11 +189,41 @@ Payment details are not part of initial Publisher registration and are not a gat
 
 A Publisher configures payment information through Earnings & Payments when payment readiness becomes relevant. Sensitive payment/tax references continue to use the existing encrypted storage and review controls.
 
-## 10. Monetization activation
+## 10. Website review and THOTH advisory
 
-Website approval and Publisher approval do not automatically imply serving.
+Website approval is a human Horus Admin action.
 
-Horus may operate a Website through the existing multi-engine model:
+When a Publisher submits a Website, Horus first persists the normal Website lifecycle transition to `PENDING_REVIEW` and the human `SiteReview`. Only after that durable submission does Horus attempt to queue the optional automatic THOTH Website Review.
+
+THOTH Website Review is:
+
+- automatic on Website submission;
+- asynchronous through the database queue;
+- advisory-only;
+- bounded and SSRF-safe when collecting public Website evidence;
+- visible to Horus Admins in Site 360 under `Quality Review`;
+- manually rerunnable while the Website remains pending human review.
+
+THOTH may return a recommendation, risk level, confidence, findings, positive signals, concerns, recommended Admin checks, summary, limitations, and evidence gaps. Those values are evidence for the human reviewer only.
+
+THOTH must never approve, reject, activate, suspend, archive, or otherwise mutate Website lifecycle state.
+
+Any THOTH failure must be fail-safe and Admin-visible without exposing raw provider errors or credentials. This includes disabled AI, missing/not-ready provider configuration, authentication failure, quota/rate limit, unavailable/incompatible model, timeout, provider outage/unreachability, invalid/oversized response, queue failure, unexpected service failure, or inability to collect acceptable public Website evidence.
+
+A THOTH failure never invalidates Website submission and never blocks the existing human Approve/Reject controls. If THOTH cannot run, the Admin continues the Website review normally.
+
+## 11. Monetization activation
+
+Publisher approval, Website submission, Website approval, THOTH recommendation, generic domain ownership verification, and ads.txt master/demand diagnostics are separate concerns and do not individually imply serving.
+
+First production activation requires:
+
+1. the Website is in `APPROVED` state; and
+2. the current primary domain has a current successful Horus ads.txt verification for the exact assigned HMP/HMS DIRECT records.
+
+Only then may the Admin activate the Website. Suspended-site recovery remains a separate lifecycle path and must not be conflated with initial activation.
+
+Horus may operate an activated Website through the existing multi-engine model:
 
 - `HORUS_GAM` / GAM;
 - Prebid (`GAM_BRIDGE` or standalone where supported);
@@ -194,25 +232,26 @@ Horus may operate a Website through the existing multi-engine model:
 
 Only real reviewed provider/network identifiers should be activated. One physical placement must have one rendering owner at a time.
 
-## 11. First production milestone
+## 12. First production milestone
 
 The next product milestone is not another broad feature expansion. It is one real end-to-end Publisher pilot:
 
 1. register one controlled Publisher through the public form;
 2. approve the Publisher through the human Admin flow;
-3. add one real Website;
-4. install and verify the complete ads.txt block;
-5. review/approve the Website;
-6. activate one real monetization profile/demand path;
-7. collect real aggregated reporting;
-8. trace gross revenue through the winning Revenue Rule;
-9. verify Publisher earnings and Horus margin;
-10. finalize one statement and prove rollback/stop controls.
+3. add one real Website with the compact four-field form;
+4. copy the complete ads.txt block and submit the Website for review;
+5. observe the automatic THOTH advisory if AI is available, without treating it as a decision;
+6. complete human Website review/approval and exact current HMP/HMS verification;
+7. activate one real monetization profile/demand path;
+8. collect real aggregated reporting;
+9. trace gross revenue through the winning Revenue Rule;
+10. verify Publisher earnings and Horus margin;
+11. finalize one statement and prove rollback/stop controls.
 
 Only after this trace is proven should Horus broaden traffic, providers, Publishers, or advertiser-campaign scope.
 
-## 12. Development rule
+## 13. Development rule
 
 Before adding a new feature, ask whether it is necessary to complete the first real Publisher-to-revenue trace. If not, prefer operational proof, cleanup, or a tightly scoped safety improvement.
 
-Do not reintroduce the retired seven-step onboarding or contract-file workflow unless the product owner explicitly changes this product definition.
+Do not reintroduce the retired seven-step onboarding, contract-file workflow, traffic-heavy Website create form, or AI-as-decision-maker behavior unless the product owner explicitly changes this product definition.
