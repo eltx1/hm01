@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Models\PublisherApplication;
+use App\Services\ControlPlane\ActionCenter;
 use App\Services\ControlPlane\ControlPlaneNavigation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
@@ -29,6 +30,17 @@ class PublisherCurrentTruthTest extends TestCase
         $this->assertFalse($labels->contains('Onboarding'));
         $this->assertTrue($labels->contains('Websites'));
         $this->assertTrue($labels->contains('Monetization Center'));
+    }
+
+    public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
+    {
+        $this->seedIdentity();
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher'), RoleName::PublisherAdmin);
+        $this->makePublisherFor($user);
+
+        $items = collect(app(ActionCenter::class)->items($user));
+
+        $this->assertNull($items->firstWhere('key', 'publisher-payment-profile'));
     }
 
     public function test_legacy_onboarding_urls_redirect_without_mutating_publisher_state(): void
