@@ -1,0 +1,150 @@
+name: Sync production static edge
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_run:
+    workflows:
+      - Deploy production
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: horus-production-static-edge-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      CDN_URL: https://cdn.horusmedia.net
+      PUBLIC_URL: https://horusmedia.net
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Validate sync configuration
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Build snapshot from live production data
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$RUNNER_TEMP/static-edge"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "mkdir -p '$remote_dir' && cd '$REMOTE_HOME/current' && php artisan static-delivery:build '$remote_dir'"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." \
+            | tar -xzf - -C "$RUNNER_TEMP/static-edge"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
+
+      - name: Validate sanitized production snapshot
+        run: php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
+
+      - name: Compare public manifest
+        id: compare
+        run: |
+          set -euo pipefail
+          local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
+          [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
+          remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
+            | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
+          if [[ "$local_hash" == "$remote_hash" ]]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Public edge already has manifest $local_hash."
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy live snapshot to Cloudflare Pages
+        if: steps.compare.outputs.deploy == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
+
+      - name: Verify canonical public artifacts
+        if: steps.compare.outputs.deploy == 'true'
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            if curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/remote-manifest.json" \
+              && cmp -s "$RUNNER_TEMP/static-edge/delivery-manifest.json" "$RUNNER_TEMP/remote-manifest.json" \
+              && curl -fsSL --max-time 20 "$CDN_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/cdn-sellers.json" \
+              && curl -fsSL --max-time 20 "$PUBLIC_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/public-sellers.json" \
+              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/cdn-sellers.json" \
+              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/public-sellers.json"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Cloudflare did not expose the exact production snapshot within the verification window.' >&2
+          exit 1
+
+      - name: Confirm manifest on production control plane
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          MANIFEST_HASH: ${{ steps.compare.outputs.manifest_hash }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_HASH" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s\n' "$MANIFEST_HASH" | ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "set -e; umask 077; mkdir -p '$REMOTE_HOME/shared/storage/app/static-delivery'; cat > '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp'; mv '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp' '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest'"
+
+      - name: Remove remote snapshot if interrupted
+        if: always()
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'" || true

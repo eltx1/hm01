@@ -29,7 +29,10 @@ use App\Services\Network\Contracts\DnsResolver;
 use App\Services\Network\SystemDnsResolver;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver;
+use App\Services\StaticDelivery\Drivers\ExternalPagesSyncDriver;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
+use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
+use App\Services\StaticDelivery\SecretReferenceResolver;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -55,8 +58,21 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(GamSoapTransportInterface::class, GamOfficialSoapTransport::class);
         $this->app->bind(DnsResolver::class, SystemDnsResolver::class);
         $this->app->bind(StaticDeliveryDriverInterface::class, function ($app): StaticDeliveryDriverInterface {
-            return match (config('static-delivery.driver')) {
+            $driver = config('static-delivery.driver');
+            if ($driver === 'cloudflare-pages-pipeline') {
+                try {
+                    $app->make(SecretReferenceResolver::class)->resolve((string) config('static-delivery.cloudflare.github_token_reference'));
+                } catch (StaticDeliveryException $exception) {
+                    if (! in_array($exception->category, ['CREDENTIAL_UNAVAILABLE', 'CREDENTIAL_UNREADABLE'], true)) {
+                        throw $exception;
+                    }
+                    $driver = 'external-pages-sync';
+                }
+            }
+
+            return match ($driver) {
                 'cloudflare-pages-pipeline' => $app->make(CloudflarePagesPipelineDriver::class),
+                'external-pages-sync' => $app->make(ExternalPagesSyncDriver::class),
                 'local' => $app->make(LocalFilesystemStaticDeliveryDriver::class),
                 default => throw new \RuntimeException('Unsupported static delivery driver.'),
             };
