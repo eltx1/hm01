@@ -17,6 +17,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
+use RuntimeException;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
 use Tests\TestCase;
@@ -67,6 +68,20 @@ class AutomaticThothWebsiteReviewTest extends TestCase
         Queue::assertPushed(RunSiteQualityReview::class, fn (RunSiteQualityReview $job) =>
             $job->runId === SiteQualityReviewRun::query()->where('site_id', $this->site->id)->value('id')
         );
+    }
+
+    public function test_even_thoth_dependency_resolution_failure_cannot_break_website_submission(): void
+    {
+        $this->app->bind(SiteQualityReviewService::class, fn () => throw new RuntimeException('simulated AI wiring failure'));
+
+        $this->actingAs($this->publisherUser)
+            ->post(route('publisher.sites.submit', $this->site))
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(SiteStatus::PendingReview, $this->site->fresh()->status);
+        $this->assertDatabaseHas('site_reviews', ['site_id' => $this->site->id, 'decision' => 'PENDING']);
+        $this->assertDatabaseMissing('site_quality_review_runs', ['site_id' => $this->site->id]);
     }
 
     public function test_disabled_ai_fails_safely_and_human_approval_controls_remain_available(): void
