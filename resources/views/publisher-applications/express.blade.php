@@ -20,7 +20,7 @@
         <div><p class="eyebrow">Final step</p><h2>Company details and submit</h2></div>
         <span class="status">About 2 minutes</span>
     </div>
-    <p class="muted">No website, ads.txt, traffic percentages, or technical setup is required here.</p>
+    <p class="muted">No website, ads.txt, traffic data, or technical setup is required here.</p>
     <form method="POST" action="{{ route('publisher-application.complete') }}" class="form-grid express-application-form">
         @csrf
         <label>Contact name<input class="hm-input" name="contact_name" value="{{ old('contact_name', auth()->user()->name) }}" required maxlength="255"></label>
@@ -37,10 +37,6 @@
         <label class="full">What do you publish?
             <textarea class="hm-input express-description" name="content_description" required minlength="20" maxlength="2000" rows="3" placeholder="One or two sentences are enough.">{{ old('content_description', $profile?->content_description) }}</textarea>
         </label>
-        <details class="full express-optional">
-            <summary>Optional: estimated monthly pageviews</summary>
-            <label>Monthly pageviews<input class="hm-input" type="number" name="monthly_pageviews" min="0" value="{{ old('monthly_pageviews', data_get($profile?->traffic_profile, 'monthly_pageviews')) }}" inputmode="numeric"></label>
-        </details>
 
         <div class="full express-agreements">
             <p class="eyebrow">Required agreements</p>
