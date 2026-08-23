@@ -7,7 +7,12 @@ use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\ServingModeChange;
+use App\Models\Site;
+use App\Models\User;
+use App\Services\Sites\SiteAdsTxtInstallationService;
+use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
 use Tests\TestCase;
@@ -83,7 +88,19 @@ class SiteManagementTest extends TestCase
 
         $session = ['two_factor_passed_at' => now()->timestamp];
         $this->actingAs($admin)->withSession($session)->post(route('admin.sites.approve', $site), ['publisher_message' => 'Approved', 'internal_reason' => 'Content reviewed'])->assertRedirect();
-        $this->post(route('admin.sites.activate', $site), ['reason' => 'Ready'])->assertRedirect();
+
+        $domain = $site->domains()->where('is_primary', true)->firstOrFail();
+        $this->post(route('admin.sites.domains.manual-verify', [$site, $domain]), ['reason' => 'Ownership evidence reviewed'])->assertRedirect();
+        $this->assertSame('VERIFIED', $domain->fresh()->verification_status);
+        $this->post(route('admin.sites.activate', $site), ['reason' => 'Ready'])
+            ->assertRedirect()
+            ->assertSessionHasErrors('activation');
+        $this->assertSame(SiteStatus::Approved, $site->fresh()->status);
+
+        $this->verifyCurrentHorusAdsTxt($site, $publisherUser);
+        $this->post(route('admin.sites.activate', $site), ['reason' => 'HMP/HMS verified'])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
         $this->post(route('admin.sites.suspend', $site), ['reason' => 'Operational check'])->assertRedirect();
         $this->post(route('admin.sites.reactivate', $site), ['reason' => 'Check complete'])->assertRedirect();
 
@@ -147,5 +164,20 @@ class SiteManagementTest extends TestCase
         $this->assertSame(SiteStatus::Archived, $site->fresh()->status);
         $this->actingAs($publisherUser)->get(route('publisher.sites.show', $site))
             ->assertOk()->assertSee('Please clarify ownership.')->assertDontSee('PRIVATE REVIEW REASON')->assertDontSee('PRIVATE SITE NOTE');
+    }
+
+    private function verifyCurrentHorusAdsTxt(Site $site, User $publisherUser): void
+    {
+        app(HorusSellerIdentityService::class)->ensureForSite($site, $publisherUser);
+        $service = app(SiteAdsTxtInstallationService::class);
+        $bundle = $service->bundle($site->fresh());
+        $this->assertTrue($bundle['available']);
+
+        Http::fake(['*' => Http::response(implode("\n", $bundle['core_records'])."\n", 200, ['Content-Type' => 'text/plain'])]);
+        $domain = $site->domains()->where('is_primary', true)->firstOrFail();
+        $verification = $service->verify($site->fresh(), $domain, $publisherUser);
+
+        $this->assertSame('VERIFIED', $verification->status);
+        $this->assertTrue($service->hasCurrentCoreVerification($site->fresh()));
     }
 }
