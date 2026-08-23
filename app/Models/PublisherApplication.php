@@ -83,7 +83,7 @@ class PublisherApplication extends Model
                 // Express applications deliberately have no website/domain yet.
                 // Their HMP/HMS identities are issued together when the first
                 // website is added, so Publisher approval stays independent.
-                if ($application->domainClaims()->exists()) {
+                if (filled($application->primary_domain) || $application->domainClaims()->exists()) {
                     $publisher = Publisher::withoutGlobalScopes()->findOrFail($application->publisher_id);
                     $identities->ensureForPublisher($publisher);
                     $identities->markApplicationApproved($application);
