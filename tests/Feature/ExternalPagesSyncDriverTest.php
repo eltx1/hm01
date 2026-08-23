@@ -11,6 +11,21 @@ use Tests\TestCase;
 
 class ExternalPagesSyncDriverTest extends TestCase
 {
+    private string $confirmationPath;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->confirmationPath = storage_path('framework/testing/confirmed-manifest-'.bin2hex(random_bytes(4)));
+        config(['static-delivery.external_sync.confirmation_path' => $this->confirmationPath]);
+    }
+
+    protected function tearDown(): void
+    {
+        @unlink($this->confirmationPath);
+        parent::tearDown();
+    }
+
     public function test_missing_server_github_credential_uses_external_sync_instead_of_failing_delivery(): void
     {
         config([
@@ -51,5 +66,18 @@ class ExternalPagesSyncDriverTest extends TestCase
 
         Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response([], 503)]);
         $this->assertNull($driver->probe($batch));
+    }
+
+    public function test_external_sync_accepts_the_post_deploy_control_plane_marker_without_an_origin_http_probe(): void
+    {
+        $hash = str_repeat('c', 64);
+        file_put_contents($this->confirmationPath, $hash."\n");
+        Http::fake(fn () => Http::response([], 500));
+
+        $confirmed = app(ExternalPagesSyncDriver::class)
+            ->probe(new StaticDeliveryBatch(['manifest_hash' => $hash]));
+
+        $this->assertTrue($confirmed?->confirmedDeployed);
+        Http::assertNothingSent();
     }
 }
