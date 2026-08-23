@@ -119,6 +119,25 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertSame('supply_chain.contact_email', $change->context['setting_key']);
     }
 
+    public function test_production_contact_migration_overrides_legacy_environment_and_queues_publication(): void
+    {
+        GlobalSetting::query()->whereKey('supply_chain.contact_email')->delete();
+        StaticGlobalArtifactChange::query()->delete();
+
+        $migration = require database_path('migrations/2026_08_23_001500_set_public_sellers_contact_email.php');
+        $migration->up();
+
+        app(GlobalSettingsService::class)->applyRuntimeOverrides();
+        $this->assertSame('mohamed@horusmedia.net', config('supply-chain.contact_email'));
+        $this->assertSame(
+            'mohamed@horusmedia.net',
+            GlobalSetting::query()->findOrFail('supply_chain.contact_email')->value,
+        );
+        $change = StaticGlobalArtifactChange::query()->sole();
+        $this->assertSame('URGENT', $change->priority->value);
+        $this->assertSame('PUBLIC_CONTACT_EMAIL_MIGRATED', $change->context['event']);
+    }
+
     public function test_permissions_publisher_denial_audit_and_secret_non_exposure(): void
     {
         $admin = $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
