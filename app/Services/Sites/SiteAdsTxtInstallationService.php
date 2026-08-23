@@ -69,6 +69,34 @@ final class SiteAdsTxtInstallationService
         ];
     }
 
+    public function hasCurrentCoreVerification(Site $site): bool
+    {
+        $bundle = $this->bundle($site);
+        if (! $bundle['available']) {
+            return false;
+        }
+
+        $domain = SiteDomain::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('is_primary', true)
+            ->where('domain', $site->primary_domain)
+            ->first();
+        if (! $domain) {
+            return false;
+        }
+
+        $latest = SiteVerification::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('site_domain_id', $domain->id)
+            ->where('method', VerificationMethod::AdsTxt->value)
+            ->where('expected_value', implode("\n", $bundle['core_records']))
+            ->latest('attempted_at')
+            ->latest('created_at')
+            ->first();
+
+        return $latest?->status === 'VERIFIED' && $latest->verified_at !== null;
+    }
+
     public function verify(Site $site, SiteDomain $domain, ?User $actor = null): SiteVerification
     {
         $bundle = $this->bundle($site);
