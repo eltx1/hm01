@@ -77,9 +77,10 @@ jobs:
         run: |
           set -euo pipefail
           remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
           mkdir -p "$RUNNER_TEMP/static-edge"
           ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "mkdir -p '$remote_dir' && cd '$REMOTE_HOME/current' && php artisan static-delivery:build '$remote_dir'"
+            "mkdir -p '$remote_dir' && cd '$app_root' && php artisan static-delivery:build '$remote_dir'"
           ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." \
             | tar -xzf - -C "$RUNNER_TEMP/static-edge"
           ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
