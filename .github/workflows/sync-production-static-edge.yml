@@ -93,6 +93,7 @@ jobs:
           set -euo pipefail
           local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
           [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
           remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
             | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
           if [[ "$local_hash" == "$remote_hash" ]]; then
@@ -100,7 +101,6 @@ jobs:
             echo "Public edge already has manifest $local_hash."
           else
             echo "deploy=true" >> "$GITHUB_OUTPUT"
-            echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy live snapshot to Cloudflare Pages
@@ -128,6 +128,17 @@ jobs:
           done
           echo 'Cloudflare did not expose the exact production snapshot within the verification window.' >&2
           exit 1
+
+      - name: Confirm manifest on production control plane
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          MANIFEST_HASH: ${{ steps.compare.outputs.manifest_hash }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_HASH" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s\n' "$MANIFEST_HASH" | ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "set -e; umask 077; mkdir -p '$REMOTE_HOME/shared/storage/app/static-delivery'; cat > '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp'; mv '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp' '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest'"
 
       - name: Remove remote snapshot if interrupted
         if: always()
