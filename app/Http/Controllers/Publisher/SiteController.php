@@ -37,7 +37,7 @@ class SiteController extends Controller
         $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
-        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block once, verify the two Horus records, then submit this website for review.');
+        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block and verify the two Horus records. You can submit the website for review while verification is pending; production activation will wait for verification.');
     }
 
     public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
@@ -105,7 +105,7 @@ class SiteController extends Controller
         $lifecycle->transition($site, SiteStatus::PendingReview, $request->user(), 'Submitted by publisher.');
         SiteReview::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'decision' => 'PENDING', 'submitted_at' => now()]);
 
-        return back()->with('status', 'Website submitted for review. Domain verification remains visible to the reviewer and does not alter HORUS_GAM availability.');
+        return back()->with('status', 'Website submitted for review. Horus ads.txt verification may finish during review, but both assigned HMP/HMS DIRECT records must verify before production activation.');
     }
 
     private function publisher(Request $request): Publisher
@@ -128,14 +128,12 @@ class SiteController extends Controller
                 'primary_domain' => ['required', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i', Rule::unique('sites')->where('publisher_id', $publisher->id)],
                 'content_category' => ['required', 'string', Rule::in(['NEWS', 'ENTERTAINMENT', 'SPORTS', 'TECHNOLOGY', 'LIFESTYLE', 'BUSINESS', 'OTHER'])],
                 'country' => ['required', 'string', 'size:2'],
-                'estimated_monthly_pageviews' => ['nullable', 'integer', 'min:0'],
             ]);
-
-            $data['estimated_monthly_pageviews'] = (int) ($data['estimated_monthly_pageviews'] ?? 0);
 
             return $data + [
                 'language' => 'en',
                 'main_traffic_countries' => [$data['country']],
+                'estimated_monthly_pageviews' => 0,
                 'estimated_monthly_users' => 0,
                 'current_monetization_providers' => [],
                 'current_gam_network_code' => null,

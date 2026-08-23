@@ -27,14 +27,8 @@ final class SiteAdsTxtInstallationService
     /** @return array{available: bool, core_records: list<string>, records: list<string>, content: string, ads_txt_url: string} */
     public function bundle(Site $site): array
     {
-        $site->loadMissing('publisher');
-        $hmp = $this->identities->managedForPublisher($site->publisher);
-        $hms = $this->identities->managedForSite($site);
+        $core = $this->coreRecords($site);
         $system = $this->supplyChain->horusAdvertisingSystemDomain();
-        $core = $hmp && $hms ? [
-            $system.', '.$hmp->seller_id.', DIRECT',
-            $system.', '.$hms->seller_id.', DIRECT',
-        ] : [];
         $ownerDomain = $this->supplyChain->ownerDomainForSite($site);
         $contact = trim((string) config('supply-chain.contact_email'));
         $directives = array_values(array_filter([
@@ -67,6 +61,35 @@ final class SiteAdsTxtInstallationService
             'content' => implode("\n", $records).($records === [] ? '' : "\n"),
             'ads_txt_url' => 'https://'.$site->primary_domain.'/ads.txt',
         ];
+    }
+
+    public function hasCurrentCoreVerification(Site $site): bool
+    {
+        $core = $this->coreRecords($site);
+        if (count($core) !== 2) {
+            return false;
+        }
+
+        $domain = SiteDomain::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('is_primary', true)
+            ->where('domain', $site->primary_domain)
+            ->first();
+        if (! $domain) {
+            return false;
+        }
+
+        $latest = SiteVerification::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('site_domain_id', $domain->id)
+            ->where('method', VerificationMethod::AdsTxt->value)
+            ->where('expected_value', implode("\n", $core))
+            ->orderByDesc('attempted_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+
+        return $latest?->status === 'VERIFIED' && $latest->verified_at !== null;
     }
 
     public function verify(Site $site, SiteDomain $domain, ?User $actor = null): SiteVerification
@@ -132,5 +155,23 @@ final class SiteAdsTxtInstallationService
         }
 
         return $verification->fresh();
+    }
+
+    /** @return list<string> */
+    private function coreRecords(Site $site): array
+    {
+        $site->loadMissing('publisher');
+        $hmp = $this->identities->managedForPublisher($site->publisher);
+        $hms = $this->identities->managedForSite($site);
+        if (! $hmp || ! $hms) {
+            return [];
+        }
+
+        $system = $this->supplyChain->horusAdvertisingSystemDomain();
+
+        return [
+            $system.', '.$hmp->seller_id.', DIRECT',
+            $system.', '.$hms->seller_id.', DIRECT',
+        ];
     }
 }

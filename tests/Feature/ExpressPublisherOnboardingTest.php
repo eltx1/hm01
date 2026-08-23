@@ -112,14 +112,25 @@ class ExpressPublisherOnboardingTest extends TestCase
         ]);
 
         $publisherUser = User::query()->where('email', 'fast@publisher.example')->firstOrFail();
-        $this->actingAs($publisherUser)->post(route('publisher.sites.store'), [
+        $this->actingAs($publisherUser)->get(route('publisher.sites.create'))
+            ->assertOk()
+            ->assertSee('Display name')
+            ->assertSee('Primary domain')
+            ->assertSee('Content category')
+            ->assertSee('Primary country')
+            ->assertDontSee('Estimated monthly pageviews');
+
+        $this->post(route('publisher.sites.store'), [
             'display_name' => 'Fast News',
             'primary_domain' => 'fast-news.example',
             'content_category' => 'NEWS',
             'country' => 'US',
+            // Stale clients cannot reintroduce traffic collection into website creation.
+            'estimated_monthly_pageviews' => 987654,
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $site = Site::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(0, $site->estimated_monthly_pageviews);
         $this->assertSame('fast-news.example', $application->publisher()->withoutGlobalScopes()->firstOrFail()->business_domain);
         $bundle = app(SiteAdsTxtInstallationService::class)->bundle($site);
         $this->assertTrue($bundle['available']);
