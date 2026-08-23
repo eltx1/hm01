@@ -34,6 +34,11 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             throw new StaticDeliveryException('MANIFEST_HASH_INVALID', 'Static delivery batch does not contain a valid manifest hash.');
         }
 
+        $confirmed = $this->confirmedManifest();
+        if ($confirmed !== null && hash_equals($expected, $confirmed)) {
+            return $this->confirmedResult($confirmed);
+        }
+
         $url = $this->manifestUrl();
         $response = Http::acceptJson()
             ->connectTimeout(max(1, (int) config('static-delivery.external_sync.connect_timeout', 5)))
@@ -48,12 +53,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             return null;
         }
 
-        return new StaticDeliveryResult(
-            remoteId: 'manifest:'.$published,
-            remoteUrl: $url,
-            confirmedDeployed: true,
-            metadata: ['manifest_hash' => $published],
-        );
+        return $this->confirmedResult($published);
     }
 
     private function manifestUrl(): string
@@ -65,5 +65,26 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
         }
 
         return $url;
+    }
+
+    private function confirmedManifest(): ?string
+    {
+        $path = (string) config('static-delivery.external_sync.confirmation_path');
+        if ($path === '' || ! is_file($path) || ! is_readable($path)) {
+            return null;
+        }
+        $hash = trim((string) file_get_contents($path));
+
+        return preg_match('/^[a-f0-9]{64}$/', $hash) ? $hash : null;
+    }
+
+    private function confirmedResult(string $hash): StaticDeliveryResult
+    {
+        return new StaticDeliveryResult(
+            remoteId: 'manifest:'.$hash,
+            remoteUrl: $this->manifestUrl(),
+            confirmedDeployed: true,
+            metadata: ['manifest_hash' => $hash],
+        );
     }
 }
