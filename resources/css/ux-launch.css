@@ -143,7 +143,16 @@ td { vertical-align: top; }
     .wizard-actions > *, .compliance-actions > *, .inline-form > button, .error-actions > * { width: 100%; }
     .recovery-grid { grid-template-columns: 1fr; }
     .auth-product-note { padding-inline: .5rem; }
-    .notification-popover { position: fixed; right: 1rem; left: 1rem; width: auto; }
+    .notification-popover {
+        position: fixed;
+        z-index: 80;
+        top: calc(4.75rem + env(safe-area-inset-top));
+        right: 0.75rem;
+        left: 0.75rem;
+        width: auto;
+        max-height: calc(100dvh - 6rem - env(safe-area-inset-top));
+        overscroll-behavior: contain;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
