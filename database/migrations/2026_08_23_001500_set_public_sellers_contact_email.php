@@ -20,7 +20,7 @@ return new class extends Migration
         );
 
         app(GlobalSettingsService::class)->invalidate();
-        if (! app()->runningUnitTests()) {
+        if (app()->environment('production') && ! app()->runningUnitTests()) {
             app(SupplyChainStaticPublisher::class)->queueUrgent([
                 'event' => 'PUBLIC_CONTACT_EMAIL_MIGRATED',
                 'setting_key' => 'supply_chain.contact_email',
