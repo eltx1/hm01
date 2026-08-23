@@ -1,3 +1,7 @@
+@if($internal)
+    @include('admin.sites.quality-review')
+@endif
+
 <article id="monetization-health" class="workspace-section">
     <div class="workspace-heading">
         <div>
