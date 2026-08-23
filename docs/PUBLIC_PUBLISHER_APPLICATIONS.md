@@ -1,5 +1,24 @@
 # Public Publisher Applications
 
+## Express account-first flow (current)
+
+New public applications approve the Publisher legal/account relationship first.
+They do not collect, reserve, verify, approve, or reject a website. The public
+flow is two short screens: account creation, then company/content summary plus
+the current legal acceptances. Traffic-source and device percentages are not a
+submission gate.
+
+After Publisher approval, the Publisher adds each website independently from
+the authenticated workspace. Website creation reserves its HMS identity and
+shows one copyable ads.txt block containing HMP, HMS, active platform-master,
+and all currently applicable demand/bidder records. Ownership verification
+checks only the exact HMP and HMS `DIRECT` records; other records never block
+the ownership result. Every website retains its own review and activation
+lifecycle.
+
+The legacy domain-claim flow below remains supported for already-created
+applications that reserved seller identities before this change.
+
 ## Product boundary
 
 The public Publisher entry point is `/register/publisher` and is controlled by

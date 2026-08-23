@@ -18,6 +18,9 @@
         default => 40,
     };
 @endphp
+@if($expressApplication)
+    @include('publisher-applications.express')
+@else
 <section class="hero publisher-application-hero">
     <div><p class="eyebrow">Publisher application</p><h1>{{ $application->publisher->display_name }}</h1><p>{{ $application->primary_domain }}</p></div>
     <div class="application-status-summary"><x-status-badge :status="$status" /><span class="status">{{ $progress }}% complete</span><small class="muted">Last saved {{ $application->updated_at?->diffForHumans() }}</small></div>
@@ -127,5 +130,6 @@
 
 @if($status->canTransitionTo(\App\Enums\PublisherApplicationStatus::Withdrawn))
 <details class="workspace-section"><summary>Withdraw application</summary><p>Withdrawal does not delete audit, legal, seller identity, or website verification evidence.</p><form method="POST" action="{{ route('publisher-application.withdraw') }}" class="form-stack">@csrf<label class="check"><input type="checkbox" name="confirm_withdrawal" value="1" required> I confirm that I want to withdraw this application.</label><button class="danger-button">Withdraw application</button></form></details>
+@endif
 @endif
 @endsection

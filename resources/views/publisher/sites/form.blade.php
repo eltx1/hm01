@@ -2,10 +2,16 @@
 @section('title', $site->exists ? 'Edit website' : 'Add website')
 @section('heading', $site->exists ? 'Edit website' : 'Add website')
 @section('content')
-<article><p class="muted">Every new website starts with <strong>HORUS_GAM</strong>. This can later be changed by Horus Media without changing your installation code.</p>
+<article><p class="muted">Every new website starts as a separate draft. Publisher approval never auto-approves a website.</p>
 <form method="POST" action="{{ $site->exists ? route('publisher.sites.update', $site) : route('publisher.sites.store') }}" class="form-grid">@csrf @if($site->exists)@method('PUT')@endif
 <label>Display name<input class="hm-input" name="display_name" value="{{ old('display_name', $site->display_name) }}" required></label>
 <label>Primary domain<input class="hm-input" name="primary_domain" value="{{ old('primary_domain', $site->primary_domain) }}" placeholder="example.com" required></label>
+@if(!$site->exists)
+<label>Content category<select class="hm-input" name="content_category" required><option value="">Choose one</option>@foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)<option value="{{ $category }}" @selected(old('content_category') === $category)>{{ str($category)->headline() }}</option>@endforeach</select></label>
+<label>Primary country (ISO 2)<input class="hm-input" name="country" value="{{ old('country') }}" maxlength="2" placeholder="US" required></label>
+<label class="full">Estimated monthly pageviews <span class="muted">(optional)</span><input class="hm-input" type="number" min="0" name="estimated_monthly_pageviews" value="{{ old('estimated_monthly_pageviews') }}" inputmode="numeric"></label>
+<div class="full wizard-actions"><span class="muted">Next: copy one complete ads.txt block and verify only the two Horus records.</span><button class="hm-button-primary">Add website</button></div>
+@else
 <label>Language<input class="hm-input" name="language" value="{{ old('language', $site->language ?: 'en') }}" required></label>
 <label>Content category<input class="hm-input" name="content_category" value="{{ old('content_category', $site->content_category) }}" required></label>
 <label>Country (ISO 2)<input class="hm-input" name="country" value="{{ old('country', $site->country) }}" maxlength="2" required></label>
@@ -20,5 +26,6 @@
 <label><input type="hidden" name="prebid_enabled" value="0"><input type="checkbox" name="prebid_enabled" value="1" @checked(old('prebid_enabled', $site->prebid_enabled))> Enable Prebid when configuration is published</label>
 <label><input type="hidden" name="native_demand_enabled" value="0"><input type="checkbox" name="native_demand_enabled" value="1" @checked(old('native_demand_enabled', $site->native_demand_enabled))> Enable optional native demand</label>
 <button class="hm-button-primary">Save website</button>
+@endif
 </form></article>
 @endsection

@@ -39,13 +39,17 @@ final class PublisherApplicationService
         private readonly PublisherApplicationNotificationService $notifications,
     ) {}
 
-    /** @param array{name: string, email: string, password: string, publisher_name: string, primary_domain: string} $data */
+    /** @param array{name: string, email: string, password: string, publisher_name: string, primary_domain?: string|null} $data */
     public function register(array $data): PublisherApplication
     {
         $email = str($data['email'])->lower()->trim()->value();
-        $domain = $this->normalizeDomain($data['primary_domain']);
+        $domain = filled($data['primary_domain'] ?? null)
+            ? $this->normalizeDomain((string) $data['primary_domain'])
+            : null;
         $this->assertEmailAvailable($email);
-        $this->assertDomainAvailable($domain);
+        if ($domain !== null) {
+            $this->assertDomainAvailable($domain);
+        }
 
         try {
             $application = DB::transaction(function () use ($data, $email, $domain): PublisherApplication {
@@ -79,10 +83,12 @@ final class PublisherApplicationService
                     'primary_domain' => $domain,
                     'status' => PublisherApplicationStatus::EmailVerificationRequired,
                 ]);
-                PublisherApplicationDomainClaim::create([
-                    'publisher_application_id' => $application->id,
-                    'normalized_domain' => $domain,
-                ]);
+                if ($domain !== null) {
+                    PublisherApplicationDomainClaim::create([
+                        'publisher_application_id' => $application->id,
+                        'normalized_domain' => $domain,
+                    ]);
+                }
                 $this->event($application, 'CREATED', null, PublisherApplicationStatus::EmailVerificationRequired, $user, applicantVisible: true);
                 $this->audit->record('publisher_application.created', $organization->id, $user, $application, newValues: [
                     'publisher_id' => $publisher->id,
@@ -128,13 +134,17 @@ final class PublisherApplicationService
                 throw ValidationException::withMessages(['application' => 'This application cannot be edited in its current state.']);
             }
 
-            $domain = $this->normalizeDomain($data['primary_domain']);
-            $this->assertDomainAvailable($domain, $application);
-            if ($domain !== $application->primary_domain) {
-                try {
-                    $application->domainClaim()->firstOrFail()->update(['normalized_domain' => $domain]);
-                } catch (UniqueConstraintViolationException) {
-                    throw ValidationException::withMessages(['primary_domain' => 'This domain cannot be used for a new Publisher application.']);
+            $domain = $application->primary_domain;
+            $domainSupplied = array_key_exists('primary_domain', $data) && filled($data['primary_domain']);
+            if ($domainSupplied) {
+                $domain = $this->normalizeDomain((string) $data['primary_domain']);
+                $this->assertDomainAvailable($domain, $application);
+                if ($domain !== $application->primary_domain) {
+                    try {
+                        $application->domainClaim()->firstOrFail()->update(['normalized_domain' => $domain]);
+                    } catch (UniqueConstraintViolationException) {
+                        throw ValidationException::withMessages(['primary_domain' => 'This domain cannot be used for a new Publisher application.']);
+                    }
                 }
             }
 
@@ -142,13 +152,18 @@ final class PublisherApplicationService
             $organization = Organization::query()->lockForUpdate()->findOrFail($application->organization_id);
             $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
             $lockedUser->update(['name' => trim($data['contact_name'])]);
-            $publisher->update([
+            $publisherValues = [
                 'legal_name' => trim($data['legal_name']),
                 'display_name' => trim($data['publisher_name']),
-                'business_domain' => $domain,
-            ]);
+            ];
+            if ($domainSupplied) {
+                $publisherValues['business_domain'] = $domain;
+            }
+            $publisher->update($publisherValues);
             $organization->update(['name' => trim($data['publisher_name'])]);
-            $application->update(['primary_domain' => $domain]);
+            if ($domainSupplied) {
+                $application->update(['primary_domain' => $domain]);
+            }
 
             $profile = $this->createQualityProfile($publisher, $lockedUser, $data);
             $this->audit->record('publisher_application.draft.saved', $application->organization_id, $lockedUser, $application, newValues: [
@@ -440,19 +455,22 @@ final class PublisherApplicationService
     private function assertComplete(PublisherApplication $application, Publisher $publisher, ?PublisherQualityProfile $profile): void
     {
         $errors = [];
-        if (blank($publisher->legal_name) || blank($publisher->display_name) || blank($application->primary_domain)) {
-            $errors['application'] = 'Complete the company and domain information before submitting.';
+        $websiteApplication = $application->domainClaims()->exists();
+        if (blank($publisher->legal_name) || blank($publisher->display_name) || ($websiteApplication && blank($application->primary_domain))) {
+            $errors['application'] = $websiteApplication
+                ? 'Complete the company and domain information before submitting.'
+                : 'Complete the company information before submitting.';
         }
         if (! $profile || $profile->content_categories === [] || blank($profile->content_description)) {
             $errors['content_description'] = 'Content categories and a content description are required before submitting.';
         }
-        if (! $profile || array_sum(array_map('intval', collect($profile->traffic_profile ?? [])->only(['organic', 'social', 'direct', 'paid', 'other'])->all())) !== 100) {
+        if ($websiteApplication && (! $profile || array_sum(array_map('intval', collect($profile->traffic_profile ?? [])->only(['organic', 'social', 'direct', 'paid', 'other'])->all())) !== 100)) {
             $errors['traffic'] = 'Traffic source percentages must total 100.';
         }
-        if (! $profile || $profile->audience_countries === []) {
+        if ($websiteApplication && (! $profile || $profile->audience_countries === [])) {
             $errors['audience_countries'] = 'At least one audience country is required.';
         }
-        if (! $profile || array_sum(array_map('intval', collect($profile->device_mix ?? [])->only(['desktop', 'mobile', 'tablet'])->all())) !== 100) {
+        if ($websiteApplication && (! $profile || array_sum(array_map('intval', collect($profile->device_mix ?? [])->only(['desktop', 'mobile', 'tablet'])->all())) !== 100)) {
             $errors['device_mix'] = 'Device percentages must total 100.';
         }
         if ($errors !== []) {

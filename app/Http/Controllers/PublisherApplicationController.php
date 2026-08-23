@@ -32,6 +32,7 @@ final class PublisherApplicationController extends Controller
             'revisions' => fn ($query) => $query->latest('version'),
         ]);
         $profile = PublisherQualityProfile::query()->where('publisher_id', $application->publisher_id)->latest('version')->first();
+        $expressApplication = $application->domainClaim === null;
         $editable = $request->user()->hasVerifiedEmail() && $application->status->applicantMayEdit();
         $step = $request->user()->hasVerifiedEmail() ? max(2, min(5, $request->integer('step', 2))) : 1;
         $claimVerified = $application->domainClaim?->verification_status === 'VERIFIED';
@@ -54,8 +55,46 @@ final class PublisherApplicationController extends Controller
 
         return view('publisher-applications.show', compact(
             'application', 'profile', 'step', 'editable', 'legalDocuments', 'acceptedLegal',
-            'marketingConsent', 'websiteVerification', 'claimVerified',
+            'marketingConsent', 'websiteVerification', 'claimVerified', 'expressApplication',
         ));
+    }
+
+    public function complete(
+        Request $request,
+        PublisherApplicationService $applications,
+        PublisherApplicationLegalService $legal,
+    ): RedirectResponse {
+        $application = $this->applicationFor($request)->load('domainClaim');
+        if ($application->domainClaim !== null) {
+            throw ValidationException::withMessages([
+                'application' => 'This earlier application already has a website claim. Continue its existing review flow.',
+            ]);
+        }
+        if (! $application->status->applicantMayEdit()) {
+            throw ValidationException::withMessages(['application' => 'This application cannot be edited in its current state.']);
+        }
+
+        $data = $request->validate([
+            'contact_name' => ['required', 'string', 'max:255'],
+            'legal_name' => ['required', 'string', 'max:255'],
+            'publisher_name' => ['required', 'string', 'max:255'],
+            'content_categories' => ['required', 'array', 'min:1', 'max:5'],
+            'content_categories.*' => ['string', Rule::in(['NEWS', 'ENTERTAINMENT', 'SPORTS', 'TECHNOLOGY', 'LIFESTYLE', 'BUSINESS', 'OTHER'])],
+            'content_description' => ['required', 'string', 'min:20', 'max:2000'],
+            'monthly_pageviews' => ['nullable', 'integer', 'min:0', 'max:100000000000'],
+            'legal' => ['nullable', 'array'],
+            'marketing_opt_in' => ['nullable', 'boolean'],
+            'confirm' => ['accepted'],
+        ]);
+
+        $applications->saveDraft($request->user(), $data);
+        $application->refresh();
+        $legal->record($application, $request->user(), $data, $request);
+        $legal->assertCurrentRequiredAccepted($application, $request->user());
+        $applications->submit($request->user());
+
+        return redirect()->route('publisher-application.show')
+            ->with('status', 'Application submitted. Website review is separate and starts only after you add a website from your Publisher dashboard.');
     }
 
     public function update(
@@ -140,7 +179,7 @@ final class PublisherApplicationController extends Controller
             throw ValidationException::withMessages(['email' => 'Verify your email before submitting the application.']);
         }
         $application = $this->applicationFor($request)->load('domainClaim');
-        if ($application->domainClaim?->verification_status !== 'VERIFIED') {
+        if ($application->domainClaim !== null && $application->domainClaim->verification_status !== 'VERIFIED') {
             throw ValidationException::withMessages(['website_verification' => 'Verify your website through the required Horus ads.txt records before submitting the application.']);
         }
         $legal->assertCurrentRequiredAccepted($application, $request->user());

@@ -44,7 +44,10 @@ final class PublicPublisherRegistrationController extends Controller
             'email' => ['required', 'email:rfc', 'max:255'],
             'password' => ['required', 'confirmed', Password::min(14)->mixedCase()->numbers()->symbols()],
             'publisher_name' => ['required', 'string', 'max:255'],
-            'primary_domain' => ['required', 'string', 'max:500'],
+            // Website onboarding is intentionally separate from Publisher approval.
+            // Keep accepting this field for older clients, but the public express
+            // form no longer asks for or requires a website.
+            'primary_domain' => ['nullable', 'string', 'max:500'],
             '_company_website' => ['nullable', 'string', 'max:0'],
             'cf-turnstile-response' => [config('publisher-applications.turnstile.enabled') ? 'required' : 'nullable', 'string', 'max:2048'],
         ]);

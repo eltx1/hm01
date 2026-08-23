@@ -55,6 +55,7 @@ Route::middleware('auth')->group(function (): void {
 
     Route::middleware('publisher.applicant')->group(function (): void {
         Route::get('/publisher-application', [PublisherApplicationController::class, 'show'])->name('publisher-application.show');
+        Route::post('/publisher-application/complete', [PublisherApplicationController::class, 'complete'])->middleware('throttle:publisher-application-submit')->name('publisher-application.complete');
         Route::put('/publisher-application', [PublisherApplicationController::class, 'update'])->middleware('throttle:publisher-application-write')->name('publisher-application.update');
         Route::post('/publisher-application/submit', [PublisherApplicationController::class, 'submit'])->middleware('throttle:publisher-application-submit')->name('publisher-application.submit');
         Route::post('/publisher-application/withdraw', [PublisherApplicationController::class, 'withdraw'])->middleware('throttle:publisher-application-write')->name('publisher-application.withdraw');

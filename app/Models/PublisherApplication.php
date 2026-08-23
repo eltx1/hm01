@@ -48,6 +48,13 @@ class PublisherApplication extends Model
                     throw new LogicException('Invalid Publisher application lifecycle transition.');
                 }
                 if ($from !== $to && $to === PublisherApplicationStatus::Submitted) {
+                    // Legacy applications that already reserved a website keep the
+                    // original ads.txt gate. Express Publisher applications have no
+                    // website claim; websites are added and reviewed independently
+                    // after Publisher approval.
+                    if (blank($application->primary_domain) && ! $application->domainClaims()->exists()) {
+                        return;
+                    }
                     $verified = PublisherApplicationDomainClaim::query()
                         ->where('publisher_application_id', $application->id)
                         ->where('normalized_domain', strtolower(rtrim((string) $application->primary_domain, '.')))

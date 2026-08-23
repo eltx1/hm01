@@ -150,13 +150,32 @@
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')
 
-@if(auth()->user()->hasPermission('publisher.ads_txt.view'))<p><a class="hm-button-secondary button-link" href="{{ route('publisher.ads-txt.index') }}">Open Ads.txt &amp; Compliance</a></p>@endif
+@if(auth()->user()->hasPermission('publisher.ads_txt.view'))
+<article class="workspace-section publisher-ads-installation">
+    <div class="workspace-heading">
+        <div><p class="eyebrow">One-time installation</p><h2>Copy the complete ads.txt block</h2></div>
+        <div class="status-row"><span class="status">{{ count($adsTxtInstallation['records']) }} records</span><button class="hm-button-primary" type="button" data-copy-target="site-ads-txt-installation">Copy all</button></div>
+    </div>
+    <p>Paste every line below into <code>{{ $adsTxtInstallation['ads_txt_url'] }}</code> in one update. Horus verifies only the two core HMP/HMS DIRECT records; the remaining active master and applicable demand records do not block ownership verification.</p>
+    @if($adsTxtInstallation['available'])
+        <pre id="site-ads-txt-installation" class="compliance-code">{{ $adsTxtInstallation['content'] }}</pre>
+        <div class="core-verification-note"><strong>Verification checks these two core records only</strong>@foreach($adsTxtInstallation['core_records'] as $record)<code>{{ $record }}</code>@endforeach</div>
+        @php($primaryDomain = $site->domains->firstWhere('is_primary', true))
+        @if($primaryDomain && auth()->user()->hasPermission('sites.manage'))
+            <form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $primaryDomain]) }}" class="wizard-actions">@csrf<input type="hidden" name="method" value="ADS_TXT"><span class="muted">Status: {{ $primaryDomain->verification_status }}</span><button class="hm-button-secondary">Verify ads.txt now</button></form>
+        @endif
+    @else
+        <div class="notice">Horus seller IDs are being prepared. Refresh this page shortly or contact your account team.</div>
+    @endif
+    <a class="text-link" href="{{ route('publisher.ads-txt.index') }}">Open detailed compliance</a>
+</article>
+@endif
 <section class="detail-grid">
     <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd></dl></article>
     <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>
 </section>
 <article><div class="section-heading"><div><p class="eyebrow">Authorized domains</p><h2>Ownership verification</h2></div></div>
-    @foreach($site->domains as $domain)<div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div><details><summary>Verification instructions</summary><ul><li>Meta tag: <code>&lt;meta name="horus-site-verification" content="{{ $domain->verification_token }}"&gt;</code></li><li>Text file: publish <code>{{ $domain->verification_token }}</code> at <code>/.well-known/horus-verification.txt</code></li><li>DNS TXT: host <code>_horus-verify.{{ $domain->domain }}</code>, value <code>horus-site-verification={{ $domain->verification_token }}</code></li></ul></details>@if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $domain]) }}" class="inline-form">@csrf<label class="sr-only" for="method-{{ $domain->id }}">Verification method</label><select id="method-{{ $domain->id }}" class="hm-input" name="method"><option>META_TAG</option><option>TEXT_FILE</option><option>DNS_TXT</option></select><button class="hm-button-secondary">Verify now</button></form>@endif</div>@endforeach
+    @foreach($site->domains as $domain)<div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div><p class="muted">Ownership is verified from the two Horus DIRECT records in this domain's live ads.txt file.</p>@if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $domain]) }}" class="inline-form">@csrf<input type="hidden" name="method" value="ADS_TXT"><button class="hm-button-secondary">Verify ads.txt</button></form>@endif</div>@endforeach
     @if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.store', $site) }}" class="inline-form">@csrf<input class="hm-input" name="domain" aria-label="Additional authorized domain" placeholder="additional.example.com" required><button class="hm-button-secondary">Add authorized domain</button></form>@endif
 </article>
 <article><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Not submitted yet.</p>@endforelse

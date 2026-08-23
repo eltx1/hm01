@@ -47,11 +47,11 @@ class PremiumPublisherApplicationExperienceTest extends TestCase
         ]);
     }
 
-    public function test_public_registration_is_branded_accessible_and_presents_the_five_step_contract(): void
+    public function test_public_registration_is_branded_accessible_and_presents_the_express_contract(): void
     {
         $this->get(route('publisher-registration.create'))
             ->assertOk()->assertSee('Horus Media official logo')->assertSee('Apply as a Publisher')
-            ->assertSee('Account')->assertSee('Website')->assertSee('Quality')->assertSee('Agreements')->assertSee('Review')
+            ->assertSee('Account')->assertSee('Company &amp; submit', false)->assertDontSee('Primary website or domain')
             ->assertSee('Need help?')->assertSee('support@horusmedia.net');
 
         $this->from(route('publisher-registration.create'))
