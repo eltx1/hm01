@@ -47,6 +47,20 @@ jobs:
           $app = require $appPath.'/bootstrap/app.php';
           $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
+          $smtp = config('mail.mailers.smtp');
+          $username = (string) ($smtp['username'] ?? '');
+          $password = (string) ($smtp['password'] ?? '');
+          $from = (string) config('mail.from.address');
+
+          echo 'SMTP_CONFIG_HOST='.(string) ($smtp['host'] ?? '').PHP_EOL;
+          echo 'SMTP_CONFIG_PORT='.(string) ($smtp['port'] ?? '').PHP_EOL;
+          echo 'SMTP_CONFIG_SCHEME='.(string) ($smtp['scheme'] ?? 'auto').PHP_EOL;
+          echo 'SMTP_CONFIG_URL_SET='.(empty($smtp['url']) ? 'NO' : 'YES').PHP_EOL;
+          echo 'SMTP_CONFIG_USERNAME_SET='.($username === '' ? 'NO' : 'YES').PHP_EOL;
+          echo 'SMTP_CONFIG_FROM_MATCHES_USERNAME='.($from === $username ? 'YES' : 'NO').PHP_EOL;
+          echo 'SMTP_CONFIG_PASSWORD_SET='.($password === '' ? 'NO' : 'YES').PHP_EOL;
+          echo 'SMTP_CONFIG_PASSWORD_HAS_WHITESPACE='.(preg_match('/\\s/', $password) ? 'YES' : 'NO').PHP_EOL;
+
           try {
               $email = App\Models\User::query()->orderBy('id')->value('email');
               if (! is_string($email) || $email === '') {
@@ -80,6 +94,11 @@ jobs:
                   str_contains($message, 'empty response') => 'SMTP_CONNECTION_FAILED',
                   str_contains($message, 'certificate'),
                   str_contains($message, 'crypto') => 'SMTP_TLS_FAILED',
+                  str_contains($message, '550') && str_contains($message, 'daily user sending limit') => 'SMTP_550_DAILY_LIMIT',
+                  str_contains($message, '550') && str_contains($message, 'spam') => 'SMTP_550_SPAM_POLICY',
+                  str_contains($message, '550') && str_contains($message, 'policy') => 'SMTP_550_POLICY',
+                  str_contains($message, '550') && (str_contains($message, 'sender') || str_contains($message, 'from address')) => 'SMTP_550_SENDER_REJECTED',
+                  str_contains($message, '550') && (str_contains($message, 'recipient') || str_contains($message, 'mailbox') || str_contains($message, 'does not exist')) => 'SMTP_550_RECIPIENT_REJECTED',
                   str_contains($message, '421'),
                   str_contains($message, '450'),
                   str_contains($message, '451'),
