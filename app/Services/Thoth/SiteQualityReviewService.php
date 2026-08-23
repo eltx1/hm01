@@ -27,21 +27,21 @@ final class SiteQualityReviewService
 
     public function queueAutomatic(Site $site, ?User $actor = null): SiteQualityReviewRun
     {
-        $existing = SiteQualityReviewRun::query()
-            ->where('site_id', $site->id)
-            ->whereIn('status', ['QUEUED', 'RUNNING'])
-            ->latest()
-            ->first();
-        if ($existing) {
-            return $existing;
-        }
-
-        return $this->queue($site, $actor, 'AUTOMATIC');
+        return $this->activeRun($site) ?? $this->queue($site, $actor, 'AUTOMATIC');
     }
 
     public function queueManual(Site $site, User $actor): SiteQualityReviewRun
     {
-        return $this->queue($site, $actor, 'MANUAL');
+        return $this->activeRun($site) ?? $this->queue($site, $actor, 'MANUAL');
+    }
+
+    private function activeRun(Site $site): ?SiteQualityReviewRun
+    {
+        return SiteQualityReviewRun::query()
+            ->where('site_id', $site->id)
+            ->whereIn('status', ['QUEUED', 'RUNNING'])
+            ->latest()
+            ->first();
     }
 
     private function queue(Site $site, ?User $actor, string $trigger): SiteQualityReviewRun
@@ -57,10 +57,14 @@ final class SiteQualityReviewService
             'schema_version' => config('thoth.schema_version'),
         ]);
 
-        $this->audit->record('thoth.site_review.queued', $site->organization_id, $actor, $run, metadata: [
-            'site_id' => $site->id,
-            'trigger' => $trigger,
-        ]);
+        try {
+            $this->audit->record('thoth.site_review.queued', $site->organization_id, $actor, $run, metadata: [
+                'site_id' => $site->id,
+                'trigger' => $trigger,
+            ]);
+        } catch (Throwable) {
+            // Audit transport must never prevent the optional advisory from being queued.
+        }
 
         try {
             RunSiteQualityReview::dispatch($run->id);
@@ -142,12 +146,15 @@ final class SiteQualityReviewService
             ]);
 
             $run = $run->fresh();
-            $actor = $this->actor($run);
-            $this->audit->record('thoth.site_review.completed', $site->organization_id, $actor, $run, metadata: [
-                'site_id' => $site->id,
-                'recommendation' => $run->result['recommended_decision'] ?? null,
-                'risk_level' => $run->result['risk_level'] ?? null,
-            ]);
+            try {
+                $this->audit->record('thoth.site_review.completed', $site->organization_id, $this->actor($run), $run, metadata: [
+                    'site_id' => $site->id,
+                    'recommendation' => $run->result['recommended_decision'] ?? null,
+                    'risk_level' => $run->result['risk_level'] ?? null,
+                ]);
+            } catch (Throwable) {
+                // The advisory result is already durable; audit delivery is secondary here.
+            }
             $this->notifyAdmins($site, $run);
 
             return $run;
@@ -178,10 +185,14 @@ final class SiteQualityReviewService
         $run = $run->fresh();
         $site = Site::withoutGlobalScopes()->find($run->site_id);
         if ($site) {
-            $this->audit->record('thoth.site_review.failed', $site->organization_id, $this->actor($run), $run, metadata: [
-                'site_id' => $site->id,
-                'error_code' => $code,
-            ]);
+            try {
+                $this->audit->record('thoth.site_review.failed', $site->organization_id, $this->actor($run), $run, metadata: [
+                    'site_id' => $site->id,
+                    'error_code' => $code,
+                ]);
+            } catch (Throwable) {
+                // Failure visibility lives on the immutable run even if audit transport fails.
+            }
             $this->notifyAdmins($site, $run);
         }
 
