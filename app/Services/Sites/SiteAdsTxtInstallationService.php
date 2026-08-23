@@ -27,14 +27,8 @@ final class SiteAdsTxtInstallationService
     /** @return array{available: bool, core_records: list<string>, records: list<string>, content: string, ads_txt_url: string} */
     public function bundle(Site $site): array
     {
-        $site->loadMissing('publisher');
-        $hmp = $this->identities->managedForPublisher($site->publisher);
-        $hms = $this->identities->managedForSite($site);
+        $core = $this->coreRecords($site);
         $system = $this->supplyChain->horusAdvertisingSystemDomain();
-        $core = $hmp && $hms ? [
-            $system.', '.$hmp->seller_id.', DIRECT',
-            $system.', '.$hms->seller_id.', DIRECT',
-        ] : [];
         $ownerDomain = $this->supplyChain->ownerDomainForSite($site);
         $contact = trim((string) config('supply-chain.contact_email'));
         $directives = array_values(array_filter([
@@ -71,8 +65,8 @@ final class SiteAdsTxtInstallationService
 
     public function hasCurrentCoreVerification(Site $site): bool
     {
-        $bundle = $this->bundle($site);
-        if (! $bundle['available']) {
+        $core = $this->coreRecords($site);
+        if (count($core) !== 2) {
             return false;
         }
 
@@ -89,7 +83,7 @@ final class SiteAdsTxtInstallationService
             ->where('site_id', $site->id)
             ->where('site_domain_id', $domain->id)
             ->where('method', VerificationMethod::AdsTxt->value)
-            ->where('expected_value', implode("\n", $bundle['core_records']))
+            ->where('expected_value', implode("\n", $core))
             ->latest('attempted_at')
             ->latest('created_at')
             ->first();
@@ -160,5 +154,23 @@ final class SiteAdsTxtInstallationService
         }
 
         return $verification->fresh();
+    }
+
+    /** @return list<string> */
+    private function coreRecords(Site $site): array
+    {
+        $site->loadMissing('publisher');
+        $hmp = $this->identities->managedForPublisher($site->publisher);
+        $hms = $this->identities->managedForSite($site);
+        if (! $hmp || ! $hms) {
+            return [];
+        }
+
+        $system = $this->supplyChain->horusAdvertisingSystemDomain();
+
+        return [
+            $system.', '.$hmp->seller_id.', DIRECT',
+            $system.', '.$hms->seller_id.', DIRECT',
+        ];
     }
 }
