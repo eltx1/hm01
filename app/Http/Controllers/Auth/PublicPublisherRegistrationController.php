@@ -47,10 +47,10 @@ final class PublicPublisherRegistrationController extends Controller
             // lockout controls, and normal password reset protections remain.
             'password' => ['required', 'confirmed', Password::min(10)],
             'publisher_name' => ['required', 'string', 'max:255'],
-            // Website onboarding is intentionally separate from Publisher approval.
-            // Keep accepting this field for older clients, but the public express
-            // form no longer asks for or requires a website.
-            'primary_domain' => ['nullable', 'string', 'max:500'],
+            // Public Publisher approval is account-only. Website/domain fields are
+            // deliberately not accepted here, even if an older client sends them.
+            // Existing legacy applications that already have domain claims remain
+            // readable and completable through their compatibility flow.
             '_company_website' => ['nullable', 'string', 'max:0'],
             'cf-turnstile-response' => [config('publisher-applications.turnstile.enabled') ? 'required' : 'nullable', 'string', 'max:2048'],
         ]);
