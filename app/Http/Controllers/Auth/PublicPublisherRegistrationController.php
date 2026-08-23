@@ -42,7 +42,10 @@ final class PublicPublisherRegistrationController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email:rfc', 'max:255'],
-            'password' => ['required', 'confirmed', Password::min(14)->mixedCase()->numbers()->symbols()],
+            // Keep a meaningful minimum without forcing composition rules that
+            // create avoidable signup friction. Rate limiting, password hashing,
+            // lockout controls, and normal password reset protections remain.
+            'password' => ['required', 'confirmed', Password::min(10)],
             'publisher_name' => ['required', 'string', 'max:255'],
             // Website onboarding is intentionally separate from Publisher approval.
             // Keep accepting this field for older clients, but the public express
