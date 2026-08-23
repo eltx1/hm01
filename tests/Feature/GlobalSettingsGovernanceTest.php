@@ -93,7 +93,7 @@ class GlobalSettingsGovernanceTest extends TestCase
 
     public function test_persisted_override_can_be_applied_to_existing_config_consumers(): void
     {
-        GlobalSetting::query()->create(['key' => 'supply_chain.contact_email', 'value' => 'compliance@example.com', 'changed_by' => $this->admin->id]);
+        GlobalSetting::query()->updateOrCreate(['key' => 'supply_chain.contact_email'], ['value' => 'compliance@example.com', 'changed_by' => $this->admin->id]);
         $settings = app(GlobalSettingsService::class);
         $settings->invalidate();
         $settings->applyRuntimeOverrides();
@@ -117,6 +117,23 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertSame('URGENT', $change->priority->value);
         $this->assertSame('SETTING_UPDATED', $change->context['event']);
         $this->assertSame('supply_chain.contact_email', $change->context['setting_key']);
+    }
+
+    public function test_production_contact_migration_overrides_legacy_environment_without_polluting_tests(): void
+    {
+        GlobalSetting::query()->whereKey('supply_chain.contact_email')->delete();
+        StaticGlobalArtifactChange::query()->delete();
+
+        $migration = require database_path('migrations/2026_08_23_001500_set_public_sellers_contact_email.php');
+        $migration->up();
+
+        app(GlobalSettingsService::class)->applyRuntimeOverrides();
+        $this->assertSame('mohamed@horusmedia.net', config('supply-chain.contact_email'));
+        $this->assertSame(
+            'mohamed@horusmedia.net',
+            GlobalSetting::query()->findOrFail('supply_chain.contact_email')->value,
+        );
+        $this->assertDatabaseCount('static_global_artifact_changes', 0);
     }
 
     public function test_permissions_publisher_denial_audit_and_secret_non_exposure(): void
