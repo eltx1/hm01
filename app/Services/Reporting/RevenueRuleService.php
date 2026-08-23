@@ -36,16 +36,18 @@ final class RevenueRuleService
             $scope = $attributes['scope_type'] instanceof RevenueRuleScope
                 ? $attributes['scope_type']
                 : RevenueRuleScope::from((string) $attributes['scope_type']);
+            $scopeId = $scope === RevenueRuleScope::Global ? null : ($attributes['scope_id'] ?? null);
             $this->validateShares($attributes);
             $this->assertEffectiveDateOpen($attributes['effective_from']);
-            $organizationId = $this->scopeOrganization($scope, $attributes['scope_id'] ?? null)
+            $organizationId = $this->scopeOrganization($scope, $scopeId)
                 ?? ($attributes['organization_id'] ?? $actor?->organization_id);
+            $this->assertNoAmbiguousRule($scope, $scopeId, $attributes);
 
             $rule = RevenueRule::withoutGlobalScopes()->create([
                 'organization_id' => $organizationId,
                 'name' => $attributes['name'],
                 'scope_type' => $scope,
-                'scope_id' => $scope === RevenueRuleScope::Global ? null : ($attributes['scope_id'] ?? null),
+                'scope_id' => $scopeId,
                 'is_active' => $attributes['is_active'] ?? true,
                 'effective_from' => $attributes['effective_from'],
                 'effective_to' => $attributes['effective_to'] ?? null,
@@ -91,6 +93,15 @@ final class RevenueRuleService
             if ($rule->currentVersion && (string) $attributes['effective_from'] < $rule->currentVersion->effective_from->toDateString()) {
                 throw ValidationException::withMessages(['effective_from' => 'A new version cannot begin before the current version.']);
             }
+            $this->assertNoAmbiguousRule(
+                $rule->scope_type,
+                $rule->scope_id,
+                array_merge($attributes, [
+                    'priority' => $rule->priority,
+                    'is_active' => $rule->is_active,
+                ]),
+                $rule->id,
+            );
 
             $before = $rule->currentVersion?->only([
                 'version', 'publisher_share_bp', 'horus_share_bp', 'mcm_partner_share_bp',
@@ -149,6 +160,13 @@ final class RevenueRuleService
             return $this->createRule($attributes, $actor, allowCommercialTermsManager: true);
         }
 
+        $this->assertNoAmbiguousRule(
+            RevenueRuleScope::Publisher,
+            $contract->publisher_id,
+            array_merge($attributes, ['is_active' => true, 'priority' => $rule->priority]),
+            $rule->id,
+        );
+
         if (! $rule->is_active) {
             $rule->update(['is_active' => true, 'updated_by' => $actor->id]);
         }
@@ -190,6 +208,7 @@ final class RevenueRuleService
     public function resolve(CarbonInterface|string $date, array $context, ?string $currency = null): RevenueRuleVersion
     {
         $date = $date instanceof CarbonInterface ? $date->toDateString() : (string) $date;
+        $currency = $currency ? strtoupper($currency) : null;
         $rules = RevenueRule::withoutGlobalScopes()
             ->with('versions')
             ->where('is_active', true)
@@ -199,8 +218,21 @@ final class RevenueRuleService
             ->filter(fn (RevenueRule $rule) => $this->matches($rule, $context))
             ->sort(function (RevenueRule $left, RevenueRule $right): int {
                 $specificity = $right->scope_type->specificity() <=> $left->scope_type->specificity();
+                if ($specificity !== 0) {
+                    return $specificity;
+                }
 
-                return $specificity !== 0 ? $specificity : $right->priority <=> $left->priority;
+                $priority = $right->priority <=> $left->priority;
+                if ($priority !== 0) {
+                    return $priority;
+                }
+
+                $effective = $right->effective_from->toDateString() <=> $left->effective_from->toDateString();
+                if ($effective !== 0) {
+                    return $effective;
+                }
+
+                return strcmp((string) $right->id, (string) $left->id);
             });
 
         foreach ($rules as $rule) {
@@ -308,6 +340,70 @@ final class RevenueRuleService
             ->exists()) {
             throw ValidationException::withMessages([
                 'effective_from' => 'A revenue-share version cannot start inside a closed financial period.',
+            ]);
+        }
+    }
+
+    /**
+     * Prevent two active rules with the same decision rank from covering the
+     * same target, time window, and currency. The operator should version or
+     * end the existing rule instead of relying on database fetch order.
+     */
+    private function assertNoAmbiguousRule(
+        RevenueRuleScope $scope,
+        ?string $scopeId,
+        array $attributes,
+        ?string $ignoreRuleId = null,
+    ): void {
+        if (! ($attributes['is_active'] ?? true)) {
+            return;
+        }
+
+        $priority = (int) ($attributes['priority'] ?? 0);
+        $newStart = $attributes['effective_from'] instanceof CarbonInterface
+            ? $attributes['effective_from']->toDateString()
+            : (string) $attributes['effective_from'];
+        $newEnd = filled($attributes['effective_to'] ?? null)
+            ? ($attributes['effective_to'] instanceof CarbonInterface
+                ? $attributes['effective_to']->toDateString()
+                : (string) $attributes['effective_to'])
+            : null;
+        $newCurrency = filled($attributes['currency'] ?? null)
+            ? strtoupper((string) $attributes['currency'])
+            : null;
+
+        $query = RevenueRule::withoutGlobalScopes()
+            ->with('versions')
+            ->where('is_active', true)
+            ->where('scope_type', $scope->value)
+            ->where('priority', $priority);
+
+        if ($scope === RevenueRuleScope::Global) {
+            $query->whereNull('scope_id');
+        } else {
+            $query->where('scope_id', $scopeId);
+        }
+        if ($ignoreRuleId !== null) {
+            $query->where('id', '!=', $ignoreRuleId);
+        }
+
+        $conflict = $query->get()->first(function (RevenueRule $rule) use ($newStart, $newEnd, $newCurrency): bool {
+            return $rule->versions->contains(function (RevenueRuleVersion $version) use ($newStart, $newEnd, $newCurrency): bool {
+                $existingStart = $version->effective_from->toDateString();
+                $existingEnd = $version->effective_to?->toDateString();
+                $datesOverlap = ($newEnd === null || $existingStart <= $newEnd)
+                    && ($existingEnd === null || $newStart <= $existingEnd);
+                $currencyOverlaps = $newCurrency === null
+                    || $version->currency === null
+                    || strtoupper((string) $version->currency) === $newCurrency;
+
+                return $datesOverlap && $currencyOverlaps;
+            });
+        });
+
+        if ($conflict) {
+            throw ValidationException::withMessages([
+                'effective_from' => 'Active revenue rule "'.$conflict->name.'" already covers the same scope, priority, date range, and currency. Version or end that rule instead of creating an ambiguous duplicate.',
             ]);
         }
     }

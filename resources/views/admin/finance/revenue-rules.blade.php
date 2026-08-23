@@ -11,6 +11,91 @@
     </div>
 </section>
 
+@php
+    $previewRequested = request()->boolean('preview');
+    $previewError = null;
+    $previewVersion = null;
+    $previewRule = null;
+    $previewDate = (string) request('preview_date', now()->toDateString());
+    $previewCurrency = strtoupper(trim((string) request('preview_currency', 'USD')));
+
+    if ($previewRequested) {
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $previewDate) !== 1) {
+            $previewError = 'Choose a valid preview date.';
+        } elseif ($previewCurrency !== '' && preg_match('/^[A-Z]{3}$/', $previewCurrency) !== 1) {
+            $previewError = 'Currency must be a three-letter code such as USD.';
+        } else {
+            $previewPublisherId = trim((string) request('preview_publisher_id'));
+            $previewSiteId = trim((string) request('preview_site_id'));
+            $previewDemandId = trim((string) request('preview_demand_id'));
+            $previewCampaignId = trim((string) request('preview_campaign_id'));
+
+            if ($previewPublisherId === '' && $previewSiteId !== '') {
+                $previewPublisherId = (string) ($sites->firstWhere('id', $previewSiteId)?->publisher_id ?? '');
+            }
+
+            try {
+                $previewVersion = app(\App\Services\Reporting\RevenueRuleService::class)->resolve($previewDate, array_filter([
+                    'publisher_id' => $previewPublisherId,
+                    'site_id' => $previewSiteId,
+                    'report_source_id' => $previewDemandId,
+                    'demand_network_id' => $previewDemandId,
+                    'campaign_id' => $previewCampaignId,
+                ], fn ($value) => $value !== ''), $previewCurrency !== '' ? $previewCurrency : null);
+                if ($previewVersion->exists && $previewVersion->revenue_rule_id) {
+                    $previewRule = $rules->firstWhere('id', $previewVersion->revenue_rule_id);
+                }
+            } catch (\Throwable $exception) {
+                report($exception);
+                $previewError = 'The preview could not be resolved with the selected context.';
+            }
+        }
+    }
+@endphp
+
+<article class="workspace-section">
+    <div class="workspace-heading">
+        <div><p class="eyebrow">Share preview</p><h2>Which revenue share will actually apply?</h2><p>Use the same resolver as financial reporting before you activate traffic or change a commercial rule. This preview is read-only and changes nothing.</p></div>
+    </div>
+    <form method="GET" action="{{ route('admin.finance.revenue-rules.index') }}" class="form-grid">
+        <input type="hidden" name="preview" value="1">
+        <label>Publisher
+            <select class="hm-input" name="preview_publisher_id"><option value="">Any / not selected</option>@foreach($publishers as $publisher)<option value="{{ $publisher->id }}" @selected(request('preview_publisher_id') === $publisher->id)>{{ $publisher->display_name }}</option>@endforeach</select>
+        </label>
+        <label>Website
+            <select class="hm-input" name="preview_site_id"><option value="">Any / not selected</option>@foreach($sites as $site)<option value="{{ $site->id }}" @selected(request('preview_site_id') === $site->id)>{{ $site->display_name }} · {{ $site->publisher?->display_name }}</option>@endforeach</select>
+            <span class="muted">If Publisher is blank, the Website's Publisher is inferred automatically.</span>
+        </label>
+        <label>Demand source
+            <select class="hm-input" name="preview_demand_id"><option value="">Any / not selected</option><optgroup label="Reporting sources">@foreach($reportSources as $source)<option value="{{ $source->id }}" @selected(request('preview_demand_id') === $source->id)>{{ $source->name }}</option>@endforeach</optgroup><optgroup label="Demand networks">@foreach($demandNetworks as $network)<option value="{{ $network->id }}" @selected(request('preview_demand_id') === $network->id)>{{ $network->name }}</option>@endforeach</optgroup></select>
+        </label>
+        <label>Campaign
+            <select class="hm-input" name="preview_campaign_id"><option value="">Any / not selected</option>@foreach($campaigns as $campaign)<option value="{{ $campaign->id }}" @selected(request('preview_campaign_id') === $campaign->id)>{{ $campaign->name }}</option>@endforeach</select>
+        </label>
+        <label>Date<input class="hm-input" type="date" name="preview_date" value="{{ $previewDate }}" required></label>
+        <label>Currency<input class="hm-input" name="preview_currency" maxlength="3" value="{{ $previewCurrency }}" placeholder="USD"></label>
+        <button class="hm-button-primary">Preview effective share</button>
+    </form>
+
+    @if($previewRequested)
+        @if($previewError)
+            <p class="error">{{ $previewError }}</p>
+        @elseif($previewVersion)
+            <div class="summary-grid">
+                <div><strong>Winning rule</strong><span>{{ $previewRule?->name ?: 'System fallback' }}</span></div>
+                <div><strong>Target</strong><span>{{ $previewRule ? ($scopeLabels[$previewRule->id] ?? 'Resolved target') : 'Default reporting configuration' }}</span></div>
+                <div><strong>Publisher</strong><span>{{ number_format($previewVersion->publisher_share_bp / 100, 2) }}%</span></div>
+                <div><strong>Horus Media</strong><span>{{ number_format($previewVersion->horus_share_bp / 100, 2) }}%</span></div>
+                <div><strong>MCM partner</strong><span>{{ number_format($previewVersion->mcm_partner_share_bp / 100, 2) }}%</span></div>
+                <div><strong>Version</strong><span>{{ $previewVersion->version === 0 ? 'System fallback' : 'v'.$previewVersion->version }}</span></div>
+                <div><strong>Effective</strong><span>{{ $previewVersion->effective_from->toDateString() }} — {{ $previewVersion->effective_to?->toDateString() ?: 'Open' }}</span></div>
+                <div><strong>Currency</strong><span>{{ $previewVersion->currency ?: ($previewCurrency ?: 'Any') }}</span></div>
+            </div>
+            @if($previewRule)<p class="muted">Resolved by {{ str($previewRule->scope_type->value)->replace('_', ' ')->headline() }} specificity, then explicit priority. {{ $previewVersion->reason ? 'Reason: '.$previewVersion->reason : '' }}</p>@else<p class="muted">No stored rule matched this context, so the configured system fallback is shown.</p>@endif
+        @endif
+    @endif
+</article>
+
 @if(auth()->user()->hasPermission('finance.revenue_rules.manage'))
 <article class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">New rule</p><h2>Create a revenue-share rule</h2><p>Choose the scope and its matching named target. You never need to copy database IDs.</p></div></div>

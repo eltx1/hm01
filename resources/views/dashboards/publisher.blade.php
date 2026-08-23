@@ -11,12 +11,12 @@
     <div>
         <p class="eyebrow">Publisher workspace</p>
         <h2>{{ $publisher->display_name }}</h2>
-        <p>Manage websites, follow onboarding and serving readiness, and review finalized aggregated earnings, statements, and payment balances.</p>
+        <p>Add and manage websites, complete ads.txt verification, configure monetization, and review finalized earnings and payment balances.</p>
         <div class="status-row">
             <x-status-badge :status="$publisher->status" />
-            @if(auth()->user()->hasPermission('sites.view'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.index') }}">Manage websites</a>@endif
+            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.create') }}">Add website</a>@endif
+            @if(auth()->user()->hasPermission('sites.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.index') }}">Manage websites</a>@endif
             @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-secondary button-link" href="{{ route('publisher.finance.overview') }}">Earnings &amp; Payments</a>@endif
-            @if(auth()->user()->hasPermission('reporting.publisher.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.reporting.index') }}">Open reports</a>@endif
         </div>
     </div>
 </section>
@@ -31,7 +31,6 @@
     <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Finalized aggregated data</span></article>
     <article><p class="eyebrow">Publisher earnings</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['revenue_minor']) }}</strong><span class="muted">Finalized contractual share in {{ $reporting['currency'] }}</span></article>
     <article><p class="eyebrow">Payment balance</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }}</strong><span class="muted">Latest finalized {{ $reporting['currency'] }} statement</span></article>
-    <article><p class="eyebrow">Onboarding</p><strong class="metric">{{ $publisher->onboarding_step }}/7</strong><span class="muted">{{ $publisher->onboarding_submitted_at ? 'Submitted' : 'In progress' }}</span></article>
 </section>
 
 <section class="split-grid">
@@ -41,13 +40,13 @@
             @forelse($publisher->sites->take(6) as $site)
                 <div class="compact-row"><div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }} · {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</p></div><x-status-badge :status="$site->status" /></div>
             @empty
-                <p class="muted">No websites have been created yet.</p>
+                <p class="muted">No websites yet. Add your first website to begin monetization setup.</p>
             @endforelse
         </div>
     </article>
     <article>
         <p class="eyebrow">Commercial readiness</p><h2>Terms and payment profile</h2>
-        <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
+        <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Configure when you are ready to receive payouts' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
         <div class="compact-row"><div><strong>Commercial terms</strong><p>{{ $activeContract?->contract_reference ?: 'No active terms' }}</p></div><x-status-badge :status="$activeContract?->status?->value ?: 'PENDING'" /></div>
         @if(auth()->user()->hasPermission('contracts.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.contracts.index') }}">View commercial terms</a>@endif
     </article>

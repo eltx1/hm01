@@ -4,11 +4,8 @@ namespace App\Http\Controllers\Publisher;
 
 use App\Http\Controllers\Controller;
 use App\Models\PublisherContract;
-use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ContractController extends Controller
 {
@@ -22,13 +19,12 @@ class ContractController extends Controller
         return view('publisher.contracts.show', compact('contract'));
     }
 
-    public function download(PublisherContract $contract): StreamedResponse|Response
+    /**
+     * Commercial terms are account data, not a publisher document workflow.
+     * Keep this compatibility endpoint fail-closed for stale links.
+     */
+    public function download(PublisherContract $contract): Response
     {
-        abort_unless($contract->contract_file_path, 404);
-        try {
-            return Storage::disk('local')->download($contract->contract_file_path, $contract->contract_file_name);
-        } catch (FileNotFoundException) {
-            abort(404);
-        }
+        abort(404);
     }
 }

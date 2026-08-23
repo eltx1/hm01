@@ -15,7 +15,7 @@ final class ControlPlaneNavigation
 
         $groups = match ($user->organization?->type) {
             OrganizationType::HorusMedia => $this->administrator($permissions),
-            OrganizationType::Publisher => $this->publisher($user, $permissions),
+            OrganizationType::Publisher => $this->publisher($permissions),
             OrganizationType::Advertiser => $this->advertiser($permissions),
             OrganizationType::Partner => $this->partner($permissions),
             default => [],
@@ -85,15 +85,12 @@ final class ControlPlaneNavigation
         ];
     }
 
-    private function publisher(User $user, Collection $permissions): array
+    private function publisher(Collection $permissions): array
     {
-        $step = $user->organization?->publisher?->onboarding_step ?? 1;
-
         return [
             $this->group('Overview', [
                 $this->item('Publisher overview', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
                 $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
-                $this->item('Onboarding', 'publisher.onboarding.show', 'onboarding.manage', ['publisher.onboarding.*'], ['step' => $step]),
             ]),
             $this->group('Websites', [
                 $this->item('Monetization Center', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),

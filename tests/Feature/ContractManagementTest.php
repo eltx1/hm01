@@ -10,8 +10,6 @@ use App\Models\PublisherContract;
 use App\Models\RevenueRule;
 use App\Services\Contracts\ContractLifecycleService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
@@ -49,9 +47,8 @@ class ContractManagementTest extends TestCase
         $service->transition($contract, ContractStatus::Active, $admin);
     }
 
-    public function test_contract_upload_uses_private_storage_and_other_publisher_cannot_download(): void
+    public function test_legacy_contract_document_endpoints_are_retired(): void
     {
-        Storage::fake('local');
         $this->seedIdentity();
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
         $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
@@ -59,21 +56,30 @@ class ContractManagementTest extends TestCase
         $contract = $this->contract($publisher->id, $publisher->organization_id, $admin->id);
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
-            ->post(route('admin.publishers.contracts.upload', [$publisher, $contract]), ['contract_file' => UploadedFile::fake()->create('agreement.pdf', 20, 'application/pdf')])->assertRedirect();
-        Storage::disk('local')->assertExists($contract->fresh()->contract_file_path);
+            ->post(route('admin.publishers.contracts.upload', [$publisher, $contract]))
+            ->assertNotFound();
+        $this->get(route('admin.publishers.contracts.download', [$publisher, $contract]))
+            ->assertNotFound();
 
-        $other = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
-        $this->makePublisherFor($other, ['legal_name' => 'Other LLC', 'display_name' => 'Other']);
-        $this->actingAs($other)->get(route('publisher.contracts.download', $contract))->assertNotFound();
+        $this->actingAs($publisherUser)
+            ->get(route('publisher.contracts.download', $contract))
+            ->assertNotFound();
+
+        $this->assertNull($contract->fresh()->contract_file_path);
     }
 
     private function contract(string $publisherId, string $organizationId, string $creatorId): PublisherContract
     {
         return PublisherContract::withoutGlobalScopes()->create([
-            'organization_id' => $organizationId, 'publisher_id' => $publisherId,
-            'contract_reference' => 'HM-001', 'revenue_share_percent' => 70,
-            'payment_threshold' => 100, 'currency' => 'USD', 'payment_terms' => 'NET_30',
-            'status' => ContractStatus::Draft, 'created_by' => $creatorId,
+            'organization_id' => $organizationId,
+            'publisher_id' => $publisherId,
+            'contract_reference' => 'HM-001',
+            'revenue_share_percent' => 70,
+            'payment_threshold' => 100,
+            'currency' => 'USD',
+            'payment_terms' => 'NET_30',
+            'status' => ContractStatus::Draft,
+            'created_by' => $creatorId,
         ]);
     }
 }
