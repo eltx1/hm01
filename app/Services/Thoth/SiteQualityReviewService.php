@@ -35,6 +35,18 @@ final class SiteQualityReviewService
         return $this->activeRun($site) ?? $this->queue($site, $actor, 'MANUAL');
     }
 
+    public function markUnexpectedFailure(string $runId): void
+    {
+        try {
+            $run = SiteQualityReviewRun::query()->find($runId);
+            if ($run && ! in_array($run->status, ['COMPLETED', 'FAILED'], true)) {
+                $this->fail($run, 'REVIEW_FAILED');
+            }
+        } catch (Throwable) {
+            // Last-resort guard: an advisory failure must never escape into Site lifecycle work.
+        }
+    }
+
     private function activeRun(Site $site): ?SiteQualityReviewRun
     {
         return SiteQualityReviewRun::query()
@@ -67,7 +79,7 @@ final class SiteQualityReviewService
         }
 
         try {
-            RunSiteQualityReview::dispatch($run->id);
+            RunSiteQualityReview::dispatch($run->id)->onConnection('database')->onQueue('default');
         } catch (Throwable) {
             if (! in_array($run->fresh()->status, ['COMPLETED', 'FAILED'], true)) {
                 $this->fail($run->fresh(), 'QUEUE_UNAVAILABLE');
