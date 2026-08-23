@@ -84,8 +84,9 @@ final class SiteAdsTxtInstallationService
             ->where('site_domain_id', $domain->id)
             ->where('method', VerificationMethod::AdsTxt->value)
             ->where('expected_value', implode("\n", $core))
-            ->latest('attempted_at')
-            ->latest('created_at')
+            ->orderByDesc('attempted_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->first();
 
         return $latest?->status === 'VERIFIED' && $latest->verified_at !== null;
