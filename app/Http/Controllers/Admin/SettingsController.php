@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\Settings\GlobalSettingsService;
 use App\Services\Settings\TypedSettingsRegistry;
+use App\Services\StaticDelivery\SupplyChainStaticPublisher;
 use App\Services\TrafficGate\TrafficGateGlobalSettingsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,10 +15,18 @@ use Illuminate\View\View;
 
 final class SettingsController extends Controller
 {
+    private const SUPPLY_CHAIN_ARTIFACT_KEYS = [
+        'supply_chain.manager_domain',
+        'supply_chain.contact_email',
+        'supply_chain.contact_address',
+        'supply_chain.tag_id',
+    ];
+
     public function __construct(
         private readonly GlobalSettingsService $settings,
         private readonly TypedSettingsRegistry $registry,
         private readonly TrafficGateGlobalSettingsService $trafficGateSettings,
+        private readonly SupplyChainStaticPublisher $supplyChainPublisher,
     ) {}
 
     public function index(): View
@@ -44,6 +53,7 @@ final class SettingsController extends Controller
         } else {
             $this->settings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
         }
+        $this->queueSupplyChainPublication($key, $request, 'SETTING_UPDATED');
 
         return back()->with('status', 'Setting updated.');
     }
@@ -63,8 +73,21 @@ final class SettingsController extends Controller
         } else {
             $this->settings->reset($request->user(), $key, $data['reason'] ?? null);
         }
+        $this->queueSupplyChainPublication($key, $request, 'SETTING_RESET');
 
         return back()->with('status', 'Setting reset to its configured fallback.');
+    }
+
+    private function queueSupplyChainPublication(string $key, Request $request, string $event): void
+    {
+        if (! in_array($key, self::SUPPLY_CHAIN_ARTIFACT_KEYS, true)) {
+            return;
+        }
+
+        $this->supplyChainPublisher->queueUrgent([
+            'event' => $event,
+            'setting_key' => $key,
+        ], $request->user());
     }
 
     private function authorizeImpact(Request $request, bool $highImpact, string $key, array $data): void

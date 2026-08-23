@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Models\GlobalSetting;
+use App\Models\StaticGlobalArtifactChange;
 use App\Services\Settings\GlobalSettingsService;
 use App\Services\Settings\SettingDefinition;
 use App\Services\Settings\TypedSettingsRegistry;
@@ -97,6 +98,25 @@ class GlobalSettingsGovernanceTest extends TestCase
         $settings->invalidate();
         $settings->applyRuntimeOverrides();
         $this->assertSame('compliance@example.com', config('supply-chain.contact_email'));
+    }
+
+    public function test_public_supply_chain_identity_setting_queues_urgent_static_publication(): void
+    {
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.settings.update', ['key' => 'supply_chain.contact_email']), [
+                'value' => 'mohamed@horusmedia.net',
+            ])
+            ->assertRedirect();
+
+        $this->assertSame(
+            'mohamed@horusmedia.net',
+            GlobalSetting::query()->findOrFail('supply_chain.contact_email')->value,
+        );
+        $change = StaticGlobalArtifactChange::query()->sole();
+        $this->assertSame('SUPPLY_CHAIN', $change->artifact_type);
+        $this->assertSame('URGENT', $change->priority->value);
+        $this->assertSame('SETTING_UPDATED', $change->context['event']);
+        $this->assertSame('supply_chain.contact_email', $change->context['setting_key']);
     }
 
     public function test_permissions_publisher_denial_audit_and_secret_non_exposure(): void
