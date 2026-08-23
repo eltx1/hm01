@@ -103,17 +103,13 @@ class SiteController extends Controller
             : 'Authorized domain added. It will publish automatically when the website is activated.');
     }
 
-    public function submit(
-        Request $request,
-        Site $site,
-        SiteLifecycleService $lifecycle,
-        SiteQualityReviewService $qualityReviews,
-    ): RedirectResponse {
+    public function submit(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
+    {
         $lifecycle->transition($site, SiteStatus::PendingReview, $request->user(), 'Submitted by publisher.');
         SiteReview::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'decision' => 'PENDING', 'submitted_at' => now()]);
 
         try {
-            $qualityReviews->queueAutomatic($site->fresh(), $request->user());
+            app(SiteQualityReviewService::class)->queueAutomatic($site->fresh(), $request->user());
         } catch (Throwable $exception) {
             Log::warning('Automatic THOTH website review could not start; website submission remains valid.', [
                 'site_id' => $site->id,
