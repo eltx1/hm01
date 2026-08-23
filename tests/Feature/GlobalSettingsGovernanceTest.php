@@ -108,10 +108,10 @@ class GlobalSettingsGovernanceTest extends TestCase
             ])
             ->assertRedirect();
 
-        $this->assertDatabaseHas('global_settings', [
-            'key' => 'supply_chain.contact_email',
-            'value' => 'mohamed@horusmedia.net',
-        ]);
+        $this->assertSame(
+            'mohamed@horusmedia.net',
+            GlobalSetting::query()->findOrFail('supply_chain.contact_email')->value,
+        );
         $change = StaticGlobalArtifactChange::query()->sole();
         $this->assertSame('SUPPLY_CHAIN', $change->artifact_type);
         $this->assertSame('URGENT', $change->priority->value);
