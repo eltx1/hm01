@@ -83,6 +83,9 @@ jobs:
             "mkdir -p '$remote_dir' && cd '$app_root' && php artisan static-delivery:build '$remote_dir'"
           ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." \
             | tar -xzf - -C "$RUNNER_TEMP/static-edge"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cat '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest' 2>/dev/null || true" \
+            > "$RUNNER_TEMP/confirmed-manifest"
           ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
 
       - name: Validate sanitized production snapshot
@@ -95,8 +98,14 @@ jobs:
           local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
           [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
           echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
-          remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
-            | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
+          confirmed_hash="$(tr -d '[:space:]' < "$RUNNER_TEMP/confirmed-manifest")"
+          remote_hash=""
+          if [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ ]]; then
+            remote_hash="$confirmed_hash"
+          else
+            remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
+              | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
+          fi
           if [[ "$local_hash" == "$remote_hash" ]]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "Public edge already has manifest $local_hash."
@@ -106,7 +115,8 @@ jobs:
 
       - name: Deploy live snapshot to Cloudflare Pages
         if: steps.compare.outputs.deploy == 'true'
-        uses: cloudflare/wrangler-action@v3
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -114,21 +124,37 @@ jobs:
 
       - name: Verify canonical public artifacts
         if: steps.compare.outputs.deploy == 'true'
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
+          [[ "$DEPLOYMENT_URL" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]
           for attempt in $(seq 1 18); do
-            if curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/remote-manifest.json" \
+            if curl -fsSL --max-time 20 "$DEPLOYMENT_URL/delivery-manifest.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/remote-manifest.json" \
               && cmp -s "$RUNNER_TEMP/static-edge/delivery-manifest.json" "$RUNNER_TEMP/remote-manifest.json" \
-              && curl -fsSL --max-time 20 "$CDN_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/cdn-sellers.json" \
-              && curl -fsSL --max-time 20 "$PUBLIC_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/public-sellers.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/cdn-sellers.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/public-sellers.json"; then
-              exit 0
+              && curl -fsSL --max-time 20 "$DEPLOYMENT_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/deployment-sellers.json" \
+              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/deployment-sellers.json"; then
+              break
+            fi
+            if [[ "$attempt" == '18' ]]; then
+              echo 'Cloudflare Pages did not expose the exact deployment within the verification window.' >&2
+              exit 1
             fi
             sleep 10
           done
-          echo 'Cloudflare did not expose the exact production snapshot within the verification window.' >&2
-          exit 1
+
+          for url in "$CDN_URL/sellers.json" "$PUBLIC_URL/sellers.json"; do
+            status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/1.0' \
+              --output "$RUNNER_TEMP/custom-sellers.json" --write-out '%{http_code}' "$url?verify=$GITHUB_RUN_ID")"
+            if [[ "$status" == '200' ]]; then
+              cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/custom-sellers.json"
+            elif [[ "$status" == '403' ]]; then
+              echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $url; the exact Pages deployment was verified."
+            else
+              echo "Unexpected custom-domain status $status for $url" >&2
+              exit 1
+            fi
+          done
 
       - name: Confirm manifest on production control plane
         env:
