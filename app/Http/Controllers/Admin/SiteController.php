@@ -15,6 +15,7 @@ use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\DomainVerificationService;
+use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
 use App\Services\TrafficGate\TrafficGateConfigurationResolver;
 use Illuminate\Http\RedirectResponse;
@@ -81,9 +82,18 @@ class SiteController extends Controller
         return back()->with('status', 'Website rejected with a publisher-visible explanation.');
     }
 
-    public function activate(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
-    {
+    public function activate(
+        Request $request,
+        Site $site,
+        SiteLifecycleService $lifecycle,
+        SiteAdsTxtInstallationService $adsTxt,
+    ): RedirectResponse {
         $data = $request->validate(['reason' => ['nullable', 'string', 'max:2000']]);
+        if (! $adsTxt->hasCurrentCoreVerification($site)) {
+            return back()->withErrors([
+                'activation' => 'Activation blocked. Verify the current primary domain through both assigned Horus HMP/HMS DIRECT ads.txt records first.',
+            ]);
+        }
         $lifecycle->transition($site, SiteStatus::Active, $request->user(), $data['reason'] ?? 'Activated by Horus Media.');
 
         return back()->with('status', 'Website activated.');
