@@ -9,7 +9,6 @@
 @if(!$site->exists)
 <label>Content category<select class="hm-input" name="content_category" required><option value="">Choose one</option>@foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)<option value="{{ $category }}" @selected(old('content_category') === $category)>{{ str($category)->headline() }}</option>@endforeach</select></label>
 <label>Primary country (ISO 2)<input class="hm-input" name="country" value="{{ old('country') }}" maxlength="2" placeholder="US" required></label>
-<label class="full">Estimated monthly pageviews <span class="muted">(optional)</span><input class="hm-input" type="number" min="0" name="estimated_monthly_pageviews" value="{{ old('estimated_monthly_pageviews') }}" inputmode="numeric"></label>
 <div class="full wizard-actions"><span class="muted">Next: copy one complete ads.txt block and verify only the two Horus records.</span><button class="hm-button-primary">Add website</button></div>
 @else
 <label>Language<input class="hm-input" name="language" value="{{ old('language', $site->language ?: 'en') }}" required></label>
