@@ -117,11 +117,18 @@ class ExpressPublisherOnboardingTest extends TestCase
         $bundle = app(SiteAdsTxtInstallationService::class)->bundle($site);
         $this->assertTrue($bundle['available']);
         $this->assertCount(2, $bundle['core_records']);
+        $this->assertSame([
+            'OWNERDOMAIN=fast-news.example',
+            'MANAGERDOMAIN=horusmedia.net',
+            'CONTACT=mohamed@horusmedia.net',
+        ], array_slice($bundle['records'], 0, 3));
         $this->assertContains('master.example, master-123, RESELLER', $bundle['records']);
 
         $this->get(route('publisher.sites.show', $site))
             ->assertOk()
             ->assertSee('Copy the complete ads.txt block')
+            ->assertSee('MANAGERDOMAIN=horusmedia.net')
+            ->assertSee('CONTACT=mohamed@horusmedia.net')
             ->assertSee('master.example, master-123, RESELLER');
 
         Http::fake(['*' => Http::response(implode("\n", $bundle['core_records'])."\n", 200, ['Content-Type' => 'text/plain'])]);
