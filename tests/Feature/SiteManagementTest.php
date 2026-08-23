@@ -80,7 +80,8 @@ class SiteManagementTest extends TestCase
     {
         $this->seedIdentity();
         $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
-        $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $publisher = $this->makePublisherFor($publisherUser, ['business_domain' => 'publisher-owner.example']);
+        $site = $this->makeSiteFor($publisher, $publisherUser);
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
 
         $this->actingAs($publisherUser)->post(route('publisher.sites.submit', $site))->assertRedirect();
