@@ -27,7 +27,7 @@
 
     <label for="publisher-password"><span class="field-label">Password <span class="required-marker" aria-hidden="true">Required</span></span></label>
     <input id="publisher-password" class="hm-input" type="password" name="password" required autocomplete="new-password" aria-describedby="publisher-password-help{{ $errors->has('password') ? ' publisher-password-error' : '' }}" @error('password') aria-invalid="true" @enderror>
-    <p class="field-help" id="publisher-password-help">Use at least 14 characters with upper/lowercase letters, a number, and a symbol. Password managers and paste are supported.</p>
+    <p class="field-help" id="publisher-password-help">Use at least 10 characters. Password managers and paste are supported.</p>
     @error('password')<p class="field-error" id="publisher-password-error" role="alert">{{ $message }}</p>@enderror
 
     <label for="publisher-password-confirmation"><span class="field-label">Confirm password <span class="required-marker" aria-hidden="true">Required</span></span></label>
