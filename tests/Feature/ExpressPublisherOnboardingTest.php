@@ -46,6 +46,8 @@ class ExpressPublisherOnboardingTest extends TestCase
         $this->get(route('publisher-registration.create'))
             ->assertOk()
             ->assertSee('under two minutes')
+            ->assertSee('Use at least 10 characters')
+            ->assertDontSee('Use at least 14 characters')
             ->assertDontSee('Primary website or domain')
             ->assertDontSee('Traffic');
 
@@ -53,8 +55,11 @@ class ExpressPublisherOnboardingTest extends TestCase
             'name' => 'Fast Publisher',
             'email' => 'fast@publisher.example',
             'publisher_name' => 'Fast Publishing LLC',
-            'password' => 'Secure-Password-2026!',
-            'password_confirmation' => 'Secure-Password-2026!',
+            'password' => 'simplepass1',
+            'password_confirmation' => 'simplepass1',
+            // A stale/legacy client must not be able to create the old pre-approval
+            // website-claim flow by posting a domain that the express form ignores.
+            'primary_domain' => 'legacy-claim.example',
             '_company_website' => '',
         ])->assertRedirect(route('publisher-application.show'));
 
@@ -65,7 +70,9 @@ class ExpressPublisherOnboardingTest extends TestCase
 
         $this->get(route('publisher-application.show'))
             ->assertOk()
-            ->assertSee('No website, ads.txt, traffic percentages, or technical setup is required here.')
+            ->assertSee('No website, ads.txt, traffic data, or technical setup is required here.')
+            ->assertDontSee('Monthly pageviews')
+            ->assertDontSee('estimated monthly pageviews')
             ->assertDontSee('Organic traffic');
 
         $this->post(route('publisher-application.complete'), [
