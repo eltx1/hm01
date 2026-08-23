@@ -31,8 +31,8 @@ final class RunSiteQualityReview implements ShouldQueue
         try {
             $reviews->execute($run);
         } catch (Throwable) {
-            // Provider/service failures are persisted by the service. A final guard keeps
-            // this optional advisory from becoming a platform failed-job dependency.
+            $reviews->markUnexpectedFailure($this->runId);
+            // The optional advisory never becomes a failed-job dependency for the platform.
         }
     }
 }
