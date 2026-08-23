@@ -88,6 +88,7 @@ class SiteController extends Controller
         SiteLifecycleService $lifecycle,
         SiteAdsTxtInstallationService $adsTxt,
     ): RedirectResponse {
+        abort_unless($site->status === SiteStatus::Approved, 422, 'Only an approved website can be activated.');
         $data = $request->validate(['reason' => ['nullable', 'string', 'max:2000']]);
         if (! $adsTxt->hasCurrentCoreVerification($site)) {
             return back()->withErrors([
