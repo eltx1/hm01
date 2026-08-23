@@ -61,8 +61,15 @@ features are implemented through the latest release validation. The remaining
 work is external go-live evidence: production hosting, real credentials,
 scheduler/CDN configuration, a controlled pilot, and operational sign-off.
 
+The current Publisher and commercial product flow is defined in
+[Current Product Truth](docs/CURRENT_PRODUCT_TRUTH.md). Historical task-era
+documents may describe retired onboarding or contract-file workflows; when they
+disagree with the current code and executable tests, the current product-truth
+document wins.
+
 Use these documents as the release gates:
 
+- [Current Product Truth](docs/CURRENT_PRODUCT_TRUTH.md)
 - [Go-live checklist](docs/GO_LIVE_CHECKLIST.md)
 - [Controlled pilot runbook](docs/PILOT_RUNBOOK.md)
 - [Security and recovery operations](docs/SECURITY_OPERATIONS.md)
@@ -86,13 +93,16 @@ system:
 - Vite assets compiled before deployment
 - organization-scoped authentication and account isolation
 - system roles, permissions, secure invitations, and audited administration
-- TOTP administrator two-factor authentication with single-use recovery codes
+- optional TOTP and email-verification implementation retained for non-production/future use while current production policy keeps them non-mandatory
 - organization, publisher, advertiser, contact, and white-label branding management
 - interactive first-super-administrator bootstrap command
 - publisher, advertiser, partner, and Horus Media dashboard shells
-- seven-step publisher onboarding with encrypted payment details
-- contracts, private contract files, status transitions, and revenue-share terms
-- organization-scoped websites, authorized domains, and four verification modes
+- account-first public Publisher application followed by human approval and separate per-Website onboarding
+- data-only Commercial Terms with status transitions and synchronized default Publisher revenue share
+- versioned Revenue Rules with Publisher, Website, Demand Source, Publisher + Demand Source, Campaign, and Global scopes
+- Revenue Rule ambiguity protection for overlapping same-rank scope/target/date/currency decisions
+- organization-scoped websites, authorized domains, and verification controls
+- one complete per-Website ads.txt installation block with OWNERDOMAIN, Horus MANAGERDOMAIN/contact, HMP/HMS, and applicable reviewed demand records
 - audited website review, status, serving-mode, revenue-share, and emergency controls
 - Google Ad Manager multi-network connection and synchronization layer
 - local inventory, transactional static-delivery outbox, Cloudflare Pages pipeline,
@@ -144,6 +154,7 @@ direct campaign lifecycle, aggregated GAM report requests, and drift checks.
 
 ## Documentation
 
+- [Current Product Truth](docs/CURRENT_PRODUCT_TRUTH.md)
 - [Product](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Multi-engine serving](docs/MULTI_ENGINE_SERVING.md)
@@ -181,4 +192,3 @@ without a GAM connection. See `docs/PILOT_RUNBOOK.md` for PILOT A-E and provider
 activation gates. OneTag is an optional pinned Prebid adapter; ExoClick has a
 reviewed asynchronous Direct JS recipe; Adsterra remains operator-tag-driven
 through the generic reviewed importer rather than a guessed hard-coded recipe.
-
