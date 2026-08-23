@@ -12,11 +12,14 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
+use App\Services\Thoth\SiteQualityReviewService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
+use Throwable;
 
 class SiteController extends Controller
 {
@@ -105,7 +108,16 @@ class SiteController extends Controller
         $lifecycle->transition($site, SiteStatus::PendingReview, $request->user(), 'Submitted by publisher.');
         SiteReview::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'decision' => 'PENDING', 'submitted_at' => now()]);
 
-        return back()->with('status', 'Website submitted for review. Horus ads.txt verification may finish during review, but both assigned HMP/HMS DIRECT records must verify before production activation.');
+        try {
+            app(SiteQualityReviewService::class)->queueAutomatic($site->fresh(), $request->user());
+        } catch (Throwable $exception) {
+            Log::warning('Automatic THOTH website review could not start; website submission remains valid.', [
+                'site_id' => $site->id,
+                'exception' => $exception::class,
+            ]);
+        }
+
+        return back()->with('status', 'Website submitted for review. THOTH will review it in parallel when AI is available; any AI failure will not block human review. Horus ads.txt verification may finish during review, but both assigned HMP/HMS DIRECT records must verify before production activation.');
     }
 
     private function publisher(Request $request): Publisher
