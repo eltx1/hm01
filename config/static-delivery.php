@@ -26,4 +26,9 @@ return [
         'timeout' => (int) env('HORUS_EDGE_REQUEST_TIMEOUT', 20),
         'read_attempts' => (int) env('HORUS_EDGE_READ_ATTEMPTS', 3),
     ],
+    'external_sync' => [
+        'manifest_url' => rtrim(env('HORUS_STATIC_DELIVERY_MANIFEST_URL', env('HORUS_CDN_URL', 'https://cdn.horusmedia.net')), '/').'/delivery-manifest.json',
+        'connect_timeout' => (int) env('HORUS_EDGE_CONNECT_TIMEOUT', 5),
+        'timeout' => (int) env('HORUS_EDGE_REQUEST_TIMEOUT', 20),
+    ],
 ];
