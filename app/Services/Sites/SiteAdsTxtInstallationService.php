@@ -35,6 +35,13 @@ final class SiteAdsTxtInstallationService
             $system.', '.$hmp->seller_id.', DIRECT',
             $system.', '.$hms->seller_id.', DIRECT',
         ] : [];
+        $ownerDomain = $this->supplyChain->ownerDomainForSite($site);
+        $contact = trim((string) config('supply-chain.contact_email'));
+        $directives = array_values(array_filter([
+            $ownerDomain === null ? null : 'OWNERDOMAIN='.$ownerDomain,
+            'MANAGERDOMAIN='.$system,
+            $contact === '' ? null : 'CONTACT='.$contact,
+        ]));
 
         $master = PlatformAdsTxtRecord::query()
             ->where('status', 'ACTIVE')
@@ -49,7 +56,7 @@ final class SiteAdsTxtInstallationService
                 $record->certification_authority_id,
             ])))))->all();
         $applicable = $this->supplyChain->adsTxtForSite($site)['lines'];
-        $records = collect(array_merge($core, $master, $applicable))
+        $records = collect(array_merge($directives, $core, $master, $applicable))
             ->map(fn (string $line): string => trim($line))
             ->filter()->unique()->values()->all();
 
