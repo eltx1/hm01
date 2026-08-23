@@ -31,15 +31,17 @@ class SiteActivationAdsTxtReadinessTest extends TestCase
         $this->assertTrue($bundle['available']);
         $this->assertCount(2, $bundle['core_records']);
 
-        Http::fake(['*' => Http::response(implode("\n", $bundle['core_records'])."\n", 200, ['Content-Type' => 'text/plain'])]);
-        $successful = $service->verify($site->fresh(), $domain, $publisherUser);
+        Http::fake([
+            '*' => Http::sequence()
+                ->push(implode("\n", $bundle['core_records'])."\n", 200, ['Content-Type' => 'text/plain'])
+                ->push($bundle['core_records'][0]."\n", 200, ['Content-Type' => 'text/plain']),
+        ]);
 
+        $successful = $service->verify($site->fresh(), $domain, $publisherUser);
         $this->assertSame('VERIFIED', $successful->status);
         $this->assertTrue($service->hasCurrentCoreVerification($site->fresh()));
 
-        Http::fake(['*' => Http::response($bundle['core_records'][0]."\n", 200, ['Content-Type' => 'text/plain'])]);
         $failed = $service->verify($site->fresh(), $domain->fresh(), $publisherUser);
-
         $this->assertSame('FAILED', $failed->status);
         $this->assertFalse($service->hasCurrentCoreVerification($site->fresh()));
     }
