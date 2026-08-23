@@ -119,7 +119,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertSame('supply_chain.contact_email', $change->context['setting_key']);
     }
 
-    public function test_production_contact_migration_overrides_legacy_environment_and_queues_publication(): void
+    public function test_production_contact_migration_overrides_legacy_environment_without_polluting_tests(): void
     {
         GlobalSetting::query()->whereKey('supply_chain.contact_email')->delete();
         StaticGlobalArtifactChange::query()->delete();
@@ -133,9 +133,7 @@ class GlobalSettingsGovernanceTest extends TestCase
             'mohamed@horusmedia.net',
             GlobalSetting::query()->findOrFail('supply_chain.contact_email')->value,
         );
-        $change = StaticGlobalArtifactChange::query()->sole();
-        $this->assertSame('URGENT', $change->priority->value);
-        $this->assertSame('PUBLIC_CONTACT_EMAIL_MIGRATED', $change->context['event']);
+        $this->assertDatabaseCount('static_global_artifact_changes', 0);
     }
 
     public function test_permissions_publisher_denial_audit_and_secret_non_exposure(): void

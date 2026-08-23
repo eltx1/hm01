@@ -20,10 +20,12 @@ return new class extends Migration
         );
 
         app(GlobalSettingsService::class)->invalidate();
-        app(SupplyChainStaticPublisher::class)->queueUrgent([
-            'event' => 'PUBLIC_CONTACT_EMAIL_MIGRATED',
-            'setting_key' => 'supply_chain.contact_email',
-        ]);
+        if (! app()->runningUnitTests()) {
+            app(SupplyChainStaticPublisher::class)->queueUrgent([
+                'event' => 'PUBLIC_CONTACT_EMAIL_MIGRATED',
+                'setting_key' => 'supply_chain.contact_email',
+            ]);
+        }
     }
 
     public function down(): void
