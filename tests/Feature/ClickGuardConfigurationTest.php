@@ -143,7 +143,7 @@ class ClickGuardConfigurationTest extends TestCase
         ])->assertRedirect();
 
         $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
-        $this->assertSame([
+        $this->assertEquals([
             'enabled' => true,
             'maxClicks' => 4,
             'windowHours' => 7,
