@@ -119,10 +119,10 @@
         <p class="eyebrow">Review controls</p><h2>Decision and lifecycle actions</h2>
         @if(auth()->user()->hasPermission('sites.review'))
             @if($site->status === \App\Enums\SiteStatus::PendingReview)
-                <form method="POST" action="{{ route('admin.sites.approve', $site) }}" class="form-stack">@csrf<label>Publisher message<textarea class="hm-input" name="publisher_message"></textarea></label><label>Internal reason<textarea class="hm-input" name="internal_reason"></textarea></label><button class="hm-button-primary">Approve website</button></form>
+                <form method="POST" action="{{ route('admin.sites.approve', $site) }}" class="form-stack">@csrf<label>Publisher message<textarea class="hm-input" name="publisher_message"></textarea></label><label>Internal reason<textarea class="hm-input" name="internal_reason"></textarea></label><p class="muted">One action approves the website, activates serving, and publishes Production configuration.</p><button class="hm-button-primary">Approve &amp; activate website</button></form>
                 <form method="POST" action="{{ route('admin.sites.reject', $site) }}" class="form-stack danger-zone">@csrf<label>Publisher explanation<textarea class="hm-input" name="publisher_message" required></textarea></label><label>Internal reason<textarea class="hm-input" name="internal_reason" required></textarea></label><button class="hm-button-danger">Reject website</button></form>
             @elseif($site->status === \App\Enums\SiteStatus::Approved)
-                <form method="POST" action="{{ route('admin.sites.activate', $site) }}" class="inline-form">@csrf<input class="hm-input" name="reason" aria-label="Activation note" placeholder="Activation note"><button class="hm-button-primary">Activate</button></form>
+                <form method="POST" action="{{ route('admin.sites.activate', $site) }}" class="inline-form">@csrf<input class="hm-input" name="reason" aria-label="Activation note" placeholder="Activation note"><button class="hm-button-primary">Activate legacy approved website</button></form>
                 <form method="POST" action="{{ route('admin.sites.suspend', $site) }}" class="inline-form danger-zone">@csrf<input class="hm-input" name="reason" aria-label="Suspension reason" placeholder="Required reason" required><button class="hm-button-danger">Suspend</button></form>
             @elseif($site->status === \App\Enums\SiteStatus::Active)
                 <form method="POST" action="{{ route('admin.sites.suspend', $site) }}" class="inline-form danger-zone">@csrf<input class="hm-input" name="reason" aria-label="Suspension reason" placeholder="Required reason" required><button class="hm-button-danger">Suspend</button></form>
@@ -162,7 +162,7 @@
         <div class="core-verification-note"><strong>Verification checks these two core records only</strong>@foreach($adsTxtInstallation['core_records'] as $record)<code>{{ $record }}</code>@endforeach</div>
         @php($primaryDomain = $site->domains->firstWhere('is_primary', true))
         @if($primaryDomain && auth()->user()->hasPermission('sites.manage'))
-            <form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $primaryDomain]) }}" class="wizard-actions">@csrf<input type="hidden" name="method" value="ADS_TXT"><span class="muted">Status: {{ $primaryDomain->verification_status }}</span><button class="hm-button-secondary">Verify ads.txt now</button></form>
+            <form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $primaryDomain]) }}" class="wizard-actions">@csrf<input type="hidden" name="method" value="ADS_TXT"><span class="muted">A successful check submits the website for review automatically. Status: {{ $primaryDomain->verification_status }}</span><button class="hm-button-secondary">Verify ads.txt &amp; submit</button></form>
         @endif
     @else
         <div class="notice">Horus seller IDs are being prepared. Refresh this page shortly or contact your account team.</div>
@@ -178,8 +178,6 @@
     @foreach($site->domains as $domain)<div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div><p class="muted">Ownership is verified from the two Horus DIRECT records in this domain's live ads.txt file.</p>@if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $domain]) }}" class="inline-form">@csrf<input type="hidden" name="method" value="ADS_TXT"><button class="hm-button-secondary">Verify ads.txt</button></form>@endif</div>@endforeach
     @if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.store', $site) }}" class="inline-form">@csrf<input class="hm-input" name="domain" aria-label="Additional authorized domain" placeholder="additional.example.com" required><button class="hm-button-secondary">Add authorized domain</button></form>@endif
 </article>
-<article><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Not submitted yet.</p>@endforelse
-    @if(auth()->user()->hasPermission('sites.manage') && in_array($site->status, [\App\Enums\SiteStatus::Draft, \App\Enums\SiteStatus::PendingVerification, \App\Enums\SiteStatus::Rejected], true))<form method="POST" action="{{ route('publisher.sites.submit', $site) }}">@csrf<button class="hm-button-primary">Submit for review</button></form>@endif
-</article>
+<article><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Waiting for successful ads.txt verification; submission is automatic.</p>@endforelse</article>
 @endif
 @endsection

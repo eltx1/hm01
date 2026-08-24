@@ -25,7 +25,7 @@
     <div>
         <p class="eyebrow">Publisher account</p><h2>{{ $publisher->display_name }}</h2>
         <p>{{ $publisher->legal_name }} · {{ $publisher->organization->name }}</p>
-        <div class="status-row"><x-status-badge :status="$publisher->status" /><span class="status">Onboarding {{ $publisher->onboarding_step }}/7</span></div>
+        <div class="status-row"><x-status-badge :status="$publisher->status" /><span class="status">Websites reviewed separately</span></div>
         @if(auth()->user()->hasPermission('publishers.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.edit', $publisher) }}">Edit publisher</a>@endif
     </div>
 </section>

@@ -2,12 +2,10 @@
 
 namespace App\Services\ControlPlane\Actions;
 
-use App\Enums\AccountStatus;
 use App\Enums\CampaignStatus;
 use App\Enums\ContractStatus;
 use App\Enums\SiteStatus;
 use App\Models\Campaign;
-use App\Models\Publisher;
 use App\Models\PublisherContract;
 use App\Models\Site;
 use App\Models\User;
@@ -18,12 +16,6 @@ final class ReviewActions implements ActionCenterProvider
     public function actions(User $user): array
     {
         $items = [];
-
-        if ($user->hasPermission('publishers.view')) {
-            $items[] = $this->item('publisher-reviews', 'Publishers awaiting review', Publisher::withoutGlobalScopes()
-                ->where('status', AccountStatus::Pending->value)->whereNotNull('onboarding_submitted_at')->count(),
-                'Submitted publisher accounts need an approval decision.', 'admin.publishers.index', ['status' => AccountStatus::Pending->value], 10);
-        }
 
         if ($user->hasPermission('sites.view')) {
             $items[] = $this->item('site-reviews', 'Websites awaiting review', Site::withoutGlobalScopes()

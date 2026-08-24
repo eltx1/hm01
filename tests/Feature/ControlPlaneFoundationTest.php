@@ -131,7 +131,7 @@ class ControlPlaneFoundationTest extends TestCase
         });
         $items = app(ActionCenter::class)->items($admin);
 
-        $this->assertSame(1, collect($items)->firstWhere('key', 'publisher-reviews')['count']);
+        $this->assertNull(collect($items)->firstWhere('key', 'publisher-reviews'));
         $this->assertSame(1, collect($items)->firstWhere('key', 'site-reviews')['count']);
         $this->assertLessThanOrEqual(16, $queries, 'Action Center must remain aggregate-only; Task 19 adds one bounded monetization-health snapshot query.');
     }

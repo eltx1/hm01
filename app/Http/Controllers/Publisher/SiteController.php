@@ -2,24 +2,20 @@
 
 namespace App\Http\Controllers\Publisher;
 
-use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Publisher;
 use App\Models\Site;
 use App\Models\SiteDomain;
-use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
-use App\Services\Thoth\SiteQualityReviewService;
+use App\Services\Sites\SiteReviewSubmissionService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
-use Throwable;
 
 class SiteController extends Controller
 {
@@ -40,7 +36,7 @@ class SiteController extends Controller
         $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
-        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Copy the complete ads.txt block and verify the two Horus records. You can submit the website for review while verification is pending; production activation will wait for verification.');
+        return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Publish the complete ads.txt block, then verify it. Successful verification submits the website for review automatically.');
     }
 
     public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
@@ -103,21 +99,14 @@ class SiteController extends Controller
             : 'Authorized domain added. It will publish automatically when the website is activated.');
     }
 
-    public function submit(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
+    public function submit(Request $request, Site $site, SiteReviewSubmissionService $submission): RedirectResponse
     {
-        $lifecycle->transition($site, SiteStatus::PendingReview, $request->user(), 'Submitted by publisher.');
-        SiteReview::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'decision' => 'PENDING', 'submitted_at' => now()]);
+        // Legacy endpoint compatibility. The current UI submits automatically
+        // after ads.txt verification; any early legacy submission still cannot
+        // be approved or activated until the real HMP/HMS check passes.
+        $submission->submitIfReady($site, $request->user(), requireVerification: false);
 
-        try {
-            app(SiteQualityReviewService::class)->queueAutomatic($site->fresh(), $request->user());
-        } catch (Throwable $exception) {
-            Log::warning('Automatic THOTH website review could not start; website submission remains valid.', [
-                'site_id' => $site->id,
-                'exception' => $exception::class,
-            ]);
-        }
-
-        return back()->with('status', 'Website submitted for review. THOTH will review it in parallel when AI is available; any AI failure will not block human review. Horus ads.txt verification may finish during review, but both assigned HMP/HMS DIRECT records must verify before production activation.');
+        return back()->with('status', 'Website submitted for review. Approval will activate it automatically.');
     }
 
     private function publisher(Request $request): Publisher

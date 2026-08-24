@@ -88,18 +88,15 @@ class SiteManagementTest extends TestCase
         $this->assertSame(SiteStatus::PendingReview, $site->fresh()->status);
 
         $session = ['two_factor_passed_at' => now()->timestamp];
-        $this->actingAs($admin)->withSession($session)->post(route('admin.sites.approve', $site), ['publisher_message' => 'Approved', 'internal_reason' => 'Content reviewed'])->assertRedirect();
-
-        $domain = $site->domains()->where('is_primary', true)->firstOrFail();
-        $this->post(route('admin.sites.domains.manual-verify', [$site, $domain]), ['reason' => 'Ownership evidence reviewed'])->assertRedirect();
-        $this->assertSame('VERIFIED', $domain->fresh()->verification_status);
-        $this->post(route('admin.sites.activate', $site), ['reason' => 'Ready'])
+        $this->actingAs($admin)->withSession($session)
+            ->post(route('admin.sites.approve', $site), ['publisher_message' => 'Approved', 'internal_reason' => 'Content reviewed'])
             ->assertRedirect()
-            ->assertSessionHasErrors('activation');
-        $this->assertSame(SiteStatus::Approved, $site->fresh()->status);
+            ->assertSessionHasErrors('approval');
+        $this->assertSame(SiteStatus::PendingReview, $site->fresh()->status);
 
         $this->verifyCurrentHorusAdsTxt($site, $publisherUser);
-        $this->post(route('admin.sites.activate', $site), ['reason' => 'HMP/HMS verified'])
+        $this->actingAs($admin)->withSession($session)
+            ->post(route('admin.sites.approve', $site), ['publisher_message' => 'Approved', 'internal_reason' => 'Content reviewed'])
             ->assertRedirect()
             ->assertSessionHasNoErrors();
         $this->post(route('admin.sites.suspend', $site), ['reason' => 'Operational check'])->assertRedirect();

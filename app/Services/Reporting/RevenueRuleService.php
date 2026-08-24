@@ -132,8 +132,16 @@ final class RevenueRuleService
     public function syncPublisherCommercialTerms(PublisherContract $contract, User $actor): RevenueRule
     {
         $this->authorize($actor, allowCommercialTermsManager: true);
-        $publisherShare = (int) round((float) $contract->revenue_share_percent * 100);
-        $effectiveFrom = now()->toDateString();
+
+        return $this->syncPublisherCommercialTermsRecord($contract, $actor);
+    }
+
+    /**
+     * Registration is the only system-owned path allowed to create the initial
+     * rule without an administrator. It never edits an existing rule.
+     */
+    public function ensurePublisherRegistrationTerms(PublisherContract $contract): RevenueRule
+    {
         $rule = RevenueRule::withoutGlobalScopes()
             ->with(['versions', 'currentVersion'])
             ->where('scope_type', RevenueRuleScope::Publisher->value)
@@ -141,20 +149,23 @@ final class RevenueRuleService
             ->where('name', self::COMMERCIAL_TERMS_RULE_NAME)
             ->first();
 
-        $attributes = [
-            'name' => self::COMMERCIAL_TERMS_RULE_NAME,
-            'scope_type' => RevenueRuleScope::Publisher,
-            'scope_id' => $contract->publisher_id,
-            'organization_id' => $contract->organization_id,
-            'effective_from' => $effectiveFrom,
-            'effective_to' => $contract->ends_at && $contract->ends_at->greaterThanOrEqualTo(today()) ? $contract->ends_at->toDateString() : null,
-            'publisher_share_bp' => $publisherShare,
-            'horus_share_bp' => 10000 - $publisherShare,
-            'mcm_partner_share_bp' => 0,
-            'currency' => $contract->currency,
-            'priority' => 50000,
-            'reason' => "Activated commercial terms {$contract->contract_reference}",
-        ];
+        if ($rule) {
+            return $rule;
+        }
+
+        return $this->createRule($this->commercialTermsAttributes($contract), null);
+    }
+
+    private function syncPublisherCommercialTermsRecord(PublisherContract $contract, User $actor): RevenueRule
+    {
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->with(['versions', 'currentVersion'])
+            ->where('scope_type', RevenueRuleScope::Publisher->value)
+            ->where('scope_id', $contract->publisher_id)
+            ->where('name', self::COMMERCIAL_TERMS_RULE_NAME)
+            ->first();
+
+        $attributes = $this->commercialTermsAttributes($contract);
 
         if (! $rule) {
             return $this->createRule($attributes, $actor, allowCommercialTermsManager: true);
@@ -184,6 +195,27 @@ final class RevenueRuleService
         $this->changeRule($rule, $attributes, $actor, allowCommercialTermsManager: true);
 
         return $rule->fresh(['currentVersion', 'versions']);
+    }
+
+    /** @return array<string, mixed> */
+    private function commercialTermsAttributes(PublisherContract $contract): array
+    {
+        $publisherShare = (int) round((float) $contract->revenue_share_percent * 100);
+
+        return [
+            'name' => self::COMMERCIAL_TERMS_RULE_NAME,
+            'scope_type' => RevenueRuleScope::Publisher,
+            'scope_id' => $contract->publisher_id,
+            'organization_id' => $contract->organization_id,
+            'effective_from' => now()->toDateString(),
+            'effective_to' => $contract->ends_at && $contract->ends_at->greaterThanOrEqualTo(today()) ? $contract->ends_at->toDateString() : null,
+            'publisher_share_bp' => $publisherShare,
+            'horus_share_bp' => 10000 - $publisherShare,
+            'mcm_partner_share_bp' => 0,
+            'currency' => $contract->currency,
+            'priority' => 50000,
+            'reason' => "Activated commercial terms {$contract->contract_reference}",
+        ];
     }
 
     public function disablePublisherCommercialTerms(PublisherContract $contract, User $actor): void

@@ -39,7 +39,6 @@ final class ControlPlaneNavigation
                 $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Publishers', [
-                $this->item('Applications', 'admin.publisher-applications.index', 'publisher_applications.view', ['admin.publisher-applications.*']),
                 $this->item('Publisher accounts', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
                 $this->item('Organizations', 'admin.organizations.index', 'organizations.view', ['admin.organizations.*']),
             ]),

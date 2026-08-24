@@ -13,6 +13,6 @@
     <label class="check"><input type="checkbox" name="remember" value="1"> <span>Keep me signed in</span></label>
     <button class="hm-button-primary" type="submit" data-submitting-label="Signing in…">Sign in</button>
     <a class="text-link" href="{{ route('password.request') }}">Forgot password?</a>
-    @if(config('publisher-applications.public_registration_enabled'))<a class="text-link" href="{{ route('publisher-registration.create') }}">Apply as a Publisher</a>@endif
+    @if(config('publisher-applications.public_registration_enabled'))<a class="text-link" href="{{ route('publisher-registration.create') }}">Create a Publisher account</a>@endif
 </form>
 @endsection

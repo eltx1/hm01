@@ -19,6 +19,7 @@ use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Contracts\DefaultPublisherTermsService;
 use App\Services\SupplyChain\DomainNormalizer;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -37,10 +38,23 @@ final class PublisherApplicationService
         private readonly DomainNormalizer $domains,
         private readonly AuditRecorder $audit,
         private readonly PublisherApplicationNotificationService $notifications,
+        private readonly DefaultPublisherTermsService $defaultTerms,
     ) {}
 
     /** @param array{name: string, email: string, password: string, publisher_name: string, primary_domain?: string|null} $data */
     public function register(array $data): PublisherApplication
+    {
+        return $this->registerAccount($data, activateImmediately: false);
+    }
+
+    /** @param array{name: string, email: string, password: string, publisher_name: string, primary_domain?: string|null} $data */
+    public function registerActive(array $data): PublisherApplication
+    {
+        return $this->registerAccount($data, activateImmediately: true);
+    }
+
+    /** @param array{name: string, email: string, password: string, publisher_name: string, primary_domain?: string|null} $data */
+    private function registerAccount(array $data, bool $activateImmediately): PublisherApplication
     {
         $email = str($data['email'])->lower()->trim()->value();
         $domain = filled($data['primary_domain'] ?? null)
@@ -52,22 +66,26 @@ final class PublisherApplicationService
         }
 
         try {
-            $application = DB::transaction(function () use ($data, $email, $domain): PublisherApplication {
+            $application = DB::transaction(function () use ($data, $email, $domain, $activateImmediately): PublisherApplication {
                 $organization = Organization::create([
                     'name' => trim($data['publisher_name']),
                     'slug' => $this->uniqueSlug($data['publisher_name']),
                     'type' => OrganizationType::Publisher,
-                    'status' => AccountStatus::Pending,
+                    'status' => $activateImmediately ? AccountStatus::Active : AccountStatus::Pending,
                     'support_email' => $email,
                 ]);
-                $publisher = Publisher::withoutGlobalScopes()->create([
+                $publisherValues = [
                     'organization_id' => $organization->id,
                     'legal_name' => trim($data['publisher_name']),
                     'display_name' => trim($data['publisher_name']),
                     'business_domain' => $domain,
                     'billing_email' => $email,
-                    'status' => AccountStatus::Pending,
-                ]);
+                    'status' => $activateImmediately ? AccountStatus::Active : AccountStatus::Pending,
+                ];
+                if ($activateImmediately) {
+                    $publisherValues += ['onboarding_step' => 7, 'onboarding_submitted_at' => now()];
+                }
+                $publisher = Publisher::withoutGlobalScopes()->create($publisherValues);
                 $user = User::create([
                     'organization_id' => $organization->id,
                     'name' => trim($data['name']),
@@ -81,7 +99,11 @@ final class PublisherApplicationService
                     'publisher_id' => $publisher->id,
                     'applicant_user_id' => $user->id,
                     'primary_domain' => $domain,
-                    'status' => PublisherApplicationStatus::EmailVerificationRequired,
+                    // Keep one compatibility/audit row for historical tooling. The
+                    // public registration path creates it already approved; this
+                    // legacy method remains available for historical fixtures/data.
+                    'status' => $activateImmediately ? PublisherApplicationStatus::Approved : PublisherApplicationStatus::EmailVerificationRequired,
+                    'approved_at' => $activateImmediately ? now() : null,
                 ]);
                 if ($domain !== null) {
                     PublisherApplicationDomainClaim::create([
@@ -89,11 +111,25 @@ final class PublisherApplicationService
                         'normalized_domain' => $domain,
                     ]);
                 }
-                $this->event($application, 'CREATED', null, PublisherApplicationStatus::EmailVerificationRequired, $user, applicantVisible: true);
+                $applicationStatus = $activateImmediately
+                    ? PublisherApplicationStatus::Approved
+                    : PublisherApplicationStatus::EmailVerificationRequired;
+                if ($activateImmediately) {
+                    $role = Role::query()
+                        ->whereNull('organization_id')
+                        ->where('name', RoleName::PublisherAdmin->value)
+                        ->firstOrFail();
+                    $user->roles()->syncWithoutDetaching([$role->id => ['assigned_by' => $user->id]]);
+                    $this->defaultTerms->ensure($publisher, $user);
+                }
+
+                $this->event($application, $activateImmediately ? 'AUTO_ACTIVATED' : 'CREATED', null, $applicationStatus, $user, applicantVisible: true);
                 $this->audit->record('publisher_application.created', $organization->id, $user, $application, newValues: [
                     'publisher_id' => $publisher->id,
                     'primary_domain' => $domain,
-                    'status' => PublisherApplicationStatus::EmailVerificationRequired->value,
+                    'status' => $applicationStatus->value,
+                    'publisher_status' => ($activateImmediately ? AccountStatus::Active : AccountStatus::Pending)->value,
+                    'default_contract_status' => $activateImmediately ? 'ACTIVE' : null,
                 ]);
 
                 return $application;

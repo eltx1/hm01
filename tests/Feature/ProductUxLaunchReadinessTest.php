@@ -66,7 +66,7 @@ final class ProductUxLaunchReadinessTest extends TestCase
 
         $this->get('/register/publisher')
             ->assertOk()
-            ->assertSee('aria-current="step"', false)
+            ->assertSee('One-step setup')
             ->assertSee('autocomplete="new-password"', false)
             ->assertSee('aria-describedby="publisher-password-help', false)
             ->assertSee('contact Horus Media support for an assisted application path')
