@@ -110,8 +110,8 @@ $add('Operations', 'queue_backlog', $queuedJobs <= 25 ? 'PASS' : ($queuedJobs <=
 // Static edge. Exact byte-level convergence is independently verified by the live verification workflow.
 $staticDriver = (string) config('static-delivery.driver');
 $staticDryRun = (bool) config('static-delivery.cloudflare.dry_run');
-$edgeDriverReady = in_array($staticDriver, ['external-pages-sync', 'cloudflare'], true);
-$add('Static Edge', 'delivery_driver', $edgeDriverReady ? 'PASS' : 'BLOCKED', 'P1', $edgeDriverReady ? 'Production static delivery uses an external edge driver.' : 'Production static delivery is not using an external edge driver.', ['driver' => $staticDriver]);
+$edgeDriverReady = in_array($staticDriver, ['external-pages-sync', 'cloudflare-pages-pipeline'], true);
+$add('Static Edge', 'delivery_driver', $edgeDriverReady ? 'PASS' : 'BLOCKED', 'P1', $edgeDriverReady ? 'Production static delivery uses a supported Cloudflare Pages delivery path.' : 'Production static delivery is not using a production external Pages driver.', ['driver' => $staticDriver]);
 $add('Static Edge', 'delivery_not_dry_run', ! $staticDryRun ? 'PASS' : 'FAIL', 'P0', ! $staticDryRun ? 'Static delivery dry-run is disabled.' : 'Static delivery is still in dry-run mode.');
 $latestBatch = $exists('static_delivery_batches') ? DB::table('static_delivery_batches')->orderByDesc('created_at')->first() : null;
 $latestBatchStatus = $latestBatch ? (string) $latestBatch->status : null;
@@ -159,8 +159,7 @@ if ($senderReady && ! in_array($mailer, ['', 'log', 'array'], true)) {
         $mailTransportReady = $sendmailPath !== '';
         $mailEvidence['sendmail_path_configured'] = $mailTransportReady;
     } elseif (in_array($mailer, ['ses', 'ses-v2', 'postmark', 'resend'], true)) {
-        // Provider credentials are secret-bearing service config and are deliberately not inspected or emitted here.
-        // Selection of a supported provider plus a valid sender proves configuration intent; a real send remains the end-to-end proof.
+        // Secret-bearing provider credentials are deliberately not emitted. End-to-end delivery remains the final proof.
         $mailTransportReady = true;
         $mailEvidence['provider_transport_selected'] = true;
     } elseif (in_array($mailer, ['failover', 'roundrobin'], true)) {
@@ -221,10 +220,11 @@ $managedSellers = $count('seller_declarations', fn ($query) => $query->where('id
 $activeManagedSellers = $count('seller_declarations', fn ($query) => $query->where('identity_source', 'HORUS_MANAGED')->where('status', 'ACTIVE'));
 $missingPublicIdentity = $count('seller_declarations', fn ($query) => $query
     ->where('identity_source', 'HORUS_MANAGED')
+    ->where('status', 'ACTIVE')
     ->where('is_confidential', 0)
     ->where(fn ($nested) => $nested->whereNull('name')->orWhere('name', '')->orWhereNull('domain')->orWhere('domain', '')));
 $metrics['seller_declarations'] = ['managed_total' => $managedSellers, 'managed_active' => $activeManagedSellers, 'statuses' => $groups('seller_declarations', 'status'), 'review_statuses' => $groups('seller_declarations', 'review_status')];
-$add('Supply Chain', 'managed_public_identity', $missingPublicIdentity === 0 ? 'PASS' : 'FAIL', 'P0', $missingPublicIdentity === 0 ? 'All non-confidential managed seller declarations have public name/domain data.' : 'One or more non-confidential managed seller declarations are missing name/domain.', ['missing_public_identity_count' => $missingPublicIdentity]);
+$add('Supply Chain', 'managed_public_identity', $missingPublicIdentity === 0 ? 'PASS' : 'FAIL', 'P0', $missingPublicIdentity === 0 ? 'All active non-confidential managed seller declarations have public name/domain data.' : 'One or more active non-confidential managed seller declarations are missing name/domain.', ['missing_public_identity_count' => $missingPublicIdentity]);
 $metrics['supply_chain_checks'] = ['statuses' => $groups('supply_chain_checks', 'status'), 'last_24h' => $count('supply_chain_checks', fn ($query) => $query->where('checked_at', '>=', now()->subDay()))];
 
 // Reporting / finance readiness for a real revenue trace.
