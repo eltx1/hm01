@@ -2,8 +2,12 @@
 
 namespace App\Services\Inventory;
 
+use App\Services\Settings\GlobalSettingsService;
+
 final class RuntimePolicyResolver
 {
+    public function __construct(private readonly GlobalSettingsService $settings) {}
+
     /** @return array<string, mixed> */
     public function privacy(?array $settings): array
     {
@@ -31,13 +35,31 @@ final class RuntimePolicyResolver
     public function clickGuard(?array $settings): array
     {
         $settings ??= [];
-        $enabled = filter_var($settings['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        $global = $this->globalClickGuard();
+        $inheritGlobal = filter_var($settings['inheritGlobal'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
+
+        if ($inheritGlobal) {
+            return $global;
+        }
+
+        $enabled = filter_var($settings['enabled'] ?? $global['enabled'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
         return [
-            'enabled' => $enabled ?? false,
-            'maxClicks' => $this->boundedInteger($settings['maxClicks'] ?? null, 3, 1, 50),
-            'windowHours' => $this->boundedInteger($settings['windowHours'] ?? null, 6, 1, 168),
-            'blockHours' => $this->boundedInteger($settings['blockHours'] ?? null, 12, 1, 720),
+            'enabled' => $enabled ?? $global['enabled'],
+            'maxClicks' => $this->boundedInteger($settings['maxClicks'] ?? null, $global['maxClicks'], 1, 50),
+            'windowHours' => $this->boundedInteger($settings['windowHours'] ?? null, $global['windowHours'], 1, 168),
+            'blockHours' => $this->boundedInteger($settings['blockHours'] ?? null, $global['blockHours'], 1, 720),
+        ];
+    }
+
+    /** @return array{enabled: bool, maxClicks: int, windowHours: int, blockHours: int} */
+    public function globalClickGuard(): array
+    {
+        return [
+            'enabled' => (bool) $this->settings->get('click_guard.enabled'),
+            'maxClicks' => $this->boundedInteger($this->settings->get('click_guard.max_clicks'), 3, 1, 50),
+            'windowHours' => $this->boundedInteger($this->settings->get('click_guard.window_hours'), 6, 1, 168),
+            'blockHours' => $this->boundedInteger($this->settings->get('click_guard.block_hours'), 12, 1, 720),
         ];
     }
 

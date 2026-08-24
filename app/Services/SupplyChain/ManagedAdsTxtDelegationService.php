@@ -4,11 +4,17 @@ namespace App\Services\SupplyChain;
 
 use App\Enums\AdsTxtDeploymentMode;
 use App\Models\Site;
+use App\Services\Campaigns\RemoteUrlSafetyValidator;
 use Illuminate\Support\Facades\Http;
 
 final class ManagedAdsTxtDelegationService
 {
-    public function __construct(private readonly SupplyChainArtifactBuilder $artifacts) {}
+    private const MAX_RESPONSE_BYTES = 1_048_576;
+
+    public function __construct(
+        private readonly SupplyChainArtifactBuilder $artifacts,
+        private readonly RemoteUrlSafetyValidator $urls,
+    ) {}
 
     public function managedUrlForSite(Site $site): string
     {
@@ -30,7 +36,7 @@ final class ManagedAdsTxtDelegationService
         }
 
         try {
-            $first = Http::withOptions(['allow_redirects' => false])->timeout(10)->get($source);
+            [$first] = $this->safeGet($source, false);
         } catch (\Throwable) {
             return $this->record($settings, false, 'ADS_TXT_REDIRECT_SOURCE_UNREACHABLE', $source, $target);
         }
@@ -44,7 +50,7 @@ final class ManagedAdsTxtDelegationService
         }
 
         try {
-            $final = Http::withOptions(['allow_redirects' => false])->timeout(10)->get($target);
+            [$final, $body, $tooLarge] = $this->safeGet($target, true);
         } catch (\Throwable) {
             return $this->record($settings, false, 'ADS_TXT_MANAGED_TARGET_UNREACHABLE', $source, $target);
         }
@@ -56,11 +62,57 @@ final class ManagedAdsTxtDelegationService
         if (! $final->successful() || ! str_starts_with($contentType, 'text/plain')) {
             return $this->record($settings, false, 'ADS_TXT_MANAGED_TARGET_INVALID', $source, $target, $final->status(), $final->header('Content-Type'));
         }
-        if (trim($final->body()) !== trim($this->artifacts->adsTxtForSite($site))) {
+        if ($tooLarge) {
+            return $this->record($settings, false, 'ADS_TXT_MANAGED_TARGET_TOO_LARGE', $source, $target, $final->status(), $final->header('Content-Type'));
+        }
+        if (trim($body) !== trim($this->artifacts->adsTxtForSite($site))) {
             return $this->record($settings, false, 'ADS_TXT_MANAGED_PAYLOAD_MISMATCH', $source, $target, $final->status(), $final->header('Content-Type'));
         }
 
         return $this->record($settings, true, 'VERIFIED', $source, $target, $final->status(), $final->header('Content-Type'));
+    }
+
+    /** @return array{0: \Illuminate\Http\Client\Response, 1: string, 2: bool} */
+    private function safeGet(string $url, bool $readBody): array
+    {
+        $addresses = $this->urls->publicAddresses($url, 'ads_txt_delegation_url');
+        $address = collect($addresses)->first(fn (string $item): bool => filter_var($item, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) ?? $addresses[0];
+        $host = strtolower(rtrim((string) parse_url($url, PHP_URL_HOST), '.'));
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        $port = (int) (parse_url($url, PHP_URL_PORT) ?: ($scheme === 'https' ? 443 : 80));
+        if (! defined('CURLOPT_RESOLVE')) {
+            throw new \RuntimeException('Safe DNS-pinned HTTP transport is unavailable.');
+        }
+        $pinnedAddress = str_contains($address, ':') ? '['.$address.']' : $address;
+        $options = [
+            'allow_redirects' => false,
+            'stream' => true,
+            'curl' => [CURLOPT_RESOLVE => [$host.':'.$port.':'.$pinnedAddress]],
+        ];
+
+        $response = Http::connectTimeout(3)->timeout(10)->withOptions($options)->get($url);
+        if (! $readBody) {
+            return [$response, '', false];
+        }
+
+        $declaredBytes = (int) ($response->header('Content-Length') ?: 0);
+        if ($declaredBytes > self::MAX_RESPONSE_BYTES) {
+            return [$response, '', true];
+        }
+        $stream = $response->toPsrResponse()->getBody();
+        if ($stream->isSeekable()) {
+            $stream->rewind();
+        }
+        $body = '';
+        while (! $stream->eof() && strlen($body) <= self::MAX_RESPONSE_BYTES) {
+            $chunk = $stream->read(min(8192, (self::MAX_RESPONSE_BYTES + 1) - strlen($body)));
+            if ($chunk === '') {
+                break;
+            }
+            $body .= $chunk;
+        }
+
+        return [$response, $body, strlen($body) > self::MAX_RESPONSE_BYTES || ! $stream->eof()];
     }
 
     /** @return array{valid: bool, code: string, source_url: string, target_url: string, http_status: ?int, content_type: ?string} */

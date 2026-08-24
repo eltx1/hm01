@@ -28,6 +28,34 @@ final class TypedSettingsRegistry
                 'Turning this off blocks new Advertiser campaign creation/submission and new or resumed delivery while preserving existing campaigns, history, finance, and emergency pause/complete actions.'
             ),
             new SettingDefinition(
+                'click_guard.enabled', 'CLICK PROTECTION', 'Global Click Protection', 'boolean', 'click-guard.enabled',
+                ['required', 'boolean'], [],
+                'Enables browser-local repeated-click protection for every website that uses the global policy.',
+                'SAFE', true, true,
+                'Changing this value republishes the static configuration for every active website and can affect advertising delivery.'
+            ),
+            new SettingDefinition(
+                'click_guard.max_clicks', 'CLICK PROTECTION', 'Maximum detected ad clicks', 'integer', 'click-guard.max_clicks',
+                ['required', 'integer', 'min:1', 'max:50'], [],
+                'Number of probable advertising clicks allowed inside the rolling window.',
+                'SAFE', true, true,
+                'Changing this value republishes the static configuration for every active website.'
+            ),
+            new SettingDefinition(
+                'click_guard.window_hours', 'CLICK PROTECTION', 'Click window (hours)', 'integer', 'click-guard.window_hours',
+                ['required', 'integer', 'min:1', 'max:168'], [],
+                'Rolling browser-local window used to count probable advertising clicks.',
+                'SAFE', true, true,
+                'Changing this value republishes the static configuration for every active website.'
+            ),
+            new SettingDefinition(
+                'click_guard.block_hours', 'CLICK PROTECTION', 'Advertising block (hours)', 'integer', 'click-guard.block_hours',
+                ['required', 'integer', 'min:1', 'max:720'], [],
+                'How long that browser stops requesting new ads after reaching the threshold.',
+                'SAFE', true, true,
+                'Changing this value republishes the static configuration for every active website.'
+            ),
+            new SettingDefinition(
                 'traffic_gate.enabled', 'CLIENT TRAFFIC GATE', 'Client Traffic Gate Enabled', 'boolean', 'traffic_gate.enabled',
                 ['required', 'boolean'], [],
                 'Requests the optional client-only soft traffic filter globally. Incomplete or invalid configuration remains inactive.',

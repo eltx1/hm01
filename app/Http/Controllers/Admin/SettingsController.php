@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\Inventory\ClickGuardGlobalSettingsService;
 use App\Services\Settings\GlobalSettingsService;
 use App\Services\Settings\TypedSettingsRegistry;
 use App\Services\StaticDelivery\SupplyChainStaticPublisher;
@@ -25,6 +26,7 @@ final class SettingsController extends Controller
     public function __construct(
         private readonly GlobalSettingsService $settings,
         private readonly TypedSettingsRegistry $registry,
+        private readonly ClickGuardGlobalSettingsService $clickGuardSettings,
         private readonly TrafficGateGlobalSettingsService $trafficGateSettings,
         private readonly SupplyChainStaticPublisher $supplyChainPublisher,
     ) {}
@@ -48,7 +50,9 @@ final class SettingsController extends Controller
         ]);
         $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
 
-        if (str_starts_with($key, 'traffic_gate.')) {
+        if (str_starts_with($key, 'click_guard.')) {
+            $this->clickGuardSettings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
+        } elseif (str_starts_with($key, 'traffic_gate.')) {
             $this->trafficGateSettings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
         } else {
             $this->settings->set($request->user(), $key, $request->input('value'), $data['reason'] ?? null);
@@ -68,7 +72,9 @@ final class SettingsController extends Controller
         ]);
         $this->authorizeImpact($request, $definition->highImpact, $definition->key, $data);
 
-        if (str_starts_with($key, 'traffic_gate.')) {
+        if (str_starts_with($key, 'click_guard.')) {
+            $this->clickGuardSettings->reset($request->user(), $key, $data['reason'] ?? null);
+        } elseif (str_starts_with($key, 'traffic_gate.')) {
             $this->trafficGateSettings->reset($request->user(), $key, $data['reason'] ?? null);
         } else {
             $this->settings->reset($request->user(), $key, $data['reason'] ?? null);

@@ -8,6 +8,7 @@ use App\Enums\RoleName;
 use App\Models\ConfigVersion;
 use App\Models\PlatformAdsTxtRecord;
 use App\Models\StaticGlobalArtifactChange;
+use App\Services\Network\Contracts\DnsResolver;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\StaticDeliveryManager;
 use App\Services\StaticDelivery\StaticDeliverySnapshotBuilder;
@@ -153,6 +154,24 @@ class AutomaticSupplyChainStaticPublicationTest extends TestCase
             $target => Http::response('', 302, ['Location' => 'https://third.example/ads.txt']),
         ]);
         $this->assertSame('ADS_TXT_REDIRECT_CHAIN_INVALID', $service->verify($site)['code']);
+    }
+
+    public function test_managed_redirect_verification_rejects_private_network_targets_before_http(): void
+    {
+        [$site] = $this->site();
+        $site->servingSettings()->firstOrFail()->update(['ads_txt_deployment_mode' => AdsTxtDeploymentMode::ManagedRedirectDelegation]);
+        $this->app->instance(DnsResolver::class, new class implements DnsResolver {
+            public function addresses(string $host): array
+            {
+                return ['127.0.0.1'];
+            }
+        });
+        Http::fake();
+
+        $result = app(ManagedAdsTxtDelegationService::class)->verify($site);
+
+        $this->assertSame('ADS_TXT_REDIRECT_SOURCE_UNREACHABLE', $result['code']);
+        Http::assertNothingSent();
     }
 
     public function test_canonical_sellers_json_origin_must_match_current_payload_and_cdn_only_is_not_enough(): void
