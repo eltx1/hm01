@@ -190,6 +190,7 @@ class PlatformMasterAdsTxtTest extends TestCase
 
     public function test_master_bulk_import_accepts_full_file_activates_valid_rows_and_reports_bad_rows(): void
     {
+        $this->withoutExceptionHandling();
         StaticGlobalArtifactChange::query()->delete();
         $contents = implode("\n", [
             '# supplied by demand partner',
@@ -203,14 +204,12 @@ class PlatformMasterAdsTxtTest extends TestCase
         $response = $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->post(route('admin.compliance.ads-txt.master.import'), [
                 'ads_txt_records' => $contents,
-                'activate' => '1',
-                'current_password' => 'password',
-                'reason' => 'Import partner-authorized master seller file.',
-                'confirm_platform_scope' => '1',
             ]);
 
-        $response->assertRedirect()->assertSessionHas('ads_txt_import_report', fn (array $report): bool =>
+        $response->assertRedirect()->assertSessionHasNoErrors()->assertSessionHas('ads_txt_import_report', fn (array $report): bool =>
             $report['created'] === 2
+            && $report['updated'] === 0
+            && $report['reactivated'] === 0
             && $report['duplicates'] === 1
             && $report['invalid_total'] === 1
         );
@@ -223,6 +222,66 @@ class PlatformMasterAdsTxtTest extends TestCase
         $this->assertArrayHasKey('sellers.json', $files);
         $this->assertArrayHasKey('supply/sellers.json', $files);
         $this->assertSame($files['sellers.json'], $files['supply/sellers.json']);
+    }
+
+    public function test_master_quick_add_merges_conflicts_reactivates_existing_and_never_blocks_valid_rows(): void
+    {
+        $this->withoutExceptionHandling();
+        $existing = $this->master('replace.exchange.com', 'seat-x', 'DIRECT', 'old-ca');
+        $existing->update(['effective_from' => now()->addDay(), 'effective_to' => now()->addWeek()]);
+        $service = app(PlatformAdsTxtService::class);
+        $disabled = $service->create([
+            'advertising_system_domain' => 'disabled.exchange.com',
+            'publisher_account_id' => 'seat-y',
+            'relationship' => 'RESELLER',
+        ], $this->admin);
+        $disabled->update(['effective_from' => now()->addDay(), 'effective_to' => now()->addWeek()]);
+
+        $response = $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.compliance.ads-txt.master.import'), [
+                'ads_txt_records' => implode("\n", [
+                    'replace.exchange.com, seat-x, DIRECT, old-ca',
+                    'replace.exchange.com, seat-x, RESELLER, new-ca',
+                    'disabled.exchange.com, seat-y, RESELLER',
+                    'new.exchange.com, seat-z, DIRECT, ca-new',
+                    'new.exchange.com, seat-z, DIRECT, ca-new',
+                    'this row is invalid',
+                ]),
+            ]);
+
+        $response->assertRedirect()->assertSessionHasNoErrors()->assertSessionHas('ads_txt_import_report', fn (array $report): bool =>
+            $report['created'] === 1
+            && $report['updated'] === 1
+            && $report['reactivated'] === 1
+            && $report['skipped'] === 0
+            && $report['duplicates'] === 1
+            && $report['superseded'] === 1
+            && $report['invalid_total'] === 1
+        );
+
+        $this->assertSame('replace.exchange.com, seat-x, RESELLER, new-ca', $existing->refresh()->raw_record);
+        $this->assertSame('ACTIVE', $existing->status);
+        $this->assertSame(SupplyChainReviewStatus::Verified, $existing->review_status);
+        $this->assertNull($existing->effective_from);
+        $this->assertNull($existing->effective_to);
+        $this->assertSame('ACTIVE', $disabled->refresh()->status);
+        $this->assertSame(SupplyChainReviewStatus::Verified, $disabled->review_status);
+        $this->assertNull($disabled->effective_from);
+        $this->assertNull($disabled->effective_to);
+        $this->assertDatabaseHas('platform_ads_txt_records', [
+            'advertising_system_domain' => 'new.exchange.com',
+            'publisher_account_id' => 'seat-z',
+            'status' => 'ACTIVE',
+            'review_status' => SupplyChainReviewStatus::Verified->value,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'supply_chain.platform_ads_txt.bulk_updated',
+            'auditable_id' => $existing->id,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'supply_chain.platform_ads_txt.bulk_reactivated',
+            'auditable_id' => $disabled->id,
+        ]);
     }
 
     public function test_demand_bulk_import_creates_all_valid_rows_for_one_account_scope(): void
