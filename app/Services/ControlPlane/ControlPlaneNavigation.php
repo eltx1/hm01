@@ -44,6 +44,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Sites & Inventory', [
                 $this->item('Websites', 'admin.sites.index', 'sites.view', ['admin.sites.*']),
+                $this->item('Click Protection', 'admin.click-protection.index', 'settings.view', ['admin.click-protection.*']),
                 $this->item('GAM connections', 'admin.gam.connections.index', 'gam.connections.view', ['admin.gam.*']),
             ]),
             $this->group('Monetization', [

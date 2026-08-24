@@ -3,6 +3,7 @@
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\Admin\AccountStatusController;
 use App\Http\Controllers\Admin\AdvertiserController;
+use App\Http\Controllers\Admin\ClickProtectionController;
 use App\Http\Controllers\Admin\ContactController;
 use App\Http\Controllers\Admin\ContractController as AdminContractController;
 use App\Http\Controllers\Admin\GamConnectionController;
@@ -146,6 +147,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/gam/connections/{gamConnection}/assign-site', [GamConnectionController::class, 'assignSite'])->middleware('permission:gam.connections.assign')->name('admin.gam.connections.assign-site');
 
         Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.index');
+        Route::get('/admin/click-protection', [ClickProtectionController::class, 'index'])->middleware(['horus', 'permission:settings.view'])->name('admin.click-protection.index');
+        Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
         Route::get('/admin/sites/{site}/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view')->name('admin.sites.inventory.index');
         Route::post('/admin/sites/{site}/inventory/ad-units', [InventoryController::class, 'storeAdUnit'])->middleware('permission:inventory.manage')->name('admin.sites.inventory.ad-units.store');

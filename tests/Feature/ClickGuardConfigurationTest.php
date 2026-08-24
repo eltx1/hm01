@@ -6,6 +6,7 @@ use App\Enums\ConfigEnvironment;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Enums\SiteStatus;
+use App\Models\AuditLog;
 use App\Models\ConfigVersion;
 use App\Models\SiteConfig;
 use App\Services\Inventory\SiteConfigurationBuilder;
@@ -25,14 +26,14 @@ class ClickGuardConfigurationTest extends TestCase
         config(['static-delivery.normal_batch_interval_minutes' => 0]);
     }
 
-    public function test_default_public_configuration_is_disabled_and_safe(): void
+    public function test_default_public_configuration_is_enabled_globally_and_safe(): void
     {
         [$site] = $this->makeSiteAndAdmin();
 
         $payload = app(SiteConfigurationBuilder::class)->build($site->refresh(), ConfigEnvironment::Production, 1);
 
         $this->assertSame([
-            'enabled' => false,
+            'enabled' => true,
             'maxClicks' => 3,
             'windowHours' => 6,
             'blockHours' => 12,
@@ -48,6 +49,7 @@ class ClickGuardConfigurationTest extends TestCase
         $site->update(['status' => SiteStatus::Active]);
 
         $response = $this->actingAs($admin)->put(route('admin.sites.config.update', $site), $this->validSettings([
+            'click_guard_inherit_global' => '0',
             'click_guard_enabled' => '1',
             'click_guard_max_clicks' => '5',
             'click_guard_window_hours' => '8',
@@ -56,7 +58,7 @@ class ClickGuardConfigurationTest extends TestCase
 
         $response->assertRedirect();
         $config = SiteConfig::withoutGlobalScopes()->where('site_id', $site->id)->firstOrFail();
-        $this->assertEquals(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $config->click_guard_settings);
+        $this->assertEquals(['inheritGlobal' => false, 'enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $config->click_guard_settings);
         $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
         $this->assertEquals(['enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24], $version->payload['clickGuard']);
         $this->assertDatabaseHas('static_delivery_items', ['config_version_id' => $version->id]);
@@ -85,6 +87,7 @@ class ClickGuardConfigurationTest extends TestCase
         $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->count();
 
         $this->actingAs($admin)->put(route('admin.sites.config.update', $site), $this->validSettings([
+            'click_guard_inherit_global' => '0',
             'click_guard_enabled' => '1',
         ]))->assertRedirect();
 
@@ -104,7 +107,7 @@ class ClickGuardConfigurationTest extends TestCase
         );
 
         $legacy = $this->validSettings();
-        unset($legacy['click_guard_enabled'], $legacy['click_guard_max_clicks'], $legacy['click_guard_window_hours'], $legacy['click_guard_block_hours']);
+        unset($legacy['click_guard_inherit_global'], $legacy['click_guard_enabled'], $legacy['click_guard_max_clicks'], $legacy['click_guard_window_hours'], $legacy['click_guard_block_hours']);
         $this->actingAs($admin)->put(route('admin.sites.config.update', $site), $legacy)->assertRedirect();
 
         $this->assertEquals(
@@ -124,6 +127,47 @@ class ClickGuardConfigurationTest extends TestCase
         ]))->assertNotFound();
     }
 
+    public function test_global_policy_update_republishes_active_sites_once_and_is_audited(): void
+    {
+        [$site, $admin] = $this->makeSiteAndAdmin();
+        $site->update(['status' => SiteStatus::Active]);
+
+        $this->actingAs($admin)->put(route('admin.click-protection.update'), [
+            'enabled' => '1',
+            'max_clicks' => 4,
+            'window_hours' => 7,
+            'block_hours' => 18,
+            'reason' => 'Tune the shared production protection policy.',
+            'current_password' => 'password',
+            'impact_confirmation' => 'CHANGE CLICK PROTECTION',
+        ])->assertRedirect();
+
+        $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
+        $this->assertSame([
+            'enabled' => true,
+            'maxClicks' => 4,
+            'windowHours' => 7,
+            'blockHours' => 18,
+        ], $version->payload['clickGuard']);
+        $this->assertDatabaseHas('global_settings', ['key' => 'click_guard.max_clicks']);
+        $this->assertTrue(AuditLog::query()->where('event', 'click_guard.global_policy.updated')->exists());
+    }
+
+    public function test_existing_site_values_without_inheritance_marker_use_global_policy(): void
+    {
+        [$site] = $this->makeSiteAndAdmin();
+        SiteConfig::withoutGlobalScopes()->updateOrCreate(
+            ['site_id' => $site->id],
+            ['organization_id' => $site->organization_id, 'click_guard_settings' => [
+                'enabled' => false, 'maxClicks' => 9, 'windowHours' => 10, 'blockHours' => 20,
+            ]],
+        );
+
+        $payload = app(SiteConfigurationBuilder::class)->build($site->refresh(), ConfigEnvironment::Production, 1);
+
+        $this->assertSame(['enabled' => true, 'maxClicks' => 3, 'windowHours' => 6, 'blockHours' => 12], $payload['clickGuard']);
+    }
+
     private function validSettings(array $overrides = []): array
     {
         return array_merge([
@@ -131,6 +175,7 @@ class ClickGuardConfigurationTest extends TestCase
             'debug_enabled' => '0',
             'house_ad_testing' => '0',
             'single_request_mode' => '1',
+            'click_guard_inherit_global' => '1',
             'click_guard_enabled' => '0',
             'click_guard_max_clicks' => 3,
             'click_guard_window_hours' => 6,

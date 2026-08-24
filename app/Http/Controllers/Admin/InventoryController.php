@@ -16,6 +16,7 @@ use App\Models\TagVersion;
 use App\Services\Compliance\SellerDeclarationManager;
 use App\Services\Inventory\AdUnitSyncService;
 use App\Services\Inventory\InventoryManager;
+use App\Services\Inventory\RuntimePolicyResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -23,7 +24,7 @@ use Illuminate\View\View;
 
 class InventoryController extends Controller
 {
-    public function index(Site $site): View
+    public function index(Site $site, RuntimePolicyResolver $runtimePolicies): View
     {
         $site->load([
             'publisher', 'gamConnection', 'adUnits.sizes', 'placements.adUnit',
@@ -44,6 +45,7 @@ class InventoryController extends Controller
             'tagVersions' => TagVersion::query()->orderByDesc('published_at')->get(),
             'adFormats' => AdFormat::query()->where('is_active', true)->orderBy('sort_order')->get(),
             'sellerDeclarations' => SellerDeclaration::withoutGlobalScopes()->where('site_id', $site->id)->orderBy('seller_id')->get(),
+            'globalClickGuard' => $runtimePolicies->globalClickGuard(),
         ]);
     }
 

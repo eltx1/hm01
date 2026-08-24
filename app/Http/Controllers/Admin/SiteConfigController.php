@@ -28,6 +28,7 @@ class SiteConfigController extends Controller
             'debug_enabled' => ['sometimes', 'boolean'],
             'house_ad_testing' => ['sometimes', 'boolean'],
             'single_request_mode' => ['sometimes', 'boolean'],
+            'click_guard_inherit_global' => ['sometimes', 'boolean'],
             'click_guard_enabled' => ['sometimes', 'boolean'],
             'click_guard_max_clicks' => ['sometimes', 'integer', 'between:1,50'],
             'click_guard_window_hours' => ['sometimes', 'integer', 'between:1,168'],
@@ -54,6 +55,19 @@ class SiteConfigController extends Controller
             );
             $before = $config->toArray();
             $existingClickGuard = $config->click_guard_settings ?? [];
+            $clickGuard = $existingClickGuard;
+            if ($request->has('click_guard_inherit_global')) {
+                $inheritGlobal = $request->boolean('click_guard_inherit_global');
+                $clickGuard = $inheritGlobal ? [
+                    'inheritGlobal' => true,
+                ] : [
+                    'inheritGlobal' => false,
+                    'enabled' => $request->boolean('click_guard_enabled'),
+                    'maxClicks' => (int) ($data['click_guard_max_clicks'] ?? 3),
+                    'windowHours' => (int) ($data['click_guard_window_hours'] ?? 6),
+                    'blockHours' => (int) ($data['click_guard_block_hours'] ?? 12),
+                ];
+            }
             $config->update([
                 'loader_release_id' => $data['loader_release_id'] ?? $config->loader_release_id,
                 'tag_version_id' => $data['tag_version_id'] ?? $config->tag_version_id,
@@ -65,14 +79,7 @@ class SiteConfigController extends Controller
                 'gpt_settings' => $data['gpt_settings'],
                 'supply_chain_settings' => $data['supply_chain_settings'],
                 'observability_settings' => $data['observability_settings'],
-                'click_guard_settings' => [
-                    'enabled' => $request->has('click_guard_enabled')
-                        ? $request->boolean('click_guard_enabled')
-                        : (bool) data_get($existingClickGuard, 'enabled', false),
-                    'maxClicks' => (int) ($data['click_guard_max_clicks'] ?? data_get($existingClickGuard, 'maxClicks', 3)),
-                    'windowHours' => (int) ($data['click_guard_window_hours'] ?? data_get($existingClickGuard, 'windowHours', 6)),
-                    'blockHours' => (int) ($data['click_guard_block_hours'] ?? data_get($existingClickGuard, 'blockHours', 12)),
-                ],
+                'click_guard_settings' => $clickGuard,
             ]);
             $audit->record('site.config.settings.updated', $site->organization_id, $request->user(), $config, $before, $config->fresh()->toArray());
 

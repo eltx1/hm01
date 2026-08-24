@@ -152,7 +152,7 @@ final class SiteConfigurationBuilder
             'nativeDemand' => array_replace($publicNative, ['enabled' => $legacyNativeEnabled]),
             'debug' => (bool) $config->debug_enabled,
             'houseAdTesting' => (bool) $config->house_ad_testing,
-            'clickGuard' => $this->clickGuard($config->click_guard_settings),
+            'clickGuard' => $this->runtimePolicies->clickGuard($config->click_guard_settings),
             'allowedHostnames' => $this->hostnames($site),
             'loader' => [
                 'version' => $loader?->version ?? '2.0.0',
@@ -240,29 +240,6 @@ final class SiteConfigurationBuilder
         return collect((array) ($native['placements'] ?? []))
             ->contains(fn (array $placement) => collect((array) ($placement['candidates'] ?? []))
                 ->contains(fn (array $candidate) => ! (bool) ($candidate['gamManaged'] ?? false)));
-    }
-
-    private function clickGuard(?array $settings): array
-    {
-        $settings ??= [];
-        $enabled = filter_var($settings['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-
-        return [
-            'enabled' => $enabled ?? false,
-            'maxClicks' => $this->boundedInteger($settings['maxClicks'] ?? null, 3, 1, 50),
-            'windowHours' => $this->boundedInteger($settings['windowHours'] ?? null, 6, 1, 168),
-            'blockHours' => $this->boundedInteger($settings['blockHours'] ?? null, 12, 1, 720),
-        ];
-    }
-
-    private function boundedInteger(mixed $value, int $default, int $minimum, int $maximum): int
-    {
-        $validated = filter_var($value, FILTER_VALIDATE_INT);
-        if ($validated === false) {
-            return $default;
-        }
-
-        return max($minimum, min($maximum, $validated));
     }
 
     private function placement(
