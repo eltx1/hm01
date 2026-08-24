@@ -14,6 +14,7 @@ required=(
   'horus-media-platform/public/assets/prebid/horus-prebid.min.js'
   'horus-media-platform/database/migrations/2026_07_30_000000_create_production_operations_tables.php'
   'horus-media-platform/database/migrations/2026_08_01_000000_create_static_delivery_tables.php'
+  'horus-media-platform/ops/audit/production-readiness.php'
   'horus-media-platform/.env.example'
   'horus-media-platform/release/INSTALLATION.md'
   'horus-media-platform/release/UPGRADE.md'
@@ -42,7 +43,7 @@ for forbidden_file in \
 done
 
 for forbidden_dir in \
-  'node_modules/' 'tests/' '.git/' '.github/' 'design/' 'docs/' 'ops/' 'scripts/' \
+  'node_modules/' 'tests/' '.git/' '.github/' 'design/' 'docs/' 'scripts/' \
   'cloudflare-pages-dist/' \
   'resources/js/' 'resources/css/' 'resources/prebid/' 'public/cdn/' \
   'storage/framework/testing/'; do
@@ -51,6 +52,13 @@ for forbidden_dir in \
     exit 1
   fi
 done
+
+unexpected_ops_entries="$(unzip -Z1 "$ZIP" | grep '^horus-media-platform/ops/' | grep -Ev '^horus-media-platform/ops/(audit/)?$|^horus-media-platform/ops/audit/production-readiness\.php$' || true)"
+if [[ -n "$unexpected_ops_entries" ]]; then
+  echo 'Release contains unexpected operational tooling:' >&2
+  printf '%s\n' "$unexpected_ops_entries" >&2
+  exit 1
+fi
 
 if unzip -Z1 "$ZIP" | grep -Eq '^horus-media-platform/bootstrap/cache/(config|events|compiled|routes-[^/]+)\.php$'; then
   echo 'Release contains host/runtime-specific Laravel bootstrap cache generated before deployment.' >&2
