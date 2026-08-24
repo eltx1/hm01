@@ -235,6 +235,7 @@ class PlatformMasterAdsTxtTest extends TestCase
             'publisher_account_id' => 'seat-y',
             'relationship' => 'RESELLER',
         ], $this->admin);
+        $disabled->update(['effective_from' => now()->addDay(), 'effective_to' => now()->addWeek()]);
 
         $response = $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->post(route('admin.compliance.ads-txt.master.import'), [
@@ -265,6 +266,8 @@ class PlatformMasterAdsTxtTest extends TestCase
         $this->assertNull($existing->effective_to);
         $this->assertSame('ACTIVE', $disabled->refresh()->status);
         $this->assertSame(SupplyChainReviewStatus::Verified, $disabled->review_status);
+        $this->assertNull($disabled->effective_from);
+        $this->assertNull($disabled->effective_to);
         $this->assertDatabaseHas('platform_ads_txt_records', [
             'advertising_system_domain' => 'new.exchange.com',
             'publisher_account_id' => 'seat-z',
