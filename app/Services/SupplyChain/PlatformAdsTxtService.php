@@ -121,7 +121,7 @@ final class PlatformAdsTxtService
         $skipped = 0;
         $invalid = $parsed['invalid'];
 
-        DB::transaction(function () use ($records, $parsed, $actor, $superseded, &$created, &$updated, &$reactivated, &$skipped): void {
+        DB::transaction(function () use ($records, $parsed, $actor, $superseded, $invalid, &$created, &$updated, &$reactivated, &$skipped): void {
             $existingByIdentity = PlatformAdsTxtRecord::query()->lockForUpdate()->get()->keyBy(
                 fn (PlatformAdsTxtRecord $record): string => $this->identity($record->advertising_system_domain, $record->publisher_account_id),
             );
