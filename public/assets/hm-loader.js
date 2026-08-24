@@ -911,7 +911,7 @@ function nativeDefinition(config, code) {
             var standalonePrebid = placement && placement.renderer === 'PREBID_STANDALONE' && placement.prebidStandaloneEnabled === true;
             if (!placement || !placement.enabled || placement.status !== 'active') return;
             if (!placement.adUnitPath && !hasNative && !standalonePrebid) return;
-            if (element.getAttribute('data-hm-defined') === '1') return;
+            if (element.getAttribute('data-hm-defined') === '1' || element.getAttribute('data-hm-defining') === '1') return;
             result.push({ element: element, placement: placement, native: native });
         });
         return result;
@@ -1602,6 +1602,18 @@ function nativeDefinition(config, code) {
             ? items.filter(function (item) { return Boolean(item.placement.adUnitPath); })
             : [];
 
+        // Reserve GAM elements before loading GPT. MutationObserver scans can
+        // otherwise re-enter while the script is pending and define one slot
+        // twice for the same element.
+        gamItems = gamItems.filter(function (item) {
+            if (item.element.getAttribute('data-hm-defined') === '1' || item.element.getAttribute('data-hm-defining') === '1') return false;
+            item.element.setAttribute('data-hm-defining', '1');
+            return true;
+        });
+        function releaseGamReservations(entries) {
+            entries.forEach(function (item) { item.element.setAttribute('data-hm-defining', '0'); });
+        }
+
         standaloneItems.forEach(function (item) { ensureElementId(item.element, config, item.placement); });
         var standalonePromise = Promise.all(standaloneItems.map(function (item) { return runStandaloneEntry(config, item); }));
         nativeOnly.forEach(function (item) {
@@ -1613,10 +1625,17 @@ function nativeDefinition(config, code) {
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
 
         return loadGpt(config).then(function (googletag) {
-            if (!googletag || !gamServingAllowed(config)) return Promise.all([nativePromise, standalonePromise]).then(function () { return nativeOnly.concat(standaloneItems); });
+            if (!googletag || !gamServingAllowed(config)) {
+                releaseGamReservations(gamItems);
+                return Promise.all([nativePromise, standalonePromise]).then(function () { return nativeOnly.concat(standaloneItems); });
+            }
             return new Promise(function (resolve) {
                 googletag.cmd.push(function () {
-                    if (!gamServingAllowed(config)) { resolve(nativeOnly.concat(standaloneItems)); return; }
+                    if (!gamServingAllowed(config)) {
+                        releaseGamReservations(gamItems);
+                        resolve(nativeOnly.concat(standaloneItems));
+                        return;
+                    }
                     try {
                         var pubads = googletag.pubads();
                         var privacy = state.privacyDecision || {};
@@ -1681,7 +1700,10 @@ function nativeDefinition(config, code) {
                             } else if (googletag.defineSlot) {
                                 slot = googletag.defineSlot(placement.adUnitPath, normalizeSizes(placement.sizes), elementId);
                             }
-                            if (!slot) return;
+                            if (!slot) {
+                                element.setAttribute('data-hm-defining', '0');
+                                return;
+                            }
                             if (slot.setConfig && placement.type === 'INTERSTITIAL') {
                                 var configuredTriggers = (formatSettings.triggers || []).reduce(function (values, trigger) {
                                     if (trigger !== 'backward') values[trigger] = true;
@@ -1695,6 +1717,7 @@ function nativeDefinition(config, code) {
                             if (slot.setForceSafeFrame) slot.setForceSafeFrame(Boolean(placement.safeFrame));
                             if (slot.setCollapseEmptyDiv) slot.setCollapseEmptyDiv(Boolean(placement.collapseEmptyDiv), Boolean(placement.collapseEmptyDiv));
                             if (slot.addService) slot.addService(pubads);
+                            element.setAttribute('data-hm-defining', '0');
                             element.setAttribute('data-hm-defined', '1');
                             element.setAttribute('data-hm-status', 'defined');
                             state.slots[elementId] = { slot: slot, placement: placement, element: element, native: item.native, refreshCount: 0 };
@@ -1720,12 +1743,14 @@ function nativeDefinition(config, code) {
                             });
                         });
                     } catch (error) {
+                        releaseGamReservations(gamItems);
                         log(config, 'Slot definition failed', error);
                         Promise.all([nativePromise, standalonePromise]).then(function () { resolve(nativeOnly.concat(standaloneItems)); });
                     }
                 });
             });
         }).catch(function (error) {
+            releaseGamReservations(gamItems);
             log(config, 'GPT unavailable; trying independent non-GAM engines', error);
             return Promise.all([
                 standalonePromise,

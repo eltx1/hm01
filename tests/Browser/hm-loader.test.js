@@ -65,6 +65,7 @@ function createHarness(config, {
     gppResponse = null,
     gpc = false,
     diagnosticToken = null,
+    deferredGpt = false,
 } = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
@@ -129,7 +130,8 @@ function createHarness(config, {
             appendChild(node) {
                 if (node.getAttribute && node.getAttribute('data-hm-gpt') === '1') {
                     metrics.gptLoads += 1;
-                    queueMicrotask(() => node.onload?.());
+                    if (deferredGpt) metrics.releaseGpt = () => node.onload?.();
+                    else queueMicrotask(() => node.onload?.());
                 }
             },
         },
@@ -234,6 +236,22 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.fetches.length, 3);
     assert.match(metrics.fetches[1], /\/manifest\.json$/);
     assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
+});
+
+test('concurrent scans while GPT loads reserve one GAM slot owner', async () => {
+    const { sandbox, metrics } = createHarness(activeConfig(), { deferredGpt: true });
+    const boot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && !metrics.releaseGpt; attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    assert.equal(metrics.gptLoads, 1);
+    const concurrentScan = sandbox.HorusMediaLoader.scan();
+    metrics.releaseGpt();
+    await Promise.all([boot, concurrentScan]);
+
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
 });
 
 test('privacy gate waits for TCF and applies unified GPT privacy configuration', async () => {
