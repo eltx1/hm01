@@ -20,7 +20,7 @@
 
 <x-ads-txt-import-report />
 
-@if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
+@if(auth()->user()->hasPermission('supply_chain.ads_txt.manage') && auth()->user()->hasPermission('supply_chain.sellers.review'))
 <article class="workspace-section import-panel">
     <div class="workspace-heading"><div><p class="eyebrow">Quick add</p><h2>Add and publish records immediately</h2><p class="muted">Paste the new partner records and submit once. New lines are published immediately, exact duplicates are ignored, and an existing seller identity is updated from its latest pasted line. Invalid lines are skipped without blocking valid additions.</p></div><span class="status-badge status-badge-success">ADMIN DIRECT</span></div>
     <form method="POST" enctype="multipart/form-data" action="{{ route('admin.compliance.ads-txt.master.import') }}" class="form-stack">@csrf
@@ -30,7 +30,9 @@
         <button class="hm-button-primary" data-submitting-label="Adding and publishing…">Add and publish records</button>
     </form>
 </article>
+@endif
 
+@if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
 <article class="workspace-section import-panel">
     <div class="workspace-heading">
         <div><p class="eyebrow">Master file editor</p><h2>View, edit or replace the complete file</h2><p class="muted">Edit up to 5,000 seller records in one place. Removing a line disables that record instead of deleting history. Preview shows the exact diff before anything changes.</p></div>
