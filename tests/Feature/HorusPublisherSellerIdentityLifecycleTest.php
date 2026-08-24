@@ -122,8 +122,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
             'created_by' => $admin->id,
         ]);
 
-        $this->assertSame(SupplyChainReviewStatus::ReviewRequired, $seller->refresh()->review_status);
-        $invariants->reviewSellerDeclaration($seller->refresh(), SupplyChainReviewStatus::Verified, $admin);
+        $this->assertSame(SupplyChainReviewStatus::Verified, $seller->refresh()->review_status);
         $active = $invariants->changeSellerStatus($seller->refresh(), SellerDeclarationStatus::Active, $admin);
 
         $this->assertSame(SellerDeclarationStatus::Active, $active->status);
@@ -235,7 +234,7 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
         $this->assertSame(0, $payload['sellers'][0]['is_confidential']);
     }
 
-    public function test_legal_identity_domain_and_commercial_changes_reopen_review_without_changing_seller_id(): void
+    public function test_legal_identity_changes_reopen_review_but_commercial_terms_do_not_change_seller_identity(): void
     {
         [$publisher, , $admin] = $this->basePublisher();
         $seller = $this->activate($publisher, $admin);
@@ -261,8 +260,8 @@ class HorusPublisherSellerIdentityLifecycleTest extends TestCase
 
         $contract = $publisher->contracts()->firstOrFail();
         $contract->update(['payment_terms' => 'NET_45']);
-        $this->assertSame(SellerDeclarationStatus::Disabled, $seller->refresh()->status);
-        $this->assertSame(SupplyChainReviewStatus::ReviewRequired, $seller->review_status);
+        $this->assertSame(SellerDeclarationStatus::Active, $seller->refresh()->status);
+        $this->assertSame(SupplyChainReviewStatus::Verified, $seller->review_status);
         $this->assertSame($originalId, $seller->seller_id);
     }
 
