@@ -22,6 +22,16 @@
 
 @if(auth()->user()->hasPermission('supply_chain.ads_txt.manage'))
 <article class="workspace-section import-panel">
+    <div class="workspace-heading"><div><p class="eyebrow">Quick add</p><h2>Add and publish records immediately</h2><p class="muted">Paste the new partner records and submit once. New lines are published immediately, exact duplicates are ignored, and an existing seller identity is updated from its latest pasted line. Invalid lines are skipped without blocking valid additions.</p></div><span class="status-badge status-badge-success">ADMIN DIRECT</span></div>
+    <form method="POST" enctype="multipart/form-data" action="{{ route('admin.compliance.ads-txt.master.import') }}" class="form-stack">@csrf
+        <label>Paste the records to add<textarea class="hm-input import-textarea" name="ads_txt_records" rows="8" placeholder="exchange.example, seller-123, RESELLER, abcdef123456"></textarea></label>
+        <label>Or upload the network file<input class="hm-input" type="file" name="ads_txt_file" accept=".txt,.csv,text/plain,text/csv"></label>
+        <div class="notice"><strong>One-step admin action:</strong> no password, preview, duplicate cleanup or second approval is required. Every accepted record becomes active across eligible websites and the change remains audited.</div>
+        <button class="hm-button-primary" data-submitting-label="Adding and publishing…">Add and publish records</button>
+    </form>
+</article>
+
+<article class="workspace-section import-panel">
     <div class="workspace-heading">
         <div><p class="eyebrow">Master file editor</p><h2>View, edit or replace the complete file</h2><p class="muted">Edit up to 5,000 seller records in one place. Removing a line disables that record instead of deleting history. Preview shows the exact diff before anything changes.</p></div>
         <div class="button-row"><button class="hm-button-secondary" type="button" data-copy-target="master-ads-editor">Copy all</button><a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.master.export') }}">Download</a></div>
@@ -67,19 +77,6 @@
             @endif
         @endif
         @endif
-    </form>
-</article>
-@endif
-
-@if(auth()->user()->hasPermission('supply_chain.ads_txt.manage') && auth()->user()->hasPermission('supply_chain.sellers.review'))
-<article class="workspace-section secondary-workflow">
-    <div class="workspace-heading"><div><p class="eyebrow">Append / import</p><h2>Add many records without replacing the file</h2><p class="muted">Use this when a demand partner gives you extra lines to append. Existing master lines are left untouched.</p></div><span class="status-badge status-badge-success">TXT / CSV</span></div>
-    <form method="POST" enctype="multipart/form-data" action="{{ route('admin.compliance.ads-txt.master.import') }}" class="form-stack">@csrf
-        <label>Paste ads.txt records<textarea class="hm-input import-textarea" name="ads_txt_records" rows="8" placeholder="exchange.example, seller-123, RESELLER, abcdef123456"></textarea></label>
-        <label>Or upload the network file<input class="hm-input" type="file" name="ads_txt_file" accept=".txt,.csv,text/plain,text/csv"></label>
-        <fieldset class="import-options"><legend>Publication mode</legend><label><input type="radio" name="activate" value="1" checked> Import, approve and publish immediately</label><label><input type="radio" name="activate" value="0"> Import disabled for later review</label></fieldset>
-        <details class="import-confirmation"><summary>Required for immediate platform-wide publication</summary><div class="form-grid"><label>Reason<input class="hm-input" name="reason" minlength="8" maxlength="1000" value="Import authorized seller file supplied by demand partner"></label><label>Current password<input class="hm-input" type="password" name="current_password" autocomplete="current-password"></label></div><label class="check"><input type="checkbox" name="confirm_platform_scope" value="1"> I confirm these records may appear on every eligible Horus-managed website.</label></details>
-        <button class="hm-button-secondary" data-submitting-label="Importing…">Append records</button>
     </form>
 </article>
 @endif
