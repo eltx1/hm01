@@ -2,7 +2,7 @@
 @section('title', $site->exists ? 'Edit website' : 'Add website')
 @section('heading', $site->exists ? 'Edit website' : 'Add website')
 @section('content')
-<article><p class="muted">Every new website starts as a separate draft. Publisher approval never auto-approves a website.</p>
+<article><p class="muted">Every new website starts as a separate draft. Successful ads.txt verification submits it for Horus review automatically.</p>
 <form method="POST" action="{{ $site->exists ? route('publisher.sites.update', $site) : route('publisher.sites.store') }}" class="form-grid">@csrf @if($site->exists)@method('PUT')@endif
 <label>Display name<input class="hm-input" name="display_name" value="{{ old('display_name', $site->display_name) }}" required></label>
 <label>Primary domain<input class="hm-input" name="primary_domain" value="{{ old('primary_domain', $site->primary_domain) }}" placeholder="example.com" required></label>

@@ -105,10 +105,18 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->get('/two-factor/challenge')->assertNotFound();
     }
 
-    public function test_publisher_registration_skips_email_verification_and_opens_application_when_disabled(): void
+    public function test_publisher_registration_skips_email_verification_and_opens_active_dashboard_when_disabled(): void
     {
         Config::set('security.authentication.email_verification_required', false);
         Config::set('publisher-applications.public_registration_enabled', true);
+        Config::set('publisher-applications.legal_documents', [
+            'PUBLISHER_TERMS' => [
+                'label' => 'Publisher Terms',
+                'version' => '2026-08',
+                'url' => 'https://horusmedia.net/publisher-terms/',
+                'required' => true,
+            ],
+        ]);
 
         $this->post('/register/publisher', [
             'name' => 'Publisher Owner',
@@ -117,7 +125,9 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
             'primary_domain' => 'publisher.example',
             'password' => 'Secure-Password-2026!',
             'password_confirmation' => 'Secure-Password-2026!',
-        ])->assertRedirect(route('publisher-application.show'));
+            'legal' => ['PUBLISHER_TERMS' => 1],
+            'marketing_opt_in' => 0,
+        ])->assertRedirect(route('dashboard'));
 
         $user = User::query()->where('email', 'owner@publisher.example')->firstOrFail();
         $application = PublisherApplication::withoutGlobalScopes()->where('applicant_user_id', $user->id)->firstOrFail();
@@ -125,10 +135,10 @@ final class OptionalAuthenticationRequirementsTest extends TestCase
         $this->assertAuthenticatedAs($user);
         $this->assertNull($user->email_verified_at);
         $this->assertTrue($user->hasVerifiedEmail());
-        $this->assertSame(PublisherApplicationStatus::Draft, $application->status);
-        $this->get(route('publisher-application.show'))->assertOk();
-        $this->get('/verify-email')->assertRedirect(route('publisher-application.show'));
-        $this->post('/email/verification-notification')->assertRedirect(route('publisher-application.show'));
+        $this->assertSame(PublisherApplicationStatus::Approved, $application->status);
+        $this->get(route('dashboard'))->assertOk();
+        $this->get('/verify-email')->assertRedirect(route('dashboard'));
+        $this->post('/email/verification-notification')->assertRedirect(route('dashboard'));
         Mail::assertNothingSent();
     }
 

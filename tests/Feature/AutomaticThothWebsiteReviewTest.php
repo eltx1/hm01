@@ -104,7 +104,7 @@ class AutomaticThothWebsiteReviewTest extends TestCase
             ->assertSee('Quality Review')
             ->assertSee('THOTH advisory failed')
             ->assertSee('THOTH is disabled in the AI Control Center.')
-            ->assertSee('Approve website')
+            ->assertSee('Approve & activate website')
             ->assertSee('Reject website');
     }
 
@@ -137,7 +137,7 @@ class AutomaticThothWebsiteReviewTest extends TestCase
             ->get(route('admin.sites.show', $this->site))
             ->assertOk()
             ->assertSee('rate limit or quota was reached')
-            ->assertSee('Approve website');
+            ->assertSee('Approve & activate website');
     }
 
     public function test_successful_site_advisory_is_visible_and_cannot_auto_approve_the_website(): void
@@ -176,7 +176,7 @@ class AutomaticThothWebsiteReviewTest extends TestCase
             ->assertSee('LOW')
             ->assertSee('Confidence')
             ->assertSee('92%')
-            ->assertSee('Approve website')
+            ->assertSee('Approve & activate website')
             ->assertSee('Reject website');
     }
 

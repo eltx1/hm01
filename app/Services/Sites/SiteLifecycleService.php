@@ -66,9 +66,9 @@ class SiteLifecycleService
             ]);
 
             // Legacy publishers that already participate in the managed identity
-            // lifecycle keep the original behavior. Express applicants receive
-            // HMP/HMS identities only after approval, when their first site supplies
-            // the canonical domain required by sellers.json.
+            // lifecycle keep the original behavior. Active express registrations
+            // receive HMP/HMS identities when their first site supplies the
+            // canonical domain required by sellers.json.
             $publisher = $site->publisher()->withoutGlobalScopes()->firstOrFail();
             $approvedApplication = $publisher->application()->withoutGlobalScopes()
                 ->where('status', PublisherApplicationStatus::Approved->value)
@@ -87,7 +87,7 @@ class SiteLifecycleService
         });
     }
 
-    public function transition(Site $site, SiteStatus $newStatus, User $actor, ?string $reason = null): Site
+    public function transition(Site $site, SiteStatus $newStatus, User $actor, ?string $reason = null, bool $notify = true): Site
     {
         $oldStatus = $site->status;
         if ($oldStatus === $newStatus) {
@@ -129,7 +129,9 @@ class SiteLifecycleService
             }
         });
 
-        $this->notifications->siteStatusChanged($site->refresh(), $oldStatus);
+        if ($notify) {
+            $this->notifications->siteStatusChanged($site->refresh(), $oldStatus);
+        }
 
         return $site->refresh();
     }

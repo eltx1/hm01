@@ -87,7 +87,9 @@ class PublisherCurrentTruthTest extends TestCase
             'password' => 'simplepass1',
             'password_confirmation' => 'simplepass1',
             '_company_website' => '',
-        ])->assertRedirect(route('publisher-application.show'))
+            'legal' => ['PUBLISHER_TERMS' => 1],
+            'marketing_opt_in' => 0,
+        ])->assertRedirect(route('dashboard'))
             ->assertSessionHasNoErrors();
 
         $this->assertDatabaseHas('users', ['email' => 'simple@publisher.example']);

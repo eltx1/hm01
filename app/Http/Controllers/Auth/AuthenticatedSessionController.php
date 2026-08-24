@@ -111,11 +111,6 @@ class AuthenticatedSessionController extends Controller
                 : route('verification.notice');
         }
 
-        $application = $user->publisherApplication()->with('publisher')->first();
-        if ($application?->approved_at && ! $application->publisher?->onboarding_submitted_at) {
-            return route('publisher.onboarding.show', 1);
-        }
-
         return route('dashboard');
     }
 }

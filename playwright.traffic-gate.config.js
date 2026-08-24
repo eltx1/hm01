@@ -3,7 +3,9 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
     testDir: './tests/Browser',
     testMatch: ['traffic-gate.playwright.spec.js', 'traffic-gate-loader.playwright.spec.js'],
-    timeout: 15000,
+    // WebKit startup can exceed 15 seconds on a cold hosted runner before the
+    // test body begins. Keep assertions strict while allowing browser setup.
+    timeout: 30000,
     expect: { timeout: 5000 },
     fullyParallel: false,
     workers: 1,

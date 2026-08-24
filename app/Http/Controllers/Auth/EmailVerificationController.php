@@ -36,9 +36,9 @@ class EmailVerificationController extends Controller
             $audit->record('auth.email.verified', $request->user()->organization_id, $request->user());
         }
 
-        $application = $applications->emailVerified($request->user());
+        $applications->emailVerified($request->user());
 
-        return redirect()->route($application ? 'publisher-application.show' : 'dashboard');
+        return redirect()->route($request->user()->isActive() ? 'dashboard' : 'publisher-application.show');
     }
 
     public function send(Request $request, PublisherApplicantEmailService $emails): RedirectResponse
@@ -59,9 +59,11 @@ class EmailVerificationController extends Controller
 
     private function verificationBypassDestination(Request $request): RedirectResponse
     {
-        $hasPublisherApplication = PublisherApplication::withoutGlobalScopes()
-            ->where('applicant_user_id', $request->user()->id)
-            ->exists();
+        if ($request->user()->isActive()) {
+            return redirect()->route('dashboard');
+        }
+
+        $hasPublisherApplication = PublisherApplication::withoutGlobalScopes()->where('applicant_user_id', $request->user()->id)->exists();
 
         return redirect()->route($hasPublisherApplication ? 'publisher-application.show' : 'dashboard');
     }

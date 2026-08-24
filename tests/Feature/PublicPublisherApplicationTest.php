@@ -7,6 +7,7 @@ use App\Enums\OrganizationType;
 use App\Enums\PublisherApplicationStatus;
 use App\Enums\RoleName;
 use App\Models\AuditLog;
+use App\Models\Organization;
 use App\Models\Publisher;
 use App\Models\PublisherApplication;
 use App\Models\PublisherApplicationRevision;
@@ -51,7 +52,7 @@ class PublicPublisherApplicationTest extends TestCase
         $this->post('/register/publisher', $this->registrationPayload())->assertNotFound();
 
         Config::set('publisher-applications.public_registration_enabled', true);
-        $this->get('/register/publisher')->assertOk()->assertSee('Apply as a Publisher');
+        $this->get('/register/publisher')->assertOk()->assertSee('Create a Publisher account');
         $this->post('/register/publisher', $this->registrationPayload())
             ->assertRedirect(route('verification.notice'));
     }
@@ -70,19 +71,25 @@ class PublicPublisherApplicationTest extends TestCase
         $this->assertDatabaseCount('publisher_applications', 0);
     }
 
-    public function test_registration_creates_pending_account_only_entities_without_domain_claim_site_or_role(): void
+    public function test_registration_creates_active_account_default_terms_and_no_website(): void
     {
         $user = $this->registerApplicant(['primary_domain' => 'stale-client.example']);
         $application = PublisherApplication::withoutGlobalScopes()->firstOrFail();
         $publisher = Publisher::withoutGlobalScopes()->firstOrFail();
 
-        $this->assertSame(PublisherApplicationStatus::EmailVerificationRequired, $application->status);
-        $this->assertSame(AccountStatus::Pending, $publisher->status);
-        $this->assertSame(AccountStatus::Pending, $publisher->organization->status);
+        $this->assertSame(PublisherApplicationStatus::Approved, $application->status);
+        $this->assertSame(AccountStatus::Active, $publisher->status);
+        $this->assertSame(AccountStatus::Active, $publisher->organization->status);
         $this->assertNull($application->primary_domain);
         $this->assertNull($publisher->business_domain);
         $this->assertFalse($user->hasVerifiedEmail());
-        $this->assertSame(0, $user->roles()->count());
+        $this->assertTrue($user->hasRole(RoleName::PublisherAdmin->value));
+        $this->assertDatabaseHas('publisher_contracts', [
+            'publisher_id' => $publisher->id,
+            'status' => 'ACTIVE',
+            'revenue_share_percent' => 70,
+            'ends_at' => null,
+        ]);
         $this->assertDatabaseCount('publisher_application_domain_claims', 0);
         $this->assertDatabaseCount('sites', 0);
         $this->assertDatabaseCount('site_configs', 0);
@@ -159,12 +166,12 @@ class PublicPublisherApplicationTest extends TestCase
             'id' => $user->id,
             'hash' => sha1($user->email),
         ]);
-        $this->get($url)->assertRedirect(route('publisher-application.show'));
+        $this->get($url)->assertRedirect(route('dashboard'));
         $this->assertSame(
-            PublisherApplicationStatus::Draft,
+            PublisherApplicationStatus::Approved,
             PublisherApplication::withoutGlobalScopes()->firstOrFail()->status,
         );
-        $this->get(route('publisher-application.show'))->assertOk();
+        $this->get(route('dashboard'))->assertOk();
     }
 
     public function test_express_applicant_submits_an_immutable_revision_without_website_or_traffic_data(): void
@@ -377,9 +384,32 @@ class PublicPublisherApplicationTest extends TestCase
 
     private function readyDraft(): User
     {
-        $user = $this->registerApplicant();
+        $organization = Organization::create([
+            'name' => 'Legacy News Publisher',
+            'slug' => 'legacy-news-publisher',
+            'type' => OrganizationType::Publisher,
+            'status' => AccountStatus::Pending,
+        ]);
+        $publisher = Publisher::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'legal_name' => 'News Publisher',
+            'display_name' => 'News Publisher',
+            'status' => AccountStatus::Pending,
+        ]);
+        $user = User::create([
+            'organization_id' => $organization->id,
+            'name' => 'News Owner',
+            'email' => 'owner@news.example',
+            'password' => 'Secure-Password-2026!',
+            'status' => 'ACTIVE',
+        ]);
         $user->forceFill(['email_verified_at' => now()])->save();
-        app(PublisherApplicationService::class)->emailVerified($user);
+        PublisherApplication::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'publisher_id' => $publisher->id,
+            'applicant_user_id' => $user->id,
+            'status' => PublisherApplicationStatus::Draft,
+        ]);
         $this->actingAs($user);
 
         return $user;
@@ -419,6 +449,8 @@ class PublicPublisherApplicationTest extends TestCase
             'password' => 'Secure-Password-2026!',
             'password_confirmation' => 'Secure-Password-2026!',
             '_company_website' => '',
+            'legal' => ['PUBLISHER_TERMS' => 1],
+            'marketing_opt_in' => 0,
         ], $overrides);
     }
 

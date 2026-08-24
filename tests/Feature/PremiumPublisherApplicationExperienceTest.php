@@ -2,13 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Enums\AccountStatus;
 use App\Enums\OrganizationType;
 use App\Enums\PublisherApplicationStatus;
 use App\Enums\RoleName;
+use App\Models\Organization;
+use App\Models\Publisher;
 use App\Models\PublisherApplication;
+use App\Models\PublisherApplicationDomainClaim;
 use App\Models\User;
 use App\Services\PublisherApplications\ApplicationAdsTxtVerificationService;
-use App\Services\PublisherApplications\PublisherApplicationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
@@ -51,9 +54,9 @@ class PremiumPublisherApplicationExperienceTest extends TestCase
         $this->get(route('publisher-registration.create'))
             ->assertOk()
             ->assertSee('Horus Media official logo')
-            ->assertSee('Apply as a Publisher')
-            ->assertSee('Account')
-            ->assertSee('Company &amp; submit', false)
+            ->assertSee('Create a Publisher account')
+            ->assertSee('One-step setup')
+            ->assertSee('Terms of Service')
             ->assertSee('Use at least 10 characters')
             ->assertDontSee('Primary website or domain')
             ->assertDontSee('Use at least 14 characters')
@@ -183,16 +186,38 @@ class PremiumPublisherApplicationExperienceTest extends TestCase
 
     private function legacyDraft(): User
     {
-        $application = app(PublisherApplicationService::class)->register([
+        $organization = Organization::create([
+            'name' => 'Publisher Example',
+            'slug' => 'publisher-example',
+            'type' => OrganizationType::Publisher,
+            'status' => AccountStatus::Pending,
+        ]);
+        $publisher = Publisher::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'legal_name' => 'Publisher Example',
+            'display_name' => 'Publisher Example',
+            'business_domain' => 'publisher.example',
+            'status' => AccountStatus::Pending,
+        ]);
+        $user = User::create([
+            'organization_id' => $organization->id,
             'name' => 'Publisher Owner',
             'email' => 'owner@publisher.example',
-            'publisher_name' => 'Publisher Example',
-            'primary_domain' => 'publisher.example',
             'password' => 'Secure-Password-2026!',
+            'status' => 'ACTIVE',
         ]);
-        $user = $application->applicant;
         $user->forceFill(['email_verified_at' => now()])->save();
-        app(PublisherApplicationService::class)->emailVerified($user);
+        $application = PublisherApplication::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'publisher_id' => $publisher->id,
+            'applicant_user_id' => $user->id,
+            'primary_domain' => 'publisher.example',
+            'status' => PublisherApplicationStatus::Draft,
+        ]);
+        PublisherApplicationDomainClaim::create([
+            'publisher_application_id' => $application->id,
+            'normalized_domain' => 'publisher.example',
+        ]);
         $this->actingAs($user);
 
         return $user;
@@ -217,6 +242,8 @@ class PremiumPublisherApplicationExperienceTest extends TestCase
             'password' => 'Secure-Password-2026!',
             'password_confirmation' => 'Secure-Password-2026!',
             '_company_website' => '',
+            'legal' => ['TERMS_OF_SERVICE' => 1, 'PRIVACY_POLICY' => 1],
+            'marketing_opt_in' => 0,
         ], $overrides);
     }
 

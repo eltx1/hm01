@@ -20,6 +20,7 @@ use App\Services\Sites\SiteLifecycleService;
 use App\Services\TrafficGate\TrafficGateConfigurationResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -64,13 +65,23 @@ class SiteController extends Controller
         ]);
     }
 
-    public function approve(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
+    public function approve(Request $request, Site $site, SiteLifecycleService $lifecycle, SiteAdsTxtInstallationService $adsTxt): RedirectResponse
     {
         $data = $request->validate(['publisher_message' => ['nullable', 'string', 'max:5000'], 'internal_reason' => ['nullable', 'string', 'max:5000']]);
-        $lifecycle->transition($site, SiteStatus::Approved, $request->user(), $data['internal_reason'] ?? 'Approved by Horus Media.');
-        $this->review($site, $request, 'APPROVED', $data);
+        if (! $adsTxt->hasCurrentCoreVerification($site)) {
+            return back()->withErrors([
+                'approval' => 'Approval blocked. The current primary domain must first pass both assigned Horus HMP/HMS DIRECT ads.txt records.',
+            ]);
+        }
 
-        return back()->with('status', 'Website approved. Production activation remains blocked until the current primary domain passes Horus HMP/HMS DIRECT ads.txt verification.');
+        DB::transaction(function () use ($site, $request, $data, $lifecycle): void {
+            $reason = $data['internal_reason'] ?? 'Approved by Horus Media.';
+            $lifecycle->transition($site, SiteStatus::Approved, $request->user(), $reason, notify: false);
+            $lifecycle->transition($site->refresh(), SiteStatus::Active, $request->user(), 'Activated automatically with website approval.');
+            $this->review($site->refresh(), $request, 'APPROVED', $data);
+        });
+
+        return back()->with('status', 'Website approved and activated. Production configuration was published automatically.');
     }
 
     public function reject(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse

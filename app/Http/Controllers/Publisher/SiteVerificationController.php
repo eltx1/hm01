@@ -9,12 +9,13 @@ use App\Models\SiteDomain;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
+use App\Services\Sites\SiteReviewSubmissionService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 class SiteVerificationController extends Controller
 {
-    public function verify(Request $request, Site $site, SiteDomain $domain, DomainVerificationService $service, SiteAdsTxtInstallationService $adsTxt, AuditRecorder $audit): RedirectResponse
+    public function verify(Request $request, Site $site, SiteDomain $domain, DomainVerificationService $service, SiteAdsTxtInstallationService $adsTxt, SiteReviewSubmissionService $submission, AuditRecorder $audit): RedirectResponse
     {
         abort_unless($domain->site_id === $site->id, 404);
         $data = $request->validate(['method' => ['required', 'in:ADS_TXT,META_TAG,TEXT_FILE,DNS_TXT']]);
@@ -24,6 +25,17 @@ class SiteVerificationController extends Controller
             : $service->verify($domain, $method, $request->user());
         $audit->record('site.domain.verification_attempted', $site->organization_id, $request->user(), $domain, newValues: ['method' => $data['method'], 'status' => $verification->status]);
 
-        return back()->with($verification->status === 'VERIFIED' ? 'status' : 'error', $verification->status === 'VERIFIED' ? 'Domain verified.' : $verification->failure_reason);
+        $autoSubmitted = $verification->status === 'VERIFIED'
+            && $method === VerificationMethod::AdsTxt
+            && $domain->is_primary
+            && $domain->domain === $site->primary_domain
+            && $submission->submitIfReady($site->fresh(), $request->user());
+
+        return back()->with(
+            $verification->status === 'VERIFIED' ? 'status' : 'error',
+            $verification->status === 'VERIFIED'
+                ? ($autoSubmitted ? 'ads.txt verified. Website submitted for review automatically.' : 'Domain verified.')
+                : $verification->failure_reason,
+        );
     }
 }
