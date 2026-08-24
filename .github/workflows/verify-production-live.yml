@@ -1,0 +1,366 @@
+name: Verify production live
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy production
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_run_id:
+        description: Successful Deploy production workflow run ID to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: horus-production-live-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.deploy_run_id }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }}
+      CDN_URL: https://cdn.horusmedia.net
+      PUBLIC_URL: https://horusmedia.net
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Validate verification configuration
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Download immutable deployment proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-deploy-proof
+          path: ${{ runner.temp }}/production-deploy-proof
+          run-id: ${{ env.DEPLOY_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse and validate deployment proof
+        id: proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/production-deploy-proof/deploy-proof.env"
+          test -s "$proof"
+
+          value() {
+            local key="$1"
+            awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$proof"
+          }
+
+          schema_version="$(value schema_version)"
+          release_sha="$(value release_sha)"
+          validation_run_id="$(value validation_run_id)"
+          artifact_sha256="$(value artifact_sha256)"
+          deploy_run_id="$(value deploy_run_id)"
+          deploy_run_attempt="$(value deploy_run_attempt)"
+
+          [[ "$schema_version" == '1' ]]
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$validation_run_id" =~ ^[0-9]+$ ]]
+          [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$deploy_run_id" =~ ^[0-9]+$ ]]
+          [[ "$deploy_run_attempt" =~ ^[0-9]+$ ]]
+          [[ "$deploy_run_id" == "$DEPLOY_RUN_ID" ]]
+
+          {
+            echo "release_sha=$release_sha"
+            echo "validation_run_id=$validation_run_id"
+            echo "artifact_sha256=$artifact_sha256"
+            echo "deploy_run_attempt=$deploy_run_attempt"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require trusted successful deploy and validation runs
+        uses: actions/github-script@v8
+        env:
+          EXPECTED_RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          VALIDATION_RUN_ID: ${{ steps.proof.outputs.validation_run_id }}
+          DEPLOY_RUN_ID: ${{ env.DEPLOY_RUN_ID }}
+          DEPLOY_RUN_ATTEMPT: ${{ steps.proof.outputs.deploy_run_attempt }}
+        with:
+          script: |
+            const deployRunId = Number(process.env.DEPLOY_RUN_ID);
+            const validationRunId = Number(process.env.VALIDATION_RUN_ID);
+            const releaseSha = process.env.EXPECTED_RELEASE_SHA;
+            const deployAttempt = Number(process.env.DEPLOY_RUN_ATTEMPT);
+
+            const { data: deploy } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: deployRunId,
+            });
+            const deployFailures = [];
+            if (deploy.name !== 'Deploy production') deployFailures.push(`workflow=${deploy.name}`);
+            if (deploy.conclusion !== 'success') deployFailures.push(`conclusion=${deploy.conclusion}`);
+            if (deploy.head_branch !== 'main') deployFailures.push(`branch=${deploy.head_branch}`);
+            if (Number(deploy.run_attempt) !== deployAttempt) deployFailures.push(`attempt=${deploy.run_attempt}`);
+            if (deployFailures.length > 0) {
+              core.setFailed(`Deployment proof is not attached to a trusted successful main deploy: ${deployFailures.join(', ')}`);
+              return;
+            }
+
+            const { data: validation } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: validationRunId,
+            });
+            const validationFailures = [];
+            if (validation.name !== 'Production release validation') validationFailures.push(`workflow=${validation.name}`);
+            if (validation.conclusion !== 'success') validationFailures.push(`conclusion=${validation.conclusion}`);
+            if (validation.head_branch !== 'main') validationFailures.push(`branch=${validation.head_branch}`);
+            if (validation.head_sha !== releaseSha) validationFailures.push(`sha=${validation.head_sha}`);
+            if (validationFailures.length > 0) {
+              core.setFailed(`Deployment proof does not reference an approved successful production validation: ${validationFailures.join(', ')}`);
+            }
+
+      - name: Checkout verification tooling from deployed release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.proof.outputs.release_sha }}
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Configure pinned SSH trust
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Verify exact atomic production release and direct origin
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          ARTIFACT_SHA256: ${{ steps.proof.outputs.artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          release="$(ssh -p "$SSH_PORT" "$USER@$HOST" "cat '$app_root/.horus-release'")"
+          printf '%s\n' "$release"
+          grep -Fxq "release_id=$RELEASE_SHA" <<< "$release"
+          grep -Fxq "artifact_sha256=$ARTIFACT_SHA256" <<< "$release"
+
+          resolved="$(ssh -p "$SSH_PORT" "$USER@$HOST" "readlink -f '$app_root'")"
+          expected="$REMOTE_HOME/releases/$RELEASE_SHA"
+          [[ "$resolved" == "$expected" ]]
+          ssh -p "$SSH_PORT" "$USER@$HOST" "test -d '$expected'"
+          echo "Atomic release symlink: $resolved"
+
+          origin_status="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "curl --noproxy '*' --resolve app.horusmedia.net:443:127.0.0.1 -k -sS -o /dev/null -w '%{http_code}' https://app.horusmedia.net/up")"
+          [[ "$origin_status" == '200' ]]
+          echo "Direct origin health: HTTP $origin_status"
+
+      - name: Wait for exact production static snapshot convergence
+        id: snapshot
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          remote_dir="$REMOTE_HOME/incoming/live-verify-$GITHUB_RUN_ID"
+          local_dir="$RUNNER_TEMP/production-static-snapshot"
+          matched=false
+          local_hash=""
+
+          for attempt in $(seq 1 36); do
+            rm -rf "$local_dir"
+            mkdir -p "$local_dir"
+            ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "rm -rf '$remote_dir'; mkdir -p '$remote_dir'; cd '$app_root'; php artisan static-delivery:build '$remote_dir'"
+            ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." | tar -xzf - -C "$local_dir"
+            ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
+
+            php scripts/validate-static-delivery.php "$local_dir"
+            local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$local_dir/delivery-manifest.json")"
+            confirmed_hash="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "cat '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest' 2>/dev/null || true" | tr -d '[:space:]')"
+
+            [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
+            if [[ "$confirmed_hash" == "$local_hash" ]]; then
+              matched=true
+              break
+            fi
+
+            echo "Waiting for Static Edge convergence: attempt $attempt/36; live=$local_hash confirmed=${confirmed_hash:-missing}"
+            sleep 10
+          done
+
+          [[ "$matched" == 'true' ]]
+          echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
+          echo "Confirmed production manifest: $local_hash"
+
+      - name: Validate live TASK 68 sellers.json disclosure contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          php -r '
+            $path = $argv[1];
+            $d = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+            if (($d["version"] ?? null) !== "1.0" || !is_array($d["sellers"] ?? null)) {
+                fwrite(STDERR, "Invalid sellers.json top-level contract\n");
+                exit(1);
+            }
+            $public = 0;
+            $confidential = 0;
+            foreach ($d["sellers"] as $i => $seller) {
+                $id = trim((string) ($seller["seller_id"] ?? ""));
+                $type = strtoupper(trim((string) ($seller["seller_type"] ?? "")));
+                $isConfidential = (int) ($seller["is_confidential"] ?? 0);
+                if ($id === "" || !in_array($type, ["PUBLISHER", "INTERMEDIARY", "BOTH"], true)) {
+                    fwrite(STDERR, "Invalid seller identity at index {$i}\n");
+                    exit(1);
+                }
+                if ($isConfidential === 1) {
+                    $confidential++;
+                    continue;
+                }
+                if ($isConfidential !== 0) {
+                    fwrite(STDERR, "Invalid is_confidential at index {$i}\n");
+                    exit(1);
+                }
+                $name = trim((string) ($seller["name"] ?? ""));
+                $domain = strtolower(trim((string) ($seller["domain"] ?? "")));
+                if ($name === "" || $domain === "" || str_contains($domain, "://") || str_contains($domain, "/")) {
+                    fwrite(STDERR, "Non-confidential seller missing canonical name/domain at index {$i}\n");
+                    exit(1);
+                }
+                $public++;
+            }
+            echo "Live sellers.json: ".count($d["sellers"])." sellers; {$public} public; {$confidential} confidential\n";
+          ' "$RUNNER_TEMP/production-static-snapshot/sellers.json"
+
+      - name: Verify exact Cloudflare Pages deployment artifacts
+        id: pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$CLOUDFLARE_PAGES_PROJECT/deployments?env=production&per_page=20"
+          curl -fsSL --max-time 30 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            "$api" -o "$RUNNER_TEMP/cf-deployments.json"
+
+          jq -e '.success == true and (.result | type == "array")' "$RUNNER_TEMP/cf-deployments.json" >/dev/null
+          matched_url=""
+
+          while IFS= read -r deployment_url; do
+            [[ "$deployment_url" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]] || continue
+            if curl -fsSL --max-time 20 "$deployment_url/delivery-manifest.json?liveverify=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/pages-manifest.json" \
+              && cmp -s "$RUNNER_TEMP/production-static-snapshot/delivery-manifest.json" "$RUNNER_TEMP/pages-manifest.json" \
+              && curl -fsSL --max-time 20 "$deployment_url/sellers.json?liveverify=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/pages-sellers.json" \
+              && cmp -s "$RUNNER_TEMP/production-static-snapshot/sellers.json" "$RUNNER_TEMP/pages-sellers.json" \
+              && curl -fsSL --max-time 20 "$deployment_url/supply/sellers.json?liveverify=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/pages-supply-sellers.json" \
+              && cmp -s "$RUNNER_TEMP/production-static-snapshot/supply/sellers.json" "$RUNNER_TEMP/pages-supply-sellers.json"; then
+              matched_url="$deployment_url"
+              break
+            fi
+          done < <(jq -r '.result[] | select(.latest_stage.status == "success") | .url' "$RUNNER_TEMP/cf-deployments.json")
+
+          test -n "$matched_url"
+          echo "deployment_url=$matched_url" >> "$GITHUB_OUTPUT"
+          echo "Cloudflare Pages exact deployment: $matched_url"
+
+      - name: Verify representative ads.txt artifacts on exact Pages deployment
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.pages.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          mapfile -t ads_files < <(find "$RUNNER_TEMP/production-static-snapshot/supply" -type f -name 'ads.txt' -print | sort)
+          count="${#ads_files[@]}"
+          if (( count == 0 )); then
+            echo "No site ads.txt artifacts exist yet; sellers.json verification remains authoritative."
+            exit 0
+          fi
+
+          if (( count <= 100 )); then
+            sample=("${ads_files[@]}")
+          else
+            sample=("${ads_files[@]:0:50}" "${ads_files[@]:count-50:50}")
+          fi
+
+          for file in "${sample[@]}"; do
+            relative="${file#"$RUNNER_TEMP/production-static-snapshot/"}"
+            curl -fsSL --max-time 20 "$DEPLOYMENT_URL/$relative?liveverify=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/public-ads.txt"
+            cmp -s "$file" "$RUNNER_TEMP/public-ads.txt"
+          done
+          echo "Verified ${#sample[@]} of $count ads.txt artifacts byte-for-byte."
+
+      - name: Verify custom public domains or documented WAF behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in "$CDN_URL/sellers.json" "$PUBLIC_URL/sellers.json"; do
+            status="$(curl -sSL --max-time 20 \
+              --user-agent 'Mozilla/5.0 Horus-Production-Live-Verification/1.0' \
+              --output "$RUNNER_TEMP/custom-sellers.json" \
+              --write-out '%{http_code}' "$url?liveverify=$GITHUB_RUN_ID")"
+            if [[ "$status" == '200' ]]; then
+              cmp -s "$RUNNER_TEMP/production-static-snapshot/sellers.json" "$RUNNER_TEMP/custom-sellers.json"
+              echo "$url exact: HTTP 200"
+            elif [[ "$status" == '403' ]]; then
+              echo "::warning::$url returned HTTP 403 from Cloudflare WAF; exact Pages deployment is verified."
+            else
+              echo "Unexpected HTTP $status for $url" >&2
+              exit 1
+            fi
+          done
+
+      - name: Remove remote verification snapshot
+        if: always()
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          if [[ -n "${HOST:-}" && -n "${USER:-}" ]]; then
+            ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$REMOTE_HOME/incoming/live-verify-$GITHUB_RUN_ID'" || true
+          fi
