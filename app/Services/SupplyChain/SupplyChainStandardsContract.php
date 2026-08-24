@@ -36,26 +36,19 @@ final class SupplyChainStandardsContract
         $sellers = collect($network['sellers']);
         $existingIds = $sellers->pluck('payload.seller_id')->map(fn ($id): string => (string) $id)->all();
 
+        // Disabled HORUS_MANAGED identities may still be public seller account IDs while a
+        // Publisher/Site is completing onboarding. Publication eligibility is lifecycle-
+        // based; confidentiality only controls whether name/domain are disclosed. Keeping
+        // the query restricted to is_confidential=true caused non-confidential sellers to
+        // disappear from sellers.json as soon as their public identity was completed.
         $reserved = SellerDeclaration::withoutGlobalScopes()
-            ->with(['publisher', 'applicationDomainClaim.application'])
+            ->with(['publisher', 'site', 'applicationDomainClaim.application'])
             ->where('identity_source', SellerIdentitySource::HorusManaged->value)
             ->where('status', 'DISABLED')
-            ->where('is_confidential', true)
             ->orderBy('seller_id')->get()
             ->filter(fn (SellerDeclaration $declaration): bool => ! in_array((string) $declaration->seller_id, $existingIds, true))
             ->filter(fn (SellerDeclaration $declaration): bool => $this->reservedIdentityPublishable($declaration))
-            ->map(fn (SellerDeclaration $declaration): array => [
-                'declaration' => $declaration,
-                'publisher_id' => $declaration->publisher_id,
-                'payload' => [
-                    'seller_id' => (string) $declaration->seller_id,
-                    'seller_type' => SellerType::Publisher->value,
-                    'name' => null,
-                    'domain' => null,
-                    'is_confidential' => 1,
-                ],
-                'fingerprint' => hash('sha256', implode('|', [(string) $declaration->publisher_id, (string) $declaration->seller_id, 'CONFIDENTIAL'])),
-            ]);
+            ->map(fn (SellerDeclaration $declaration): array => $this->reservedSeller($declaration));
         $sellers = $sellers->merge($reserved);
 
         $sellers = $sellers->filter(function (array $seller) use ($findings): bool {
@@ -374,36 +367,136 @@ final class SupplyChainStandardsContract
 
     private function hasPublisherLevelIdentity(SellerDeclaration $declaration): bool
     {
-        return SellerDeclaration::withoutGlobalScopes()
+        $publisherIdentity = SellerDeclaration::withoutGlobalScopes()
+            ->with(['publisher', 'site', 'applicationDomainClaim.application'])
             ->where('publisher_id', $declaration->publisher_id)
             ->where('identity_source', SellerIdentitySource::HorusManaged->value)
             ->where('identity_scope', SellerIdentityScope::Publisher->value)
-            ->where('status', 'ACTIVE')->exists();
+            ->first();
+        if (! $publisherIdentity) {
+            return false;
+        }
+
+        return (string) $publisherIdentity->status->value === 'ACTIVE'
+            || ((string) $publisherIdentity->status->value === 'DISABLED' && $this->reservedIdentityPublishable($publisherIdentity));
+    }
+
+    /** @return array{declaration: SellerDeclaration, publisher_id: mixed, payload: array<string, mixed>, fingerprint: string} */
+    private function reservedSeller(SellerDeclaration $declaration): array
+    {
+        $publisher = $declaration->publisher;
+        $confidential = $this->effectiveConfidentiality($declaration);
+        $name = trim((string) ($declaration->name ?: $publisher?->legal_name ?: $publisher?->display_name));
+        $domain = trim((string) ($declaration->domain ?: $publisher?->business_domain ?: $declaration->site?->primary_domain));
+        try {
+            $domain = $domain === '' ? '' : (string) $this->domains->normalize($domain);
+        } catch (InvalidArgumentException) {
+            $domain = '';
+        }
+
+        // Never emit an invalid non-confidential Seller object. If historic data has not
+        // yet been completed, retain confidentiality until the identity can be repaired.
+        if ($name === '' || $domain === '') {
+            $confidential = true;
+        }
+        $payload = [
+            'seller_id' => (string) $declaration->seller_id,
+            'seller_type' => SellerType::Publisher->value,
+            'name' => $confidential ? null : $name,
+            'domain' => $confidential ? null : $domain,
+            'is_confidential' => $confidential ? 1 : 0,
+        ];
+
+        return [
+            'declaration' => $declaration,
+            'publisher_id' => $declaration->publisher_id,
+            'payload' => $payload,
+            'fingerprint' => hash('sha256', json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)),
+        ];
+    }
+
+    private function effectiveConfidentiality(SellerDeclaration $declaration): bool
+    {
+        if (! (bool) $declaration->is_confidential) {
+            return false;
+        }
+
+        // Explicit Horus-admin confidentiality review always wins. Legacy/default
+        // pre-approval confidentiality is automatically lifted once the Publisher is
+        // active and has a public business identity to disclose.
+        $review = data_get($declaration->metadata, 'confidentiality_review');
+        if (is_array($review) && filled($review['reviewed_at'] ?? null) && filled($review['reviewed_by'] ?? null)) {
+            return true;
+        }
+        $publisher = $declaration->publisher;
+        $publisherStatus = strtoupper((string) $publisher?->getRawOriginal('status'));
+
+        return $publisherStatus !== 'ACTIVE' || blank($publisher?->business_domain);
     }
 
     private function reservedIdentityPublishable(SellerDeclaration $declaration): bool
     {
-        if (! $declaration->is_confidential) {
+        $source = $declaration->identity_source instanceof SellerIdentitySource
+            ? $declaration->identity_source : SellerIdentitySource::tryFrom((string) $declaration->identity_source);
+        if ($source !== SellerIdentitySource::HorusManaged || strtoupper((string) $declaration->status->value) !== 'DISABLED') {
             return false;
         }
+
+        // Preserve the verified legacy application-claim publication path.
         $terminal = [PublisherApplicationStatus::Rejected->value, PublisherApplicationStatus::Withdrawn->value];
         $scope = $declaration->identity_scope instanceof SellerIdentityScope
             ? $declaration->identity_scope : SellerIdentityScope::tryFrom((string) $declaration->identity_scope);
-        if ($scope === SellerIdentityScope::Website) {
+        if ($scope === SellerIdentityScope::Website && $declaration->applicationDomainClaim) {
             $claim = $declaration->applicationDomainClaim;
-
-            return $claim?->claim_status === 'CLAIMED'
+            if ($claim->claim_status === 'CLAIMED'
                 && $claim->verification_status === 'VERIFIED'
                 && $claim->application
-                && ! in_array($claim->application->status->value, $terminal, true);
+                && ! in_array($claim->application->status->value, $terminal, true)) {
+                return true;
+            }
         }
-
-        return PublisherApplicationDomainClaim::query()
+        if ($scope === SellerIdentityScope::Publisher && PublisherApplicationDomainClaim::query()
             ->where('publisher_seller_declaration_id', $declaration->id)
             ->where('claim_status', 'CLAIMED')
             ->where('verification_status', 'VERIFIED')
             ->whereHas('application', fn ($query) => $query->whereNotIn('status', $terminal))
-            ->exists();
+            ->exists()) {
+            return true;
+        }
+
+        // Express onboarding has no application-domain claim. Once the Publisher account
+        // is active and a real Site owns the HMS, both HMP and HMS must remain discoverable
+        // in sellers.json while website review/ads.txt verification is still pending.
+        $publisher = $declaration->publisher;
+        if (! $publisher || strtoupper((string) $publisher->getRawOriginal('status')) !== 'ACTIVE') {
+            return false;
+        }
+        $nonTerminalSiteStatuses = ['DRAFT', 'PENDING_VERIFICATION', 'PENDING_REVIEW', 'APPROVED', 'ACTIVE', 'SUSPENDED'];
+        if ($scope === SellerIdentityScope::Website) {
+            $site = $declaration->site_id
+                ? ($declaration->site ?: Site::withoutGlobalScopes()->find($declaration->site_id))
+                : null;
+
+            return $site !== null
+                && (string) $site->publisher_id === (string) $declaration->publisher_id
+                && in_array(strtoupper((string) $site->getRawOriginal('status')), $nonTerminalSiteStatuses, true);
+        }
+        if ($scope === SellerIdentityScope::Publisher) {
+            $siteIds = SellerDeclaration::withoutGlobalScopes()
+                ->where('publisher_id', $declaration->publisher_id)
+                ->where('identity_source', SellerIdentitySource::HorusManaged->value)
+                ->where('identity_scope', SellerIdentityScope::Website->value)
+                ->whereNotNull('site_id')
+                ->pluck('site_id');
+
+            return $siteIds->isNotEmpty() && Site::withoutGlobalScopes()
+                ->where('publisher_id', $declaration->publisher_id)
+                ->whereIn('id', $siteIds)
+                ->whereIn('status', $nonTerminalSiteStatuses)
+                ->exists();
+        }
+
+        return false;
     }
 
     /** @return array<string, string|null> */
