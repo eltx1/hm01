@@ -190,6 +190,7 @@ class PlatformMasterAdsTxtTest extends TestCase
 
     public function test_master_bulk_import_accepts_full_file_activates_valid_rows_and_reports_bad_rows(): void
     {
+        $this->withoutExceptionHandling();
         StaticGlobalArtifactChange::query()->delete();
         $contents = implode("\n", [
             '# supplied by demand partner',
@@ -225,6 +226,7 @@ class PlatformMasterAdsTxtTest extends TestCase
 
     public function test_master_quick_add_merges_conflicts_reactivates_existing_and_never_blocks_valid_rows(): void
     {
+        $this->withoutExceptionHandling();
         $existing = $this->master('replace.exchange.com', 'seat-x', 'DIRECT', 'old-ca');
         $service = app(PlatformAdsTxtService::class);
         $disabled = $service->create([
