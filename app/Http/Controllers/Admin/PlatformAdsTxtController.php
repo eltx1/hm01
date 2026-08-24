@@ -9,16 +9,18 @@ use App\Models\PlatformAdsTxtRecord;
 use App\Models\Site;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Compliance\AdsTxtComplianceService;
+use App\Services\SupplyChain\PlatformAdsTxtFileEditorService;
 use App\Services\SupplyChain\PlatformAdsTxtService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\Response;
 
 final class PlatformAdsTxtController extends Controller
 {
-    public function index(PlatformAdsTxtService $service, AdsTxtComplianceService $compliance): View
+    public function index(PlatformAdsTxtService $service, AdsTxtComplianceService $compliance, PlatformAdsTxtFileEditorService $editor): View
     {
         $records = PlatformAdsTxtRecord::with(['reviewer', 'creator', 'updater'])
             ->orderBy('advertising_system_domain')->orderBy('publisher_account_id')->get();
@@ -30,6 +32,8 @@ final class PlatformAdsTxtController extends Controller
             'previewSites' => $previewSites,
             'previews' => $previewSites->mapWithKeys(fn (Site $site): array => [$site->id => $compliance->canonical($site)]),
             'auditEvents' => AuditLog::query()->where('event', 'like', 'supply_chain.platform_ads_txt.%')->latest()->limit(100)->get(),
+            'masterFile' => old('master_ads_txt', $editor->currentFile()),
+            'masterEditorPreview' => session('master_editor_preview'),
         ]);
     }
 
@@ -53,6 +57,41 @@ final class PlatformAdsTxtController extends Controller
 
         return back()->with('status', 'Master ads.txt import completed: '.$summary)
             ->with('ads_txt_import_report', $this->importReport($result));
+    }
+
+    public function previewEditor(Request $request, PlatformAdsTxtFileEditorService $editor): RedirectResponse
+    {
+        $data = $request->validate([
+            'master_ads_txt' => ['nullable', 'string', 'max:2097152'],
+        ]);
+        $preview = $editor->preview((string) ($data['master_ads_txt'] ?? ''));
+
+        return back()->withInput()->with('master_editor_preview', $preview);
+    }
+
+    public function applyEditor(Request $request, PlatformAdsTxtFileEditorService $editor): RedirectResponse
+    {
+        $data = $request->validate([
+            'master_ads_txt' => ['nullable', 'string', 'max:2097152'],
+            'current_password' => ['required', 'current_password'],
+            'reason' => ['required', 'string', 'min:8', 'max:1000'],
+            'confirm_replace' => ['required', 'accepted'],
+        ]);
+        $result = $editor->replace((string) ($data['master_ads_txt'] ?? ''), $request->user(), $data['reason']);
+
+        return redirect()->route('admin.compliance.ads-txt.master.index')->with(
+            'status',
+            'Master ads.txt file applied: '.$result['added_count'].' added, '.$result['removed_count'].' removed, '.$result['changed_count'].' changed, '.$result['unchanged_count'].' unchanged.',
+        );
+    }
+
+    public function downloadEditor(PlatformAdsTxtFileEditorService $editor): Response
+    {
+        return response($editor->currentFile(), 200, [
+            'Content-Type' => 'text/plain; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="horus-master-ads.txt"',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     public function update(Request $request, PlatformAdsTxtRecord $platformAdsTxtRecord, PlatformAdsTxtService $service): RedirectResponse

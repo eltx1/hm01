@@ -6,6 +6,13 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix('admin/compliance/ads-txt')->group(function (): void {
     Route::get('/master', [PlatformAdsTxtController::class, 'index'])
         ->middleware('permission:supply_chain.ads_txt.view')->name('admin.compliance.ads-txt.master.index');
+    Route::get('/master/export', [PlatformAdsTxtController::class, 'downloadEditor'])
+        ->middleware('permission:supply_chain.ads_txt.view')->name('admin.compliance.ads-txt.master.export');
+    Route::post('/master/editor/preview', [PlatformAdsTxtController::class, 'previewEditor'])
+        ->middleware('permission:supply_chain.ads_txt.manage')->name('admin.compliance.ads-txt.master.editor.preview');
+    Route::post('/master/editor/apply', [PlatformAdsTxtController::class, 'applyEditor'])
+        ->middleware(['permission:supply_chain.ads_txt.manage', 'permission:supply_chain.sellers.review'])
+        ->name('admin.compliance.ads-txt.master.editor.apply');
     Route::post('/master', [PlatformAdsTxtController::class, 'store'])
         ->middleware('permission:supply_chain.ads_txt.manage')->name('admin.compliance.ads-txt.master.store');
     Route::post('/master/import', [PlatformAdsTxtController::class, 'import'])

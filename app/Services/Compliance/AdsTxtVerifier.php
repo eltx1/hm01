@@ -32,15 +32,17 @@ final class AdsTxtVerifier
             ->latest('checked_at')->value('status');
         $canonical = $this->compliance->canonical($site);
         $fetch = $this->fetcher->fetch($site);
-        $comparison = $this->comparator->compare($canonical['content'], $fetch['ok'] ? $fetch['body'] : '', $canonical['findings']);
+        $comparisonContent = (string) ($canonical['comparison_content'] ?? $canonical['content']);
+        $comparison = $this->comparator->compare($comparisonContent, $fetch['ok'] ? $fetch['body'] : '', $canonical['findings']);
         $status = $comparison['status'];
-        if (! $fetch['ok'] && $canonical['record_count'] > 0) {
+        if (! $fetch['ok'] && ($canonical['required_record_count'] ?? $canonical['record_count']) > 0) {
             $status = in_array($fetch['error_code'], ['HTTP_404', 'HTTP_410'], true)
                 ? AdsTxtComplianceStatus::Missing->value
                 : AdsTxtComplianceStatus::Unreachable->value;
         }
 
         $findings = [
+            'phase' => $canonical['phase'] ?? 'PRODUCTION',
             'fetch' => [
                 'ok' => $fetch['ok'],
                 'error_code' => $fetch['error_code'],
