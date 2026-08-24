@@ -35,42 +35,35 @@ final class ClickGuardGlobalSettingsService
         }
 
         $after = collect(self::KEYS)->mapWithKeys(fn (string $key): array => [$key => $this->settings->get($key)])->all();
-        if ($before === $after) {
-            return 0;
+        if ($before !== $after) {
+            $this->audit->record(
+                'click_guard.global_policy.updated',
+                null,
+                $actor,
+                null,
+                $before,
+                $after,
+                ['reason' => mb_substr($reason, 0, 500), 'client_only' => true],
+            );
         }
 
-        $this->audit->record(
-            'click_guard.global_policy.updated',
-            null,
-            $actor,
-            null,
-            $before,
-            $after,
-            ['reason' => mb_substr($reason, 0, 500), 'client_only' => true],
-        );
-
+        // Always reconcile active sites, even for an unchanged retry. A prior
+        // publication can fail after only part of the site set was queued.
         return $this->publishActiveSites($actor);
     }
 
     public function set(User $actor, string $key, mixed $rawValue, ?string $reason = null): GlobalSetting
     {
-        $before = $this->settings->get($key);
         $row = $this->settings->set($actor, $key, $rawValue, $reason);
-        $after = $this->settings->get($key);
-        if ($before !== $after) {
-            $this->publishActiveSites($actor);
-        }
+        $this->publishActiveSites($actor);
 
         return $row;
     }
 
     public function reset(User $actor, string $key, ?string $reason = null): void
     {
-        $before = $this->settings->get($key);
         $this->settings->reset($actor, $key, $reason);
-        if ($before !== $this->settings->get($key)) {
-            $this->publishActiveSites($actor);
-        }
+        $this->publishActiveSites($actor);
     }
 
     private function publishActiveSites(User $actor): int

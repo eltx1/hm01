@@ -7,6 +7,7 @@ use App\Enums\StaticDeliveryPriority;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Inventory\RuntimePolicyResolver;
 use App\Services\Inventory\SiteConfigPublisher;
 use Illuminate\Database\Migrations\Migration;
 
@@ -38,13 +39,14 @@ return new class extends Migration
                 }
             });
 
+        $policy = app(RuntimePolicyResolver::class)->globalClickGuard();
         app(AuditRecorder::class)->record(
             'click_guard.global_default.deployed',
             null,
             $actor,
             null,
             null,
-            ['enabled' => true, 'maxClicks' => 3, 'windowHours' => 6, 'blockHours' => 12],
+            $policy,
             ['active_site_configs_queued' => $published, 'client_only' => true],
         );
     }

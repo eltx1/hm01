@@ -132,7 +132,7 @@ class ClickGuardConfigurationTest extends TestCase
         [$site, $admin] = $this->makeSiteAndAdmin();
         $site->update(['status' => SiteStatus::Active]);
 
-        $this->actingAs($admin)->put(route('admin.click-protection.update'), [
+        $request = [
             'enabled' => '1',
             'max_clicks' => 4,
             'window_hours' => 7,
@@ -140,7 +140,8 @@ class ClickGuardConfigurationTest extends TestCase
             'reason' => 'Tune the shared production protection policy.',
             'current_password' => 'password',
             'impact_confirmation' => 'CHANGE CLICK PROTECTION',
-        ])->assertRedirect();
+        ];
+        $this->actingAs($admin)->put(route('admin.click-protection.update'), $request)->assertRedirect();
 
         $version = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->latest('version')->firstOrFail();
         $this->assertEquals([
@@ -151,6 +152,9 @@ class ClickGuardConfigurationTest extends TestCase
         ], $version->payload['clickGuard']);
         $this->assertDatabaseHas('global_settings', ['key' => 'click_guard.max_clicks']);
         $this->assertTrue(AuditLog::query()->where('event', 'click_guard.global_policy.updated')->exists());
+
+        $this->actingAs($admin)->put(route('admin.click-protection.update'), $request)->assertRedirect();
+        $this->assertSame(2, ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->count());
     }
 
     public function test_existing_site_values_without_inheritance_marker_use_global_policy(): void
