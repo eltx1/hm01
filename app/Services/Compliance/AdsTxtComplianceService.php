@@ -128,9 +128,7 @@ final class AdsTxtComplianceService
     {
         $core = collect($bundle['core_records'])->map(fn (string $line): string => trim($line))->filter()->values();
         $all = collect($bundle['records'])->map(fn (string $line): string => trim($line))->filter()->values();
-        $directives = $all->filter(fn (string $line): bool => preg_match('/^[A-Z][A-Z0-9_-]*\s*=/i', $line) === 1)->values();
-        $requiredLines = $directives->merge($core)->unique()->values();
-        $comparisonContent = $requiredLines->implode("\n").($requiredLines->isEmpty() ? '' : "\n");
+        $comparisonContent = $core->implode("\n").($core->isEmpty() ? '' : "\n");
         $records = $all->reject(fn (string $line): bool => preg_match('/^[A-Z][A-Z0-9_-]*\s*=/i', $line) === 1)
             ->map(function (string $line) use ($core): array {
                 $isCore = $core->contains($line);
