@@ -86,6 +86,56 @@ class Task68SupplyChainAdsTxtHardeningTest extends TestCase
         }
     }
 
+    public function test_seller_stays_active_while_any_current_representation_exists_and_disables_when_the_last_one_ends(): void
+    {
+        [$publisher, $user, $site] = $this->publisherAndSite('Represented Publisher LLC', 'represented.example');
+        $identities = app(HorusSellerIdentityService::class);
+        $hmp = $identities->ensureForPublisher($publisher, $user);
+        $hms = $identities->ensureForSite($site, $user);
+        foreach ([$hmp, $hms] as $seller) {
+            $seller->forceFill([
+                'status' => 'ACTIVE',
+                'review_status' => SupplyChainReviewStatus::Verified,
+                'reviewed_at' => now(),
+            ])->saveQuietly();
+        }
+
+        $admin = $this->admin();
+        $first = PublisherContract::withoutGlobalScopes()->create([
+            'organization_id' => $publisher->organization_id,
+            'publisher_id' => $publisher->id,
+            'contract_reference' => 'TASK68-REP-A',
+            'status' => 'ACTIVE',
+            'starts_at' => now()->subDays(2),
+            'revenue_share_percent' => 70,
+            'currency' => 'USD',
+            'payment_terms' => 'NET_30',
+            'created_by' => $admin->id,
+        ]);
+        $second = PublisherContract::withoutGlobalScopes()->create([
+            'organization_id' => $publisher->organization_id,
+            'publisher_id' => $publisher->id,
+            'contract_reference' => 'TASK68-REP-B',
+            'status' => 'SIGNED',
+            'starts_at' => now()->subDay(),
+            'revenue_share_percent' => 75,
+            'currency' => 'USD',
+            'payment_terms' => 'NET_45',
+            'created_by' => $admin->id,
+        ]);
+
+        $first->update(['status' => 'TERMINATED']);
+        $this->assertSame('ACTIVE', $hmp->refresh()->status->value);
+        $this->assertSame('ACTIVE', $hms->refresh()->status->value);
+
+        $second->delete();
+        foreach ([$hmp, $hms] as $seller) {
+            $seller->refresh();
+            $this->assertSame('DISABLED', $seller->status->value);
+            $this->assertSame(SupplyChainReviewStatus::Verified, $seller->review_status);
+        }
+    }
+
     public function test_pending_website_uses_horus_activation_records_not_placeholder_as_required_file(): void
     {
         [$publisher, $user, $site] = $this->publisherAndSite('Activation Publisher LLC', 'activation.example');
