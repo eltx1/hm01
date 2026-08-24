@@ -48,6 +48,9 @@ rsync -a "$ROOT/" "$STAGE/horus-media-platform/" \
   --exclude 'storage/framework/views/*'
 
 cp "$ROOT/.env.production.example" "$STAGE/horus-media-platform/.env.example"
+mkdir -p "$STAGE/horus-media-platform/ops/audit"
+cp "$ROOT/ops/audit/production-readiness.php" \
+  "$STAGE/horus-media-platform/ops/audit/production-readiness.php"
 cp "$ROOT/docs/PRODUCTION_DEPLOYMENT_FOUNDATION.md" \
   "$STAGE/horus-media-platform/release/PRODUCTION_DEPLOYMENT_FOUNDATION.md"
 find "$STAGE/horus-media-platform" -type f \( -name '*.log' -o -name '.DS_Store' \) -delete
