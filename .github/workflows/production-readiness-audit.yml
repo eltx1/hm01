@@ -1,0 +1,292 @@
+name: Production readiness audit
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy production
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_run_id:
+        description: Successful Deploy production workflow run ID to audit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: horus-production-readiness-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    env:
+      DEPLOY_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.deploy_run_id }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      CDN_URL: https://cdn.horusmedia.net
+      AUDIT_ISSUE_NUMBER: '111'
+
+    steps:
+      - name: Validate audit configuration
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+
+      - name: Download immutable deployment proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-deploy-proof
+          path: ${{ runner.temp }}/production-deploy-proof
+          run-id: ${{ env.DEPLOY_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse deployment proof
+        id: proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/production-deploy-proof/deploy-proof.env"
+          test -s "$proof"
+
+          value() {
+            local key="$1"
+            awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$proof"
+          }
+
+          release_sha="$(value release_sha)"
+          validation_run_id="$(value validation_run_id)"
+          artifact_sha256="$(value artifact_sha256)"
+          deploy_run_id="$(value deploy_run_id)"
+          deploy_run_attempt="$(value deploy_run_attempt)"
+
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$validation_run_id" =~ ^[0-9]+$ ]]
+          [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$deploy_run_id" == "$DEPLOY_RUN_ID" ]]
+          [[ "$deploy_run_attempt" =~ ^[0-9]+$ ]]
+
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "validation_run_id=$validation_run_id" >> "$GITHUB_OUTPUT"
+          echo "artifact_sha256=$artifact_sha256" >> "$GITHUB_OUTPUT"
+          echo "deploy_run_attempt=$deploy_run_attempt" >> "$GITHUB_OUTPUT"
+
+      - name: Require trusted successful deploy and validation runs
+        uses: actions/github-script@v8
+        env:
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          VALIDATION_RUN_ID: ${{ steps.proof.outputs.validation_run_id }}
+          DEPLOY_RUN_ID: ${{ env.DEPLOY_RUN_ID }}
+          DEPLOY_RUN_ATTEMPT: ${{ steps.proof.outputs.deploy_run_attempt }}
+        with:
+          script: |
+            const deployRunId = Number(process.env.DEPLOY_RUN_ID);
+            const validationRunId = Number(process.env.VALIDATION_RUN_ID);
+            const expectedSha = process.env.RELEASE_SHA;
+            const expectedAttempt = Number(process.env.DEPLOY_RUN_ATTEMPT);
+
+            const { data: deploy } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: deployRunId,
+            });
+            if (deploy.name !== 'Deploy production' || deploy.conclusion !== 'success' || deploy.head_branch !== 'main' || Number(deploy.run_attempt) !== expectedAttempt) {
+              core.setFailed('Audit refused an untrusted or unsuccessful production deploy run.');
+              return;
+            }
+
+            const { data: validation } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: validationRunId,
+            });
+            if (validation.name !== 'Production release validation' || validation.conclusion !== 'success' || validation.head_branch !== 'main' || validation.head_sha !== expectedSha) {
+              core.setFailed('Audit refused a release without exact successful main production validation.');
+            }
+
+      - name: Configure pinned SSH trust
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Verify release, origin, and public static edge
+        id: external
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          ARTIFACT_SHA256: ${{ steps.proof.outputs.artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          marker="$(ssh -p "$SSH_PORT" "$USER@$HOST" "cat '$app_root/.horus-release'")"
+          grep -Fxq "release_id=$RELEASE_SHA" <<< "$marker"
+          grep -Fxq "artifact_sha256=$ARTIFACT_SHA256" <<< "$marker"
+
+          resolved="$(ssh -p "$SSH_PORT" "$USER@$HOST" "readlink -f '$app_root'")"
+          [[ "$resolved" == "$REMOTE_HOME/releases/$RELEASE_SHA" ]]
+
+          origin_status="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "curl --noproxy '*' --resolve app.horusmedia.net:443:127.0.0.1 -k -sS -o /dev/null -w '%{http_code}' https://app.horusmedia.net/up")"
+          [[ "$origin_status" == '200' ]]
+
+          confirmed_hash="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cat '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest' 2>/dev/null || true" | tr -d '[:space:]')"
+          [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          cdn_manifest_match=false
+          cdn_sellers_valid=false
+          seller_count=0
+          if curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?audit=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/cdn-manifest.json"; then
+            cdn_hash="$(jq -r '.manifestHash // ""' "$RUNNER_TEMP/cdn-manifest.json")"
+            if [[ "$cdn_hash" == "$confirmed_hash" ]]; then
+              cdn_manifest_match=true
+            fi
+          fi
+
+          if curl -fsSL --max-time 20 "$CDN_URL/sellers.json?audit=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/cdn-sellers.json"; then
+            if jq -e '
+              .version == "1.0"
+              and (.sellers | type == "array")
+              and all(.sellers[];
+                (.seller_id | type == "string" and length > 0)
+                and (.seller_type == "PUBLISHER" or .seller_type == "INTERMEDIARY" or .seller_type == "BOTH")
+                and ((.is_confidential // 0) == 1 or ((.name | type == "string" and length > 0) and (.domain | type == "string" and length > 0)))
+              )' "$RUNNER_TEMP/cdn-sellers.json" >/dev/null; then
+              cdn_sellers_valid=true
+              seller_count="$(jq '.sellers | length' "$RUNNER_TEMP/cdn-sellers.json")"
+            fi
+          fi
+
+          echo "origin_status=$origin_status" >> "$GITHUB_OUTPUT"
+          echo "confirmed_manifest=$confirmed_hash" >> "$GITHUB_OUTPUT"
+          echo "cdn_manifest_match=$cdn_manifest_match" >> "$GITHUB_OUTPUT"
+          echo "cdn_sellers_valid=$cdn_sellers_valid" >> "$GITHUB_OUTPUT"
+          echo "seller_count=$seller_count" >> "$GITHUB_OUTPUT"
+
+      - name: Run read-only production audit
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          report="$RUNNER_TEMP/production-readiness-report.json"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$app_root' && php ops/audit/production-readiness.php" > "$report"
+          jq -e '.schema_version == 1 and (.summary.overall == "PILOT_READY" or .summary.overall == "NOT_READY") and (.checks | type == "array")' "$report" >/dev/null
+          [[ "$(jq -r '.release.release_id // ""' "$report")" == "$RELEASE_SHA" ]]
+
+      - name: Upload sanitized audit artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: horus-production-readiness-${{ steps.proof.outputs.release_sha }}
+          path: ${{ runner.temp }}/production-readiness-report.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Publish production readiness report
+        uses: actions/github-script@v8
+        env:
+          REPORT_PATH: ${{ runner.temp }}/production-readiness-report.json
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          ORIGIN_STATUS: ${{ steps.external.outputs.origin_status }}
+          CDN_MANIFEST_MATCH: ${{ steps.external.outputs.cdn_manifest_match }}
+          CDN_SELLERS_VALID: ${{ steps.external.outputs.cdn_sellers_valid }}
+          SELLER_COUNT: ${{ steps.external.outputs.seller_count }}
+          AUDIT_ISSUE_NUMBER: ${{ env.AUDIT_ISSUE_NUMBER }}
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, 'utf8'));
+            const checks = Array.isArray(report.checks) ? report.checks : [];
+
+            const external = [
+              {
+                section: 'External Verification', key: 'direct_origin',
+                status: process.env.ORIGIN_STATUS === '200' ? 'PASS' : 'FAIL', priority: 'P0',
+                message: `Direct origin health returned HTTP ${process.env.ORIGIN_STATUS || 'unknown'}.`,
+              },
+              {
+                section: 'External Verification', key: 'cdn_manifest',
+                status: process.env.CDN_MANIFEST_MATCH === 'true' ? 'PASS' : 'FAIL', priority: 'P0',
+                message: process.env.CDN_MANIFEST_MATCH === 'true' ? 'CDN manifest matches the server-confirmed manifest.' : 'CDN manifest does not match the server-confirmed manifest.',
+              },
+              {
+                section: 'External Verification', key: 'cdn_sellers_json',
+                status: process.env.CDN_SELLERS_VALID === 'true' ? 'PASS' : 'FAIL', priority: 'P0',
+                message: process.env.CDN_SELLERS_VALID === 'true' ? `Public sellers.json is structurally valid with ${process.env.SELLER_COUNT} seller records.` : 'Public sellers.json failed the production disclosure contract.',
+              },
+            ];
+
+            const allChecks = [...external, ...checks];
+            const blocking = allChecks.filter(c => ['FAIL', 'BLOCKED'].includes(c.status) && ['P0', 'P1'].includes(c.priority));
+            const overall = blocking.length === 0 ? 'PILOT_READY' : 'NOT_READY';
+            const icons = {PASS:'✅', FAIL:'❌', BLOCKED:'⛔', NOT_CONFIGURED:'⚠️', INFO:'ℹ️'};
+            const priorityOrder = {P0:0, P1:1, P2:2, P3:3};
+            allChecks.sort((a,b) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9) || a.section.localeCompare(b.section) || a.key.localeCompare(b.key));
+
+            let body = `## Production Readiness Audit — ${report.generated_at}\n\n`;
+            body += `**Overall:** ${overall === 'PILOT_READY' ? '✅ PILOT_READY' : '❌ NOT_READY'}  \n`;
+            body += `**Release:** \`${process.env.RELEASE_SHA}\`  \n`;
+            body += `**Blocking P0/P1 findings:** ${blocking.length}\n\n`;
+
+            if (blocking.length > 0) {
+              body += `### Launch blockers\n\n`;
+              for (const c of blocking) body += `- ${icons[c.status] || ''} **${c.priority} ${c.section} / ${c.key}:** ${c.message}\n`;
+              body += `\n`;
+            }
+
+            body += `### Full audit\n\n| Status | Priority | Area | Check | Result |\n|---|---|---|---|---|\n`;
+            for (const c of allChecks) {
+              const clean = String(c.message || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+              body += `| ${icons[c.status] || ''} ${c.status} | ${c.priority} | ${c.section} | \`${c.key}\` | ${clean} |\n`;
+            }
+
+            body += `\n### Aggregate production metrics\n\n\`\`\`json\n${JSON.stringify(report.metrics || {}, null, 2)}\n\`\`\`\n`;
+            body += `\n> ${report.privacy}\n`;
+
+            if (body.length > 64000) body = body.slice(0, 63500) + '\n\n_Report truncated to GitHub comment limit; full sanitized JSON is attached as a workflow artifact._';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.AUDIT_ISSUE_NUMBER),
+              body,
+            });
+            await core.summary.addRaw(body).write();
