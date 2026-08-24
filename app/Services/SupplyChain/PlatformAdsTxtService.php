@@ -99,17 +99,34 @@ final class PlatformAdsTxtService
         return $record->refresh();
     }
 
-    /** @return array{created: int, activated: int, skipped: int, invalid: list<array{line: int, content: string, message: string}>, ignored: int, duplicates: int, total_lines: int} */
-    public function bulkImport(string $contents, User $actor, bool $activate, ?string $reason = null): array
+    /** @return array{created: int, updated: int, reactivated: int, skipped: int, invalid: list<array{line: int, content: string, message: string}>, ignored: int, duplicates: int, superseded: int, total_lines: int} */
+    public function bulkImport(string $contents, User $actor): array
     {
         $parsed = $this->bulkParser->parse($contents);
+        $records = [];
+        $superseded = 0;
+        foreach ($parsed['records'] as $item) {
+            $identity = $this->identity($item['domain'], $item['publisher_account_id']);
+            if (isset($records[$identity]) && $records[$identity]['raw_record'] !== $item['raw_record']) {
+                $superseded++;
+            }
+            // A pasted partner file may repeat one seller identity with revised
+            // fields. The administrator's last line is the intended final value.
+            $records[$identity] = $item;
+        }
+
         $created = 0;
-        $activated = 0;
+        $updated = 0;
+        $reactivated = 0;
         $skipped = 0;
         $invalid = $parsed['invalid'];
 
-        DB::transaction(function () use ($parsed, $actor, $activate, $reason, &$created, &$activated, &$skipped, &$invalid): void {
-            foreach ($parsed['records'] as $item) {
+        DB::transaction(function () use ($records, $parsed, $actor, $superseded, &$created, &$updated, &$reactivated, &$skipped): void {
+            $existingByIdentity = PlatformAdsTxtRecord::query()->lockForUpdate()->get()->keyBy(
+                fn (PlatformAdsTxtRecord $record): string => $this->identity($record->advertising_system_domain, $record->publisher_account_id),
+            );
+
+            foreach ($records as $identity => $item) {
                 $attributes = [
                     'advertising_system_domain' => $item['domain'],
                     'publisher_account_id' => $item['publisher_account_id'],
@@ -117,72 +134,84 @@ final class PlatformAdsTxtService
                     'certification_authority_id' => $item['certification_authority_id'],
                 ];
                 $normalized = $this->normalize($attributes);
-                $existing = PlatformAdsTxtRecord::query()
-                    ->where('advertising_system_domain', $normalized['advertising_system_domain'])
-                    ->where('publisher_account_id', $normalized['publisher_account_id'])
-                    ->first();
+                /** @var PlatformAdsTxtRecord|null $existing */
+                $existing = $existingByIdentity->get($identity);
 
                 if ($existing) {
-                    if (! hash_equals($existing->record_hash, $normalized['record_hash'])) {
-                        $invalid[] = [
-                            'line' => $item['source_line'],
-                            'content' => $item['raw_record'],
-                            'message' => 'This seller identity already exists with different relationship or authority fields.',
-                        ];
-
+                    $sameRecord = hash_equals((string) $existing->record_hash, $normalized['record_hash']);
+                    $activeAndVerified = $existing->status === 'ACTIVE'
+                        && $existing->review_status === SupplyChainReviewStatus::Verified;
+                    if ($sameRecord && $activeAndVerified) {
+                        $skipped++;
                         continue;
                     }
-                    if ($activate && ($existing->status !== 'ACTIVE' || $existing->review_status !== SupplyChainReviewStatus::Verified)) {
-                        $before = $this->auditValues($existing);
-                        $existing->update([
-                            'status' => 'ACTIVE',
-                            'review_status' => SupplyChainReviewStatus::Verified,
-                            'reviewed_at' => now(),
-                            'reviewed_by' => $actor->id,
-                            'updated_by' => $actor->id,
-                        ]);
-                        $this->audit($existing, 'supply_chain.platform_ads_txt.bulk_activated', $actor, $before, $this->auditValues($existing));
-                        $activated++;
+
+                    $before = $this->auditValues($existing);
+                    $existing->update([
+                        'relationship' => $normalized['relationship'],
+                        'certification_authority_id' => $normalized['certification_authority_id'],
+                        'raw_record' => $normalized['raw_record'],
+                        'record_hash' => $normalized['record_hash'],
+                        'status' => 'ACTIVE',
+                        'review_status' => SupplyChainReviewStatus::Verified,
+                        'reviewed_at' => now(),
+                        'reviewed_by' => $actor->id,
+                        'updated_by' => $actor->id,
+                        'remote_verification_status' => $sameRecord ? $existing->remote_verification_status : 'UNVERIFIED',
+                        'remote_error_code' => $sameRecord ? $existing->remote_error_code : null,
+                        'last_verified_at' => $sameRecord ? $existing->last_verified_at : null,
+                    ]);
+                    $event = $sameRecord
+                        ? 'supply_chain.platform_ads_txt.bulk_reactivated'
+                        : 'supply_chain.platform_ads_txt.bulk_updated';
+                    $this->audit($existing, $event, $actor, $before, $this->auditValues($existing));
+                    if ($sameRecord) {
+                        $reactivated++;
                     } else {
-                        $skipped++;
+                        $updated++;
                     }
 
                     continue;
                 }
 
                 $record = PlatformAdsTxtRecord::create($normalized + [
-                    'status' => $activate ? 'ACTIVE' : 'DISABLED',
-                    'review_status' => $activate ? SupplyChainReviewStatus::Verified : SupplyChainReviewStatus::ReviewRequired,
+                    'status' => 'ACTIVE',
+                    'review_status' => SupplyChainReviewStatus::Verified,
                     'remote_verification_status' => 'UNVERIFIED',
-                    'reviewed_at' => $activate ? now() : null,
-                    'reviewed_by' => $activate ? $actor->id : null,
+                    'reviewed_at' => now(),
+                    'reviewed_by' => $actor->id,
                     'created_by' => $actor->id,
                     'updated_by' => $actor->id,
                 ]);
                 $this->audit($record, 'supply_chain.platform_ads_txt.bulk_created', $actor, [], $this->auditValues($record));
                 $created++;
+                $existingByIdentity->put($identity, $record);
             }
 
             $this->audit->record('supply_chain.platform_ads_txt.bulk_imported', $actor->organization_id, $actor, newValues: [
-                'activate' => $activate,
-                'reason' => $reason,
+                'activate' => true,
+                'mode' => 'ADMIN_APPEND_AND_PUBLISH',
                 'created' => $created,
-                'activated' => $activated,
+                'updated' => $updated,
+                'reactivated' => $reactivated,
                 'skipped' => $skipped,
                 'invalid_count' => count($invalid),
                 'ignored' => $parsed['ignored'],
                 'input_duplicates' => $parsed['duplicates'],
+                'superseded' => $superseded,
                 'total_lines' => $parsed['total_lines'],
             ]);
         });
 
         return [
             'created' => $created,
-            'activated' => $activated,
+            'updated' => $updated,
+            'reactivated' => $reactivated,
             'skipped' => $skipped,
             'invalid' => $invalid,
             'ignored' => $parsed['ignored'],
             'duplicates' => $parsed['duplicates'],
+            'superseded' => $superseded,
             'total_lines' => $parsed['total_lines'],
         ];
     }
@@ -305,6 +334,11 @@ final class PlatformAdsTxtService
         if ($query->exists()) {
             throw ValidationException::withMessages(['publisher_account_id' => 'A platform master record already owns this advertising-system seller identity.']);
         }
+    }
+
+    private function identity(string $domain, string $seller): string
+    {
+        return strtolower(trim($domain))."\0".trim($seller);
     }
 
     private function storeVerification(PlatformAdsTxtRecord $record, string $status, ?string $error, User $actor, array $before): PlatformAdsTxtRecord
