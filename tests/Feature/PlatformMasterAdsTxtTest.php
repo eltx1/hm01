@@ -228,6 +228,7 @@ class PlatformMasterAdsTxtTest extends TestCase
     {
         $this->withoutExceptionHandling();
         $existing = $this->master('replace.exchange.com', 'seat-x', 'DIRECT', 'old-ca');
+        $existing->update(['effective_from' => now()->addDay(), 'effective_to' => now()->addWeek()]);
         $service = app(PlatformAdsTxtService::class);
         $disabled = $service->create([
             'advertising_system_domain' => 'disabled.exchange.com',
@@ -260,6 +261,8 @@ class PlatformMasterAdsTxtTest extends TestCase
         $this->assertSame('replace.exchange.com, seat-x, RESELLER, new-ca', $existing->refresh()->raw_record);
         $this->assertSame('ACTIVE', $existing->status);
         $this->assertSame(SupplyChainReviewStatus::Verified, $existing->review_status);
+        $this->assertNull($existing->effective_from);
+        $this->assertNull($existing->effective_to);
         $this->assertSame('ACTIVE', $disabled->refresh()->status);
         $this->assertSame(SupplyChainReviewStatus::Verified, $disabled->review_status);
         $this->assertDatabaseHas('platform_ads_txt_records', [
