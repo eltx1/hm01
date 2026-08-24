@@ -195,6 +195,32 @@ jobs:
               ;;
           esac
 
+      - name: Write immutable deployment proof
+        shell: bash
+        env:
+          ARTIFACT_SHA256: ${{ steps.artifact.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          proof_dir="$RUNNER_TEMP/production-deploy-proof"
+          install -d -m 700 "$proof_dir"
+          cat > "$proof_dir/deploy-proof.env" <<EOF
+          schema_version=1
+          release_sha=$RELEASE_SHA
+          validation_run_id=$RELEASE_RUN_ID
+          artifact_sha256=$ARTIFACT_SHA256
+          deploy_run_id=$GITHUB_RUN_ID
+          deploy_run_attempt=$GITHUB_RUN_ATTEMPT
+          EOF
+
+      - name: Upload deployment proof
+        uses: actions/upload-artifact@v7
+        with:
+          name: horus-production-deploy-proof
+          path: ${{ runner.temp }}/production-deploy-proof/deploy-proof.env
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Remove transferred package
         if: always()
         shell: bash
