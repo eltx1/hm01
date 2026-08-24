@@ -149,6 +149,13 @@ final class PlatformAdsTxtFileEditorService
                     continue;
                 }
 
+                $sameRaw = hash_equals((string) $record->record_hash, hash('sha256', $item['raw_record']));
+                $alreadyActiveVerified = $record->status === 'ACTIVE'
+                    && $record->review_status === SupplyChainReviewStatus::Verified;
+                if ($sameRaw && $alreadyActiveVerified) {
+                    continue;
+                }
+
                 $before = $record->only(['raw_record', 'status', 'review_status', 'relationship', 'certification_authority_id']);
                 $record->update([
                     'relationship' => $item['relationship'],
@@ -160,9 +167,9 @@ final class PlatformAdsTxtFileEditorService
                     'reviewed_at' => now(),
                     'reviewed_by' => $actor->id,
                     'updated_by' => $actor->id,
-                    'remote_verification_status' => $record->raw_record === $item['raw_record'] ? $record->remote_verification_status : 'UNVERIFIED',
-                    'remote_error_code' => $record->raw_record === $item['raw_record'] ? $record->remote_error_code : null,
-                    'last_verified_at' => $record->raw_record === $item['raw_record'] ? $record->last_verified_at : null,
+                    'remote_verification_status' => $sameRaw ? $record->remote_verification_status : 'UNVERIFIED',
+                    'remote_error_code' => $sameRaw ? $record->remote_error_code : null,
+                    'last_verified_at' => $sameRaw ? $record->last_verified_at : null,
                 ]);
                 $after = $record->fresh()->only(['raw_record', 'status', 'review_status', 'relationship', 'certification_authority_id']);
                 if ($before !== $after) {
