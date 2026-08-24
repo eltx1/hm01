@@ -45,17 +45,11 @@ final class PlatformAdsTxtController extends Controller
 
     public function import(Request $request, PlatformAdsTxtService $service): RedirectResponse
     {
-        $activate = $request->boolean('activate');
-        $data = $request->validate([
-            'activate' => ['required', 'boolean'],
-            'current_password' => [Rule::requiredIf($activate), 'nullable', 'current_password'],
-            'reason' => [Rule::requiredIf($activate), 'nullable', 'string', 'min:8', 'max:1000'],
-            'confirm_platform_scope' => [Rule::requiredIf($activate), 'nullable', 'accepted'],
-        ]);
-        $result = $service->bulkImport($this->importContent($request), $request->user(), $activate, $data['reason'] ?? null);
-        $summary = $result['created'].' created, '.$result['activated'].' activated, '.$result['skipped'].' existing, '.count($result['invalid']).' invalid.';
+        $result = $service->bulkImport($this->importContent($request), $request->user());
+        $summary = $result['created'].' added, '.$result['updated'].' updated, '.$result['reactivated'].' reactivated, '
+            .$result['skipped'].' already present, '.count($result['invalid']).' invalid skipped.';
 
-        return back()->with('status', 'Master ads.txt import completed: '.$summary)
+        return back()->with('status', 'Master ads.txt records published: '.$summary)
             ->with('ads_txt_import_report', $this->importReport($result));
     }
 
