@@ -58,7 +58,9 @@ class PublisherContract extends Model
         }
 
         $today = now()->toDateString();
-        $represented = self::withoutGlobalScopes()
+        // Remove only tenant scoping. Keep SoftDeletes intact so a deleted Contract can
+        // never satisfy the representation requirement after its deleted event fires.
+        $represented = self::withoutGlobalScope('organization')
             ->where('publisher_id', $publisherId)
             ->whereIn('status', [ContractStatus::Signed->value, ContractStatus::Active->value])
             ->where(fn ($query) => $query->whereNull('starts_at')->orWhereDate('starts_at', '<=', $today))
