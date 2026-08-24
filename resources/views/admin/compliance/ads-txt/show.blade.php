@@ -2,15 +2,25 @@
 @section('title', $site->display_name.' ads.txt')
 @section('heading', 'Ads.txt · '.$site->display_name)
 @section('content')
-<section class="hero"><div><p class="eyebrow">{{ $site->publisher->display_name }} · Supply Chain & Compliance</p><h2>{{ $site->primary_domain }}</h2><div class="status-row"><x-status-badge :status="$summary['status']" /><x-status-badge :status="$summary['verification_state']" /></div><p>{{ $summary['action'] }}</p></div><a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.index') }}">All websites</a></section>
+@php($activationPhase = ($summary['phase'] ?? 'PRODUCTION') === 'ACTIVATION')
+<section class="hero"><div><p class="eyebrow">{{ $site->publisher->display_name }} · Supply Chain & Compliance</p><h2>{{ $site->primary_domain }}</h2><div class="status-row"><x-status-badge :status="$summary['status']" /><x-status-badge :status="$summary['verification_state']" />@if($activationPhase)<span class="status-badge">ACTIVATION</span>@endif</div><p>{{ $summary['action'] }}</p></div><a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.index') }}">All websites</a></section>
 
 <x-control-plane.workspace-tabs :items="[
     ['label' => 'Ads.txt', 'href' => route('admin.compliance.ads-txt.index')],
     ['label' => 'Sellers & schain', 'href' => route('admin.compliance.sellers.index'), 'visible' => auth()->user()->hasPermission('supply_chain.sellers.view')],
 ]" label="Supply chain compliance sections" />
 
+@if($activationPhase)
+<article class="workspace-section">
+    <p class="eyebrow">Website activation</p>
+    <h2>Horus activation ads.txt</h2>
+    <p class="muted">This website is not in production yet. The two Horus HMP/HMS DIRECT records are the activation-critical records. Master and demand records included in the complete copy block are supporting records and do not block website approval or activation.</p>
+    <div class="status-row"><x-status-badge :status="$summary['core_verified'] ? 'VERIFIED' : 'PENDING'" /><span>{{ $summary['core_verified'] ? 'Both Horus records are currently verified.' : 'Verification may complete while human website review continues.' }}</span></div>
+</article>
+@endif
+
 <section class="metric-grid compliance-metrics" aria-label="Ads.txt summary">
-    <article><p class="eyebrow">Required</p><strong class="metric">{{ $summary['required_count'] }}</strong></article>
+    <article><p class="eyebrow">{{ $activationPhase ? 'Activation required' : 'Required' }}</p><strong class="metric">{{ $summary['required_count'] }}</strong></article>
     <article><p class="eyebrow">Correct</p><strong class="metric">{{ $summary['correct_count'] }}</strong></article>
     <article><p class="eyebrow">Missing</p><strong class="metric">{{ $summary['missing_count'] }}</strong></article>
     <article><p class="eyebrow">Invalid / conflict</p><strong class="metric">{{ $summary['invalid_count'] }}</strong></article>
@@ -18,18 +28,18 @@
 </section>
 
 <div class="compliance-actions">
-    <button class="hm-button-primary" type="button" data-copy-target="canonical-ads-txt" data-copy-label="Copy canonical file">Copy canonical file</button>
-    <a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.download', $site) }}">Download canonical file</a>
+    <button class="hm-button-primary" type="button" data-copy-target="canonical-ads-txt" data-copy-label="{{ $activationPhase ? 'Copy complete installation file' : 'Copy canonical file' }}">{{ $activationPhase ? 'Copy complete installation file' : 'Copy canonical file' }}</button>
+    <a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.download', $site) }}">{{ $activationPhase ? 'Download installation file' : 'Download canonical file' }}</a>
     @if(auth()->user()->hasPermission('supply_chain.ads_txt.verify'))<form method="POST" action="{{ route('admin.compliance.ads-txt.verify', $site) }}">@csrf<button class="hm-button-secondary">Recheck safely</button></form>@endif
 </div>
 
 <section class="detail-grid">
-    <article><p class="eyebrow">Authoritative output</p><h2>Canonical required file</h2><pre id="canonical-ads-txt" class="compliance-code">{{ $summary['canonical']['content'] }}</pre></article>
+    <article><p class="eyebrow">Authoritative output</p><h2>{{ $activationPhase ? 'Complete Horus installation file' : 'Production canonical required file' }}</h2><pre id="canonical-ads-txt" class="compliance-code">{{ $summary['canonical']['content'] }}</pre></article>
     <article><p class="eyebrow">Latest public response</p><h2>Live fetched file</h2>@if($summary['live_content'] !== null)<pre class="compliance-code">{{ $summary['live_content'] }}</pre>@else<p class="muted">No safe live response has been stored.</p>@endif</article>
 </section>
 
 <section class="detail-grid">
-    <article><p class="eyebrow">Canonical vs live</p><h2>Correct and missing</h2>
+    <article><p class="eyebrow">{{ $activationPhase ? 'Activation requirements vs live' : 'Canonical vs live' }}</p><h2>Correct and missing</h2>
         <h3>Correct</h3>@forelse($summary['comparison']['correct'] ?? [] as $item)<code class="record-line record-correct">{{ $item['canonical'] }}</code>@empty<p class="muted">No required records confirmed yet.</p>@endforelse
         <h3>Missing</h3>@forelse($summary['comparison']['missing'] ?? [] as $item)<code class="record-line record-missing">{{ $item['canonical'] }}</code>@empty<p class="muted">No missing seller records.</p>@endforelse
         @foreach($summary['comparison']['missing_directives'] ?? [] as $item)<code class="record-line record-missing">{{ $item['canonical'] }}</code>@endforeach
@@ -37,11 +47,11 @@
     <article><p class="eyebrow">Diagnostics</p><h2>Invalid, conflicting and additional</h2>
         @forelse($summary['comparison']['invalid'] ?? [] as $item)<div class="finding finding-danger"><strong>Line {{ $item['line'] }} · {{ $item['code'] }}</strong><code>{{ $item['content'] }}</code><span>{{ $item['message'] }}</span></div>@empty<p class="muted">No invalid lines.</p>@endforelse
         @foreach($summary['comparison']['conflicts'] ?? [] as $item)<div class="finding finding-danger"><strong>Conflict</strong><span>{{ $item['message'] }}</span>@foreach($item['records'] as $line)<code>{{ $line }}</code>@endforeach</div>@endforeach
-        <h3>Additional unmanaged live records</h3>@forelse($summary['comparison']['additional'] ?? [] as $item)<code class="record-line">{{ $item['canonical'] }}</code>@empty<p class="muted">No additional live seller records.</p>@endforelse
+        <h3>{{ $activationPhase ? 'Additional live records (not required for Horus activation)' : 'Additional unmanaged live records' }}</h3>@forelse($summary['comparison']['additional'] ?? [] as $item)<code class="record-line">{{ $item['canonical'] }}</code>@empty<p class="muted">No additional live seller records.</p>@endforelse
     </article>
 </section>
 
-<article class="workspace-section"><p class="eyebrow">Canonical sources</p><h2>Required records and provenance</h2>
+<article class="workspace-section"><p class="eyebrow">{{ $activationPhase ? 'Installation sources' : 'Canonical sources' }}</p><h2>{{ $activationPhase ? 'Activation and supporting records' : 'Required records and provenance' }}</h2>
     @forelse($summary['canonical']['records'] as $record)<div class="compact-row"><div><code>{{ $record['canonical'] }}</code><p>{{ $record['account_label'] }} · {{ $record['scope'] }} · source {{ $record['source'] }}</p></div><x-status-badge :status="$record['status']" /></div>@empty<p class="muted">No eligible seller records are currently configured. OWNERDOMAIN and MANAGERDOMAIN remain generated.</p>@endforelse
 </article>
 
