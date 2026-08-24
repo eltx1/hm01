@@ -17,7 +17,6 @@ final class SiteReviewSubmissionService
     public function __construct(
         private readonly SiteLifecycleService $lifecycle,
         private readonly SiteAdsTxtInstallationService $adsTxt,
-        private readonly SiteQualityReviewService $qualityReview,
     ) {}
 
     /**
@@ -56,7 +55,9 @@ final class SiteReviewSubmissionService
         }
 
         try {
-            $this->qualityReview->queueAutomatic($site->fresh(), $actor);
+            // Resolve THOTH lazily so even a broken provider binding cannot
+            // prevent the already-valid human review submission.
+            app(SiteQualityReviewService::class)->queueAutomatic($site->fresh(), $actor);
         } catch (Throwable $exception) {
             Log::warning('Automatic THOTH website review could not start; website submission remains valid.', [
                 'site_id' => $site->id,
