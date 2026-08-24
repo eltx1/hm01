@@ -34,7 +34,7 @@
 </div>
 
 <section class="detail-grid">
-    <article><p class="eyebrow">Authoritative output</p><h2>{{ $activationPhase ? 'Complete Horus installation file' : 'Production canonical required file' }}</h2><pre id="canonical-ads-txt" class="compliance-code">{{ $summary['canonical']['content'] }}</pre></article>
+    <article><p class="eyebrow">Authoritative output</p><h2>{{ $activationPhase ? 'Complete Horus installation file' : 'Production Canonical required file' }}</h2><pre id="canonical-ads-txt" class="compliance-code">{{ $summary['canonical']['content'] }}</pre></article>
     <article><p class="eyebrow">Latest public response</p><h2>Live fetched file</h2>@if($summary['live_content'] !== null)<pre class="compliance-code">{{ $summary['live_content'] }}</pre>@else<p class="muted">No safe live response has been stored.</p>@endif</article>
 </section>
 
