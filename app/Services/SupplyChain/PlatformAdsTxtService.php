@@ -139,9 +139,11 @@ final class PlatformAdsTxtService
 
                 if ($existing) {
                     $sameRecord = hash_equals((string) $existing->record_hash, $normalized['record_hash']);
-                    $activeAndVerified = $existing->status === 'ACTIVE'
-                        && $existing->review_status === SupplyChainReviewStatus::Verified;
-                    if ($sameRecord && $activeAndVerified) {
+                    $publishedImmediately = $existing->status === 'ACTIVE'
+                        && $existing->review_status === SupplyChainReviewStatus::Verified
+                        && $existing->effective_from === null
+                        && $existing->effective_to === null;
+                    if ($sameRecord && $publishedImmediately) {
                         $skipped++;
                         continue;
                     }
@@ -157,6 +159,8 @@ final class PlatformAdsTxtService
                         'reviewed_at' => now(),
                         'reviewed_by' => $actor->id,
                         'updated_by' => $actor->id,
+                        'effective_from' => null,
+                        'effective_to' => null,
                         'remote_verification_status' => $sameRecord ? $existing->remote_verification_status : 'UNVERIFIED',
                         'remote_error_code' => $sameRecord ? $existing->remote_error_code : null,
                         'last_verified_at' => $sameRecord ? $existing->last_verified_at : null,
