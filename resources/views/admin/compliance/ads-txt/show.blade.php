@@ -14,7 +14,7 @@
 <article class="workspace-section">
     <p class="eyebrow">Website activation</p>
     <h2>Horus activation ads.txt</h2>
-    <p class="muted">This website is not in production yet. The two Horus HMP/HMS DIRECT records are the activation-critical records. Master and demand records included in the complete copy block are supporting records and do not block website approval or activation.</p>
+    <p class="muted">This website is not in production yet. The two Horus HMP/HMS DIRECT records are the activation-critical records. <strong>Canonical required file</strong> for activation is limited to those two records; master and demand records included in the complete copy block are supporting records and do not block website approval or activation.</p>
     <div class="status-row"><x-status-badge :status="$summary['core_verified'] ? 'VERIFIED' : 'PENDING'" /><span>{{ $summary['core_verified'] ? 'Both Horus records are currently verified.' : 'Verification may complete while human website review continues.' }}</span></div>
 </article>
 @endif
