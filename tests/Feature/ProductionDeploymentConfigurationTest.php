@@ -49,8 +49,11 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $migration = file_get_contents(database_path('migrations/2026_08_24_020000_enable_global_click_guard.php'));
 
         $this->assertIsString($migration);
+        $pattern = <<<'REGEX'
+/AuditRecorder::class\)->record\(\s*'click_guard\.global_default\.deployed',\s*null,\s*\$actor,\s*null,\s*\[\],\s*\$policy,/s
+REGEX;
         $this->assertMatchesRegularExpression(
-            "/AuditRecorder::class\)->record\(\s*'click_guard\.global_default\.deployed',\s*null,\s*\$actor,\s*null,\s*\[\],\s*\$policy,/s",
+            $pattern,
             $migration,
         );
     }
