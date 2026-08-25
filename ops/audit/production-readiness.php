@@ -115,7 +115,16 @@ $add('Static Edge', 'delivery_driver', $edgeDriverReady ? 'PASS' : 'BLOCKED', 'P
 $add('Static Edge', 'delivery_not_dry_run', ! $staticDryRun ? 'PASS' : 'FAIL', 'P0', ! $staticDryRun ? 'Static delivery dry-run is disabled.' : 'Static delivery is still in dry-run mode.');
 $latestBatch = $exists('static_delivery_batches') ? DB::table('static_delivery_batches')->orderByDesc('created_at')->first() : null;
 $latestBatchStatus = $latestBatch ? (string) $latestBatch->status : null;
-$add('Static Edge', 'latest_delivery_batch', $latestBatchStatus === 'DEPLOYED' ? 'PASS' : ($latestBatch ? 'BLOCKED' : 'NOT_CONFIGURED'), $latestBatchStatus === 'DEPLOYED' ? 'P3' : 'P1', $latestBatchStatus === 'DEPLOYED' ? 'Latest static delivery batch is deployed.' : ($latestBatch ? 'Latest static delivery batch is not deployed.' : 'No static delivery batch exists yet.'), ['status' => $latestBatchStatus, 'attempts' => $latestBatch ? (int) $latestBatch->attempts : null]);
+$latestDeployedBatch = $exists('static_delivery_batches') ? DB::table('static_delivery_batches')->where('status', 'DEPLOYED')->orderByDesc('created_at')->first() : null;
+$hasDeployedBatch = $latestDeployedBatch !== null;
+$add(
+    'Static Edge',
+    'latest_delivery_batch',
+    $hasDeployedBatch ? 'PASS' : ($latestBatch ? 'BLOCKED' : 'NOT_CONFIGURED'),
+    $hasDeployedBatch ? 'P3' : 'P1',
+    $hasDeployedBatch ? 'A static delivery batch is deployed; a newer in-flight batch does not invalidate the confirmed live snapshot.' : ($latestBatch ? 'No static delivery batch has reached DEPLOYED yet.' : 'No static delivery batch exists yet.'),
+    ['latest_status' => $latestBatchStatus, 'latest_attempts' => $latestBatch ? (int) $latestBatch->attempts : null, 'deployed_batch_present' => $hasDeployedBatch],
+);
 $metrics['static_delivery_statuses'] = $groups('static_delivery_batches', 'status');
 
 // Security and explicit product-policy invariants.

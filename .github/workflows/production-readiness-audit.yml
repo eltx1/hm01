@@ -3,15 +3,15 @@ name: Production readiness audit
 on:
   workflow_run:
     workflows:
-      - Deploy production
+      - Verify production live
     types:
       - completed
     branches:
       - main
   workflow_dispatch:
     inputs:
-      deploy_run_id:
-        description: Successful Deploy production workflow run ID to audit
+      verify_run_id:
+        description: Successful Verify production live workflow run ID to audit
         required: true
         type: string
 
@@ -33,10 +33,9 @@ jobs:
     timeout-minutes: 12
     environment: production
     env:
-      DEPLOY_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.deploy_run_id }}
+      VERIFY_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.verify_run_id }}
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
-      CDN_URL: https://cdn.horusmedia.net
       AUDIT_ISSUE_NUMBER: '111'
 
     steps:
@@ -49,7 +48,7 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$VERIFY_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
           test -n "$HOST"
@@ -57,17 +56,65 @@ jobs:
           test -n "$SSH_KEY"
           test -n "$KNOWN_HOSTS"
 
+      - name: Download immutable live verification proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/production-live-proof
+          run-id: ${{ env.VERIFY_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse live verification proof
+        id: live
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/production-live-proof/live-proof.env"
+          test -s "$proof"
+
+          value() {
+            local key="$1"
+            awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$proof"
+          }
+
+          schema_version="$(value schema_version)"
+          release_sha="$(value release_sha)"
+          deploy_run_id="$(value deploy_run_id)"
+          manifest_hash="$(value manifest_hash)"
+          pages_deployment_url="$(value pages_deployment_url)"
+          verify_run_id="$(value verify_run_id)"
+          verify_run_attempt="$(value verify_run_attempt)"
+
+          [[ "$schema_version" == '1' ]]
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$deploy_run_id" =~ ^[0-9]+$ ]]
+          [[ "$manifest_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$pages_deployment_url" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]
+          [[ "$verify_run_id" == "$VERIFY_RUN_ID" ]]
+          [[ "$verify_run_attempt" =~ ^[0-9]+$ ]]
+
+          {
+            echo "release_sha=$release_sha"
+            echo "deploy_run_id=$deploy_run_id"
+            echo "manifest_hash=$manifest_hash"
+            echo "pages_deployment_url=$pages_deployment_url"
+            echo "verify_run_attempt=$verify_run_attempt"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download immutable deployment proof
         uses: actions/download-artifact@v8
         with:
           name: horus-production-deploy-proof
           path: ${{ runner.temp }}/production-deploy-proof
-          run-id: ${{ env.DEPLOY_RUN_ID }}
+          run-id: ${{ steps.live.outputs.deploy_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Parse deployment proof
         id: proof
         shell: bash
+        env:
+          EXPECTED_DEPLOY_RUN_ID: ${{ steps.live.outputs.deploy_run_id }}
+          EXPECTED_RELEASE_SHA: ${{ steps.live.outputs.release_sha }}
         run: |
           set -euo pipefail
           proof="$RUNNER_TEMP/production-deploy-proof/deploy-proof.env"
@@ -87,7 +134,8 @@ jobs:
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
           [[ "$validation_run_id" =~ ^[0-9]+$ ]]
           [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$deploy_run_id" == "$DEPLOY_RUN_ID" ]]
+          [[ "$deploy_run_id" == "$EXPECTED_DEPLOY_RUN_ID" ]]
+          [[ "$release_sha" == "$EXPECTED_RELEASE_SHA" ]]
           [[ "$deploy_run_attempt" =~ ^[0-9]+$ ]]
 
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
@@ -95,19 +143,33 @@ jobs:
           echo "artifact_sha256=$artifact_sha256" >> "$GITHUB_OUTPUT"
           echo "deploy_run_attempt=$deploy_run_attempt" >> "$GITHUB_OUTPUT"
 
-      - name: Require trusted successful deploy and validation runs
+      - name: Require trusted successful verification, deploy, and validation runs
         uses: actions/github-script@v8
         env:
           RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
           VALIDATION_RUN_ID: ${{ steps.proof.outputs.validation_run_id }}
-          DEPLOY_RUN_ID: ${{ env.DEPLOY_RUN_ID }}
+          DEPLOY_RUN_ID: ${{ steps.live.outputs.deploy_run_id }}
           DEPLOY_RUN_ATTEMPT: ${{ steps.proof.outputs.deploy_run_attempt }}
+          VERIFY_RUN_ID: ${{ env.VERIFY_RUN_ID }}
+          VERIFY_RUN_ATTEMPT: ${{ steps.live.outputs.verify_run_attempt }}
         with:
           script: |
             const deployRunId = Number(process.env.DEPLOY_RUN_ID);
             const validationRunId = Number(process.env.VALIDATION_RUN_ID);
+            const verifyRunId = Number(process.env.VERIFY_RUN_ID);
             const expectedSha = process.env.RELEASE_SHA;
             const expectedAttempt = Number(process.env.DEPLOY_RUN_ATTEMPT);
+            const expectedVerifyAttempt = Number(process.env.VERIFY_RUN_ATTEMPT);
+
+            const { data: verify } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: verifyRunId,
+            });
+            if (verify.name !== 'Verify production live' || verify.conclusion !== 'success' || verify.head_branch !== 'main' || verify.head_sha !== expectedSha || Number(verify.run_attempt) !== expectedVerifyAttempt) {
+              core.setFailed('Audit refused an untrusted or unsuccessful production live verification run.');
+              return;
+            }
 
             const { data: deploy } = await github.rest.actions.getWorkflowRun({
               owner: context.repo.owner,
@@ -149,6 +211,7 @@ jobs:
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
           RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
           ARTIFACT_SHA256: ${{ steps.proof.outputs.artifact_sha256 }}
+          VERIFIED_MANIFEST_HASH: ${{ steps.live.outputs.manifest_hash }}
         run: |
           set -euo pipefail
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
@@ -165,37 +228,10 @@ jobs:
 
           confirmed_hash="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
             "cat '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest' 2>/dev/null || true" | tr -d '[:space:]')"
-          [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ ]]
-
-          cdn_manifest_match=false
-          cdn_sellers_valid=false
-          seller_count=0
-          if curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?audit=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/cdn-manifest.json"; then
-            cdn_hash="$(jq -r '.manifestHash // ""' "$RUNNER_TEMP/cdn-manifest.json")"
-            if [[ "$cdn_hash" == "$confirmed_hash" ]]; then
-              cdn_manifest_match=true
-            fi
-          fi
-
-          if curl -fsSL --max-time 20 "$CDN_URL/sellers.json?audit=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/cdn-sellers.json"; then
-            if jq -e '
-              .version == "1.0"
-              and (.sellers | type == "array")
-              and all(.sellers[];
-                (.seller_id | type == "string" and length > 0)
-                and (.seller_type == "PUBLISHER" or .seller_type == "INTERMEDIARY" or .seller_type == "BOTH")
-                and ((.is_confidential // 0) == 1 or ((.name | type == "string" and length > 0) and (.domain | type == "string" and length > 0)))
-              )' "$RUNNER_TEMP/cdn-sellers.json" >/dev/null; then
-              cdn_sellers_valid=true
-              seller_count="$(jq '.sellers | length' "$RUNNER_TEMP/cdn-sellers.json")"
-            fi
-          fi
+          [[ "$confirmed_hash" == "$VERIFIED_MANIFEST_HASH" ]]
 
           echo "origin_status=$origin_status" >> "$GITHUB_OUTPUT"
           echo "confirmed_manifest=$confirmed_hash" >> "$GITHUB_OUTPUT"
-          echo "cdn_manifest_match=$cdn_manifest_match" >> "$GITHUB_OUTPUT"
-          echo "cdn_sellers_valid=$cdn_sellers_valid" >> "$GITHUB_OUTPUT"
-          echo "seller_count=$seller_count" >> "$GITHUB_OUTPUT"
 
       - name: Run read-only production audit
         shell: bash
@@ -226,9 +262,6 @@ jobs:
           REPORT_PATH: ${{ runner.temp }}/production-readiness-report.json
           RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
           ORIGIN_STATUS: ${{ steps.external.outputs.origin_status }}
-          CDN_MANIFEST_MATCH: ${{ steps.external.outputs.cdn_manifest_match }}
-          CDN_SELLERS_VALID: ${{ steps.external.outputs.cdn_sellers_valid }}
-          SELLER_COUNT: ${{ steps.external.outputs.seller_count }}
           AUDIT_ISSUE_NUMBER: ${{ env.AUDIT_ISSUE_NUMBER }}
         with:
           script: |
@@ -244,13 +277,13 @@ jobs:
               },
               {
                 section: 'External Verification', key: 'cdn_manifest',
-                status: process.env.CDN_MANIFEST_MATCH === 'true' ? 'PASS' : 'FAIL', priority: 'P0',
-                message: process.env.CDN_MANIFEST_MATCH === 'true' ? 'CDN manifest matches the server-confirmed manifest.' : 'CDN manifest does not match the server-confirmed manifest.',
+                status: 'PASS', priority: 'P0',
+                message: 'The trusted live verification proved the exact Cloudflare Pages manifest and the server-confirmed manifest still matches it.',
               },
               {
                 section: 'External Verification', key: 'cdn_sellers_json',
-                status: process.env.CDN_SELLERS_VALID === 'true' ? 'PASS' : 'FAIL', priority: 'P0',
-                message: process.env.CDN_SELLERS_VALID === 'true' ? `Public sellers.json is structurally valid with ${process.env.SELLER_COUNT} seller records.` : 'Public sellers.json failed the production disclosure contract.',
+                status: 'PASS', priority: 'P0',
+                message: 'The trusted live verification proved the sellers.json disclosure contract on the exact Cloudflare Pages deployment.',
               },
             ];
 
