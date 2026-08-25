@@ -44,6 +44,20 @@ class ProductionDeploymentConfigurationTest extends TestCase
         $this->assertFileExists(base_path('.github/workflows/deploy-production.yml'));
     }
 
+    public function test_global_click_guard_deployment_audit_uses_typed_array_values(): void
+    {
+        $migration = file_get_contents(database_path('migrations/2026_08_24_020000_enable_global_click_guard.php'));
+
+        $this->assertIsString($migration);
+        $pattern = <<<'REGEX'
+/AuditRecorder::class\)->record\(\s*'click_guard\.global_default\.deployed',\s*null,\s*\$actor,\s*null,\s*\[\],\s*\$policy,/s
+REGEX;
+        $this->assertMatchesRegularExpression(
+            $pattern,
+            $migration,
+        );
+    }
+
     public function test_direct_origin_tls_override_is_narrow_and_public_health_remains_strict(): void
     {
         $deploy = file_get_contents(base_path('ops/deploy/horus-atomic-deploy.sh'));
