@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Publisher;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Sites\StorePublisherSiteRequest;
 use App\Models\Publisher;
 use App\Models\Site;
 use App\Models\SiteDomain;
@@ -29,10 +30,10 @@ class SiteController extends Controller
         return view('publisher.sites.form', ['site' => new Site, 'publisher' => $this->publisher($request)]);
     }
 
-    public function store(Request $request, SiteLifecycleService $lifecycle): RedirectResponse
+    public function store(StorePublisherSiteRequest $request, SiteLifecycleService $lifecycle): RedirectResponse
     {
-        $publisher = $this->publisher($request);
-        $data = $this->validated($request, $publisher);
+        $publisher = $request->publisherAccount();
+        $data = $request->sitePayload();
         $data['default_revenue_share_percent'] = $publisher->applicableRevenueShare();
         $site = $lifecycle->create(array_merge($data, ['organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id]), $request->user());
 
@@ -114,7 +115,7 @@ class SiteController extends Controller
         return Publisher::query()->where('organization_id', $request->user()->organization_id)->firstOrFail();
     }
 
-    private function validated(Request $request, Publisher $publisher, ?Site $site = null): array
+    private function validated(Request $request, Publisher $publisher, Site $site): array
     {
         $request->merge([
             'primary_domain' => $this->normalizeDomain((string) $request->input('primary_domain')),
@@ -122,28 +123,6 @@ class SiteController extends Controller
             'main_traffic_countries' => $this->csv((string) $request->input('main_traffic_countries')),
             'current_monetization_providers' => $this->csv((string) $request->input('current_monetization_providers')),
         ]);
-
-        if (! $site) {
-            $data = $request->validate([
-                'display_name' => ['required', 'string', 'max:255'],
-                'primary_domain' => ['required', 'max:255', 'regex:/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i', Rule::unique('sites')->where('publisher_id', $publisher->id)],
-                'content_category' => ['required', 'string', Rule::in(['NEWS', 'ENTERTAINMENT', 'SPORTS', 'TECHNOLOGY', 'LIFESTYLE', 'BUSINESS', 'OTHER'])],
-                'country' => ['required', 'string', 'size:2'],
-            ]);
-
-            return $data + [
-                'language' => 'en',
-                'main_traffic_countries' => [$data['country']],
-                'estimated_monthly_pageviews' => 0,
-                'estimated_monthly_users' => 0,
-                'current_monetization_providers' => [],
-                'current_gam_network_code' => null,
-                'current_adsense_status' => null,
-                'current_adx_status' => null,
-                'prebid_enabled' => false,
-                'native_demand_enabled' => false,
-            ];
-        }
 
         return $request->validate([
             'display_name' => ['required', 'string', 'max:255'],

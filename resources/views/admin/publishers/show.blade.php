@@ -39,7 +39,7 @@
 </section>
 
 <article id="websites" class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Inventory ownership</p><h2>Websites</h2></div><a class="section-anchor" href="{{ route('admin.sites.index') }}">All websites</a></div>
+    <div class="workspace-heading"><div><p class="eyebrow">Inventory ownership</p><h2>Websites</h2></div><div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.sites.create', $publisher) }}">Add website</a>@endif <a class="section-anchor" href="{{ route('admin.sites.index') }}">All websites</a></div></div>
     <div class="compact-list">
         @forelse($publisher->sites as $site)
             <a class="compact-row" href="{{ route('admin.sites.show', $site) }}"><div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }} · {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</p></div><x-status-badge :status="$site->status" /></a>

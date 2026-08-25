@@ -1,15 +1,16 @@
 @extends('layouts.admin')
-@section('title', $site->exists ? 'Edit website' : 'Add website')
-@section('heading', $site->exists ? 'Edit website' : 'Add website')
+@php($adminContext = $adminContext ?? false)
+@section('title', $site->exists ? 'Edit website' : ($adminContext ? 'Add website to '.$publisher->display_name : 'Add website'))
+@section('heading', $site->exists ? 'Edit website' : ($adminContext ? 'Add website to '.$publisher->display_name : 'Add website'))
 @section('content')
-<article><p class="muted">Every new website starts as a separate draft. Successful ads.txt verification submits it for Horus review automatically.</p>
-<form method="POST" action="{{ $site->exists ? route('publisher.sites.update', $site) : route('publisher.sites.store') }}" class="form-grid">@csrf @if($site->exists)@method('PUT')@endif
+<article><p class="muted">Every new website starts as a separate draft for {{ $publisher->display_name }}. Successful ads.txt verification submits it for Horus review automatically.</p>
+<form method="POST" action="{{ $site->exists ? route('publisher.sites.update', $site) : ($siteStoreRoute ?? route('publisher.sites.store')) }}" class="form-grid">@csrf @if($site->exists)@method('PUT')@endif
 <label>Display name<input class="hm-input" name="display_name" value="{{ old('display_name', $site->display_name) }}" required></label>
 <label>Primary domain<input class="hm-input" name="primary_domain" value="{{ old('primary_domain', $site->primary_domain) }}" placeholder="example.com" required></label>
 @if(!$site->exists)
 <label>Content category<select class="hm-input" name="content_category" required><option value="">Choose one</option>@foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)<option value="{{ $category }}" @selected(old('content_category') === $category)>{{ str($category)->headline() }}</option>@endforeach</select></label>
 <label>Primary country (ISO 2)<input class="hm-input" name="country" value="{{ old('country') }}" maxlength="2" placeholder="US" required></label>
-<div class="full wizard-actions"><span class="muted">Next: copy one complete ads.txt block and verify only the two Horus records.</span><button class="hm-button-primary">Add website</button></div>
+<div class="full wizard-actions"><span class="muted">Next: copy one complete ads.txt block and verify only the two Horus records.</span><div>@if(isset($cancelRoute))<a class="section-anchor" href="{{ $cancelRoute }}">Cancel</a>@endif <button class="hm-button-primary">Add website</button></div></div>
 @else
 <label>Language<input class="hm-input" name="language" value="{{ old('language', $site->language ?: 'en') }}" required></label>
 <label>Content category<input class="hm-input" name="content_category" value="{{ old('content_category', $site->content_category) }}" required></label>

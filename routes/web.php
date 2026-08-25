@@ -14,6 +14,7 @@ use App\Http\Controllers\Admin\PublisherApplicationController as AdminPublisherA
 use App\Http\Controllers\Admin\PublisherController;
 use App\Http\Controllers\Admin\PublisherPaymentProfileController;
 use App\Http\Controllers\Admin\PublisherQualityReviewController;
+use App\Http\Controllers\Admin\PublisherSiteController as AdminPublisherSiteController;
 use App\Http\Controllers\Admin\RolePermissionController;
 use App\Http\Controllers\Admin\SiteConfigController;
 use App\Http\Controllers\Admin\SiteController as AdminSiteController;
@@ -113,6 +114,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/publishers/applications/{application}/reject', [AdminPublisherApplicationController::class, 'reject'])->middleware(['horus', 'permission:publisher_applications.review', 'throttle:sensitive'])->name('admin.publisher-applications.reject');
         Route::get('/admin/publishers/create', [PublisherController::class, 'create'])->middleware('permission:publishers.manage')->name('admin.publishers.create');
         Route::post('/admin/publishers', [PublisherController::class, 'store'])->middleware('permission:publishers.manage')->name('admin.publishers.store');
+        Route::get('/admin/publishers/{publisher}/sites/create', [AdminPublisherSiteController::class, 'create'])->middleware(['horus', 'permission:sites.manage'])->name('admin.publishers.sites.create');
+        Route::post('/admin/publishers/{publisher}/sites', [AdminPublisherSiteController::class, 'store'])->middleware(['horus', 'permission:sites.manage'])->name('admin.publishers.sites.store');
         Route::get('/admin/publishers/{publisher}', [PublisherController::class, 'show'])->middleware(['horus', 'permission:publishers.view'])->name('admin.publishers.show');
         Route::get('/admin/publishers/{publisher}/edit', [PublisherController::class, 'edit'])->middleware('permission:publishers.manage')->name('admin.publishers.edit');
         Route::put('/admin/publishers/{publisher}', [PublisherController::class, 'update'])->middleware('permission:publishers.manage')->name('admin.publishers.update');
