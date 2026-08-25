@@ -58,6 +58,24 @@ REGEX;
         );
     }
 
+    public function test_readiness_audit_runs_only_after_trusted_live_verification(): void
+    {
+        $verify = file_get_contents(base_path('.github/workflows/verify-production-live.yml'));
+        $audit = file_get_contents(base_path('.github/workflows/production-readiness-audit.yml'));
+        $script = file_get_contents(base_path('ops/audit/production-readiness.php'));
+
+        $this->assertIsString($verify);
+        $this->assertIsString($audit);
+        $this->assertIsString($script);
+        $this->assertStringContainsString('name: horus-production-live-proof', $verify);
+        $this->assertStringContainsString('- Verify production live', $audit);
+        $this->assertStringContainsString('name: horus-production-live-proof', $audit);
+        $this->assertStringContainsString("verify.name !== 'Verify production live'", $audit);
+        $this->assertStringNotContainsString('$CDN_URL/delivery-manifest.json?audit=', $audit);
+        $this->assertStringContainsString("where('status', 'DEPLOYED')", $script);
+        $this->assertStringContainsString('a newer in-flight batch does not invalidate the confirmed live snapshot', $script);
+    }
+
     public function test_direct_origin_tls_override_is_narrow_and_public_health_remains_strict(): void
     {
         $deploy = file_get_contents(base_path('ops/deploy/horus-atomic-deploy.sh'));

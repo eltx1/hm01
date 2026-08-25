@@ -354,6 +354,35 @@ jobs:
             fi
           done
 
+      - name: Write immutable live verification proof
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
+          MANIFEST_HASH: ${{ steps.snapshot.outputs.manifest_hash }}
+          PAGES_DEPLOYMENT_URL: ${{ steps.pages.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/production-live-proof"
+          mkdir -p "$proof_dir"
+          {
+            echo 'schema_version=1'
+            echo "release_sha=$RELEASE_SHA"
+            echo "deploy_run_id=$DEPLOY_RUN_ID"
+            echo "manifest_hash=$MANIFEST_HASH"
+            echo "pages_deployment_url=$PAGES_DEPLOYMENT_URL"
+            echo "verify_run_id=$GITHUB_RUN_ID"
+            echo "verify_run_attempt=$GITHUB_RUN_ATTEMPT"
+          } > "$proof_dir/live-proof.env"
+
+      - name: Upload immutable live verification proof
+        uses: actions/upload-artifact@v7
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/production-live-proof/live-proof.env
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: true
+
       - name: Remove remote verification snapshot
         if: always()
         shell: bash
