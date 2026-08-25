@@ -45,7 +45,7 @@ return new class extends Migration
             null,
             $actor,
             null,
-            null,
+            [],
             $policy,
             ['active_site_configs_queued' => $published, 'client_only' => true],
         );
