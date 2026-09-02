@@ -35,11 +35,13 @@ class PublisherFinanceExperienceTest extends TestCase
 
     public function test_publisher_finance_pages_separate_estimated_finalized_and_currencies(): void
     {
+        $this->travelTo(now()->startOfMonth()->addDays(10));
+
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $connection = $this->connection($admin->organization_id);
-        $estimatedDate = now()->toImmutable();
-        $finalizedDate = $estimatedDate;
-        $euroDate = $estimatedDate;
+        $estimatedDate = now()->startOfMonth()->addDay()->toImmutable();
+        $finalizedDate = $estimatedDate->addDay();
+        $euroDate = $estimatedDate->addDays(2);
 
         app(ReportImportService::class)->importRows($connection, [[
             'date' => $estimatedDate, 'publisher_id' => $publisher->id, 'site_id' => $site->id,
