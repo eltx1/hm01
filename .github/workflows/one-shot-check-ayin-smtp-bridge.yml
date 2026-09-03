@@ -1,0 +1,46 @@
+name: One-shot check AYIN SMTP bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-check-ayin-smtp-bridge.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+    steps:
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Check same-host bridge permissions without reading secrets
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -p "$SSH_PORT" "$USER@$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "REMOTE_USER=$(whoami)"
+          echo "REMOTE_HOSTNAME=$(hostname)"
+          test -r /home/horusapp/htdocs/app.horusmedia.net/.env && echo "HORUS_ENV_READABLE=YES" || echo "HORUS_ENV_READABLE=NO"
+          test -e /home/ayin/env/api.env && echo "AYIN_ENV_EXISTS=YES" || echo "AYIN_ENV_EXISTS=NO"
+          test -r /home/ayin/env/api.env && echo "AYIN_ENV_READABLE=YES" || echo "AYIN_ENV_READABLE=NO"
+          test -w /home/ayin/env/api.env && echo "AYIN_ENV_WRITABLE=YES" || echo "AYIN_ENV_WRITABLE=NO"
+          REMOTE
