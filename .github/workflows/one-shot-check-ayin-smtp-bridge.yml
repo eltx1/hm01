@@ -1,4 +1,4 @@
-name: One-shot export Horus SMTP to AYIN bridge
+name: One-shot clean AYIN SMTP bridge ciphertext
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  clean:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Export live Horus SMTP through encrypted same-host bridge
+      - name: Remove Horus-owned temporary ciphertext
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
@@ -38,70 +38,8 @@ jobs:
           ssh -p "$SSH_PORT" "$USER@$HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           [[ "$(hostname)" == "ip-172-31-4-110" ]]
-
-          public=/tmp/ayin-smtp-bridge-public.pem
-          encrypted_key=/tmp/ayin-smtp-bridge.key.enc
-          encrypted_payload=/tmp/ayin-smtp-bridge.payload.enc
-          test -r "$public"
-
-          plain="$(mktemp)"
-          passfile="$(mktemp)"
-          helper="$(mktemp --suffix=.php)"
-          chmod 600 "$plain" "$passfile" "$helper"
-          trap 'rm -f "$plain" "$passfile" "$helper"' EXIT
-
-          cat > "$helper" <<'PHP'
-          <?php
-          $appPath = '/home/horusapp/htdocs/app.horusmedia.net';
-          chdir($appPath);
-          require $appPath.'/vendor/autoload.php';
-          $app = require $appPath.'/bootstrap/app.php';
-          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-
-          $smtp = config('mail.mailers.smtp');
-          $values = [
-              'MAIL_HOST' => (string) ($smtp['host'] ?? ''),
-              'MAIL_PORT' => (string) ($smtp['port'] ?? ''),
-              'MAIL_USERNAME' => (string) ($smtp['username'] ?? ''),
-              'MAIL_PASSWORD' => (string) ($smtp['password'] ?? ''),
-              'MAIL_FROM_ADDRESS' => (string) config('mail.from.address'),
-          ];
-
-          foreach ($values as $key => $value) {
-              if ($value === '' || preg_match('/[\r\n]/', $value)) {
-                  fwrite(STDERR, "Invalid live SMTP configuration for {$key}.\n");
-                  exit(1);
-              }
-          }
-          if (! preg_match('/^[0-9]{2,5}$/', $values['MAIL_PORT'])) {
-              fwrite(STDERR, "Invalid live SMTP port.\n");
-              exit(1);
-          }
-
-          $output = '';
-          foreach ($values as $key => $value) {
-              $output .= $key.'='.$value."\n";
-          }
-          if (file_put_contents($argv[1], $output, LOCK_EX) === false) {
-              fwrite(STDERR, "Could not prepare SMTP bridge payload.\n");
-              exit(1);
-          }
-          PHP
-
-          php "$helper" "$plain"
-          test -s "$plain"
-          openssl rand -hex 32 > "$passfile"
-          chmod 600 "$passfile"
-
-          rm -f "$encrypted_key" "$encrypted_payload"
-          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
-            -in "$plain" -out "$encrypted_payload" -pass file:"$passfile"
-          openssl pkeyutl -encrypt -pubin -inkey "$public" \
-            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
-            -in "$passfile" -out "$encrypted_key"
-          chmod 644 "$encrypted_key" "$encrypted_payload"
-
-          rm -f "$plain" "$passfile" "$helper"
-          trap - EXIT
-          echo "HORUS_SMTP_ENCRYPTED_BRIDGE_READY=YES"
+          rm -f /tmp/ayin-smtp-bridge.key.enc /tmp/ayin-smtp-bridge.payload.enc
+          test ! -e /tmp/ayin-smtp-bridge.key.enc
+          test ! -e /tmp/ayin-smtp-bridge.payload.enc
+          echo "AYIN_SMTP_BRIDGE_CIPHERTEXT_CLEANED=YES"
           REMOTE
