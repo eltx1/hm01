@@ -44,9 +44,9 @@ Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix(
         ->middleware('permission:demand.reports')->name('admin.demand.reports.csv');
 
     Route::get('/sites/{site}/demand', [DemandNetworkController::class, 'site'])
-        ->middleware('permission:demand.view')->name('admin.sites.demand.status');
-    Route::patch('/sites/{site}/demand/enabled', [DemandNetworkController::class, 'toggleSiteNative'])
-        ->middleware('permission:demand.manage')->name('admin.sites.demand.enabled');
+        ->middleware('permission:demand.view')->name('admin.sites.demand.show');
+    Route::patch('/sites/{site}/demand', [DemandNetworkController::class, 'toggleSiteNative'])
+        ->middleware('permission:demand.manage')->name('admin.sites.demand.status');
     Route::post('/sites/{site}/demand/accounts/{demandAccount}', [DemandNetworkController::class, 'assignSite'])
         ->middleware('permission:demand.manage')->name('admin.sites.demand.assign');
     Route::put('/sites/{site}/demand/mappings/{demandSite}', [DemandNetworkController::class, 'updateSite'])
