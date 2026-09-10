@@ -24,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::middleware('web')->group(base_path('routes/admin-auth.php'));
             Route::middleware('web')->group(base_path('routes/prebid-ads-txt.php'));
             Route::middleware('web')->group(base_path('routes/platform-ads-txt.php'));
+            Route::middleware('web')->group(base_path('routes/direct-demand.php'));
             Route::middleware('web')->group(base_path('routes/thoth-applications.php'));
             Route::middleware('web')->group(base_path('routes/site-quality-review.php'));
             Route::middleware('web')->group(base_path('routes/traffic-gate.php'));
