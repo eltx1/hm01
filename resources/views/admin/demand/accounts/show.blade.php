@@ -94,7 +94,7 @@
     <div class="compact-list">
         @forelse($account->sites as $mapping)
             @if($mapping->site)
-                <a class="compact-row" href="{{ route('admin.sites.demand.status', $mapping->site) }}">
+                <a class="compact-row" href="{{ route('admin.sites.demand.show', $mapping->site) }}">
                     <div><strong>{{ $mapping->site->display_name }}</strong><p>{{ $mapping->site->primary_domain }} · {{ $mapping->approval_status->value }} · {{ $mapping->is_enabled ? 'enabled' : 'disabled' }}</p></div>
                     <span class="pill">Open mapping →</span>
                 </a>
