@@ -7,6 +7,7 @@ use App\Enums\DemandApprovalStatus;
 use App\Enums\DemandIntegrationMode;
 use App\Enums\DemandNetworkCode;
 use App\Enums\PlacementStatus;
+use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\DemandAccount;
@@ -25,7 +26,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
-use RuntimeException;
 
 final class DirectDemandQuickMonetizeController extends Controller
 {
@@ -37,11 +37,13 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'publisher',
                 'placements' => fn ($query) => $query
                     ->withoutGlobalScopes()
+                    ->whereNull('placements.deleted_at')
                     ->where('status', PlacementStatus::Active->value)
                     ->with('sizes')
                     ->orderBy('sort_order')
                     ->orderBy('name'),
             ])
+            ->whereNull('sites.deleted_at')
             ->where('status', SiteStatus::Active->value)
             ->whereNotNull('publisher_id')
             ->orderBy('display_name')
@@ -79,11 +81,19 @@ final class DirectDemandQuickMonetizeController extends Controller
             throw ValidationException::withMessages(['quick' => 'Custom Third-Party Tag connector is unavailable.']);
         }
 
-        $site = Site::withoutGlobalScopes()->with('publisher')->findOrFail($data['site_id']);
-        $placement = Placement::withoutGlobalScopes()->findOrFail($data['placement_id']);
+        $site = Site::withoutGlobalScopes()
+            ->with(['publisher', 'siteConfig'])
+            ->whereNull('deleted_at')
+            ->findOrFail($data['site_id']);
+        $placement = Placement::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->findOrFail($data['placement_id']);
 
         if ($site->status !== SiteStatus::Active) {
             throw ValidationException::withMessages(['site_id' => 'Quick Monetize is available only for active websites.']);
+        }
+        if ($site->serving_mode === ServingMode::Paused || $site->siteConfig?->immediate_pause || ($site->siteConfig && $site->siteConfig->status !== 'ACTIVE')) {
+            throw ValidationException::withMessages(['site_id' => 'This website is operationally paused. Resume it before publishing a new ad tag.']);
         }
         if (! $site->publisher) {
             throw ValidationException::withMessages(['site_id' => 'The selected website is not attached to a Publisher.']);
@@ -93,6 +103,11 @@ final class DirectDemandQuickMonetizeController extends Controller
         }
         if ($placement->status !== PlacementStatus::Active) {
             throw ValidationException::withMessages(['placement_id' => 'Quick Monetize requires an active placement.']);
+        }
+
+        $siteProblems = $this->siteReadinessProblems($controls, $site, $placement);
+        if ($siteProblems !== []) {
+            throw ValidationException::withMessages(['quick' => implode(' ', $siteProblems)]);
         }
 
         $tag = trim((string) $data['tag']);
@@ -130,6 +145,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $publisher = $site->publisher;
 
             $account = DemandAccount::withoutGlobalScopes()
+                ->whereNull('deleted_at')
                 ->where('demand_network_id', $network->id)
                 ->where('publisher_id', $publisher->id)
                 ->where('scope', DemandAccountScope::Publisher->value)
@@ -213,11 +229,14 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ->findOrFail($demandPlacement->id);
             $recipe = $connectors->for($account->refresh()->load('network'))->generateDirectTag($demandPlacement);
             if (($recipe['executionMode'] ?? null) !== 'ISOLATED_IFRAME') {
-                throw new RuntimeException('Quick Monetize did not produce the expected isolated third-party recipe.');
+                throw ValidationException::withMessages([
+                    'tag' => 'Quick Monetize could not create the expected isolated third-party runtime recipe. No changes were published.',
+                ]);
             }
 
             $publicConfig = $configurationBuilder->build($site->fresh());
-            if ((array) data_get($publicConfig, 'placements.'.$placement->code.'.candidates', []) === []) {
+            $candidates = (array) ($publicConfig['placements'][$placement->code]['candidates'] ?? []);
+            if ($candidates === []) {
                 throw ValidationException::withMessages([
                     'tag' => 'The tag passed parsing but could not produce a deliverable Direct Demand candidate. No changes were published.',
                 ]);
@@ -262,6 +281,29 @@ final class DirectDemandQuickMonetizeController extends Controller
             if ($controls->disabled('DEMAND_NETWORK', $network->id, $control)) {
                 $problems[] = "Connector runtime {$control} is paused.";
             }
+        }
+
+        return array_values(array_unique($problems));
+    }
+
+    /** @return array<int, string> */
+    private function siteReadinessProblems(PlatformControlService $controls, Site $site, Placement $placement): array
+    {
+        $problems = [];
+        if ($controls->disabledForSite('AD_SERVING', $site->id, $site->gam_connection_id)) {
+            $problems[] = 'Ad serving is paused for this website.';
+        }
+        if ($controls->disabledForSite('DIRECT_JS', $site->id)) {
+            $problems[] = 'Direct Demand is paused for this website.';
+        }
+        if ($controls->disabledForSite('NATIVE_DEMAND', $site->id)) {
+            $problems[] = 'The website Direct Demand compatibility control is paused.';
+        }
+        if ($controls->placementEngineDisabled($placement->id, 'DIRECT_JS')) {
+            $problems[] = 'Direct Demand is paused for this placement.';
+        }
+        if ($controls->placementEngineDisabled($placement->id, 'NATIVE_DEMAND')) {
+            $problems[] = 'The placement Direct Demand compatibility control is paused.';
         }
 
         return array_values(array_unique($problems));
