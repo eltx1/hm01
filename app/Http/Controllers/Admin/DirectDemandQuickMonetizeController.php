@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\ConfigEnvironment;
 use App\Enums\DemandAccountScope;
 use App\Enums\DemandApprovalStatus;
 use App\Enums\DemandIntegrationMode;
@@ -14,11 +15,13 @@ use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
 use App\Models\Placement;
+use App\Models\Publisher;
 use App\Models\Site;
+use App\Services\Audit\AuditRecorder;
 use App\Services\Demand\DemandAccountService;
-use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Demand\DemandConnectorManager;
 use App\Services\Demand\DirectTagRecipeParser;
+use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Http\RedirectResponse;
@@ -62,9 +65,10 @@ final class DirectDemandQuickMonetizeController extends Controller
         DemandAccountService $accounts,
         DemandConnectorManager $connectors,
         DirectTagRecipeParser $parser,
-        DemandConfigurationBuilder $configurationBuilder,
+        SiteConfigurationBuilder $siteConfigurationBuilder,
         SiteConfigPublisher $configPublisher,
         PlatformControlService $controls,
+        AuditRecorder $audit,
     ): RedirectResponse {
         $data = $request->validate([
             'site_id' => ['required', 'ulid', 'exists:sites,id'],
@@ -133,8 +137,9 @@ final class DirectDemandQuickMonetizeController extends Controller
             $request,
             $accounts,
             $connectors,
-            $configurationBuilder,
+            $siteConfigurationBuilder,
             $configPublisher,
+            $audit,
             $network,
             $site,
             $placement,
@@ -142,7 +147,14 @@ final class DirectDemandQuickMonetizeController extends Controller
             $origins,
         ): DemandAccount {
             $actor = $request->user();
-            $publisher = $site->publisher;
+
+            // Serialize first-time Quick Monetize account creation per Publisher.
+            // Production MySQL row locking prevents two simultaneous submissions
+            // from creating duplicate managed accounts before either can commit.
+            $publisher = Publisher::withoutGlobalScopes()
+                ->whereKey($site->publisher_id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
             $account = DemandAccount::withoutGlobalScopes()
                 ->whereNull('deleted_at')
@@ -222,23 +234,63 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ],
             ], $actor);
 
-            $site->update(['native_demand_enabled' => true]);
+            $beforeDirectDemand = (bool) $site->native_demand_enabled;
+            if (! $beforeDirectDemand) {
+                $site->update(['native_demand_enabled' => true]);
+                $audit->record(
+                    'demand.site.direct_demand_enabled_changed',
+                    $site->organization_id,
+                    $actor,
+                    $site,
+                    ['native_demand_enabled' => false],
+                    ['native_demand_enabled' => true],
+                );
+            }
 
             $demandPlacement = DemandPlacement::withoutGlobalScopes()
                 ->with(['demandSite.account.network', 'placement.sizes', 'widgets'])
                 ->findOrFail($demandPlacement->id);
-            $recipe = $connectors->for($account->refresh()->load('network'))->generateDirectTag($demandPlacement);
+            $connector = $connectors->for($account->refresh()->load('network'));
+            $connectorReview = $connector->parseDirectTag($tag);
+            if (! (bool) ($connectorReview['safe'] ?? false)) {
+                $connectorWarnings = array_values((array) ($connectorReview['securityWarnings'] ?? []));
+                throw ValidationException::withMessages([
+                    'tag' => $connectorWarnings !== []
+                        ? implode(' ', $connectorWarnings)
+                        : 'The supplied third-party tag did not pass the connector security review.',
+                ]);
+            }
+
+            $recipe = $connector->generateDirectTag($demandPlacement);
             if (($recipe['executionMode'] ?? null) !== 'ISOLATED_IFRAME') {
                 throw ValidationException::withMessages([
                     'tag' => 'Quick Monetize could not create the expected isolated third-party runtime recipe. No changes were published.',
                 ]);
             }
 
-            $publicConfig = $configurationBuilder->build($site->fresh());
-            $candidates = (array) ($publicConfig['placements'][$placement->code]['candidates'] ?? []);
-            if ($candidates === []) {
+            // Validate the complete renderer decision, not only the Direct Demand
+            // candidate. If GAM or standalone Prebid already owns this physical
+            // placement, the whole transaction rolls back instead of disabling or
+            // double-rendering the existing ad surface.
+            $finalConfig = $siteConfigurationBuilder->build(
+                $site->fresh(),
+                ConfigEnvironment::Production,
+                0,
+            );
+            $finalPlacement = collect((array) ($finalConfig['placements'] ?? []))
+                ->first(fn (array $candidate) => ($candidate['code'] ?? null) === $placement->code);
+            $directCandidates = (array) ($finalConfig['directDemand']['placements'][$placement->code]['candidates'] ?? []);
+
+            if ($directCandidates === [] || ! is_array($finalPlacement)) {
                 throw ValidationException::withMessages([
                     'tag' => 'The tag passed parsing but could not produce a deliverable Direct Demand candidate. No changes were published.',
+                ]);
+            }
+            if ((bool) ($finalPlacement['rendererConflict'] ?? false)
+                || ($finalPlacement['renderer'] ?? null) !== 'DIRECT_JS'
+                || ! (bool) ($finalPlacement['enabled'] ?? false)) {
+                throw ValidationException::withMessages([
+                    'placement_id' => 'This placement is already owned by another renderer or is not eligible for Direct Demand. Quick Monetize will not replace or double-render it. Choose another placement or use Advanced setup.',
                 ]);
             }
 
@@ -269,6 +321,7 @@ final class DirectDemandQuickMonetizeController extends Controller
         }
         if (! $network) {
             $problems[] = 'Custom Third-Party Tag connector is missing.';
+
             return $problems;
         }
         if (! $network->is_enabled) {
@@ -309,8 +362,9 @@ final class DirectDemandQuickMonetizeController extends Controller
         return array_values(array_unique($problems));
     }
 
-    /** @param array<int, array<string, mixed>> $scripts
-     *  @return array<int, string>
+    /**
+     * @param array<int, array<string, mixed>> $scripts
+     * @return array<int, string>
      */
     private function scriptOrigins(array $scripts): array
     {
