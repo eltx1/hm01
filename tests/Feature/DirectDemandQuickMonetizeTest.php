@@ -191,7 +191,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
     }
 
-    public function test_protocol_relative_provider_script_is_normalized_and_generic_tag_remains_isolated(): void
+    public function test_protocol_relative_provider_script_is_normalized_and_generic_tag_uses_sized_trusted_isolation_runtime(): void
     {
         $tag = '<script async src="//cdn.taboola.com/libtrc/horus-test/loader.js"></script><div id="taboola-zone"></div>';
 
@@ -204,12 +204,21 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
-        $this->assertSame('ISOLATED_IFRAME', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('https://cdn.horusmedia.net/assets/hm-isolated-direct.js', data_get($candidate, 'tag.scripts.0.url'));
         $this->assertSame([[300, 250]], data_get($candidate, 'tag.render.allowedSizes'));
-        $csp = (string) data_get($candidate, 'tag.isolation.csp');
+        $this->assertSame('300', data_get($candidate, 'tag.container.attributes.data-hm-isolated-width'));
+        $this->assertSame('250', data_get($candidate, 'tag.container.attributes.data-hm-isolated-height'));
+
+        $csp = base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-csp'), true);
+        $this->assertIsString($csp);
         $this->assertStringContainsString('connect-src https://cdn.taboola.com;', $csp);
         $this->assertStringNotContainsString('connect-src https:;', $csp);
         $this->assertStringNotContainsString('frame-src https:;', $csp);
+
+        $isolatedHtml = base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-html'), true);
+        $this->assertIsString($isolatedHtml);
+        $this->assertStringContainsString('//cdn.taboola.com/libtrc/horus-test/loader.js', $isolatedHtml);
     }
 
     public function test_repeating_quick_activation_reuses_account_and_mappings_instead_of_duplicating_them(): void
