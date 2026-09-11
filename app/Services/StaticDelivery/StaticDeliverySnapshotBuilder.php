@@ -130,6 +130,8 @@ final class StaticDeliverySnapshotBuilder
         $loaderHash = hash('sha256', $loader);
         $gptDirect = $this->readRequired(public_path('assets/hm-gpt-direct.js'));
         $gptDirectHash = hash('sha256', $gptDirect);
+        $isolatedDirect = $this->readRequired(public_path('assets/hm-isolated-direct.js'));
+        $isolatedDirectHash = hash('sha256', $isolatedDirect);
         $prebid = $this->readRequired(public_path('assets/prebid/horus-prebid.min.js'));
         $prebidHash = hash('sha256', $prebid);
         $trafficGateHtml = $this->readRequired(public_path('traffic-gate/index.html'));
@@ -141,6 +143,8 @@ final class StaticDeliverySnapshotBuilder
             'assets/loader/hm-loader.'.substr($loaderHash, 0, 16).'.min.js' => $loader,
             'assets/hm-gpt-direct.js' => $gptDirect,
             'assets/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
+            'assets/hm-isolated-direct.js' => $isolatedDirect,
+            'assets/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
             'assets/prebid/horus-prebid.sha256' => $prebidHash."\n",
@@ -234,6 +238,14 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: application/javascript; charset=utf-8
 
 /assets/gpt/*
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/hm-isolated-direct.js
+  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/direct/*
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
