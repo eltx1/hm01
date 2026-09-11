@@ -44,7 +44,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if ($warnings === []) {
             $recipe = $gpt
                 ? ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT', 'slot' => $gpt]
-                : ['executionMode' => 'ISOLATED_IFRAME'];
+                : ['executionMode' => 'STRUCTURED', 'provider' => 'HORUS_ISOLATED'];
         }
 
         return [
@@ -91,50 +91,11 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if ($origins === []) {
             throw new RuntimeException('Custom isolated tags require explicit provider CSP origins.');
         }
-
         foreach ($this->externalScriptUrls($html) as $url) {
             $this->assertAllowedScriptUrl($url);
         }
 
-        $originList = implode(' ', $origins);
-        $csp = "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
-        $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
-        $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
-        $sizes = $this->placementSizes($placement);
-
-        return [
-            'recipeVersion' => 1,
-            'executionMode' => 'ISOLATED_IFRAME',
-            'format' => $format,
-            'scripts' => [],
-            'container' => [
-                'element' => 'div',
-                'id' => 'hm-isolated-'.$placement->id,
-                'class' => 'hm-direct-demand-isolated',
-                'attributes' => [],
-            ],
-            'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id),
-            'initialization' => ['type' => 'NONE', 'parameters' => []],
-            'render' => [
-                'timeoutMs' => $timeout,
-                'successSelector' => null,
-                'assumeLoadedIsSuccess' => true,
-                'allowedFormats' => [$format],
-                'allowedSizes' => $sizes,
-            ],
-            'isolation' => [
-                'html' => $html,
-                'csp' => $csp,
-                'sandbox' => ['allow-scripts'],
-            ],
-            'scriptUrl' => '',
-            'containerId' => 'hm-isolated-'.$placement->id,
-            'containerClass' => 'hm-direct-demand-isolated',
-            'attributes' => [],
-            'renderTimeoutMs' => $timeout,
-            'successSelector' => null,
-            'assumeLoadedIsSuccess' => true,
-        ];
+        return $this->isolatedRuntimeRecipe($html, $origins, $configuration, $placement);
     }
 
     public function generateGamCreative(DemandPlacement $placement): array
@@ -175,7 +136,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
      */
     private function googleGptRecipe(array $gpt, array $configuration, DemandPlacement $placement): array
     {
-        $runtimeUrl = $this->trustedGptRuntimeUrl();
+        $runtimeUrl = $this->trustedRuntimeUrl('hm-gpt-direct.js');
         $containerId = $gpt['containerId'];
         $sizes = $gpt['sizes'];
         $placementSizes = $this->placementSizes($placement);
@@ -235,17 +196,76 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         ];
     }
 
-    private function trustedGptRuntimeUrl(): string
+    /** @return array<string, mixed> */
+    private function isolatedRuntimeRecipe(string $html, array $origins, array $configuration, DemandPlacement $placement): array
+    {
+        $sizes = $this->placementSizes($placement);
+        if ($sizes === []) {
+            throw new RuntimeException('Quick isolated tags require an active fixed size on the selected Horus placement. Use Advanced setup for non-fixed inventory.');
+        }
+        $frameSize = $sizes[0];
+        $originList = implode(' ', $origins);
+        $csp = "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
+        $runtimeUrl = $this->trustedRuntimeUrl('hm-isolated-direct.js');
+        $containerId = 'hm-isolated-'.$placement->id;
+        $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
+        $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
+        $attributes = [
+            'data-hm-isolated-direct' => '1',
+            'data-hm-isolated-html' => base64_encode($html),
+            'data-hm-isolated-csp' => base64_encode($csp),
+            'data-hm-isolated-width' => (string) $frameSize[0],
+            'data-hm-isolated-height' => (string) $frameSize[1],
+        ];
+
+        return [
+            'recipeVersion' => 1,
+            'executionMode' => 'STRUCTURED',
+            'format' => $format,
+            'scripts' => [[
+                'url' => $runtimeUrl,
+                'async' => true,
+                'defer' => false,
+                'dedupeKey' => 'horus-isolated-direct-runtime-v1',
+                'attributes' => [],
+            ]],
+            'container' => [
+                'element' => 'div',
+                'id' => $containerId,
+                'class' => 'hm-direct-demand-isolated',
+                'attributes' => $attributes,
+            ],
+            'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id),
+            'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => [
+                'timeoutMs' => $timeout,
+                'successSelector' => '#'.$containerId.'[data-hm-isolated-status="requested"]',
+                'assumeLoadedIsSuccess' => false,
+                'allowedFormats' => [$format],
+                'allowedSizes' => $sizes,
+            ],
+            'isolation' => null,
+            'scriptUrl' => $runtimeUrl,
+            'containerId' => $containerId,
+            'containerClass' => 'hm-direct-demand-isolated',
+            'attributes' => $attributes,
+            'renderTimeoutMs' => $timeout,
+            'successSelector' => '#'.$containerId.'[data-hm-isolated-status="requested"]',
+            'assumeLoadedIsSuccess' => false,
+        ];
+    }
+
+    private function trustedRuntimeUrl(string $asset): string
     {
         $base = rtrim((string) config('horus.cdn_url'), '/');
         if ($base === '') {
             $base = 'https://cdn.horusmedia.net';
         }
-        $url = $base.'/assets/hm-gpt-direct.js';
+        $url = $base.'/assets/'.$asset;
         if (! filter_var($url, FILTER_VALIDATE_URL)
             || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
             || (string) parse_url($url, PHP_URL_HOST) === '') {
-            throw new RuntimeException('Horus GPT direct runtime requires a trusted HTTPS CDN URL.');
+            throw new RuntimeException('Horus Direct Demand runtime requires a trusted HTTPS CDN URL.');
         }
 
         return $url;
