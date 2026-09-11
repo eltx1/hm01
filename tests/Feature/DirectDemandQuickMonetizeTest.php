@@ -99,7 +99,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             ->assertDontSee('Approved script origins');
     }
 
-    public function test_valid_google_gpt_tag_is_fully_wired_and_published_in_one_post(): void
+    public function test_valid_google_gpt_tag_is_normalized_wired_and_published_in_one_post(): void
     {
         $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
 
@@ -149,11 +149,67 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
+        $tagRecipe = (array) data_get($candidate, 'tag', []);
         $this->assertSame('MANUAL_TAG', data_get($candidate, 'mode'));
-        $this->assertSame('ISOLATED_IFRAME', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('https://cdn.horusmedia.net/assets/hm-gpt-direct.js', data_get($candidate, 'tag.scripts.0.url'));
+        $this->assertSame('/1234567/lordai_header', data_get($candidate, 'tag.container.attributes.data-hm-gpt-ad-unit-path'));
+        $this->assertSame('[[300,250]]', data_get($candidate, 'tag.container.attributes.data-hm-gpt-sizes'));
+        $this->assertSame([[300, 250]], data_get($candidate, 'tag.render.allowedSizes'));
+        $this->assertStringNotContainsString('googletag.defineSlot', json_encode($tagRecipe, JSON_UNESCAPED_SLASHES) ?: '');
+        $this->assertStringNotContainsString('googletag.cmd.push', json_encode($tagRecipe, JSON_UNESCAPED_SLASHES) ?: '');
 
         $afterVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
         $this->assertGreaterThan($beforeVersions, $afterVersions);
+    }
+
+    public function test_google_gpt_size_must_match_the_selected_horus_placement(): void
+    {
+        $tag = str_replace('[300, 250]', '[728, 90]', $this->gptTag());
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag]))
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_private_or_reserved_script_origin_is_rejected_before_any_configuration_is_created(): void
+    {
+        $tag = '<script async src="https://127.0.0.1/ad.js"></script><div id="zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag]))
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_protocol_relative_provider_script_is_normalized_and_generic_tag_remains_isolated(): void
+    {
+        $tag = '<script async src="//cdn.taboola.com/libtrc/horus-test/loader.js"></script><div id="taboola-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag]))
+            ->assertRedirect();
+
+        $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(['https://cdn.taboola.com'], data_get($account->configuration, 'allowed_script_origins'));
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
+        $this->assertSame('ISOLATED_IFRAME', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame([[300, 250]], data_get($candidate, 'tag.render.allowedSizes'));
+        $csp = (string) data_get($candidate, 'tag.isolation.csp');
+        $this->assertStringContainsString('connect-src https://cdn.taboola.com;', $csp);
+        $this->assertStringNotContainsString('connect-src https:;', $csp);
+        $this->assertStringNotContainsString('frame-src https:;', $csp);
     }
 
     public function test_repeating_quick_activation_reuses_account_and_mappings_instead_of_duplicating_them(): void
