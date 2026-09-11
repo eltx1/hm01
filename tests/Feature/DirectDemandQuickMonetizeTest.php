@@ -11,9 +11,11 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\ConfigVersion;
 use App\Models\DemandAccount;
+use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
 use App\Models\DemandSite;
 use App\Models\DemandWidget;
+use App\Services\Demand\CustomThirdPartyTagConnector;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Operations\PlatformControlService;
@@ -110,10 +112,12 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $demandSite = DemandSite::withoutGlobalScopes()->where('demand_account_id', $account->id)->firstOrFail();
         $demandPlacement = DemandPlacement::withoutGlobalScopes()->where('demand_site_id', $demandSite->id)->firstOrFail();
         $widget = DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $demandPlacement->id)->firstOrFail();
+        $network = DemandNetwork::query()->where('code', 'CUSTOM_THIRD_PARTY_TAG')->firstOrFail();
 
         $response->assertRedirect(route('admin.demand.quick.create', ['site' => $this->site->id]));
         $response->assertSessionHas('status');
 
+        $this->assertSame(CustomThirdPartyTagConnector::class, $network->connector_class);
         $this->assertSame(DemandAccountScope::Publisher, $account->scope);
         $this->assertSame(DemandIntegrationMode::ManualTag, $account->integration_mode);
         $this->assertSame(DemandApprovalStatus::Approved, $account->approval_status);
@@ -139,6 +143,9 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             data_get($widget->configuration, 'isolation_allowed_origins'),
         );
         $this->assertTrue($this->site->fresh()->native_demand_enabled);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'demand.site.direct_demand_enabled_changed',
+        ]);
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
@@ -158,6 +165,32 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame(1, DemandSite::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $this->assertSame(1, DemandPlacement::withoutGlobalScopes()->where('placement_id', $this->placement->id)->count());
         $this->assertSame(1, DemandWidget::withoutGlobalScopes()->count());
+    }
+
+    public function test_existing_gam_renderer_is_rejected_without_partial_quick_monetize_writes(): void
+    {
+        $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->site->update([
+            'serving_mode' => ServingMode::HorusGam,
+            'current_gam_network_code' => '1234567',
+            'native_demand_enabled' => false,
+        ]);
+        $this->site->servingSettings()->update(['serving_mode' => ServingMode::HorusGam]);
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload())
+            ->assertSessionHasErrors('placement_id');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+        $this->assertSame(
+            $beforeVersions,
+            ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count(),
+        );
+        $this->assertDatabaseMissing('audit_logs', [
+            'event' => 'demand.site.direct_demand_enabled_changed',
+        ]);
     }
 
     public function test_cross_site_placement_is_rejected_without_partial_demand_writes(): void
@@ -184,6 +217,23 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
     }
 
+    public function test_soft_deleted_site_is_hidden_and_cannot_be_quick_monetized(): void
+    {
+        $siteId = $this->site->id;
+        $this->site->delete();
+
+        $this->adminSession()
+            ->get(route('admin.demand.quick.create'))
+            ->assertOk()
+            ->assertDontSee('lordai.net');
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload(['site_id' => $siteId]))
+            ->assertNotFound();
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+    }
+
     public function test_unsafe_or_secret_like_tag_is_rejected_before_any_configuration_is_created(): void
     {
         $unsafe = '<div id="ad"></div><script src="http://evil.example/ad.js"></script><script>const api_key="secret";</script>';
@@ -196,6 +246,31 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
         $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_dynamic_function_constructor_is_rejected_but_normal_gpt_function_callback_is_allowed(): void
+    {
+        $unsafe = <<<'HTML'
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<div id="div-gpt-ad-lordai-header"></div>
+<script>
+const execute = Function('return 1');
+execute();
+</script>
+HTML;
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $unsafe]))
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload())
+            ->assertRedirect();
     }
 
     public function test_platform_kill_switch_blocks_quick_activation_and_is_not_overridden(): void
