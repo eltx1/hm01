@@ -16,10 +16,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         $parsed = (new DirectTagRecipeParser())->parse($tag);
         $warnings = array_values(array_unique((array) ($parsed['securityWarnings'] ?? [])));
+        $gpt = null;
 
         if (! (bool) ($parsed['containsSensitiveMaterial'] ?? false)) {
             try {
                 $this->assertSafeCustomHtml($tag);
+                $gpt = (new GoogleGptManualTagParser())->parse($tag);
             } catch (RuntimeException $exception) {
                 $warnings[] = $exception->getMessage();
             }
@@ -38,10 +40,16 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
 
         $warnings = array_values(array_unique($warnings));
+        $recipe = null;
+        if ($warnings === []) {
+            $recipe = $gpt
+                ? ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT', 'slot' => $gpt]
+                : ['executionMode' => 'ISOLATED_IFRAME'];
+        }
 
         return [
             'safe' => ! (bool) ($parsed['containsSensitiveMaterial'] ?? false) && $warnings === [],
-            'recipe' => $warnings === [] ? ['executionMode' => 'ISOLATED_IFRAME'] : null,
+            'recipe' => $recipe,
             'detectedScripts' => $parsed['detectedScripts'] ?? [],
             'detectedContainers' => $parsed['detectedContainers'] ?? [],
             'detectedPublicIdentifiers' => $parsed['detectedPublicIdentifiers'] ?? [],
@@ -61,6 +69,15 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $html = trim((string) $widget->direct_tag_template);
         $configuration = $this->mergedConfiguration($placement, $widget);
         $this->assertSafeCustomHtml($html);
+
+        $gpt = (new GoogleGptManualTagParser())->parse($html);
+        if ($gpt !== null) {
+            foreach ($this->externalScriptUrls($html) as $url) {
+                $this->assertAllowedScriptUrl($url);
+            }
+
+            return $this->googleGptRecipe($gpt, $configuration);
+        }
 
         $origins = $this->isolationOrigins($configuration);
         if ($origins === []) {
@@ -137,6 +154,82 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'snippet' => $snippet,
             'safeFrameCompatible' => true,
         ];
+    }
+
+    /**
+     * Google GPT is normalized to data, never replayed as pasted JavaScript.
+     * A small Horus-owned runtime creates an independent GPT frame for the slot,
+     * avoiding both arbitrary inline execution and top-page GPT state conflicts.
+     *
+     * @param array{adUnitPath:string,containerId:string,sizes:array<int,array{0:int,1:int}>} $gpt
+     * @return array<string, mixed>
+     */
+    private function googleGptRecipe(array $gpt, array $configuration): array
+    {
+        $runtimeUrl = $this->trustedGptRuntimeUrl();
+        $containerId = $gpt['containerId'];
+        $sizes = $gpt['sizes'];
+        $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
+
+        return [
+            'recipeVersion' => 1,
+            'executionMode' => 'STRUCTURED',
+            'format' => 'DISPLAY',
+            'scripts' => [[
+                'url' => $runtimeUrl,
+                'async' => true,
+                'defer' => false,
+                'dedupeKey' => 'horus-google-gpt-direct-runtime-v1',
+                'attributes' => [],
+            ]],
+            'container' => [
+                'element' => 'div',
+                'id' => $containerId,
+                'class' => 'hm-direct-google-gpt',
+                'attributes' => [
+                    'data-hm-gpt-direct' => '1',
+                    'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'],
+                    'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+                ],
+            ],
+            'publicPlacementId' => $gpt['adUnitPath'],
+            'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => [
+                'timeoutMs' => $timeout,
+                'successSelector' => '#'.$containerId.'[data-hm-gpt-status="requested"]',
+                'assumeLoadedIsSuccess' => false,
+                'allowedFormats' => ['DISPLAY'],
+                'allowedSizes' => $sizes,
+            ],
+            'isolation' => null,
+            'scriptUrl' => $runtimeUrl,
+            'containerId' => $containerId,
+            'containerClass' => 'hm-direct-google-gpt',
+            'attributes' => [
+                'data-hm-gpt-direct' => '1',
+                'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'],
+                'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            ],
+            'renderTimeoutMs' => $timeout,
+            'successSelector' => '#'.$containerId.'[data-hm-gpt-status="requested"]',
+            'assumeLoadedIsSuccess' => false,
+        ];
+    }
+
+    private function trustedGptRuntimeUrl(): string
+    {
+        $base = rtrim((string) config('horus.cdn_url'), '/');
+        if ($base === '') {
+            $base = 'https://cdn.horusmedia.net';
+        }
+        $url = $base.'/assets/hm-gpt-direct.js';
+        if (! filter_var($url, FILTER_VALIDATE_URL)
+            || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
+            || (string) parse_url($url, PHP_URL_HOST) === '') {
+            throw new RuntimeException('Horus GPT direct runtime requires a trusted HTTPS CDN URL.');
+        }
+
+        return $url;
     }
 
     private function assertSafeCustomHtml(string $html): void
