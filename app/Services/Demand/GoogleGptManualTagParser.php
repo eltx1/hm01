@@ -15,7 +15,7 @@ final class GoogleGptManualTagParser
      * Return null when the tag is not Google GPT. A GPT-looking tag that cannot
      * be normalized safely fails closed instead of falling back to raw execution.
      *
-     * @return array{adUnitPath:string,containerId:string,sizes:array<int,array{0:int,1:int}>}|null
+     * @return array{scriptUrl:string,adUnitPath:string,containerId:string,sizes:array<int,array{0:int,1:int}>}|null
      */
     public function parse(string $tag): ?array
     {
@@ -25,9 +25,21 @@ final class GoogleGptManualTagParser
             ->filter()
             ->values();
 
-        $gptScripts = $scripts->filter(fn (string $url): bool => in_array($url, self::GPT_SCRIPT_URLS, true))->values();
+        $gptScripts = $scripts
+            ->filter(fn (string $url): bool => in_array($url, self::GPT_SCRIPT_URLS, true))
+            ->values();
+
         if ($gptScripts->isEmpty()) {
             return null;
+        }
+
+        $warnings = array_values((array) ($parsed['securityWarnings'] ?? []));
+        if ((bool) ($parsed['containsSensitiveMaterial'] ?? false) || $warnings !== []) {
+            throw new RuntimeException(
+                $warnings !== []
+                    ? implode(' ', $warnings)
+                    : 'The Google GPT tag contains private or unsafe material.'
+            );
         }
 
         if ($scripts->count() !== 1 || $gptScripts->count() !== 1) {
@@ -38,9 +50,10 @@ final class GoogleGptManualTagParser
         if (count($containers) !== 1) {
             throw new RuntimeException('Google GPT Quick Monetize requires exactly one ad container.');
         }
+
         $containerId = trim((string) ($containers[0]['id'] ?? ''));
-        if ($containerId === '' || ! preg_match('/^[A-Za-z][A-Za-z0-9_:.-]{0,127}$/', $containerId)) {
-            throw new RuntimeException('Google GPT Quick Monetize requires one static, safe container id.');
+        if ($containerId === '' || ! preg_match('/^[A-Za-z][A-Za-z0-9_-]{0,127}$/', $containerId)) {
+            throw new RuntimeException('Google GPT Quick Monetize requires one static container id using only letters, numbers, underscore, or hyphen.');
         }
 
         $inline = implode("\n", array_map('strval', (array) ($parsed['inlineCode'] ?? [])));
@@ -62,8 +75,10 @@ final class GoogleGptManualTagParser
             throw new RuntimeException('The Google GPT defineSlot container does not match the pasted ad container.');
         }
 
-        if (! preg_match('/googletag\s*\.\s*display\s*\(\s*([\'\"])'.preg_quote($containerId, '/').'\1\s*\)/s', $inline)) {
-            throw new RuntimeException('Google GPT Quick Monetize requires a static googletag.display(...) call for the same container.');
+        $displayPattern = '/googletag\s*\.\s*display\s*\(\s*([\'\"])([^\'\"]+)\1\s*\)/s';
+        if (preg_match_all($displayPattern, $inline, $displayMatches, PREG_SET_ORDER) !== 1
+            || ! hash_equals($containerId, trim((string) $displayMatches[0][2]))) {
+            throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.display(...) call for the same container.');
         }
 
         $decoded = json_decode((string) $matches[0][3], true);
@@ -73,6 +88,7 @@ final class GoogleGptManualTagParser
         }
 
         return [
+            'scriptUrl' => $gptScripts->first(),
             'adUnitPath' => $adUnitPath,
             'containerId' => $containerId,
             'sizes' => $sizes,
@@ -95,17 +111,22 @@ final class GoogleGptManualTagParser
             if (! is_array($size) || count($size) !== 2 || ! is_numeric($size[0] ?? null) || ! is_numeric($size[1] ?? null)) {
                 return [];
             }
+
             $width = (int) $size[0];
             $height = (int) $size[1];
             if ($width < 1 || $width > 10000 || $height < 1 || $height > 10000) {
                 return [];
             }
+
             $sizes[] = [$width, $height];
             if (count($sizes) > 20) {
                 return [];
             }
         }
 
-        return collect($sizes)->unique(fn (array $size): string => $size[0].'x'.$size[1])->values()->all();
+        return collect($sizes)
+            ->unique(fn (array $size): string => $size[0].'x'.$size[1])
+            ->values()
+            ->all();
     }
 }
