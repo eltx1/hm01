@@ -128,6 +128,8 @@ final class StaticDeliverySnapshotBuilder
     {
         $loader = $this->readRequired(public_path('assets/hm-loader.min.js'));
         $loaderHash = hash('sha256', $loader);
+        $gptDirect = $this->readRequired(public_path('assets/hm-gpt-direct.js'));
+        $gptDirectHash = hash('sha256', $gptDirect);
         $prebid = $this->readRequired(public_path('assets/prebid/horus-prebid.min.js'));
         $prebidHash = hash('sha256', $prebid);
         $trafficGateHtml = $this->readRequired(public_path('traffic-gate/index.html'));
@@ -137,6 +139,8 @@ final class StaticDeliverySnapshotBuilder
             'hm-loader.js' => $loader,
             'assets/hm-loader.min.js' => $loader,
             'assets/loader/hm-loader.'.substr($loaderHash, 0, 16).'.min.js' => $loader,
+            'assets/hm-gpt-direct.js' => $gptDirect,
+            'assets/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
             'assets/prebid/horus-prebid.sha256' => $prebidHash."\n",
@@ -221,12 +225,20 @@ final class StaticDeliverySnapshotBuilder
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
-/assets/prebid/*.min.js
+/assets/hm-loader.min.js
+  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/hm-gpt-direct.js
+  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/gpt/*
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
-/assets/hm-loader.min.js
-  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+/assets/prebid/*.min.js
+  Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
 /assets/prebid/horus-prebid.min.js
