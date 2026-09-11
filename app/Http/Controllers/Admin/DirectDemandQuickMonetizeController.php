@@ -29,6 +29,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Throwable;
 
 final class DirectDemandQuickMonetizeController extends Controller
 {
@@ -261,10 +262,25 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ]);
             }
 
-            $recipe = $connector->generateDirectTag($demandPlacement);
-            if (($recipe['executionMode'] ?? null) !== 'ISOLATED_IFRAME') {
+            try {
+                $recipe = $connector->generateDirectTag($demandPlacement);
+            } catch (ValidationException $exception) {
+                throw $exception;
+            } catch (Throwable $exception) {
                 throw ValidationException::withMessages([
-                    'tag' => 'Quick Monetize could not create the expected isolated third-party runtime recipe. No changes were published.',
+                    'tag' => $exception->getMessage() !== ''
+                        ? $exception->getMessage()
+                        : 'Quick Monetize could not create a trusted runtime recipe. No changes were published.',
+                ]);
+            }
+
+            $reviewMode = strtoupper((string) data_get($connectorReview, 'recipe.executionMode', ''));
+            $actualMode = strtoupper((string) ($recipe['executionMode'] ?? ''));
+            if (! in_array($actualMode, ['STRUCTURED', 'ISOLATED_IFRAME'], true)
+                || $actualMode !== $reviewMode
+                || (data_get($connectorReview, 'recipe.provider') === 'GOOGLE_GPT' && $actualMode !== 'STRUCTURED')) {
+                throw ValidationException::withMessages([
+                    'tag' => 'Quick Monetize could not create the reviewed trusted runtime recipe. No changes were published.',
                 ]);
             }
 
@@ -372,16 +388,23 @@ final class DirectDemandQuickMonetizeController extends Controller
             ->map(function (array $script): ?string {
                 $url = trim((string) ($script['url'] ?? ''));
                 $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-                $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+                $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
                 $port = parse_url($url, PHP_URL_PORT);
                 if ($scheme !== 'https' || $host === '') {
                     return null;
                 }
                 if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
-                    return null;
+                    throw ValidationException::withMessages(['tag' => 'Control-plane script origins cannot be published into a provider tag.']);
+                }
+                if (! $this->isPublicScriptHost($host)) {
+                    throw ValidationException::withMessages([
+                        'tag' => "Provider script host [{$host}] is private, reserved, or otherwise unsafe for publisher delivery.",
+                    ]);
                 }
 
-                return $scheme.'://'.$host.($port ? ':'.$port : '');
+                $formattedHost = str_contains($host, ':') ? '['.$host.']' : $host;
+
+                return $scheme.'://'.$formattedHost.($port ? ':'.$port : '');
             })
             ->filter()
             ->unique()
@@ -392,6 +415,29 @@ final class DirectDemandQuickMonetizeController extends Controller
         }
 
         return $origins->all();
+    }
+
+    private function isPublicScriptHost(string $host): bool
+    {
+        $host = strtolower(trim($host, '[]'));
+        if ($host === '' || $host === 'localhost' || $host === 'localhost.localdomain') {
+            return false;
+        }
+        foreach (['.localhost', '.local', '.internal', '.home.arpa', '.test', '.invalid', '.example'] as $suffix) {
+            if (str_ends_with($host, $suffix)) {
+                return false;
+            }
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return filter_var(
+                $host,
+                FILTER_VALIDATE_IP,
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+            ) !== false;
+        }
+
+        return str_contains($host, '.')
+            && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
     }
 
     private function publisherRevenueShare(Site $site): float
