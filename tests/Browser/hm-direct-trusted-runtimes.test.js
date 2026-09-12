@@ -68,6 +68,17 @@ function run(source, selector, selectedContainer) {
     return { sandbox, createdFrames };
 }
 
+function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
+    const encoded = Buffer.from(value, 'utf8').toString('base64');
+    const parts = [];
+    for (let offset = 0; offset < encoded.length; offset += chunkSize) {
+        parts.push(encoded.slice(offset, offset + chunkSize));
+    }
+    const attributes = { [`${baseAttribute}-parts`]: String(parts.length) };
+    parts.forEach((part, index) => { attributes[`${baseAttribute}-${index}`] = part; });
+    return attributes;
+}
+
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
@@ -95,6 +106,46 @@ test('isolated Direct Demand runtime preserves placement dimensions and sandboxi
     assert.ok(frame.srcdoc.includes(html));
     assert.equal(attributes['data-hm-isolated-runtime-state'], 'loaded');
     assert.equal(attributes['data-hm-isolated-status'], 'requested');
+});
+
+test('isolated Direct Demand runtime reassembles payloads larger than public attribute limits', async () => {
+    const marker = 'LONG-PROVIDER-PAYLOAD-';
+    const html = '<script src="https://ads.example.com/ad.js"></script><div id="ad">' + marker.repeat(180) + '</div>';
+    const csp = "default-src 'none'; script-src https://ads.example.com; connect-src https://ads.example.com; object-src 'none';";
+    const attributes = {
+        'data-hm-isolated-direct': '1',
+        'data-hm-isolated-width': '300',
+        'data-hm-isolated-height': '250',
+        ...chunkedAttributes('data-hm-isolated-html', html),
+        ...chunkedAttributes('data-hm-isolated-csp', csp),
+    };
+    const target = container(attributes, 'chunked-isolated-zone');
+
+    const { createdFrames } = run(isolatedSource, '[data-hm-isolated-direct="1"]', target);
+    await tick();
+
+    assert.ok(Object.keys(attributes).filter((key) => key.startsWith('data-hm-isolated-html-')).length > 2);
+    assert.ok(Object.values(attributes).every((value) => String(value).length <= 2000));
+    assert.equal(createdFrames.length, 1);
+    assert.ok(createdFrames[0].srcdoc.includes(html));
+    assert.ok(createdFrames[0].srcdoc.includes(csp));
+    assert.deepEqual(createdFrames[0].sandboxValues, ['allow-scripts']);
+    assert.equal(attributes['data-hm-isolated-runtime-state'], 'loaded');
+});
+
+test('isolated Direct Demand runtime rejects incomplete chunked payloads', () => {
+    const attributes = {
+        'data-hm-isolated-direct': '1',
+        'data-hm-isolated-html-parts': '2',
+        'data-hm-isolated-html-0': Buffer.from('<div>', 'utf8').toString('base64'),
+        'data-hm-isolated-csp': Buffer.from("default-src 'none'; script-src https://ads.example.com;", 'utf8').toString('base64'),
+    };
+    const target = container(attributes, 'broken-isolated-zone');
+
+    const { createdFrames } = run(isolatedSource, '[data-hm-isolated-direct="1"]', target);
+
+    assert.equal(createdFrames.length, 0);
+    assert.equal(attributes['data-hm-isolated-runtime-state'], 'invalid');
 });
 
 test('Google GPT direct runtime builds only Horus-controlled GPT markup from normalized data', async () => {
