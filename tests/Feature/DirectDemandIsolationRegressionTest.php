@@ -11,6 +11,8 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
+use App\Models\DemandPlacement;
+use App\Models\DemandWidget;
 use App\Services\Demand\DemandAccountService;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
@@ -106,6 +108,53 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertSame($tag, base64_decode($encoded, true));
     }
 
+    public function test_quick_activation_publishes_new_canonical_widget_after_operator_renames_the_previous_widget(): void
+    {
+        $firstTag = '<script async src="https://cdn.taboola.com/libtrc/horus-old/loader.js"></script><div id="taboola-old-zone"></div>';
+        $secondTag = '<script async src="https://cdn.taboola.com/libtrc/horus-new/loader.js"></script><div id="taboola-new-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $firstTag,
+            ])
+            ->assertRedirect();
+
+        $demandPlacement = DemandPlacement::withoutGlobalScopes()
+            ->where('placement_id', $this->placement->id)
+            ->firstOrFail();
+        $oldWidget = DemandWidget::withoutGlobalScopes()
+            ->where('demand_placement_id', $demandPlacement->id)
+            ->firstOrFail();
+        $oldWidget->update([
+            'name' => 'Operator Renamed Old Quick Widget',
+            'updated_at' => now()->subMinutes(5),
+        ]);
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $secondTag,
+            ])
+            ->assertRedirect();
+
+        $this->assertSame(
+            2,
+            DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $demandPlacement->id)->count(),
+        );
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.single_size.candidates.0');
+        $encoded = (string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-html');
+        $published = base64_decode($encoded, true);
+
+        $this->assertIsString($published);
+        $this->assertSame($secondTag, $published);
+        $this->assertNotSame($firstTag, $published);
+    }
+
     public function test_quick_generic_tag_rejects_ambiguous_multi_size_placement_without_partial_writes(): void
     {
         $inventory = app(InventoryManager::class);
@@ -142,7 +191,43 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
     }
 
-    public function test_advanced_legacy_fluid_custom_tag_keeps_opaque_iframe_renderer(): void
+    public function test_quick_generic_tag_rejects_fixed_plus_fluid_active_sizes_without_partial_writes(): void
+    {
+        $inventory = app(InventoryManager::class);
+        $adUnit = $inventory->createAdUnit($this->site, [
+            'name' => 'Mixed Size',
+            'code' => 'mixed_size',
+            'sizes' => [
+                ['width' => 300, 'height' => 250],
+                ['size_type' => 'FLUID', 'label' => 'fluid'],
+            ],
+        ], $this->admin);
+        $mixed = $inventory->createPlacement($this->site, [
+            'name' => 'Mixed Size',
+            'code' => 'mixed_size',
+            'type' => 'DISPLAY',
+            'status' => 'ACTIVE',
+            'ad_unit_id' => $adUnit->id,
+            'sizes' => [
+                ['width' => 300, 'height' => 250],
+                ['size_type' => 'FLUID'],
+            ],
+        ], $this->admin);
+        $tag = '<script async src="https://cdn.taboola.com/libtrc/horus-test/loader.js"></script><div id="taboola-mixed-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $mixed->id,
+                'tag' => $tag,
+            ])
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_advanced_legacy_fluid_custom_tag_keeps_opaque_iframe_renderer_and_historical_image_policy(): void
     {
         $inventory = app(InventoryManager::class);
         $adUnit = $inventory->createAdUnit($this->site, [
@@ -195,18 +280,20 @@ final class DirectDemandIsolationRegressionTest extends TestCase
             'integration_mode' => DemandIntegrationMode::DirectJs,
             'approval_status' => DemandApprovalStatus::Approved,
             'is_enabled' => true,
-            'direct_tag_template' => '<div id="fluid-zone"></div><script src="https://ads.example.com/public.js"></script>',
+            'direct_tag_template' => '<div id="fluid-zone"><img src="https://images.example-cdn.com/public.jpg"></div><script src="https://ads.example.com/public.js"></script>',
             'configuration' => [],
         ], $this->admin);
         $this->site->update(['native_demand_enabled' => true]);
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.fluid_placement.candidates.0');
+        $csp = (string) data_get($candidate, 'tag.isolation.csp');
 
         $this->assertSame('ISOLATED_IFRAME', data_get($candidate, 'tag.executionMode'));
         $this->assertSame(['allow-scripts'], data_get($candidate, 'tag.isolation.sandbox'));
         $this->assertSame([], data_get($candidate, 'tag.render.allowedSizes'));
-        $this->assertStringContainsString('connect-src https://ads.example.com;', (string) data_get($candidate, 'tag.isolation.csp'));
+        $this->assertStringContainsString('connect-src https://ads.example.com;', $csp);
+        $this->assertStringContainsString('img-src https: data:;', $csp);
     }
 
     private function adminSession(): static
