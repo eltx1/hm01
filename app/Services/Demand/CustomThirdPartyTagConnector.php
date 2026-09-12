@@ -2,6 +2,7 @@
 
 namespace App\Services\Demand;
 
+use App\Enums\DemandApprovalStatus;
 use App\Models\DemandPlacement;
 use App\Models\DemandWidget;
 use RuntimeException;
@@ -11,6 +12,32 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     protected function code(): string
     {
         return 'CUSTOM_THIRD_PARTY_TAG';
+    }
+
+    protected function widget(DemandPlacement $placement): ?DemandWidget
+    {
+        $placement->loadMissing(['widgets', 'placement.sizes', 'demandSite.site']);
+        $approved = $placement->widgets
+            ->filter(fn (DemandWidget $widget) => $widget->is_enabled
+                && $widget->approval_status === DemandApprovalStatus::Approved);
+
+        // Quick Monetize owns the generated mapping. If an operator renamed an
+        // earlier Quick widget in Advanced setup, the subsequent activation may
+        // create a new canonical Quick widget. Prefer the most recently updated
+        // Quick-managed widget so the tag that was just submitted is the one
+        // validated and published, while leaving unrelated legacy selection
+        // semantics unchanged.
+        if ((bool) data_get($placement->configuration, 'quick_monetize_managed', false)) {
+            $quick = $approved
+                ->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))
+                ->sortByDesc('updated_at')
+                ->first();
+            if ($quick) {
+                return $quick;
+            }
+        }
+
+        return $approved->sortBy('created_at')->first();
     }
 
     public function parseDirectTag(string $tag): array
@@ -211,12 +238,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     /** @return array<string, mixed> */
     private function isolatedRuntimeRecipe(string $html, array $origins, array $configuration, DemandPlacement $placement): array
     {
-        $sizes = $this->placementSizes($placement);
-        if (count($sizes) !== 1) {
-            throw new RuntimeException('Quick Monetize generic tags require exactly one active fixed size on the selected Horus placement. Use a dedicated single-size placement or Advanced setup for responsive, fluid, or multi-size inventory.');
-        }
-
-        $frameSize = $sizes[0];
+        $frameSize = $this->quickPlacementSize($placement);
+        $sizes = [$frameSize];
         $originList = implode(' ', $origins);
         $csp = $this->isolatedCsp($originList);
         $runtimeUrl = $this->trustedRuntimeUrl('hm-isolated-direct.js');
@@ -301,7 +324,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             ],
             'isolation' => [
                 'html' => $html,
-                'csp' => $this->isolatedCsp($originList),
+                'csp' => $this->legacyIsolatedCsp($originList),
                 'sandbox' => ['allow-scripts'],
             ],
             'scriptUrl' => '',
@@ -317,6 +340,15 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     private function isolatedCsp(string $originList): string
     {
         return "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
+    }
+
+    private function legacyIsolatedCsp(string $originList): string
+    {
+        // This is intentionally the historical compatibility policy. Existing
+        // Advanced/native creatives may load images from HTTPS hosts other than
+        // their script origin. Tightening that policy during an unrelated Quick
+        // Monetize rollout would silently break already-serving inventory.
+        return "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src https: data:; style-src 'unsafe-inline'; frame-src {$originList};";
     }
 
     /** @return array<string, string> */
@@ -348,6 +380,23 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         return (bool) data_get($placement->configuration, 'quick_monetize_managed', false)
             || (bool) data_get($widget?->configuration, 'quick_monetize_managed', false);
+    }
+
+    /** @return array{0:int,1:int} */
+    private function quickPlacementSize(DemandPlacement $placement): array
+    {
+        $placement->loadMissing('placement.sizes');
+        $active = $placement->placement->sizes->where('is_active', true)->values();
+        if ($active->count() !== 1) {
+            throw new RuntimeException('Quick Monetize generic tags require exactly one active fixed size on the selected Horus placement. Use a dedicated single-size placement or Advanced setup for responsive, fluid, or multi-size inventory.');
+        }
+
+        $size = $active->first();
+        if (! $size || $size->size_type !== 'FIXED' || ! $size->width || ! $size->height) {
+            throw new RuntimeException('Quick Monetize generic tags require exactly one active fixed size on the selected Horus placement. Use a dedicated single-size placement or Advanced setup for responsive, fluid, or multi-size inventory.');
+        }
+
+        return [(int) $size->width, (int) $size->height];
     }
 
     private function trustedRuntimeUrl(string $asset): string
