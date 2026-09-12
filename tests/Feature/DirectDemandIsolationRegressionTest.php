@@ -108,6 +108,58 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertSame($tag, base64_decode($encoded, true));
     }
 
+    public function test_quick_generic_tag_preserves_non_default_https_port_in_allowlist_and_csp(): void
+    {
+        $tag = '<script async src="https://cdn.taboola.com:8443/libtrc/horus-port/loader.js"></script><div id="taboola-port-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $tag,
+            ])
+            ->assertRedirect();
+
+        $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(
+            ['https://cdn.taboola.com:8443'],
+            data_get($account->configuration, 'allowed_script_origins'),
+        );
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.single_size.candidates.0');
+        $encodedCsp = (string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-csp');
+        $csp = base64_decode($encodedCsp, true);
+
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertIsString($csp);
+        $this->assertStringContainsString("script-src 'unsafe-inline' https://cdn.taboola.com:8443;", $csp);
+        $this->assertStringContainsString('connect-src https://cdn.taboola.com:8443;', $csp);
+    }
+
+    public function test_quick_generic_tag_normalizes_explicit_default_https_port(): void
+    {
+        $tag = '<script async src="https://cdn.taboola.com:443/libtrc/horus-default-port/loader.js"></script><div id="taboola-default-port-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $tag,
+            ])
+            ->assertRedirect();
+
+        $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(
+            ['https://cdn.taboola.com'],
+            data_get($account->configuration, 'allowed_script_origins'),
+        );
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.single_size.candidates.0');
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+    }
+
     public function test_quick_activation_reuses_renamed_managed_widget_and_publishes_the_new_tag(): void
     {
         $firstTag = '<script async src="https://cdn.taboola.com/libtrc/horus-old/loader.js"></script><div id="taboola-old-zone"></div>';
