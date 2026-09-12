@@ -160,6 +160,25 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
     }
 
+    public function test_quick_generic_tag_rejects_more_than_twenty_distinct_script_origins_before_writes(): void
+    {
+        $scripts = collect(range(1, 21))
+            ->map(fn (int $index): string => '<script async src="https://cdn'.$index.'.example.net/ad.js"></script>')
+            ->implode('');
+        $tag = $scripts.'<div id="too-many-origins-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $tag,
+            ])
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
     public function test_quick_activation_reuses_renamed_managed_widget_and_publishes_the_new_tag(): void
     {
         $firstTag = '<script async src="https://cdn.taboola.com/libtrc/horus-old/loader.js"></script><div id="taboola-old-zone"></div>';
