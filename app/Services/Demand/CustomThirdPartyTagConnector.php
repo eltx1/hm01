@@ -21,16 +21,16 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             ->filter(fn (DemandWidget $widget) => $widget->is_enabled
                 && $widget->approval_status === DemandApprovalStatus::Approved);
 
-        // Quick Monetize owns the generated mapping. If an operator renamed an
-        // earlier Quick widget in Advanced setup, the subsequent activation may
-        // create a new canonical Quick widget. Prefer the most recently updated
-        // Quick-managed widget so the tag that was just submitted is the one
-        // validated and published, while leaving unrelated legacy selection
-        // semantics unchanged.
+        // Quick Monetize owns the generated mapping. A renamed Quick widget is
+        // still the same renderer, and older releases may already have produced
+        // more than one Quick-managed row. DemandWidget uses sortable ULIDs, so
+        // the greatest id is the deterministic newest row independent of SQL
+        // timestamp precision. Normal Advanced/legacy mappings retain their
+        // historical oldest-approved selection semantics.
         if ((bool) data_get($placement->configuration, 'quick_monetize_managed', false)) {
             $quick = $approved
                 ->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))
-                ->sortByDesc('updated_at')
+                ->sortByDesc('id')
                 ->first();
             if ($quick) {
                 return $quick;
