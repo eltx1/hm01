@@ -417,12 +417,46 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     protected function assertAllowedScriptUrl(string $url): void
     {
-        parent::assertAllowedScriptUrl($url);
+        $origin = $this->canonicalHttpsOrigin($url);
+        if ($origin === null) {
+            throw new RuntimeException('Demand script URLs must be valid HTTPS URLs without embedded credentials.');
+        }
 
         $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
         if (! $this->isPublicScriptHost($host)) {
             throw new RuntimeException("Demand script host [{$host}] is private, reserved, or otherwise not valid for publisher delivery.");
         }
+
+        $allowed = collect($this->selectedAccount->network->script_origins ?? [])
+            ->merge((array) config('demand.allowed_script_origins.'.$this->code(), []))
+            ->merge((array) data_get($this->selectedAccount->configuration, 'allowed_script_origins', []))
+            ->map(fn ($value) => $this->canonicalHttpsOrigin((string) $value))
+            ->filter()
+            ->unique();
+
+        if ($allowed->isEmpty() || ! $allowed->contains($origin)) {
+            throw new RuntimeException("Demand script origin [{$origin}] is not allowlisted for ".$this->code().'.');
+        }
+    }
+
+    private function canonicalHttpsOrigin(string $url): ?string
+    {
+        $url = trim($url);
+        if (! filter_var($url, FILTER_VALIDATE_URL)
+            || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
+            || parse_url($url, PHP_URL_USER) !== null
+            || parse_url($url, PHP_URL_PASS) !== null) {
+            return null;
+        }
+
+        $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
+        if ($host === '') {
+            return null;
+        }
+        $originHost = str_contains($host, ':') ? '['.$host.']' : $host;
+        $port = parse_url($url, PHP_URL_PORT);
+
+        return 'https://'.$originHost.($port && (int) $port !== 443 ? ':'.(int) $port : '');
     }
 
     private function assertSafeCustomHtml(string $html): void
