@@ -108,7 +108,7 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertSame($tag, base64_decode($encoded, true));
     }
 
-    public function test_quick_activation_publishes_new_canonical_widget_after_operator_renames_the_previous_widget(): void
+    public function test_quick_activation_reuses_renamed_managed_widget_and_publishes_the_new_tag(): void
     {
         $firstTag = '<script async src="https://cdn.taboola.com/libtrc/horus-old/loader.js"></script><div id="taboola-old-zone"></div>';
         $secondTag = '<script async src="https://cdn.taboola.com/libtrc/horus-new/loader.js"></script><div id="taboola-new-zone"></div>';
@@ -141,7 +141,7 @@ final class DirectDemandIsolationRegressionTest extends TestCase
             ->assertRedirect();
 
         $this->assertSame(
-            2,
+            1,
             DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $demandPlacement->id)->count(),
         );
 
