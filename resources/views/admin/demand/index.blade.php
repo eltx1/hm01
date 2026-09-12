@@ -6,14 +6,15 @@
     <div>
         <p class="eyebrow">Independent direct monetization engine</p>
         <h2>Demand accounts</h2>
-        <p>Manage Direct JS and manual-tag demand independently from GAM and Prebid. Open each account in its own workspace for identity, tags, finance, credentials and reporting.</p>
+        <p>For normal publisher onboarding, use Quick Monetize: choose the website and placement, paste the provider tag, and Horus handles the account, mappings, safety review and production publication automatically. Advanced account controls remain available when needed.</p>
         <div class="status-row">
             <span class="pill">{{ $networks->where('is_enabled', true)->count() }} CONNECTORS</span>
             <span class="pill">{{ $accounts->total() }} ACCOUNTS</span>
             <span class="pill">MASTER {{ $directDemandMasterEnabled ? 'ON' : 'OFF' }}</span>
         </div>
         <div class="status-row" style="margin-top:1rem">
-            <a class="hm-button-primary button-link" href="{{ route('admin.demand.accounts.create') }}">+ Add demand account</a>
+            <a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.create') }}">Quick Monetize</a>
+            <a class="hm-button-secondary button-link" href="{{ route('admin.demand.accounts.create') }}">Advanced account setup</a>
             <a class="hm-button-secondary button-link" href="{{ route('admin.sites.index') }}">Websites / Placements</a>
             <a class="hm-button-secondary button-link" href="{{ route('admin.compliance.ads-txt.index') }}">Ads.txt</a>
         </div>
@@ -29,9 +30,12 @@
 <article id="accounts" class="workspace-section">
     <div class="workspace-heading">
         <div><p class="eyebrow">Account registry</p><h2>Configured demand accounts</h2></div>
-        <a class="hm-button-primary button-link" href="{{ route('admin.demand.accounts.create') }}">Add account</a>
+        <div class="status-row">
+            <a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.create') }}">Quick Monetize</a>
+            <a class="hm-button-secondary button-link" href="{{ route('admin.demand.accounts.create') }}">Advanced setup</a>
+        </div>
     </div>
-    <p class="muted">Each row is one provider relationship. Horus ownership scope and external provider identifiers are kept separate.</p>
+    <p class="muted">Quick-managed accounts are reusable per Publisher, so adding more placements does not make admins repeat the account setup.</p>
 
     <div class="compact-list">
         @forelse($accounts as $account)
@@ -41,6 +45,7 @@
                     <div class="status-row">
                         <strong>{{ $account->name }}</strong>
                         <span class="pill">{{ $account->network->name }}</span>
+                        @if(data_get($account->configuration, 'quick_monetize_managed'))<span class="pill">QUICK MANAGED</span>@endif
                         <span class="pill">{{ $account->approval_status->value }}</span>
                         <span class="pill">{{ $account->is_enabled ? 'ENABLED' : 'DISABLED' }}</span>
                     </div>
@@ -65,8 +70,8 @@
         @empty
             <div class="domain-card">
                 <h3>No demand accounts yet</h3>
-                <p class="muted">Create the provider account first, then map it to a website and placement.</p>
-                <a class="hm-button-primary button-link" href="{{ route('admin.demand.accounts.create') }}">Create first account</a>
+                <p class="muted">Use Quick Monetize for the first production tag. Horus will create the required publisher account automatically.</p>
+                <a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.create') }}">Quick Monetize</a>
             </div>
         @endforelse
     </div>
@@ -77,7 +82,7 @@
     <div class="workspace-heading">
         <div><p class="eyebrow">Connector registry</p><h2>Networks and runtime health</h2></div>
     </div>
-    <p class="muted">Network-level controls are secondary infrastructure settings. Account editing now lives inside each account workspace.</p>
+    <p class="muted">Network-level controls are secondary infrastructure settings. Account editing lives inside each account workspace.</p>
 
     <div class="compact-list">
         @foreach($networks as $network)
