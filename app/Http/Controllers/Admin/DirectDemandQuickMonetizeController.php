@@ -425,8 +425,9 @@ final class DirectDemandQuickMonetizeController extends Controller
             if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
                 throw ValidationException::withMessages(['tag' => 'Provider tags may not authorize the Horus control-plane origin.']);
             }
+            $originHost = str_contains($host, ':') ? '['.$host.']' : $host;
             $port = parse_url($url, PHP_URL_PORT);
-            $origins[] = 'https://'.$host.($port && (int) $port !== 443 ? ':'.(int) $port : '');
+            $origins[] = 'https://'.$originHost.($port && (int) $port !== 443 ? ':'.(int) $port : '');
         }
 
         return array_values(array_unique($origins));
