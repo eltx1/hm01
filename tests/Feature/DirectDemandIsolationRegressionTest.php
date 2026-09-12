@@ -162,7 +162,7 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $network = DemandNetwork::query()->where('code', 'CUSTOM_THIRD_PARTY_TAG')->firstOrFail();
         $service = app(DemandAccountService::class);
         $account = $service->create([
-            'organization_id' => $this->site->organization_id,
+            'organization_id' => $this->admin->organization_id,
             'demand_network_id' => $network->id,
             'name' => 'Advanced Legacy Custom',
             'scope' => DemandAccountScope::HorusMedia,
