@@ -15,6 +15,22 @@
         return Number.isInteger(number) && number > 0 && number <= 10000 ? number : fallback;
     }
 
+    function encodedPayload(container, baseAttribute) {
+        var direct = container.getAttribute(baseAttribute);
+        if (direct) return direct;
+
+        var count = positiveInteger(container.getAttribute(baseAttribute + '-parts'), 0);
+        if (count < 1 || count > 64) return null;
+
+        var joined = '';
+        for (var index = 0; index < count; index += 1) {
+            var part = container.getAttribute(baseAttribute + '-' + index);
+            if (!part || part.length > 2000) return null;
+            joined += part;
+        }
+        return joined || null;
+    }
+
     function decodeBase64(value) {
         try {
             var binary = window.atob(String(value || ''));
@@ -31,8 +47,8 @@
     function render(container) {
         if (!container || container.getAttribute('data-hm-isolated-runtime-state')) return;
 
-        var html = decodeBase64(container.getAttribute('data-hm-isolated-html'));
-        var csp = decodeBase64(container.getAttribute('data-hm-isolated-csp'));
+        var html = decodeBase64(encodedPayload(container, 'data-hm-isolated-html'));
+        var csp = decodeBase64(encodedPayload(container, 'data-hm-isolated-csp'));
         var width = positiveInteger(container.getAttribute('data-hm-isolated-width'), 300);
         var height = positiveInteger(container.getAttribute('data-hm-isolated-height'), 250);
         if (!html || !csp || /["<>]/.test(csp)) {
