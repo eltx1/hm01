@@ -3,6 +3,7 @@
 namespace App\Services\Demand;
 
 use App\Models\DemandPlacement;
+use App\Models\DemandWidget;
 use RuntimeException;
 
 final class CustomThirdPartyTagConnector extends AbstractDemandConnector
@@ -77,14 +78,21 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
         $html = trim((string) $widget->direct_tag_template);
         $this->assertSafeCustomHtml($html);
+        $quickManaged = $this->isQuickManaged($placement, $widget);
 
-        $gpt = (new GoogleGptManualTagParser())->parse($html);
-        if ($gpt !== null) {
-            foreach ($this->externalScriptUrls($html) as $url) {
-                $this->assertAllowedScriptUrl($url);
+        // Trusted GPT normalization is intentionally a Quick Monetize behavior.
+        // Existing Advanced/legacy custom-tag mappings keep their historical
+        // opaque iframe contract instead of being silently migrated to a new
+        // renderer merely because their HTML happens to contain GPT syntax.
+        if ($quickManaged) {
+            $gpt = (new GoogleGptManualTagParser())->parse($html);
+            if ($gpt !== null) {
+                foreach ($this->externalScriptUrls($html) as $url) {
+                    $this->assertAllowedScriptUrl($url);
+                }
+
+                return $this->googleGptRecipe($gpt, $configuration, $placement);
             }
-
-            return $this->googleGptRecipe($gpt, $configuration, $placement);
         }
 
         $origins = $this->isolationOrigins($configuration);
@@ -93,6 +101,10 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
         foreach ($this->externalScriptUrls($html) as $url) {
             $this->assertAllowedScriptUrl($url);
+        }
+
+        if (! $quickManaged) {
+            return $this->legacyIsolatedRecipe($html, $origins, $configuration, $placement);
         }
 
         return $this->isolatedRuntimeRecipe($html, $origins, $configuration, $placement);
@@ -200,23 +212,24 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     private function isolatedRuntimeRecipe(string $html, array $origins, array $configuration, DemandPlacement $placement): array
     {
         $sizes = $this->placementSizes($placement);
-        if ($sizes === []) {
-            throw new RuntimeException('Quick isolated tags require an active fixed size on the selected Horus placement. Use Advanced setup for non-fixed inventory.');
+        if (count($sizes) !== 1) {
+            throw new RuntimeException('Quick Monetize generic tags require exactly one active fixed size on the selected Horus placement. Use a dedicated single-size placement or Advanced setup for responsive, fluid, or multi-size inventory.');
         }
+
         $frameSize = $sizes[0];
         $originList = implode(' ', $origins);
-        $csp = "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
+        $csp = $this->isolatedCsp($originList);
         $runtimeUrl = $this->trustedRuntimeUrl('hm-isolated-direct.js');
         $containerId = 'hm-isolated-'.$placement->id;
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
         $attributes = [
             'data-hm-isolated-direct' => '1',
-            'data-hm-isolated-html' => base64_encode($html),
-            'data-hm-isolated-csp' => base64_encode($csp),
             'data-hm-isolated-width' => (string) $frameSize[0],
             'data-hm-isolated-height' => (string) $frameSize[1],
         ];
+        $attributes += $this->encodedPayloadAttributes('data-hm-isolated-html', $html);
+        $attributes += $this->encodedPayloadAttributes('data-hm-isolated-csp', $csp);
 
         return [
             'recipeVersion' => 1,
@@ -253,6 +266,88 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'successSelector' => '#'.$containerId.'[data-hm-isolated-status="requested"]',
             'assumeLoadedIsSuccess' => false,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function legacyIsolatedRecipe(string $html, array $origins, array $configuration, DemandPlacement $placement): array
+    {
+        $originList = implode(' ', $origins);
+        $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
+        $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
+        $containerId = 'hm-isolated-'.$placement->id;
+
+        return [
+            'recipeVersion' => 1,
+            'executionMode' => 'ISOLATED_IFRAME',
+            'format' => $format,
+            'scripts' => [],
+            'container' => [
+                'element' => 'div',
+                'id' => $containerId,
+                'class' => 'hm-direct-demand-isolated',
+                'attributes' => [],
+            ],
+            'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id),
+            'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => [
+                'timeoutMs' => $timeout,
+                'successSelector' => null,
+                'assumeLoadedIsSuccess' => true,
+                'allowedFormats' => [$format],
+                // Keep legacy/Advanced mappings size-neutral. In particular,
+                // fluid/native mappings must continue rendering exactly as they
+                // did before the Quick Monetize connector was introduced.
+                'allowedSizes' => [],
+            ],
+            'isolation' => [
+                'html' => $html,
+                'csp' => $this->isolatedCsp($originList),
+                'sandbox' => ['allow-scripts'],
+            ],
+            'scriptUrl' => '',
+            'containerId' => $containerId,
+            'containerClass' => 'hm-direct-demand-isolated',
+            'attributes' => [],
+            'renderTimeoutMs' => $timeout,
+            'successSelector' => null,
+            'assumeLoadedIsSuccess' => true,
+        ];
+    }
+
+    private function isolatedCsp(string $originList): string
+    {
+        return "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
+    }
+
+    /** @return array<string, string> */
+    private function encodedPayloadAttributes(string $baseAttribute, string $payload): array
+    {
+        $encoded = base64_encode($payload);
+        // DemandConfigurationBuilder intentionally caps every public data-*
+        // attribute at 2,000 characters. Keep small payloads on the historical
+        // single attribute and chunk larger payloads below that boundary so an
+        // approved 60 KB tag can never be silently truncated in static config.
+        if (strlen($encoded) <= 1800) {
+            return [$baseAttribute => $encoded];
+        }
+
+        $parts = str_split($encoded, 1800);
+        if (count($parts) > 64) {
+            throw new RuntimeException('The encoded isolated tag exceeds the trusted runtime payload limit.');
+        }
+
+        $attributes = [$baseAttribute.'-parts' => (string) count($parts)];
+        foreach ($parts as $index => $part) {
+            $attributes[$baseAttribute.'-'.$index] = $part;
+        }
+
+        return $attributes;
+    }
+
+    private function isQuickManaged(DemandPlacement $placement, ?DemandWidget $widget): bool
+    {
+        return (bool) data_get($placement->configuration, 'quick_monetize_managed', false)
+            || (bool) data_get($widget?->configuration, 'quick_monetize_managed', false);
     }
 
     private function trustedRuntimeUrl(string $asset): string
