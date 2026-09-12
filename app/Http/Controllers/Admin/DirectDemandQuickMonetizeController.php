@@ -131,6 +131,11 @@ final class DirectDemandQuickMonetizeController extends Controller
         if ($origins === []) {
             throw ValidationException::withMessages(['tag' => 'Quick Monetize requires at least one HTTPS provider script.']);
         }
+        if (count($origins) > 20) {
+            throw ValidationException::withMessages([
+                'tag' => 'Quick Monetize supports at most 20 distinct provider script origins per tag. Use Advanced setup for more complex provider tags.',
+            ]);
+        }
         if (count((array) ($review['detectedContainers'] ?? [])) !== 1) {
             throw ValidationException::withMessages(['tag' => 'Quick Monetize requires exactly one render container. Use Advanced setup for complex multi-container tags.']);
         }
@@ -149,6 +154,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $origins,
         ): DemandAccount {
             $actor = $request->user();
+            $siteRevenueShare = $this->publisherRevenueShare($site);
 
             // Serialize first-time Quick Monetize account creation per Publisher.
             // Production MySQL row locking prevents two simultaneous submissions
@@ -176,7 +182,7 @@ final class DirectDemandQuickMonetizeController extends Controller
                     'approval_status' => DemandApprovalStatus::Approved,
                     'is_enabled' => true,
                     'is_default' => false,
-                    'revenue_share_percent' => $this->publisherRevenueShare($site),
+                    'revenue_share_percent' => $siteRevenueShare,
                     'fallback_priority' => 100,
                     'account_identifier' => null,
                     'configuration' => [
@@ -204,11 +210,17 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ], $actor);
             }
 
+            // Revenue share is site/commercial state, not a field the operator
+            // should re-enter in Quick Monetize. Keep the account default for the
+            // first site and always persist the effective site-specific override
+            // on the mapping so one Publisher account can safely serve sites with
+            // different commercial terms.
             $demandSite = $accounts->assignSite($account, $site, [
                 'approval_status' => DemandApprovalStatus::Approved->value,
                 'is_enabled' => true,
                 'is_default' => true,
                 'integration_mode' => DemandIntegrationMode::ManualTag->value,
+                'revenue_share_percent' => $siteRevenueShare,
                 'fallback_priority' => 100,
                 'configuration' => ['quick_monetize_managed' => true],
             ], $actor);
@@ -440,11 +452,14 @@ final class DirectDemandQuickMonetizeController extends Controller
 
     private function publisherRevenueShare(Site $site): string
     {
-        $share = $site->revenue_share_percent;
-        if ($share !== null) {
-            return number_format((float) $share, 4, '.', '');
+        $share = $site->default_revenue_share_percent;
+        if ($share === null) {
+            $share = $site->publisher?->applicableRevenueShare();
+        }
+        if ($share === null) {
+            $share = (int) config('reporting.default_publisher_share_bp', 7000) / 100;
         }
 
-        return number_format((float) config('commercial.default_publisher_revenue_share_percent', 70), 4, '.', '');
+        return number_format((float) $share, 4, '.', '');
     }
 }
