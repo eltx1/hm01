@@ -14,6 +14,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
+use App\Models\DemandWidget;
 use App\Models\Placement;
 use App\Models\Publisher;
 use App\Models\Site;
@@ -221,8 +222,20 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'configuration' => ['quick_monetize_managed' => true],
             ], $actor);
 
+            // A widget name is presentation, not identity. If an operator renamed
+            // the Quick widget in Advanced setup, update that same Quick-managed
+            // row instead of creating a second approved renderer. ULIDs give a
+            // deterministic latest-row fallback for data that already contains a
+            // duplicate from an older Quick implementation.
+            $existingQuickWidget = DemandWidget::withoutGlobalScopes()
+                ->where('demand_placement_id', $demandPlacement->id)
+                ->get()
+                ->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))
+                ->sortByDesc('id')
+                ->first();
+
             $accounts->upsertWidget($demandPlacement, [
-                'name' => 'Quick Manual · '.$placement->code,
+                'name' => $existingQuickWidget?->name ?? 'Quick Manual · '.$placement->code,
                 'widget_code' => 'quick-'.$placement->code,
                 'integration_mode' => DemandIntegrationMode::ManualTag->value,
                 'direct_tag_template' => $tag,
@@ -371,53 +384,43 @@ final class DirectDemandQuickMonetizeController extends Controller
         if ($controls->placementEngineDisabled($placement->id, 'DIRECT_JS')) {
             $problems[] = 'Direct Demand is paused for this placement.';
         }
-        if ($controls->placementEngineDisabled($placement->id, 'NATIVE_DEMAND')) {
-            $problems[] = 'The placement Direct Demand compatibility control is paused.';
+        if ($controls->placementEngineDisabled($placement->id, 'AD_SERVING')) {
+            $problems[] = 'Ad serving is paused for this placement.';
         }
 
         return array_values(array_unique($problems));
     }
 
-    /**
-     * @param array<int, array<string, mixed>> $scripts
-     * @return array<int, string>
+    /** @param array<int, array<string, mixed>> $scripts
+     *  @return array<int, string>
      */
     private function scriptOrigins(array $scripts): array
     {
-        $origins = collect($scripts)
-            ->map(function (array $script): ?string {
-                $url = trim((string) ($script['url'] ?? ''));
-                $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-                $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
-                $port = parse_url($url, PHP_URL_PORT);
-                if ($scheme !== 'https' || $host === '') {
-                    return null;
-                }
-                if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
-                    throw ValidationException::withMessages(['tag' => 'Control-plane script origins cannot be published into a provider tag.']);
-                }
-                if (! $this->isPublicScriptHost($host)) {
-                    throw ValidationException::withMessages([
-                        'tag' => "Provider script host [{$host}] is private, reserved, or otherwise unsafe for publisher delivery.",
-                    ]);
-                }
-
-                $formattedHost = str_contains($host, ':') ? '['.$host.']' : $host;
-
-                return $scheme.'://'.$formattedHost.($port ? ':'.$port : '');
-            })
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($origins->count() > 20) {
-            throw ValidationException::withMessages(['tag' => 'The tag uses more than 20 script origins. Use Advanced setup for manual review.']);
+        $origins = [];
+        foreach ($scripts as $script) {
+            $url = trim((string) ($script['url'] ?? ''));
+            if (str_starts_with($url, '//')) {
+                $url = 'https:'.$url;
+            }
+            if (! filter_var($url, FILTER_VALIDATE_URL)
+                || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+                throw ValidationException::withMessages(['tag' => 'Provider script URLs must use HTTPS.']);
+            }
+            $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
+            if (! $this->publicHost($host)) {
+                throw ValidationException::withMessages(['tag' => "Provider script host [{$host}] is private, reserved, or otherwise unsafe for publisher delivery."]);
+            }
+            if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
+                throw ValidationException::withMessages(['tag' => 'Provider tags may not authorize the Horus control-plane origin.']);
+            }
+            $port = parse_url($url, PHP_URL_PORT);
+            $origins[] = 'https://'.$host.($port && (int) $port !== 443 ? ':'.(int) $port : '');
         }
 
-        return $origins->all();
+        return array_values(array_unique($origins));
     }
 
-    private function isPublicScriptHost(string $host): bool
+    private function publicHost(string $host): bool
     {
         $host = strtolower(trim($host, '[]'));
         if ($host === '' || $host === 'localhost' || $host === 'localhost.localdomain') {
@@ -429,23 +432,19 @@ final class DirectDemandQuickMonetizeController extends Controller
             }
         }
         if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return filter_var(
-                $host,
-                FILTER_VALIDATE_IP,
-                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
-            ) !== false;
+            return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
         }
 
-        return str_contains($host, '.')
-            && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
+        return str_contains($host, '.') && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
     }
 
-    private function publisherRevenueShare(Site $site): float
+    private function publisherRevenueShare(Site $site): string
     {
-        if ($site->default_revenue_share_percent !== null) {
-            return (float) $site->default_revenue_share_percent;
+        $share = $site->revenue_share_percent;
+        if ($share !== null) {
+            return number_format((float) $share, 4, '.', '');
         }
 
-        return (float) $site->publisher->applicableRevenueShare();
+        return number_format((float) config('commercial.default_publisher_revenue_share_percent', 70), 4, '.', '');
     }
 }
