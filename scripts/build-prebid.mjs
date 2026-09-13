@@ -7,8 +7,23 @@ const outputDir = new URL('../public/assets/prebid/', import.meta.url);
 const sourcePath = new URL('horus-prebid.js', outputDir);
 const minifiedPath = new URL('horus-prebid.min.js', outputDir);
 const checksumPath = new URL('horus-prebid.sha256', outputDir);
+const buildMetadataPath = new URL('horus-prebid.build.json', outputDir);
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 const endpoint = process.env.HORUS_PREBID_DOWNLOAD_URL || 'https://js-download.prebid.org/download';
+
+function normalizedBuild(value) {
+    const modules = Array.isArray(value?.modules)
+        ? [...new Set(value.modules.map(String))].sort()
+        : [];
+    return { version: String(value?.version || ''), modules };
+}
+
+function buildFingerprint(value) {
+    return createHash('sha256').update(JSON.stringify(normalizedBuild(value))).digest('hex');
+}
+
+const expectedBuild = normalizedBuild(manifest);
+const expectedFingerprint = buildFingerprint(expectedBuild);
 
 const form = new URLSearchParams();
 for (const moduleCode of manifest.modules) form.append('modules[]', moduleCode);
@@ -19,6 +34,14 @@ function validSource(source) {
         && source.includes('pbjs')
         && source.length >= 50000
         && source.includes(`prebid.js v${manifest.version}`);
+}
+
+function validCommittedBuildMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') return false;
+    const normalized = normalizedBuild(metadata);
+    return normalized.version === expectedBuild.version
+        && JSON.stringify(normalized.modules) === JSON.stringify(expectedBuild.modules)
+        && String(metadata.manifestSha256 || '') === expectedFingerprint;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,15 +79,21 @@ try {
 } catch (error) {
     // The generated, reviewed source is committed with the repository. A flaky
     // upstream builder must not make an otherwise deterministic production
-    // release impossible. Fallback is accepted only when it is a complete build
-    // of the exact version pinned by the manifest.
-    const committed = await readFile(sourcePath, 'utf8').catch(() => '');
-    if (!validSource(committed)) {
-        throw new Error(`Prebid download failed and the committed fallback is invalid: ${error?.message || error}`);
+    // release impossible. Fallback is accepted only when both the source and
+    // its committed build metadata match the exact pinned version + module set.
+    // A manifest module change therefore cannot silently reuse an older bundle.
+    const [committed, metadataText] = await Promise.all([
+        readFile(sourcePath, 'utf8').catch(() => ''),
+        readFile(buildMetadataPath, 'utf8').catch(() => ''),
+    ]);
+    let metadata = null;
+    try { metadata = JSON.parse(metadataText); } catch { metadata = null; }
+    if (!validSource(committed) || !validCommittedBuildMetadata(metadata)) {
+        throw new Error(`Prebid download failed and the committed fallback does not match the pinned version/module manifest: ${error?.message || error}`);
     }
     source = committed;
     sourceOrigin = 'committed fallback';
-    console.warn(`Prebid builder unavailable; using validated committed ${manifest.version} source`);
+    console.warn(`Prebid builder unavailable; using validated committed ${manifest.version} source for manifest ${expectedFingerprint}`);
 }
 
 await mkdir(outputDir, { recursive: true });
@@ -77,4 +106,9 @@ const minified = await transformWithEsbuild(source, 'horus-prebid.js', {
 await writeFile(minifiedPath, `${minified.code.trim()}\n`, 'utf8');
 const checksum = createHash('sha256').update(minified.code).digest('hex');
 await writeFile(checksumPath, `${checksum}\n`, 'utf8');
+await writeFile(buildMetadataPath, `${JSON.stringify({
+    version: expectedBuild.version,
+    modules: expectedBuild.modules,
+    manifestSha256: expectedFingerprint,
+}, null, 2)}\n`, 'utf8');
 console.log(`Built Prebid.js ${manifest.version} with ${manifest.modules.length} modules from ${sourceOrigin}`);
