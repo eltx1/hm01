@@ -60,29 +60,21 @@ final class GoogleGptManualTagParser
         if ($inline === '') {
             throw new RuntimeException('Google GPT Quick Monetize could not find the slot definition.');
         }
-        $this->assertSupportedOperations($inline);
 
-        $pattern = '/googletag\s*\.\s*defineSlot\s*\(\s*([\'\"])(\/[^\'\"]+)\1\s*,\s*(\[[0-9,\s\[\]]+\])\s*,\s*([\'\"])([^\'\"]+)\4\s*\)/s';
-        if (preg_match_all($pattern, $inline, $matches, PREG_SET_ORDER) !== 1) {
-            throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.defineSlot(...) call.');
-        }
-
-        $adUnitPath = trim((string) $matches[0][2]);
-        $slotContainerId = trim((string) $matches[0][5]);
+        $program = $this->parseCanonicalProgram($inline);
+        $adUnitPath = $program['adUnitPath'];
+        $slotContainerId = $program['containerId'];
         if (! preg_match('#^/[0-9]{1,20}/[A-Za-z0-9_.\-/]{1,240}$#', $adUnitPath)) {
             throw new RuntimeException('The Google GPT ad unit path is not a supported static GAM ad unit path.');
         }
         if (! hash_equals($containerId, $slotContainerId)) {
             throw new RuntimeException('The Google GPT defineSlot container does not match the pasted ad container.');
         }
-
-        $displayPattern = '/googletag\s*\.\s*display\s*\(\s*([\'\"])([^\'\"]+)\1\s*\)/s';
-        if (preg_match_all($displayPattern, $inline, $displayMatches, PREG_SET_ORDER) !== 1
-            || ! hash_equals($containerId, trim((string) $displayMatches[0][2]))) {
+        if (! hash_equals($containerId, $program['displayContainerId'])) {
             throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.display(...) call for the same container.');
         }
 
-        $decoded = json_decode((string) $matches[0][3], true);
+        $decoded = json_decode($program['sizesJson'], true);
         $sizes = $this->normalizeSizes($decoded);
         if ($sizes === []) {
             throw new RuntimeException('The Google GPT slot has no supported fixed display size.');
@@ -96,30 +88,107 @@ final class GoogleGptManualTagParser
         ];
     }
 
-    private function assertSupportedOperations(string $inline): void
+    /**
+     * Quick Monetize intentionally supports only the canonical static GPT
+     * program that Horus can reconstruct exactly. This parser consumes the
+     * complete inline program, not just interesting method names, so comments,
+     * conditionals, boolean guards, assignments, targeting/mapping modifiers,
+     * or any other surrounding behavior cannot be silently discarded.
+     *
+     * One or more canonical cmd.push(function () { ... }) blocks are accepted
+     * because Google's generated tags commonly put defineSlot/enableServices
+     * and display in separate callbacks.
+     *
+     * @return array{adUnitPath:string,containerId:string,sizesJson:string,displayContainerId:string}
+     */
+    private function parseCanonicalProgram(string $inline): array
     {
-        if (! preg_match_all('/\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/', $inline, $matches)) {
-            return;
+        $source = trim($inline);
+        $initializer = '/\A\s*(?:window\s*\.\s*)?googletag\s*=\s*(?:window\s*\.\s*)?googletag\s*\|\|\s*\{\s*cmd\s*:\s*\[\s*\]\s*\}\s*;?/s';
+        if (preg_match($initializer, $source, $match) === 1) {
+            $source = substr($source, strlen($match[0]));
         }
 
-        // Quick Monetize reconstructs only the canonical static GPT flow below.
-        // Anything else (targeting, mappings, setConfig, refresh, custom slot
-        // modifiers, etc.) must use Advanced setup rather than being silently
-        // discarded during normalization.
-        $allowed = ['push', 'defineSlot', 'addService', 'pubads', 'enableServices', 'display'];
-        $unsupported = collect($matches[1])
-            ->map('strval')
-            ->reject(fn (string $method): bool => in_array($method, $allowed, true))
-            ->unique()
-            ->values()
-            ->all();
+        $define = null;
+        $display = null;
+        $enableServicesCount = 0;
+        $blockCount = 0;
 
-        if ($unsupported !== []) {
-            throw new RuntimeException(
-                'Google GPT Quick Monetize does not support GPT modifiers or operations ['
-                .implode(', ', $unsupported)
-                .']. Use Advanced setup or provide a plain static defineSlot/display tag.'
-            );
+        while (trim($source) !== '') {
+            $push = '/\A\s*googletag\s*\.\s*cmd\s*\.\s*push\s*\(\s*function\s*\(\s*\)\s*\{\s*(.*?)\s*\}\s*\)\s*;?/s';
+            if (preg_match($push, $source, $block) !== 1) {
+                throw new RuntimeException('Google GPT Quick Monetize accepts only the canonical static googletag.cmd.push(function () { ... }) program. Use Advanced setup for conditional or custom GPT code.');
+            }
+
+            $blockCount++;
+            if ($blockCount > 4) {
+                throw new RuntimeException('Google GPT Quick Monetize contains too many initialization callbacks. Use Advanced setup.');
+            }
+            $this->consumeCanonicalBody((string) $block[1], $define, $display, $enableServicesCount);
+            $source = substr($source, strlen($block[0]));
+        }
+
+        if ($define === null || $display === null || $enableServicesCount !== 1) {
+            throw new RuntimeException('Google GPT Quick Monetize requires exactly one static defineSlot/addService, enableServices, and display flow.');
+        }
+
+        return [
+            'adUnitPath' => $define['adUnitPath'],
+            'containerId' => $define['containerId'],
+            'sizesJson' => $define['sizesJson'],
+            'displayContainerId' => $display,
+        ];
+    }
+
+    /**
+     * @param array{adUnitPath:string,containerId:string,sizesJson:string}|null $define
+     */
+    private function consumeCanonicalBody(string $body, ?array &$define, ?string &$display, int &$enableServicesCount): void
+    {
+        $offset = 0;
+        $length = strlen($body);
+        while ($offset < $length) {
+            if (preg_match('/\G\s+/s', $body, $whitespace, 0, $offset) === 1) {
+                $offset += strlen($whitespace[0]);
+                if ($offset >= $length) {
+                    break;
+                }
+            }
+
+            $definePattern = '/\G\s*googletag\s*\.\s*defineSlot\s*\(\s*([\'\"])(\/[^\'\"]+)\1\s*,\s*(\[[0-9,\s\[\]]+\])\s*,\s*([\'\"])([^\'\"]+)\4\s*\)\s*\.\s*addService\s*\(\s*googletag\s*\.\s*pubads\s*\(\s*\)\s*\)\s*;?/s';
+            if (preg_match($definePattern, $body, $match, 0, $offset) === 1) {
+                if ($define !== null) {
+                    throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.defineSlot(...) call.');
+                }
+                $define = [
+                    'adUnitPath' => trim((string) $match[2]),
+                    'sizesJson' => (string) $match[3],
+                    'containerId' => trim((string) $match[5]),
+                ];
+                $offset += strlen($match[0]);
+                continue;
+            }
+
+            if (preg_match('/\G\s*googletag\s*\.\s*enableServices\s*\(\s*\)\s*;?/s', $body, $match, 0, $offset) === 1) {
+                $enableServicesCount++;
+                if ($enableServicesCount > 1) {
+                    throw new RuntimeException('Google GPT Quick Monetize requires exactly one googletag.enableServices() call.');
+                }
+                $offset += strlen($match[0]);
+                continue;
+            }
+
+            $displayPattern = '/\G\s*googletag\s*\.\s*display\s*\(\s*([\'\"])([^\'\"]+)\1\s*\)\s*;?/s';
+            if (preg_match($displayPattern, $body, $match, 0, $offset) === 1) {
+                if ($display !== null) {
+                    throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.display(...) call.');
+                }
+                $display = trim((string) $match[2]);
+                $offset += strlen($match[0]);
+                continue;
+            }
+
+            throw new RuntimeException('Google GPT Quick Monetize contains conditional, commented, modified, or otherwise unsupported GPT code. Use Advanced setup for custom GPT behavior.');
         }
     }
 
