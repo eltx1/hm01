@@ -131,6 +131,50 @@ HTML;
         (new GoogleGptManualTagParser())->parse($tag);
     }
 
+    public function test_gpt_operation_order_is_rejected_when_display_precedes_slot_definition(): void
+    {
+        $tag = <<<'HTML'
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<div id="div-gpt-header"></div>
+<script>
+window.googletag = window.googletag || {cmd: []};
+googletag.cmd.push(function() {
+  googletag.display('div-gpt-header');
+});
+googletag.cmd.push(function() {
+  googletag.defineSlot('/1234567/header', [300, 250], 'div-gpt-header').addService(googletag.pubads());
+  googletag.enableServices();
+});
+</script>
+HTML;
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('canonical operation order');
+
+        (new GoogleGptManualTagParser())->parse($tag);
+    }
+
+    public function test_gpt_operation_order_is_rejected_when_services_are_enabled_before_slot_definition(): void
+    {
+        $tag = <<<'HTML'
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<div id="div-gpt-header"></div>
+<script>
+window.googletag = window.googletag || {cmd: []};
+googletag.cmd.push(function() {
+  googletag.enableServices();
+  googletag.defineSlot('/1234567/header', [300, 250], 'div-gpt-header').addService(googletag.pubads());
+  googletag.display('div-gpt-header');
+});
+</script>
+HTML;
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('canonical operation order');
+
+        (new GoogleGptManualTagParser())->parse($tag);
+    }
+
     private function plainTag(): string
     {
         return <<<'HTML'
