@@ -128,13 +128,18 @@ final class DirectDemandQuickMonetizeController extends Controller
             ]);
         }
 
-        $origins = $this->scriptOrigins((array) ($review['detectedScripts'] ?? []));
-        if ($origins === []) {
+        $scriptOrigins = $this->scriptOrigins((array) ($review['detectedScripts'] ?? []));
+        if ($scriptOrigins === []) {
             throw ValidationException::withMessages(['tag' => 'Quick Monetize requires at least one HTTPS provider script.']);
         }
-        if (count($origins) > 20) {
+        $isolationOrigins = collect($scriptOrigins)
+            ->merge($this->resourceOrigins($tag))
+            ->unique()
+            ->values()
+            ->all();
+        if (count($isolationOrigins) > 20) {
             throw ValidationException::withMessages([
-                'tag' => 'Quick Monetize supports at most 20 distinct provider script origins per tag. Use Advanced setup for more complex provider tags.',
+                'tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.',
             ]);
         }
         if (count((array) ($review['detectedContainers'] ?? [])) !== 1) {
@@ -152,7 +157,8 @@ final class DirectDemandQuickMonetizeController extends Controller
             $site,
             $placement,
             $tag,
-            $origins,
+            $scriptOrigins,
+            $isolationOrigins,
         ): DemandAccount {
             $actor = $request->user();
             $siteRevenueShare = $this->publisherRevenueShare($site);
@@ -188,13 +194,13 @@ final class DirectDemandQuickMonetizeController extends Controller
                     'account_identifier' => null,
                     'configuration' => [
                         'quick_monetize_managed' => true,
-                        'allowed_script_origins' => $origins,
+                        'allowed_script_origins' => $scriptOrigins,
                         'render_timeout_ms' => 2500,
                     ],
                 ], $actor);
             } else {
                 $mergedOrigins = collect((array) data_get($account->configuration, 'allowed_script_origins', []))
-                    ->merge($origins)
+                    ->merge($scriptOrigins)
                     ->unique()
                     ->values()
                     ->all();
@@ -261,7 +267,7 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'is_enabled' => true,
                 'configuration' => [
                     'quick_monetize_managed' => true,
-                    'isolation_allowed_origins' => $origins,
+                    'isolation_allowed_origins' => $isolationOrigins,
                     'render_timeout_ms' => 2500,
                 ],
             ], $actor);
@@ -438,6 +444,99 @@ final class DirectDemandQuickMonetizeController extends Controller
         }
 
         return array_values(array_unique($origins));
+    }
+
+    /** @return array<int, string> */
+    private function resourceOrigins(string $tag): array
+    {
+        $validator = app(PublicProviderOriginValidator::class);
+        $urls = [];
+
+        preg_match_all('/<\s*(img|iframe|source|video|audio|track|input|link)\b([^>]*)>/is', $tag, $elements, PREG_SET_ORDER);
+        foreach ($elements as $element) {
+            $name = strtolower((string) ($element[1] ?? ''));
+            $attributes = $this->htmlAttributes((string) ($element[2] ?? ''));
+            $keys = match ($name) {
+                'img' => ['src', 'srcset'],
+                'iframe' => ['src'],
+                'source' => ['src', 'srcset'],
+                'video' => ['src', 'poster'],
+                'audio', 'track', 'input' => ['src'],
+                'link' => ['href'],
+                default => [],
+            };
+
+            foreach ($keys as $key) {
+                $value = trim((string) ($attributes[$key] ?? ''));
+                if ($value === '') {
+                    continue;
+                }
+                if ($key === 'srcset') {
+                    foreach (preg_split('/\s*,\s*/', $value) ?: [] as $candidate) {
+                        $candidate = trim((string) $candidate);
+                        if ($candidate === '') {
+                            continue;
+                        }
+                        $parts = preg_split('/\s+/', $candidate, 2);
+                        $urls[] = (string) ($parts[0] ?? '');
+                    }
+                } else {
+                    $urls[] = $value;
+                }
+            }
+        }
+
+        preg_match_all('/\bstyle\s*=\s*(["\'])(.*?)\1/is', $tag, $styleAttributes, PREG_SET_ORDER);
+        foreach ($styleAttributes as $styleAttribute) {
+            preg_match_all('/url\(\s*(["\']?)(.*?)\1\s*\)/is', (string) ($styleAttribute[2] ?? ''), $styleUrls, PREG_SET_ORDER);
+            foreach ($styleUrls as $styleUrl) {
+                $urls[] = trim((string) ($styleUrl[2] ?? ''));
+            }
+        }
+
+        $origins = [];
+        foreach (array_values(array_unique($urls)) as $rawUrl) {
+            $url = html_entity_decode(trim((string) $rawUrl), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($url === '') {
+                continue;
+            }
+            if (str_starts_with($url, '//')) {
+                $url = 'https:'.$url;
+            }
+            if (! filter_var($url, FILTER_VALIDATE_URL)
+                || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+                throw ValidationException::withMessages([
+                    'tag' => 'Quick Monetize resource URLs must use absolute HTTPS URLs. Use Advanced setup for relative, data, blob, or other custom resource URLs.',
+                ]);
+            }
+
+            $origin = $validator->canonicalOrigin($url);
+            if ($origin === null) {
+                $host = $validator->normalizeHost((string) parse_url($url, PHP_URL_HOST));
+                throw ValidationException::withMessages([
+                    'tag' => "Provider resource host [{$host}] is private, reserved, unresolved, control-plane, or otherwise unsafe for publisher delivery.",
+                ]);
+            }
+            $origins[] = $origin;
+        }
+
+        return array_values(array_unique($origins));
+    }
+
+    /** @return array<string, string> */
+    private function htmlAttributes(string $source): array
+    {
+        $attributes = [];
+        preg_match_all('/([A-Za-z_:][-A-Za-z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+)))?/u', $source, $matches, PREG_SET_ORDER);
+        foreach ($matches as $match) {
+            $name = strtolower((string) ($match[1] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $attributes[$name] = html_entity_decode((string) ($match[2] ?? $match[3] ?? $match[4] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+
+        return $attributes;
     }
 
     private function publisherRevenueShare(Site $site): string
