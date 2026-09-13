@@ -148,7 +148,7 @@ test('isolated Direct Demand runtime rejects incomplete chunked payloads', () =>
     assert.equal(attributes['data-hm-isolated-runtime-state'], 'invalid');
 });
 
-test('Google GPT direct runtime builds only Horus-controlled GPT markup from normalized data', async () => {
+test('Google GPT direct runtime waits for slotRenderEnded instead of treating iframe load as success', async () => {
     const attributes = {
         'data-hm-gpt-direct': '1',
         'data-hm-gpt-ad-unit-path': '/1234567/lordai_header',
@@ -166,8 +166,10 @@ test('Google GPT direct runtime builds only Horus-controlled GPT markup from nor
     assert.match(frame.srcdoc, /https:\/\/securepubads\.g\.doubleclick\.net\/tag\/js\/gpt\.js/);
     assert.ok(frame.srcdoc.includes('/1234567/lordai_header'));
     assert.ok(frame.srcdoc.includes('[[300,250],[320,100]]'));
+    assert.ok(frame.srcdoc.includes('slotRenderEnded'));
+    assert.ok(frame.srcdoc.includes('event.isEmpty?"empty":"rendered"'));
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'loaded');
-    assert.equal(attributes['data-hm-gpt-status'], 'requested');
+    assert.equal(attributes['data-hm-gpt-status'], undefined);
 });
 
 test('Google GPT direct runtime rejects non-normalized container identifiers', () => {
