@@ -150,9 +150,13 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
         $tagRecipe = (array) data_get($candidate, 'tag', []);
+        $gptRuntimeHash = substr((string) hash_file('sha256', public_path('assets/hm-gpt-direct.js')), 0, 16);
         $this->assertSame('MANUAL_TAG', data_get($candidate, 'mode'));
         $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
-        $this->assertSame('https://cdn.horusmedia.net/assets/hm-gpt-direct.js', data_get($candidate, 'tag.scripts.0.url'));
+        $this->assertSame(
+            'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.'.$gptRuntimeHash.'.js',
+            data_get($candidate, 'tag.scripts.0.url'),
+        );
         $this->assertSame('/1234567/lordai_header', data_get($candidate, 'tag.container.attributes.data-hm-gpt-ad-unit-path'));
         $this->assertSame('[[300,250]]', data_get($candidate, 'tag.container.attributes.data-hm-gpt-sizes'));
         $this->assertSame([[300, 250]], data_get($candidate, 'tag.render.allowedSizes'));
@@ -204,8 +208,12 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.header_banner.candidates.0');
+        $isolationRuntimeHash = substr((string) hash_file('sha256', public_path('assets/hm-isolated-direct.js')), 0, 16);
         $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
-        $this->assertSame('https://cdn.horusmedia.net/assets/hm-isolated-direct.js', data_get($candidate, 'tag.scripts.0.url'));
+        $this->assertSame(
+            'https://cdn.horusmedia.net/runtime/direct/hm-isolated-direct.'.$isolationRuntimeHash.'.js',
+            data_get($candidate, 'tag.scripts.0.url'),
+        );
         $this->assertSame([[300, 250]], data_get($candidate, 'tag.render.allowedSizes'));
         $this->assertSame('300', data_get($candidate, 'tag.container.attributes.data-hm-isolated-width'));
         $this->assertSame('250', data_get($candidate, 'tag.container.attributes.data-hm-isolated-height'));
