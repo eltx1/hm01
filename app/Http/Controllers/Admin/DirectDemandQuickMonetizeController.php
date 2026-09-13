@@ -14,6 +14,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
+use App\Models\DemandSite;
 use App\Models\DemandWidget;
 use App\Models\Placement;
 use App\Models\Publisher;
@@ -132,8 +133,9 @@ final class DirectDemandQuickMonetizeController extends Controller
         if ($scriptOrigins === []) {
             throw ValidationException::withMessages(['tag' => 'Quick Monetize requires at least one HTTPS provider script.']);
         }
+        $resourceOrigins = $this->resourceOrigins($tag);
         $isolationOrigins = collect($scriptOrigins)
-            ->merge($this->resourceOrigins($tag))
+            ->merge($resourceOrigins['all'])
             ->unique()
             ->values()
             ->all();
@@ -158,6 +160,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $placement,
             $tag,
             $scriptOrigins,
+            $resourceOrigins,
             $isolationOrigins,
         ): DemandAccount {
             $actor = $request->user();
@@ -222,6 +225,16 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ], $actor);
             }
 
+            // Quick owns the activation fields below, but a replacement tag must
+            // not erase Advanced state that is unrelated to Quick Monetize. In
+            // particular, retain remote identifiers and merge configuration.
+            $existingDemandSite = DemandSite::withoutGlobalScopes()
+                ->where('demand_account_id', $account->id)
+                ->where('site_id', $site->id)
+                ->first();
+            $siteMappingConfiguration = (array) ($existingDemandSite?->configuration ?? []);
+            $siteMappingConfiguration['quick_monetize_managed'] = true;
+
             // Revenue share is site/commercial state, not a field the operator
             // should re-enter in Quick Monetize. Keep the account default for the
             // first site and always persist the effective site-specific override
@@ -234,16 +247,25 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'integration_mode' => DemandIntegrationMode::ManualTag->value,
                 'revenue_share_percent' => $siteRevenueShare,
                 'fallback_priority' => 100,
-                'configuration' => ['quick_monetize_managed' => true],
+                'remote_site_id' => $existingDemandSite?->remote_site_id,
+                'configuration' => $siteMappingConfiguration,
             ], $actor);
+
+            $existingDemandPlacement = DemandPlacement::withoutGlobalScopes()
+                ->where('demand_site_id', $demandSite->id)
+                ->where('placement_id', $placement->id)
+                ->first();
+            $placementMappingConfiguration = (array) ($existingDemandPlacement?->configuration ?? []);
+            $placementMappingConfiguration['quick_monetize_managed'] = true;
 
             $demandPlacement = $accounts->assignPlacement($demandSite, $placement, [
                 'approval_status' => DemandApprovalStatus::Approved->value,
                 'is_enabled' => true,
                 'integration_mode' => DemandIntegrationMode::ManualTag->value,
                 'fallback_priority' => 100,
-                'placement_code' => $placement->code,
-                'configuration' => ['quick_monetize_managed' => true],
+                'remote_placement_id' => $existingDemandPlacement?->remote_placement_id,
+                'placement_code' => $existingDemandPlacement?->placement_code ?? $placement->code,
+                'configuration' => $placementMappingConfiguration,
             ], $actor);
 
             // A widget name is presentation, not identity. If an operator renamed
@@ -257,6 +279,16 @@ final class DirectDemandQuickMonetizeController extends Controller
                 ->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))
                 ->sortByDesc('id')
                 ->first();
+            $widgetConfiguration = (array) ($existingQuickWidget?->configuration ?? []);
+            $widgetConfiguration['quick_monetize_managed'] = true;
+            $widgetConfiguration['isolation_allowed_origins'] = $isolationOrigins;
+            $widgetConfiguration['isolation_script_origins'] = $scriptOrigins;
+            $widgetConfiguration['isolation_frame_origins'] = $resourceOrigins['frame'];
+            $widgetConfiguration['isolation_image_origins'] = $resourceOrigins['image'];
+            $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
+            $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
+            $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
+            $widgetConfiguration['render_timeout_ms'] ??= 2500;
 
             $accounts->upsertWidget($demandPlacement, [
                 'name' => $existingQuickWidget?->name ?? 'Quick Manual · '.$placement->code,
@@ -265,11 +297,7 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'direct_tag_template' => $tag,
                 'approval_status' => DemandApprovalStatus::Approved->value,
                 'is_enabled' => true,
-                'configuration' => [
-                    'quick_monetize_managed' => true,
-                    'isolation_allowed_origins' => $isolationOrigins,
-                    'render_timeout_ms' => 2500,
-                ],
+                'configuration' => $widgetConfiguration,
             ], $actor);
 
             $beforeDirectDemand = (bool) $site->native_demand_enabled;
@@ -446,42 +474,75 @@ final class DirectDemandQuickMonetizeController extends Controller
         return array_values(array_unique($origins));
     }
 
-    /** @return array<int, string> */
+    /**
+     * @return array{all:array<int,string>,frame:array<int,string>,image:array<int,string>,style:array<int,string>,media:array<int,string>,font:array<int,string>}
+     */
     private function resourceOrigins(string $tag): array
     {
         $validator = app(PublicProviderOriginValidator::class);
-        $urls = [];
+        $references = [];
 
         preg_match_all('/<\s*(img|iframe|source|video|audio|track|input|link)\b([^>]*)>/is', $tag, $elements, PREG_SET_ORDER);
         foreach ($elements as $element) {
             $name = strtolower((string) ($element[1] ?? ''));
             $attributes = $this->htmlAttributes((string) ($element[2] ?? ''));
-            $keys = match ($name) {
-                'img' => ['src', 'srcset'],
-                'iframe' => ['src'],
-                'source' => ['src', 'srcset'],
-                'video' => ['src', 'poster'],
-                'audio', 'track', 'input' => ['src'],
-                'link' => ['href'],
-                default => [],
-            };
 
-            foreach ($keys as $key) {
-                $value = trim((string) ($attributes[$key] ?? ''));
+            $add = function (string $value, array $types, bool $srcset = false) use (&$references): void {
+                $value = trim($value);
                 if ($value === '') {
-                    continue;
+                    return;
                 }
-                if ($key === 'srcset') {
+                if ($srcset) {
                     foreach (preg_split('/\s*,\s*/', $value) ?: [] as $candidate) {
                         $candidate = trim((string) $candidate);
                         if ($candidate === '') {
                             continue;
                         }
                         $parts = preg_split('/\s+/', $candidate, 2);
-                        $urls[] = (string) ($parts[0] ?? '');
+                        $references[] = [(string) ($parts[0] ?? ''), $types];
                     }
+
+                    return;
+                }
+                $references[] = [$value, $types];
+            };
+
+            if ($name === 'img') {
+                $add((string) ($attributes['src'] ?? ''), ['image']);
+                $add((string) ($attributes['srcset'] ?? ''), ['image'], true);
+            } elseif ($name === 'iframe') {
+                $add((string) ($attributes['src'] ?? ''), ['frame']);
+            } elseif ($name === 'source') {
+                // A source element can belong to picture, video, or audio. Grant
+                // only passive image/media fetch capabilities, never scripts.
+                $add((string) ($attributes['src'] ?? ''), ['image', 'media']);
+                $add((string) ($attributes['srcset'] ?? ''), ['image', 'media'], true);
+            } elseif ($name === 'video') {
+                $add((string) ($attributes['src'] ?? ''), ['media']);
+                $add((string) ($attributes['poster'] ?? ''), ['image']);
+            } elseif (in_array($name, ['audio', 'track'], true)) {
+                $add((string) ($attributes['src'] ?? ''), ['media']);
+            } elseif ($name === 'input') {
+                $add((string) ($attributes['src'] ?? ''), ['image']);
+            } elseif ($name === 'link') {
+                $href = (string) ($attributes['href'] ?? '');
+                if (trim($href) === '') {
+                    continue;
+                }
+                $rel = strtolower((string) ($attributes['rel'] ?? ''));
+                $as = strtolower((string) ($attributes['as'] ?? ''));
+                if (preg_match('/(?:^|\s)stylesheet(?:\s|$)/', $rel) || $as === 'style') {
+                    $add($href, ['style']);
+                } elseif ($as === 'image') {
+                    $add($href, ['image']);
+                } elseif ($as === 'font') {
+                    $add($href, ['font']);
+                } elseif (in_array($as, ['audio', 'video'], true)) {
+                    $add($href, ['media']);
                 } else {
-                    $urls[] = $value;
+                    throw ValidationException::withMessages([
+                        'tag' => 'Quick Monetize supports external link resources only when their resource type is explicit. Use Advanced setup for custom link/preload behavior.',
+                    ]);
                 }
             }
         }
@@ -490,12 +551,21 @@ final class DirectDemandQuickMonetizeController extends Controller
         foreach ($styleAttributes as $styleAttribute) {
             preg_match_all('/url\(\s*(["\']?)(.*?)\1\s*\)/is', (string) ($styleAttribute[2] ?? ''), $styleUrls, PREG_SET_ORDER);
             foreach ($styleUrls as $styleUrl) {
-                $urls[] = trim((string) ($styleUrl[2] ?? ''));
+                // CSS url() may address backgrounds or fonts. Both are passive
+                // resource classes and neither grants script execution.
+                $references[] = [trim((string) ($styleUrl[2] ?? '')), ['image', 'font']];
             }
         }
 
-        $origins = [];
-        foreach (array_values(array_unique($urls)) as $rawUrl) {
+        $result = [
+            'all' => [],
+            'frame' => [],
+            'image' => [],
+            'style' => [],
+            'media' => [],
+            'font' => [],
+        ];
+        foreach ($references as [$rawUrl, $types]) {
             $url = html_entity_decode(trim((string) $rawUrl), ENT_QUOTES | ENT_HTML5, 'UTF-8');
             if ($url === '') {
                 continue;
@@ -517,10 +587,19 @@ final class DirectDemandQuickMonetizeController extends Controller
                     'tag' => "Provider resource host [{$host}] is private, reserved, unresolved, control-plane, or otherwise unsafe for publisher delivery.",
                 ]);
             }
-            $origins[] = $origin;
+            $result['all'][] = $origin;
+            foreach ($types as $type) {
+                if (array_key_exists($type, $result)) {
+                    $result[$type][] = $origin;
+                }
+            }
         }
 
-        return array_values(array_unique($origins));
+        foreach ($result as $key => $origins) {
+            $result[$key] = array_values(array_unique($origins));
+        }
+
+        return $result;
     }
 
     /** @return array<string, string> */
@@ -533,7 +612,14 @@ final class DirectDemandQuickMonetizeController extends Controller
             if ($name === '') {
                 continue;
             }
-            $attributes[$name] = html_entity_decode((string) ($match[2] ?? $match[3] ?? $match[4] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $value = '';
+            foreach ([2, 3, 4] as $capture) {
+                if (array_key_exists($capture, $match) && (string) $match[$capture] !== '') {
+                    $value = (string) $match[$capture];
+                    break;
+                }
+            }
+            $attributes[$name] = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
 
         return $attributes;
