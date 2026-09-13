@@ -1,0 +1,22 @@
+{
+  "version": "11.14.0",
+  "modules": [
+    "consentManagementGpp",
+    "consentManagementTcf",
+    "currency",
+    "gppControl_usnat",
+    "gppControl_usstates",
+    "gptPreAuction",
+    "ixBidAdapter",
+    "msftBidAdapter",
+    "onetagBidAdapter",
+    "openxBidAdapter",
+    "pubmaticBidAdapter",
+    "rubiconBidAdapter",
+    "storageControl",
+    "tcfControl",
+    "tripleliftBidAdapter",
+    "validationFpdModule"
+  ],
+  "manifestSha256": "84ec969a24a726857765d13163a41a059f6c98f94f23b1e8dbd98ffbe28f9b88"
+}
