@@ -145,6 +145,14 @@ final class StaticDeliverySnapshotBuilder
             'assets/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
             'assets/hm-isolated-direct.js' => $isolatedDirect,
             'assets/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
+
+            // These content-addressed copies intentionally live outside every
+            // prefix managed by pre-Quick static-delivery releases. If the app
+            // is rolled back, the old snapshot driver will not delete runtimes
+            // still referenced by persisted Quick Monetize configurations.
+            'runtime/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
+            'runtime/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
+
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
             'assets/prebid/horus-prebid.sha256' => $prebidHash."\n",
@@ -246,6 +254,10 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: application/javascript; charset=utf-8
 
 /assets/direct/*
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: application/javascript; charset=utf-8
+
+/runtime/*
   Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
