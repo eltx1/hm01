@@ -36,10 +36,11 @@
         return /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(String(value || ''));
     }
 
-    function frameDocument(adUnitPath, allowedSizes, innerId) {
+    function frameDocument(adUnitPath, allowedSizes, innerId, parentId) {
         var pathJson = JSON.stringify(adUnitPath);
         var sizesJson = JSON.stringify(allowedSizes);
         var idJson = JSON.stringify(innerId);
+        var parentIdJson = JSON.stringify(parentId);
         var width = Math.max.apply(null, allowedSizes.map(function (size) { return size[0]; }));
         var height = Math.max.apply(null, allowedSizes.map(function (size) { return size[1]; }));
 
@@ -47,9 +48,14 @@
             + '<meta name="viewport" content="width=device-width,initial-scale=1">'
             + '<style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}#' + innerId + '{width:' + width + 'px;min-height:' + height + 'px}</style>'
             + '<script>window.googletag=window.googletag||{cmd:[]};googletag.cmd.push(function(){'
+            + 'var parentId=' + parentIdJson + ';'
+            + 'function report(status){try{var target=parent.document.getElementById(parentId);if(target){target.setAttribute("data-hm-gpt-runtime-state",status);target.setAttribute("data-hm-gpt-status",status);}}catch(e){}}'
             + 'var slot=googletag.defineSlot(' + pathJson + ',' + sizesJson + ',' + idJson + ');'
-            + 'if(!slot){return;}if(slot.setForceSafeFrame){slot.setForceSafeFrame(true);}slot.addService(googletag.pubads());'
-            + 'googletag.enableServices();googletag.display(' + idJson + ');});<\/script>'
+            + 'if(!slot){report("failed");return;}'
+            + 'if(slot.setForceSafeFrame){slot.setForceSafeFrame(true);}'
+            + 'var pubads=googletag.pubads();'
+            + 'if(pubads&&pubads.addEventListener){pubads.addEventListener("slotRenderEnded",function(event){if(event&&event.slot===slot){report(event.isEmpty?"empty":"rendered");}});}'
+            + 'slot.addService(pubads);googletag.enableServices();googletag.display(' + idJson + ');});<\/script>'
             + '<script async src="' + GPT_URL + '"><\/script></head><body><div id="' + innerId + '"></div></body></html>';
     }
 
@@ -80,10 +86,11 @@
         frame.style.border = '0';
         frame.style.display = 'block';
         frame.style.maxWidth = '100%';
-        frame.srcdoc = frameDocument(adUnitPath, allowedSizes, innerId);
+        frame.srcdoc = frameDocument(adUnitPath, allowedSizes, innerId, containerId);
         frame.onload = function () {
-            container.setAttribute('data-hm-gpt-runtime-state', 'loaded');
-            container.setAttribute('data-hm-gpt-status', 'requested');
+            if (container.getAttribute('data-hm-gpt-runtime-state') === 'starting') {
+                container.setAttribute('data-hm-gpt-runtime-state', 'loaded');
+            }
         };
         frame.onerror = function () {
             container.setAttribute('data-hm-gpt-runtime-state', 'failed');
