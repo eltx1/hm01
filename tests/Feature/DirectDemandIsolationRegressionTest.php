@@ -162,8 +162,8 @@ final class DirectDemandIsolationRegressionTest extends TestCase
 
     public function test_quick_generic_tag_rejects_more_than_twenty_distinct_script_origins_before_writes(): void
     {
-        $scripts = collect(range(1, 21))
-            ->map(fn (int $index): string => '<script async src="https://cdn'.$index.'.example.net/ad.js"></script>')
+        $scripts = collect(range(8001, 8021))
+            ->map(fn (int $port): string => '<script async src="https://cdn.taboola.com:'.$port.'/ad.js"></script>')
             ->implode('');
         $tag = $scripts.'<div id="too-many-origins-zone"></div>';
 
@@ -224,6 +224,57 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertIsString($published);
         $this->assertSame($secondTag, $published);
         $this->assertNotSame($firstTag, $published);
+    }
+
+    public function test_quick_activation_clears_inherited_account_recipe_so_replacement_tag_cannot_be_shadowed(): void
+    {
+        $firstTag = '<script async src="https://cdn.taboola.com/libtrc/horus-first/loader.js"></script><div id="taboola-first-zone"></div>';
+        $secondTag = '<script async src="https://cdn.taboola.com/libtrc/horus-second/loader.js"></script><div id="taboola-second-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $firstTag,
+            ])
+            ->assertRedirect();
+
+        $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
+        $configuration = (array) $account->configuration;
+        $configuration['direct_recipe'] = [
+            'executionMode' => 'STRUCTURED',
+            'format' => 'DISPLAY',
+            'scripts' => [[
+                'url' => 'https://cdn.taboola.com/stale.js',
+                'async' => true,
+            ]],
+            'container' => [
+                'element' => 'div',
+                'id' => 'stale-account-recipe',
+                'class' => 'stale-account-recipe',
+                'attributes' => [],
+            ],
+            'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => ['timeoutMs' => 2500, 'allowedFormats' => ['DISPLAY'], 'allowedSizes' => [[300, 250]]],
+        ];
+        $account->update(['configuration' => $configuration]);
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), [
+                'site_id' => $this->site->id,
+                'placement_id' => $this->placement->id,
+                'tag' => $secondTag,
+            ])
+            ->assertRedirect();
+
+        $account->refresh();
+        $this->assertNull(data_get($account->configuration, 'direct_recipe'));
+
+        $public = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($public, 'placements.single_size.candidates.0');
+        $encoded = (string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-html');
+        $this->assertSame($secondTag, base64_decode($encoded, true));
+        $this->assertNotSame('stale-account-recipe', data_get($candidate, 'tag.container.id'));
     }
 
     public function test_quick_generic_tag_rejects_ambiguous_multi_size_placement_without_partial_writes(): void
@@ -330,8 +381,8 @@ final class DirectDemandIsolationRegressionTest extends TestCase
             'fallback_priority' => 20,
             'account_identifier' => 'advanced-public',
             'configuration' => [
-                'allowed_script_origins' => ['https://ads.example.com'],
-                'isolation_allowed_origins' => ['https://ads.example.com'],
+                'allowed_script_origins' => ['https://cdn.taboola.com'],
+                'isolation_allowed_origins' => ['https://cdn.taboola.com'],
             ],
         ], $this->admin);
         $mapping = $service->assignSite($account, $this->site, [
@@ -351,7 +402,7 @@ final class DirectDemandIsolationRegressionTest extends TestCase
             'integration_mode' => DemandIntegrationMode::DirectJs,
             'approval_status' => DemandApprovalStatus::Approved,
             'is_enabled' => true,
-            'direct_tag_template' => '<div id="fluid-zone"><img src="https://images.example-cdn.com/public.jpg"></div><script src="https://ads.example.com/public.js"></script>',
+            'direct_tag_template' => '<div id="fluid-zone"><img src="https://images.unsplash.com/photo.jpg"></div><script src="https://cdn.taboola.com/public.js"></script>',
             'configuration' => [],
         ], $this->admin);
         $this->site->update(['native_demand_enabled' => true]);
@@ -363,7 +414,7 @@ final class DirectDemandIsolationRegressionTest extends TestCase
         $this->assertSame('ISOLATED_IFRAME', data_get($candidate, 'tag.executionMode'));
         $this->assertSame(['allow-scripts'], data_get($candidate, 'tag.isolation.sandbox'));
         $this->assertSame([], data_get($candidate, 'tag.render.allowedSizes'));
-        $this->assertStringContainsString('connect-src https://ads.example.com;', $csp);
+        $this->assertStringContainsString('connect-src https://cdn.taboola.com;', $csp);
         $this->assertStringContainsString('img-src https: data:;', $csp);
     }
 
