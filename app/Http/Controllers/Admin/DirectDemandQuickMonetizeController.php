@@ -25,6 +25,7 @@ use App\Services\Demand\DirectTagRecipeParser;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Security\PublicProviderOriginValidator;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -201,6 +202,11 @@ final class DirectDemandQuickMonetizeController extends Controller
                 $configuration['quick_monetize_managed'] = true;
                 $configuration['allowed_script_origins'] = $mergedOrigins;
                 $configuration['render_timeout_ms'] ??= 2500;
+
+                // Quick Monetize owns this managed account's renderer recipe.
+                // An Advanced account-level recipe must never shadow the public
+                // tag the operator is activating now.
+                unset($configuration['direct_recipe']);
 
                 $account = $accounts->update($account, [
                     'integration_mode' => DemandIntegrationMode::ManualTag,
@@ -408,7 +414,9 @@ final class DirectDemandQuickMonetizeController extends Controller
      */
     private function scriptOrigins(array $scripts): array
     {
+        $validator = app(PublicProviderOriginValidator::class);
         $origins = [];
+
         foreach ($scripts as $script) {
             $url = trim((string) ($script['url'] ?? ''));
             if (str_starts_with($url, '//')) {
@@ -418,37 +426,18 @@ final class DirectDemandQuickMonetizeController extends Controller
                 || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
                 throw ValidationException::withMessages(['tag' => 'Provider script URLs must use HTTPS.']);
             }
-            $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
-            if (! $this->publicHost($host)) {
-                throw ValidationException::withMessages(['tag' => "Provider script host [{$host}] is private, reserved, or otherwise unsafe for publisher delivery."]);
+
+            $origin = $validator->canonicalOrigin($url);
+            if ($origin === null) {
+                $host = $validator->normalizeHost((string) parse_url($url, PHP_URL_HOST));
+                throw ValidationException::withMessages([
+                    'tag' => "Provider script host [{$host}] is private, reserved, unresolved, control-plane, or otherwise unsafe for publisher delivery.",
+                ]);
             }
-            if ($host === 'app.horusmedia.net' || str_ends_with($host, '.app.horusmedia.net')) {
-                throw ValidationException::withMessages(['tag' => 'Provider tags may not authorize the Horus control-plane origin.']);
-            }
-            $originHost = str_contains($host, ':') ? '['.$host.']' : $host;
-            $port = parse_url($url, PHP_URL_PORT);
-            $origins[] = 'https://'.$originHost.($port && (int) $port !== 443 ? ':'.(int) $port : '');
+            $origins[] = $origin;
         }
 
         return array_values(array_unique($origins));
-    }
-
-    private function publicHost(string $host): bool
-    {
-        $host = strtolower(trim($host, '[]'));
-        if ($host === '' || $host === 'localhost' || $host === 'localhost.localdomain') {
-            return false;
-        }
-        foreach (['.localhost', '.local', '.internal', '.home.arpa', '.test', '.invalid', '.example'] as $suffix) {
-            if (str_ends_with($host, $suffix)) {
-                return false;
-            }
-        }
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
-        }
-
-        return str_contains($host, '.') && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
     }
 
     private function publisherRevenueShare(Site $site): string
