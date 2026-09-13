@@ -16,6 +16,35 @@ final class PublicProviderOriginValidatorTest extends TestCase
         $this->assertNull($validator->canonicalOrigin('https://ads.attacker.net/ad.js'));
     }
 
+    public function test_hostname_is_rejected_when_any_dns_answer_is_special_purpose(): void
+    {
+        foreach (['100.64.0.1', '198.18.0.1', '192.0.2.1', '203.0.113.1', '2001:db8::1', '3fff::1', 'ff02::1'] as $address) {
+            $validator = $this->validator(['ads.attacker.net' => ['8.8.8.8', $address]]);
+            $this->assertNull(
+                $validator->canonicalOrigin('https://ads.attacker.net/ad.js'),
+                "Expected special-purpose address {$address} to fail closed.",
+            );
+        }
+    }
+
+    public function test_special_purpose_ip_literals_are_rejected(): void
+    {
+        foreach ([
+            'https://100.64.0.1/ad.js',
+            'https://198.18.0.1/ad.js',
+            'https://192.0.2.1/ad.js',
+            'https://203.0.113.1/ad.js',
+            'https://[2001:db8::1]/ad.js',
+            'https://[3fff::1]/ad.js',
+            'https://[ff02::1]/ad.js',
+        ] as $url) {
+            $this->assertNull(
+                $this->validator([])->canonicalOrigin($url),
+                "Expected special-purpose literal {$url} to fail closed.",
+            );
+        }
+    }
+
     public function test_hostname_is_rejected_when_dns_resolution_returns_no_addresses(): void
     {
         $validator = $this->validator(['unresolved.example.net' => []]);
