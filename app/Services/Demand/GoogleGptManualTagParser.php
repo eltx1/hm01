@@ -60,6 +60,7 @@ final class GoogleGptManualTagParser
         if ($inline === '') {
             throw new RuntimeException('Google GPT Quick Monetize could not find the slot definition.');
         }
+        $this->assertSupportedOperations($inline);
 
         $pattern = '/googletag\s*\.\s*defineSlot\s*\(\s*([\'\"])(\/[^\'\"]+)\1\s*,\s*(\[[0-9,\s\[\]]+\])\s*,\s*([\'\"])([^\'\"]+)\4\s*\)/s';
         if (preg_match_all($pattern, $inline, $matches, PREG_SET_ORDER) !== 1) {
@@ -93,6 +94,33 @@ final class GoogleGptManualTagParser
             'containerId' => $containerId,
             'sizes' => $sizes,
         ];
+    }
+
+    private function assertSupportedOperations(string $inline): void
+    {
+        if (! preg_match_all('/\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/', $inline, $matches)) {
+            return;
+        }
+
+        // Quick Monetize reconstructs only the canonical static GPT flow below.
+        // Anything else (targeting, mappings, setConfig, refresh, custom slot
+        // modifiers, etc.) must use Advanced setup rather than being silently
+        // discarded during normalization.
+        $allowed = ['push', 'defineSlot', 'addService', 'pubads', 'enableServices', 'display'];
+        $unsupported = collect($matches[1])
+            ->map('strval')
+            ->reject(fn (string $method): bool => in_array($method, $allowed, true))
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($unsupported !== []) {
+            throw new RuntimeException(
+                'Google GPT Quick Monetize does not support GPT modifiers or operations ['
+                .implode(', ', $unsupported)
+                .']. Use Advanced setup or provide a plain static defineSlot/display tag.'
+            );
+        }
     }
 
     /** @return array<int, array{0:int,1:int}> */
