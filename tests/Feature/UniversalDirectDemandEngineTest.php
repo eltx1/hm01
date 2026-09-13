@@ -194,8 +194,8 @@ HTML);
             'fallback_priority' => 10,
             'account_identifier' => 'public-custom-account',
             'configuration' => [
-                'allowed_script_origins' => ['https://ads.example.com'],
-                'isolation_allowed_origins' => ['https://ads.example.com'],
+                'allowed_script_origins' => ['https://cdn.taboola.com'],
+                'isolation_allowed_origins' => ['https://cdn.taboola.com'],
                 'render_timeout_ms' => 700,
             ],
         ], $this->admin);
@@ -216,7 +216,7 @@ HTML);
             'integration_mode' => DemandIntegrationMode::DirectJs,
             'approval_status' => DemandApprovalStatus::Approved,
             'is_enabled' => true,
-            'direct_tag_template' => '<div id="custom-zone"></div><script src="https://ads.example.com/public.js"></script><script>window.providerQueue = window.providerQueue || [];</script>',
+            'direct_tag_template' => '<div id="custom-zone"></div><script src="https://cdn.taboola.com/public.js"></script><script>window.providerQueue = window.providerQueue || [];</script>',
             'configuration' => [],
         ], $this->admin);
 
@@ -224,7 +224,7 @@ HTML);
         $this->assertSame('ISOLATED_IFRAME', $tag['executionMode']);
         $this->assertSame(['allow-scripts'], data_get($tag, 'isolation.sandbox'));
         $this->assertStringContainsString("default-src 'none'", data_get($tag, 'isolation.csp'));
-        $this->assertStringContainsString('https://ads.example.com', data_get($tag, 'isolation.csp'));
+        $this->assertStringContainsString('https://cdn.taboola.com', data_get($tag, 'isolation.csp'));
         $this->assertStringNotContainsString('allow-same-origin', json_encode($tag, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('allow-top-navigation', json_encode($tag, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('app.horusmedia.net', json_encode($tag, JSON_THROW_ON_ERROR));
