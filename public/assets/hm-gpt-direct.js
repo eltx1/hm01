@@ -65,7 +65,8 @@
         var adUnitPath = container.getAttribute('data-hm-gpt-ad-unit-path');
         var allowedSizes = sizes(container.getAttribute('data-hm-gpt-sizes'));
         var containerId = String(container.id || '');
-        if (!validPath(adUnitPath) || !allowedSizes || !validId(containerId)) {
+        var innerId = String(container.getAttribute('data-hm-gpt-inner-id') || '');
+        if (!validPath(adUnitPath) || !allowedSizes || !validId(containerId) || !validId(innerId)) {
             container.setAttribute('data-hm-gpt-runtime-state', 'invalid');
             return;
         }
@@ -74,7 +75,6 @@
         var frame = document.createElement('iframe');
         var width = Math.max.apply(null, allowedSizes.map(function (size) { return size[0]; }));
         var height = Math.max.apply(null, allowedSizes.map(function (size) { return size[1]; }));
-        var innerId = 'hm-gpt-slot-' + containerId.replace(/[^A-Za-z0-9_-]/g, '-');
 
         frame.title = 'Advertisement';
         frame.setAttribute('aria-label', 'Advertisement');
