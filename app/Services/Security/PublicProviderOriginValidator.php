@@ -2,7 +2,7 @@
 
 namespace App\Services\Security;
 
-final class PublicProviderOriginValidator
+class PublicProviderOriginValidator
 {
     /**
      * Return a canonical public HTTPS origin or null when the URL is unsafe.
@@ -70,8 +70,13 @@ final class PublicProviderOriginValidator
         if ($addresses === []) {
             return false;
         }
+        foreach ($addresses as $address) {
+            if (! is_string($address) || ! $this->isPublicIp($address)) {
+                return false;
+            }
+        }
 
-        return collect($addresses)->every(fn (string $address): bool => $this->isPublicIp($address));
+        return true;
     }
 
     protected function resolveAddresses(string $host): array
