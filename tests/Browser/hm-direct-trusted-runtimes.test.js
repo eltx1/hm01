@@ -11,6 +11,7 @@ function container(attributes, id = '') {
     return {
         id,
         frames,
+        style: {},
         getAttribute(name) { return attributes[name] ?? null; },
         setAttribute(name, value) { attributes[name] = String(value); },
         appendChild(frame) {
@@ -67,6 +68,51 @@ function run(source, selector, selectedContainer) {
     sandbox.window = sandbox;
     vm.runInNewContext(source, sandbox, { filename: 'trusted-direct-runtime.js' });
     return { sandbox, createdFrames };
+}
+
+function executeGptFrameDocument(frame, target, innerId, eventSize) {
+    const inline = frame.srcdoc.match(/<script>([\s\S]*?)<\/script>/);
+    assert.ok(inline, 'GPT srcdoc must contain the Horus inline bootstrap');
+
+    let renderListener = null;
+    const innerNode = { style: {} };
+    const slot = {
+        setForceSafeFrame() {},
+        addService() { return slot; },
+    };
+    const pubads = {
+        addEventListener(name, callback) {
+            if (name === 'slotRenderEnded') renderListener = callback;
+        },
+    };
+    const googletag = {
+        cmd: { push(callback) { callback(); } },
+        defineSlot() { return slot; },
+        pubads() { return pubads; },
+        enableServices() {},
+        display() {},
+    };
+    const innerDocument = {
+        getElementById(id) { return id === innerId ? innerNode : null; },
+    };
+    const sandbox = {
+        document: innerDocument,
+        parent: {
+            document: {
+                getElementById(id) { return id === target.id ? target : null; },
+            },
+        },
+        googletag,
+        console,
+    };
+    sandbox.window = sandbox;
+    sandbox.window.frameElement = frame;
+
+    vm.runInNewContext(inline[1], sandbox, { filename: 'gpt-frame-runtime.js' });
+    assert.equal(typeof renderListener, 'function');
+    renderListener({ slot, isEmpty: false, size: eventSize });
+
+    return innerNode;
 }
 
 function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
@@ -163,7 +209,7 @@ test('Google GPT direct runtime waits for slotRenderEnded instead of treating if
 
     assert.equal(createdFrames.length, 1);
     const frame = createdFrames[0];
-    assert.equal(frame.getAttribute('width'), '320');
+    assert.equal(frame.getAttribute('width'), '300');
     assert.equal(frame.getAttribute('height'), '250');
     assert.match(frame.srcdoc, /https:\/\/securepubads\.g\.doubleclick\.net\/tag\/js\/gpt\.js/);
     assert.ok(frame.srcdoc.includes('/1234567/lordai_header'));
@@ -171,9 +217,67 @@ test('Google GPT direct runtime waits for slotRenderEnded instead of treating if
     assert.ok(frame.srcdoc.includes('div-gpt-ad-lordai-header'));
     assert.ok(frame.srcdoc.includes('hm-gpt-placement-1'));
     assert.ok(frame.srcdoc.includes('slotRenderEnded'));
-    assert.ok(frame.srcdoc.includes('event.isEmpty?"empty":"rendered"'));
+    assert.ok(frame.srcdoc.includes('normalizedRenderedSize(event.size)'));
+    assert.ok(frame.srcdoc.includes('report("rendered",renderedSize)'));
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'loaded');
     assert.equal(attributes['data-hm-gpt-status'], undefined);
+});
+
+test('Google GPT multi-size runtime starts at a declared size and resizes to the actual creative', async () => {
+    const attributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/mixed_shape',
+        'data-hm-gpt-sizes': '[[970,90],[300,600]]',
+        'data-hm-gpt-inner-id': 'provider-mixed-shape',
+    };
+    const target = container(attributes, 'hm-gpt-placement-mixed');
+
+    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', target);
+    await tick();
+
+    assert.equal(createdFrames.length, 1);
+    const frame = createdFrames[0];
+    assert.equal(frame.getAttribute('width'), '970');
+    assert.equal(frame.getAttribute('height'), '90');
+    assert.notEqual(`${frame.getAttribute('width')}x${frame.getAttribute('height')}`, '970x600');
+    assert.equal(target.style.width, '970px');
+    assert.equal(target.style.height, '90px');
+
+    const innerNode = executeGptFrameDocument(frame, target, 'provider-mixed-shape', [300, 600]);
+
+    assert.equal(frame.getAttribute('width'), '300');
+    assert.equal(frame.getAttribute('height'), '600');
+    assert.equal(frame.style.width, '300px');
+    assert.equal(frame.style.height, '600px');
+    assert.equal(target.style.width, '300px');
+    assert.equal(target.style.height, '600px');
+    assert.equal(innerNode.style.width, '300px');
+    assert.equal(innerNode.style.height, '600px');
+    assert.equal(attributes['data-hm-gpt-rendered-width'], '300');
+    assert.equal(attributes['data-hm-gpt-rendered-height'], '600');
+    assert.equal(attributes['data-hm-gpt-status'], 'rendered');
+});
+
+test('Google GPT multi-size runtime fails closed when GPT reports an undeclared size', async () => {
+    const attributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/mixed_shape',
+        'data-hm-gpt-sizes': '[[970,90],[300,600]]',
+        'data-hm-gpt-inner-id': 'provider-mixed-shape',
+    };
+    const target = container(attributes, 'hm-gpt-placement-mixed-invalid');
+
+    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', target);
+    await tick();
+    const frame = createdFrames[0];
+
+    executeGptFrameDocument(frame, target, 'provider-mixed-shape', [970, 600]);
+
+    assert.equal(frame.getAttribute('width'), '970');
+    assert.equal(frame.getAttribute('height'), '90');
+    assert.equal(attributes['data-hm-gpt-status'], 'failed');
+    assert.equal(attributes['data-hm-gpt-rendered-width'], undefined);
+    assert.equal(attributes['data-hm-gpt-rendered-height'], undefined);
 });
 
 test('Google GPT runtime keeps outer placement state unique when provider inner ids repeat', async () => {
