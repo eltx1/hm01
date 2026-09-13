@@ -40,9 +40,10 @@ function iframe() {
 
 function run(source, selector, selectedContainer) {
     const createdFrames = [];
+    const selectedContainers = Array.isArray(selectedContainer) ? selectedContainer : [selectedContainer];
     const document = {
         documentElement: {},
-        querySelectorAll(query) { return query === selector ? [selectedContainer] : []; },
+        querySelectorAll(query) { return query === selector ? selectedContainers : []; },
         createElement(tag) {
             assert.equal(tag, 'iframe');
             const frame = iframe();
@@ -153,8 +154,9 @@ test('Google GPT direct runtime waits for slotRenderEnded instead of treating if
         'data-hm-gpt-direct': '1',
         'data-hm-gpt-ad-unit-path': '/1234567/lordai_header',
         'data-hm-gpt-sizes': '[[300,250],[320,100]]',
+        'data-hm-gpt-inner-id': 'div-gpt-ad-lordai-header',
     };
-    const target = container(attributes, 'div-gpt-ad-lordai-header');
+    const target = container(attributes, 'hm-gpt-placement-1');
 
     const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', target);
     await tick();
@@ -166,22 +168,63 @@ test('Google GPT direct runtime waits for slotRenderEnded instead of treating if
     assert.match(frame.srcdoc, /https:\/\/securepubads\.g\.doubleclick\.net\/tag\/js\/gpt\.js/);
     assert.ok(frame.srcdoc.includes('/1234567/lordai_header'));
     assert.ok(frame.srcdoc.includes('[[300,250],[320,100]]'));
+    assert.ok(frame.srcdoc.includes('div-gpt-ad-lordai-header'));
+    assert.ok(frame.srcdoc.includes('hm-gpt-placement-1'));
     assert.ok(frame.srcdoc.includes('slotRenderEnded'));
     assert.ok(frame.srcdoc.includes('event.isEmpty?"empty":"rendered"'));
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'loaded');
     assert.equal(attributes['data-hm-gpt-status'], undefined);
 });
 
-test('Google GPT direct runtime rejects non-normalized container identifiers', () => {
-    const attributes = {
+test('Google GPT runtime keeps outer placement state unique when provider inner ids repeat', async () => {
+    const firstAttributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/header_a',
+        'data-hm-gpt-sizes': '[[300,250]]',
+        'data-hm-gpt-inner-id': 'provider-reused-div',
+    };
+    const secondAttributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/header_b',
+        'data-hm-gpt-sizes': '[[300,250]]',
+        'data-hm-gpt-inner-id': 'provider-reused-div',
+    };
+    const first = container(firstAttributes, 'hm-gpt-placement-a');
+    const second = container(secondAttributes, 'hm-gpt-placement-b');
+
+    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', [first, second]);
+    await tick();
+
+    assert.equal(createdFrames.length, 2);
+    assert.ok(createdFrames[0].srcdoc.includes('provider-reused-div'));
+    assert.ok(createdFrames[1].srcdoc.includes('provider-reused-div'));
+    assert.ok(createdFrames[0].srcdoc.includes('hm-gpt-placement-a'));
+    assert.ok(!createdFrames[0].srcdoc.includes('hm-gpt-placement-b'));
+    assert.ok(createdFrames[1].srcdoc.includes('hm-gpt-placement-b'));
+    assert.ok(!createdFrames[1].srcdoc.includes('hm-gpt-placement-a'));
+    assert.equal(firstAttributes['data-hm-gpt-runtime-state'], 'loaded');
+    assert.equal(secondAttributes['data-hm-gpt-runtime-state'], 'loaded');
+});
+
+test('Google GPT direct runtime rejects non-normalized outer or inner identifiers', () => {
+    const invalidOuterAttributes = {
         'data-hm-gpt-direct': '1',
         'data-hm-gpt-ad-unit-path': '/1234567/lordai_header',
         'data-hm-gpt-sizes': '[[300,250]]',
+        'data-hm-gpt-inner-id': 'provider-inner',
     };
-    const target = container(attributes, 'bad.id');
+    const invalidOuter = container(invalidOuterAttributes, 'bad.id');
+    const invalidInnerAttributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/lordai_header',
+        'data-hm-gpt-sizes': '[[300,250]]',
+        'data-hm-gpt-inner-id': 'bad.inner',
+    };
+    const invalidInner = container(invalidInnerAttributes, 'hm-gpt-placement-valid');
 
-    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', target);
+    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', [invalidOuter, invalidInner]);
 
     assert.equal(createdFrames.length, 0);
-    assert.equal(attributes['data-hm-gpt-runtime-state'], 'invalid');
+    assert.equal(invalidOuterAttributes['data-hm-gpt-runtime-state'], 'invalid');
+    assert.equal(invalidInnerAttributes['data-hm-gpt-runtime-state'], 'invalid');
 });
