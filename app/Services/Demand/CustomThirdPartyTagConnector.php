@@ -106,6 +106,9 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
         $html = trim((string) $widget->direct_tag_template);
         $this->assertSafeCustomHtml($html);
+        if ($quickManaged) {
+            $this->assertNoQuickSelfNavigation($html);
+        }
 
         // Trusted GPT normalization is intentionally a Quick Monetize behavior.
         // Existing Advanced/legacy custom-tag mappings keep their historical
@@ -122,12 +125,16 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             }
         }
 
-        $origins = $this->isolationOrigins($configuration);
+        $origins = $this->isolationOrigins($configuration, $quickManaged);
         if ($origins === []) {
             throw new RuntimeException('Custom isolated tags require explicit provider CSP origins.');
         }
         foreach ($this->externalScriptUrls($html) as $url) {
-            $this->assertAllowedScriptUrl($url);
+            if ($quickManaged) {
+                $this->assertAllowedScriptUrl($url);
+            } else {
+                $this->assertAllowedLegacyScriptUrl($url);
+            }
         }
 
         if (! $quickManaged) {
@@ -141,13 +148,13 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         $widget = $this->widget($placement);
         $configuration = $this->mergedConfiguration($placement, $widget);
+        $quickManaged = $this->isQuickManaged($placement, $widget);
 
         // Persisted CUSTOM_THIRD_PARTY_TAG accounts are routed through this
         // connector for compatibility. Preserve the historical reviewed-recipe
         // precedence for non-Quick GAM mappings instead of silently replacing a
         // reviewed creative with the raw widget template on a later deployment.
-        if (! $this->isQuickManaged($placement, $widget)
-            && is_array($configuration['direct_recipe'] ?? null)) {
+        if (! $quickManaged && is_array($configuration['direct_recipe'] ?? null)) {
             return parent::generateGamCreative($placement);
         }
 
@@ -157,8 +164,15 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
 
         $this->assertSafeCustomHtml($snippet);
+        if ($quickManaged) {
+            $this->assertNoQuickSelfNavigation($snippet);
+        }
         foreach ($this->externalScriptUrls($snippet) as $url) {
-            $this->assertAllowedScriptUrl($url);
+            if ($quickManaged) {
+                $this->assertAllowedScriptUrl($url);
+            } else {
+                $this->assertAllowedLegacyScriptUrl($url);
+            }
         }
 
         $size = $placement->placement->sizes
@@ -255,8 +269,37 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         $frameSize = $this->quickPlacementSize($placement);
         $sizes = [$frameSize];
-        $originList = implode(' ', $origins);
-        $csp = $this->isolatedCsp($originList);
+        $scriptOrigins = collect($this->externalScriptUrls($html))
+            ->map(fn ($url) => $this->canonicalHttpsOrigin((string) $url))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        if ($scriptOrigins === []) {
+            throw new RuntimeException('Quick isolated tags require at least one reviewed public script origin.');
+        }
+
+        // New Quick configurations retain resource type provenance so resource-
+        // only origins never gain script execution permission. For persisted
+        // Quick rows created by the immediately previous release, the bounded
+        // union remains a compatibility fallback for passive resource directives
+        // only; it is never copied into script-src.
+        $fallbackResources = array_values(array_diff($origins, $scriptOrigins));
+        $frameOrigins = $this->quickDirectiveOrigins($configuration, 'isolation_frame_origins', $fallbackResources);
+        $imageOrigins = $this->quickDirectiveOrigins($configuration, 'isolation_image_origins', $fallbackResources);
+        $styleOrigins = $this->quickDirectiveOrigins($configuration, 'isolation_style_origins', $fallbackResources);
+        $mediaOrigins = $this->quickDirectiveOrigins($configuration, 'isolation_media_origins', $fallbackResources);
+        $fontOrigins = $this->quickDirectiveOrigins($configuration, 'isolation_font_origins', $fallbackResources);
+
+        $csp = $this->isolatedCsp(
+            $scriptOrigins,
+            $origins,
+            $frameOrigins,
+            $imageOrigins,
+            $styleOrigins,
+            $mediaOrigins,
+            $fontOrigins,
+        );
         $runtimeUrl = $this->trustedRuntimeUrl('hm-isolated-direct.js');
         $containerId = 'hm-isolated-'.$placement->id;
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
@@ -352,9 +395,29 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         ];
     }
 
-    private function isolatedCsp(string $originList): string
-    {
-        return "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src {$originList} data:; style-src 'unsafe-inline'; frame-src {$originList}; font-src {$originList} data:; media-src {$originList}; base-uri 'none'; form-action 'none'; object-src 'none';";
+    /**
+     * Quick CSP keeps executable scripts on the exact script origins detected in
+     * the pasted tag. Passive resource-only origins are granted only to the
+     * applicable directives recorded during Quick review.
+     */
+    private function isolatedCsp(
+        array $scriptOrigins,
+        array $allOrigins,
+        array $frameOrigins,
+        array $imageOrigins,
+        array $styleOrigins,
+        array $mediaOrigins,
+        array $fontOrigins,
+    ): string {
+        $scripts = $this->cspSources($scriptOrigins);
+        $connect = $this->cspSources($allOrigins);
+        $frames = $this->cspSources(array_merge($scriptOrigins, $frameOrigins));
+        $images = $this->cspSources(array_merge($scriptOrigins, $imageOrigins));
+        $styles = $this->cspSources(array_merge($scriptOrigins, $styleOrigins));
+        $media = $this->cspSources(array_merge($scriptOrigins, $mediaOrigins));
+        $fonts = $this->cspSources(array_merge($scriptOrigins, $fontOrigins));
+
+        return "default-src 'none'; script-src 'unsafe-inline'{$this->cspSuffix($scripts)}; connect-src{$this->cspSuffix($connect)}; img-src{$this->cspSuffix($images)} data:; style-src 'unsafe-inline'{$this->cspSuffix($styles)}; frame-src{$this->cspSuffix($frames)}; font-src{$this->cspSuffix($fonts)} data:; media-src{$this->cspSuffix($media)}; base-uri 'none'; form-action 'none'; object-src 'none';";
     }
 
     private function legacyIsolatedCsp(string $originList): string
@@ -364,6 +427,36 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         // their script origin. Tightening that policy during an unrelated Quick
         // Monetize rollout would silently break already-serving inventory.
         return "default-src 'none'; script-src 'unsafe-inline' {$originList}; connect-src {$originList}; img-src https: data:; style-src 'unsafe-inline'; frame-src {$originList};";
+    }
+
+    private function cspSources(array $origins): string
+    {
+        return collect($origins)
+            ->filter(fn ($value) => is_string($value) && $value !== '')
+            ->unique()
+            ->values()
+            ->implode(' ');
+    }
+
+    private function cspSuffix(string $sources): string
+    {
+        return $sources === '' ? '' : ' '.$sources;
+    }
+
+    /** @return array<int, string> */
+    private function quickDirectiveOrigins(array $configuration, string $key, array $fallback): array
+    {
+        if (! array_key_exists($key, $configuration)) {
+            return array_values(array_unique($fallback));
+        }
+
+        return collect((array) $configuration[$key])
+            ->map(fn ($origin) => $this->canonicalHttpsOrigin((string) $origin))
+            ->filter()
+            ->unique()
+            ->take(20)
+            ->values()
+            ->all();
     }
 
     /** @return array<string, string> */
@@ -467,9 +560,76 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
     }
 
+    private function assertAllowedLegacyScriptUrl(string $url): void
+    {
+        $origin = $this->legacyHttpsOrigin($url);
+        if ($origin === null) {
+            throw new RuntimeException('Legacy demand script URL is not a valid reviewed HTTPS provider origin.');
+        }
+
+        $allowed = collect($this->selectedAccount->network->script_origins ?? [])
+            ->merge((array) config('demand.allowed_script_origins.'.$this->code(), []))
+            ->merge((array) data_get($this->selectedAccount->configuration, 'allowed_script_origins', []))
+            ->map(fn ($value) => $this->legacyHttpsOrigin((string) $value))
+            ->filter()
+            ->unique();
+
+        if ($allowed->isEmpty() || ! $allowed->contains($origin)) {
+            throw new RuntimeException("Demand script origin [{$origin}] is not allowlisted for ".$this->code().'.');
+        }
+    }
+
     private function canonicalHttpsOrigin(string $url): ?string
     {
         return app(PublicProviderOriginValidator::class)->canonicalOrigin($url);
+    }
+
+    /**
+     * Historical Advanced mappings are validated syntactically and against
+     * explicit local/control-plane names, but do not require live DNS on every
+     * unrelated republish. IP literals still receive the strict global-unicast
+     * policy because that path performs no DNS lookup.
+     */
+    private function legacyHttpsOrigin(string $url): ?string
+    {
+        $url = trim($url);
+        if (str_starts_with($url, '//')) {
+            $url = 'https:'.$url;
+        }
+        if (! filter_var($url, FILTER_VALIDATE_URL)
+            || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
+            || parse_url($url, PHP_URL_USER) !== null
+            || parse_url($url, PHP_URL_PASS) !== null) {
+            return null;
+        }
+
+        $validator = app(PublicProviderOriginValidator::class);
+        $host = $validator->normalizeHost((string) parse_url($url, PHP_URL_HOST));
+        if ($host === ''
+            || $host === 'localhost'
+            || $host === 'localhost.localdomain'
+            || $host === 'app.horusmedia.net'
+            || str_ends_with($host, '.app.horusmedia.net')) {
+            return null;
+        }
+        foreach (['.localhost', '.local', '.internal', '.home.arpa', '.test', '.invalid', '.example'] as $suffix) {
+            if (str_ends_with($host, $suffix)) {
+                return null;
+            }
+        }
+
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return $this->canonicalHttpsOrigin($url);
+        }
+        if (! str_contains($host, '.')
+            || filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false) {
+            return null;
+        }
+
+        $originHost = str_contains($host, ':') ? '['.$host.']' : $host;
+        $port = parse_url($url, PHP_URL_PORT);
+
+        return 'https://'.$originHost.($port && (int) $port !== 443 ? ':'.(int) $port : '');
     }
 
     private function assertSafeCustomHtml(string $html): void
@@ -508,6 +668,21 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
     }
 
+    private function assertNoQuickSelfNavigation(string $html): void
+    {
+        $navigationPatterns = [
+            '/(?<![\w.])(?:(?:window|self|document)\s*\.\s*)?location\s*(?:\.\s*href)?\s*=/i',
+            '/(?<![\w.])(?:(?:window|self|document)\s*\.\s*)?location\s*\.\s*(?:assign|replace)\s*\(/i',
+            '/(?:window|self|document)\s*\[\s*["\']location["\']\s*\]\s*(?:\.\s*href|\[\s*["\']href["\']\s*\])?\s*=/i',
+            '/(?:window|self|document)\s*\[\s*["\']location["\']\s*\]\s*\.\s*(?:assign|replace)\s*\(/i',
+        ];
+        foreach ($navigationPatterns as $pattern) {
+            if (preg_match($pattern, $html)) {
+                throw new RuntimeException('Quick Monetize isolated tags cannot navigate their sandbox document. Use Advanced setup for navigation-capable provider code.');
+            }
+        }
+    }
+
     /** @return array<int, string> */
     private function externalScriptUrls(string $html): array
     {
@@ -541,10 +716,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     }
 
     /** @return array<int, string> */
-    private function isolationOrigins(array $configuration): array
+    private function isolationOrigins(array $configuration, bool $strictDns): array
     {
         return collect((array) ($configuration['isolation_allowed_origins'] ?? []))
-            ->map(fn ($origin) => $this->canonicalHttpsOrigin((string) $origin))
+            ->map(fn ($origin) => $strictDns
+                ? $this->canonicalHttpsOrigin((string) $origin)
+                : $this->legacyHttpsOrigin((string) $origin))
             ->filter()
             ->unique()
             ->take(20)
