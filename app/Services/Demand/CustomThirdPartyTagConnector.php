@@ -5,6 +5,7 @@ namespace App\Services\Demand;
 use App\Enums\DemandApprovalStatus;
 use App\Models\DemandPlacement;
 use App\Models\DemandWidget;
+use App\Services\Security\PublicProviderOriginValidator;
 use RuntimeException;
 
 final class CustomThirdPartyTagConnector extends AbstractDemandConnector
@@ -91,11 +92,11 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         $widget = $this->widget($placement);
         $configuration = $this->mergedConfiguration($placement, $widget);
+        $quickManaged = $this->isQuickManaged($placement, $widget);
 
-        // Preserve the precedence ConfiguredDemandConnector historically gave
-        // to an explicitly reviewed structured recipe. Existing production rows
-        // can therefore move to this connector without changing their renderer.
-        if (is_array($configuration['direct_recipe'] ?? null)) {
+        // Preserve Advanced/legacy reviewed recipes, but never let an inherited
+        // account-level recipe shadow the public tag Quick Monetize is managing.
+        if (! $quickManaged && is_array($configuration['direct_recipe'] ?? null)) {
             return parent::generateDirectTag($placement);
         }
 
@@ -105,7 +106,6 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
         $html = trim((string) $widget->direct_tag_template);
         $this->assertSafeCustomHtml($html);
-        $quickManaged = $this->isQuickManaged($placement, $widget);
 
         // Trusted GPT normalization is intentionally a Quick Monetize behavior.
         // Existing Advanced/legacy custom-tag mappings keep their historical
@@ -189,6 +189,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
 
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
+        $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
 
         return [
             'recipeVersion' => 1,
@@ -215,7 +216,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'initialization' => ['type' => 'NONE', 'parameters' => []],
             'render' => [
                 'timeoutMs' => $timeout,
-                'successSelector' => '#'.$containerId.'[data-hm-gpt-status="requested"]',
+                'successSelector' => $successSelector,
                 'assumeLoadedIsSuccess' => false,
                 'allowedFormats' => ['DISPLAY'],
                 'allowedSizes' => $sizes,
@@ -230,7 +231,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
                 'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             ],
             'renderTimeoutMs' => $timeout,
-            'successSelector' => '#'.$containerId.'[data-hm-gpt-status="requested"]',
+            'successSelector' => $successSelector,
             'assumeLoadedIsSuccess' => false,
         ];
     }
@@ -419,12 +420,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     {
         $origin = $this->canonicalHttpsOrigin($url);
         if ($origin === null) {
-            throw new RuntimeException('Demand script URLs must be valid HTTPS URLs without embedded credentials.');
-        }
-
-        $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
-        if (! $this->isPublicScriptHost($host)) {
-            throw new RuntimeException("Demand script host [{$host}] is private, reserved, or otherwise not valid for publisher delivery.");
+            $host = app(PublicProviderOriginValidator::class)->normalizeHost((string) parse_url($url, PHP_URL_HOST));
+            throw new RuntimeException("Demand script host [{$host}] is private, reserved, unresolved, control-plane, or otherwise not valid for publisher delivery.");
         }
 
         $allowed = collect($this->selectedAccount->network->script_origins ?? [])
@@ -441,22 +438,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     private function canonicalHttpsOrigin(string $url): ?string
     {
-        $url = trim($url);
-        if (! filter_var($url, FILTER_VALIDATE_URL)
-            || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
-            || parse_url($url, PHP_URL_USER) !== null
-            || parse_url($url, PHP_URL_PASS) !== null) {
-            return null;
-        }
-
-        $host = strtolower(trim((string) parse_url($url, PHP_URL_HOST), '[]'));
-        if ($host === '') {
-            return null;
-        }
-        $originHost = str_contains($host, ':') ? '['.$host.']' : $host;
-        $port = parse_url($url, PHP_URL_PORT);
-
-        return 'https://'.$originHost.($port && (int) $port !== 443 ? ':'.(int) $port : '');
+        return app(PublicProviderOriginValidator::class)->canonicalOrigin($url);
     }
 
     private function assertSafeCustomHtml(string $html): void
@@ -531,45 +513,11 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     private function isolationOrigins(array $configuration): array
     {
         return collect((array) ($configuration['isolation_allowed_origins'] ?? []))
-            ->map(fn ($origin) => strtolower(rtrim((string) $origin, '/')))
-            ->filter(function (string $origin): bool {
-                if (! filter_var($origin, FILTER_VALIDATE_URL)
-                    || strtolower((string) parse_url($origin, PHP_URL_SCHEME)) !== 'https') {
-                    return false;
-                }
-                $host = strtolower(trim((string) parse_url($origin, PHP_URL_HOST), '[]'));
-
-                return $host !== ''
-                    && $host !== 'app.horusmedia.net'
-                    && ! str_ends_with($host, '.app.horusmedia.net')
-                    && $this->isPublicScriptHost($host);
-            })
+            ->map(fn ($origin) => $this->canonicalHttpsOrigin((string) $origin))
+            ->filter()
             ->unique()
             ->take(20)
             ->values()
             ->all();
-    }
-
-    private function isPublicScriptHost(string $host): bool
-    {
-        $host = strtolower(trim($host, '[]'));
-        if ($host === '' || $host === 'localhost' || $host === 'localhost.localdomain') {
-            return false;
-        }
-        foreach (['.localhost', '.local', '.internal', '.home.arpa', '.test', '.invalid', '.example'] as $suffix) {
-            if (str_ends_with($host, $suffix)) {
-                return false;
-            }
-        }
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return filter_var(
-                $host,
-                FILTER_VALIDATE_IP,
-                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
-            ) !== false;
-        }
-
-        return str_contains($host, '.')
-            && filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
     }
 }
