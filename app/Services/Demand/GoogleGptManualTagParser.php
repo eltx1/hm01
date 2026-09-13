@@ -97,7 +97,8 @@ final class GoogleGptManualTagParser
      *
      * One or more canonical cmd.push(function () { ... }) blocks are accepted
      * because Google's generated tags commonly put defineSlot/enableServices
-     * and display in separate callbacks.
+     * and display in separate callbacks. The operation order is preserved across
+     * those callbacks and must be defineSlot -> enableServices -> display.
      *
      * @return array{adUnitPath:string,containerId:string,sizesJson:string,displayContainerId:string}
      */
@@ -113,6 +114,7 @@ final class GoogleGptManualTagParser
         $display = null;
         $enableServicesCount = 0;
         $blockCount = 0;
+        $operations = [];
 
         while (trim($source) !== '') {
             $push = '/\A\s*googletag\s*\.\s*cmd\s*\.\s*push\s*\(\s*function\s*\(\s*\)\s*\{\s*(.*?)\s*\}\s*\)\s*;?/s';
@@ -124,12 +126,15 @@ final class GoogleGptManualTagParser
             if ($blockCount > 4) {
                 throw new RuntimeException('Google GPT Quick Monetize contains too many initialization callbacks. Use Advanced setup.');
             }
-            $this->consumeCanonicalBody((string) $block[1], $define, $display, $enableServicesCount);
+            $this->consumeCanonicalBody((string) $block[1], $define, $display, $enableServicesCount, $operations);
             $source = substr($source, strlen($block[0]));
         }
 
         if ($define === null || $display === null || $enableServicesCount !== 1) {
             throw new RuntimeException('Google GPT Quick Monetize requires exactly one static defineSlot/addService, enableServices, and display flow.');
+        }
+        if ($operations !== ['define', 'enable', 'display']) {
+            throw new RuntimeException('Google GPT Quick Monetize requires the canonical operation order: defineSlot/addService, then enableServices, then display. Use Advanced setup for custom GPT sequencing.');
         }
 
         return [
@@ -142,8 +147,9 @@ final class GoogleGptManualTagParser
 
     /**
      * @param array{adUnitPath:string,containerId:string,sizesJson:string}|null $define
+     * @param array<int, string> $operations
      */
-    private function consumeCanonicalBody(string $body, ?array &$define, ?string &$display, int &$enableServicesCount): void
+    private function consumeCanonicalBody(string $body, ?array &$define, ?string &$display, int &$enableServicesCount, array &$operations): void
     {
         $offset = 0;
         $length = strlen($body);
@@ -165,6 +171,7 @@ final class GoogleGptManualTagParser
                     'sizesJson' => (string) $match[3],
                     'containerId' => trim((string) $match[5]),
                 ];
+                $operations[] = 'define';
                 $offset += strlen($match[0]);
                 continue;
             }
@@ -174,6 +181,7 @@ final class GoogleGptManualTagParser
                 if ($enableServicesCount > 1) {
                     throw new RuntimeException('Google GPT Quick Monetize requires exactly one googletag.enableServices() call.');
                 }
+                $operations[] = 'enable';
                 $offset += strlen($match[0]);
                 continue;
             }
@@ -184,6 +192,7 @@ final class GoogleGptManualTagParser
                     throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.display(...) call.');
                 }
                 $display = trim((string) $match[2]);
+                $operations[] = 'display';
                 $offset += strlen($match[0]);
                 continue;
             }
