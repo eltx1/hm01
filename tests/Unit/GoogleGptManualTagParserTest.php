@@ -105,7 +105,7 @@ googletag.cmd.push(function() {
 HTML;
 
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('canonical static googletag.cmd.push');
+        $this->expectExceptionMessage('conditional, commented, modified, or otherwise unsupported GPT code');
 
         (new GoogleGptManualTagParser())->parse($tag);
     }
