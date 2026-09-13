@@ -119,4 +119,12 @@ final class DirectDemandQuickResourceOriginTest extends TestCase
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
     }
+
+    private function adminSession(): static
+    {
+        $this->actingAs($this->admin);
+        $this->withSession(['two_factor_passed_at' => now()->timestamp]);
+
+        return $this;
+    }
 }
