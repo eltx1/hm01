@@ -140,6 +140,17 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     public function generateGamCreative(DemandPlacement $placement): array
     {
         $widget = $this->widget($placement);
+        $configuration = $this->mergedConfiguration($placement, $widget);
+
+        // Persisted CUSTOM_THIRD_PARTY_TAG accounts are routed through this
+        // connector for compatibility. Preserve the historical reviewed-recipe
+        // precedence for non-Quick GAM mappings instead of silently replacing a
+        // reviewed creative with the raw widget template on a later deployment.
+        if (! $this->isQuickManaged($placement, $widget)
+            && is_array($configuration['direct_recipe'] ?? null)) {
+            return parent::generateGamCreative($placement);
+        }
+
         $snippet = trim((string) ($widget?->gam_creative_template ?: $widget?->direct_tag_template));
         if ($snippet === '') {
             return parent::generateGamCreative($placement);
@@ -406,7 +417,24 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if ($base === '') {
             $base = 'https://cdn.horusmedia.net';
         }
-        $url = $base.'/assets/'.$asset;
+
+        $assetPath = public_path('assets/'.$asset);
+        $contents = is_file($assetPath) ? file_get_contents($assetPath) : false;
+        if ($contents === false || $contents === '') {
+            throw new RuntimeException('Horus Direct Demand runtime asset is missing.');
+        }
+
+        $hash = substr(hash('sha256', $contents), 0, 16);
+        $runtimePath = match ($asset) {
+            'hm-gpt-direct.js' => 'runtime/gpt/hm-gpt-direct.'.$hash.'.js',
+            'hm-isolated-direct.js' => 'runtime/direct/hm-isolated-direct.'.$hash.'.js',
+            default => throw new RuntimeException('Unknown Horus Direct Demand runtime asset.'),
+        };
+
+        // runtime/* is deliberately outside legacy static-delivery managed
+        // prefixes. A rollback to a pre-Quick release therefore cannot delete a
+        // content-addressed runtime still referenced by persisted configurations.
+        $url = $base.'/'.$runtimePath;
         if (! filter_var($url, FILTER_VALIDATE_URL)
             || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
             || (string) parse_url($url, PHP_URL_HOST) === '') {
