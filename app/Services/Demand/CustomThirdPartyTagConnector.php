@@ -187,7 +187,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     private function googleGptRecipe(array $gpt, array $configuration, DemandPlacement $placement): array
     {
         $runtimeUrl = $this->trustedRuntimeUrl('hm-gpt-direct.js');
-        $containerId = $gpt['containerId'];
+        $providerContainerId = $gpt['containerId'];
+        // Provider snippets frequently reuse a generated div id. The outer
+        // Horus runtime surface must be unique per placement so success/failure
+        // state from one slot can never satisfy another slot's selector. The
+        // provider id is retained only inside the isolated GPT frame.
+        $containerId = 'hm-gpt-'.$placement->id;
         $sizes = $gpt['sizes'];
         $placementSizes = $this->placementSizes($placement);
         if ($placementSizes === []) {
@@ -201,6 +206,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
+        $attributes = [
+            'data-hm-gpt-direct' => '1',
+            'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'],
+            'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            'data-hm-gpt-inner-id' => $providerContainerId,
+        ];
 
         return [
             'recipeVersion' => 1,
@@ -217,11 +228,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
                 'element' => 'div',
                 'id' => $containerId,
                 'class' => 'hm-direct-google-gpt',
-                'attributes' => [
-                    'data-hm-gpt-direct' => '1',
-                    'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'],
-                    'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
-                ],
+                'attributes' => $attributes,
             ],
             'publicPlacementId' => $gpt['adUnitPath'],
             'initialization' => ['type' => 'NONE', 'parameters' => []],
@@ -236,11 +243,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'scriptUrl' => $runtimeUrl,
             'containerId' => $containerId,
             'containerClass' => 'hm-direct-google-gpt',
-            'attributes' => [
-                'data-hm-gpt-direct' => '1',
-                'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'],
-                'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
-            ],
+            'attributes' => $attributes,
             'renderTimeoutMs' => $timeout,
             'successSelector' => $successSelector,
             'assumeLoadedIsSuccess' => false,
