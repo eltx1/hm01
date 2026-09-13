@@ -10,7 +10,7 @@ final class PublicProviderOriginValidatorTest extends TestCase
     public function test_hostname_is_rejected_when_any_dns_answer_is_private(): void
     {
         $validator = $this->validator([
-            'ads.attacker.net' => ['203.0.113.10', '127.0.0.1'],
+            'ads.attacker.net' => ['8.8.8.8', '127.0.0.1'],
         ]);
 
         $this->assertNull($validator->canonicalOrigin('https://ads.attacker.net/ad.js'));
