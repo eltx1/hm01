@@ -79,7 +79,8 @@ final class DirectDemandQuickResourceOriginTest extends TestCase
                 'placement_id' => $this->placement->id,
                 'tag' => $tag,
             ])
-            ->assertRedirect();
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
         $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
         $this->assertSame(
@@ -95,12 +96,15 @@ final class DirectDemandQuickResourceOriginTest extends TestCase
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.resource_placement.candidates.0');
-        $encodedCsp = (string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-csp');
-        $csp = base64_decode($encodedCsp, true);
+        $attributes = (array) data_get($candidate, 'tag.container.attributes', []);
+        $csp = $this->decodedPayload($attributes, 'data-hm-isolated-csp');
 
-        $this->assertIsString($csp);
         $this->assertStringContainsString('frame-src https://cdn.taboola.com https://securepubads.g.doubleclick.net;', $csp);
-        $this->assertStringContainsString("script-src 'unsafe-inline' https://cdn.taboola.com https://securepubads.g.doubleclick.net;", $csp);
+        $this->assertStringContainsString("script-src 'unsafe-inline' https://cdn.taboola.com;", $csp);
+        $this->assertStringNotContainsString(
+            "script-src 'unsafe-inline' https://cdn.taboola.com https://securepubads.g.doubleclick.net;",
+            $csp,
+        );
     }
 
     public function test_quick_generic_tag_rejects_private_non_script_resource_origin_before_any_write(): void
@@ -118,6 +122,27 @@ final class DirectDemandQuickResourceOriginTest extends TestCase
 
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
         $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function decodedPayload(array $attributes, string $baseAttribute): string
+    {
+        $encoded = (string) ($attributes[$baseAttribute] ?? '');
+        if ($encoded === '') {
+            $parts = (int) ($attributes[$baseAttribute.'-parts'] ?? 0);
+            $this->assertGreaterThan(0, $parts, 'Expected a direct or chunked encoded payload.');
+
+            for ($index = 0; $index < $parts; $index++) {
+                $key = $baseAttribute.'-'.$index;
+                $this->assertArrayHasKey($key, $attributes);
+                $encoded .= (string) $attributes[$key];
+            }
+        }
+
+        $decoded = base64_decode($encoded, true);
+        $this->assertIsString($decoded);
+
+        return $decoded;
     }
 
     private function adminSession(): static
