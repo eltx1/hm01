@@ -84,14 +84,14 @@ final class DirectDemandQuickFinalHardeningTest extends TestCase
 
         $this->adminSession()
             ->post(route('admin.demand.quick.store'), $this->payload($tag))
-            ->assertRedirect();
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.final_quick.candidates.0');
-        $encodedCsp = (string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-csp');
-        $csp = base64_decode($encodedCsp, true);
+        $attributes = (array) data_get($candidate, 'tag.container.attributes', []);
+        $csp = $this->decodedPayload($attributes, 'data-hm-isolated-csp');
 
-        $this->assertIsString($csp);
         $this->assertSame(
             "script-src 'unsafe-inline' https://cdn.taboola.com",
             $this->directive($csp, 'script-src'),
@@ -233,6 +233,27 @@ final class DirectDemandQuickFinalHardeningTest extends TestCase
             'placement_id' => $this->placement->id,
             'tag' => $tag,
         ];
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function decodedPayload(array $attributes, string $baseAttribute): string
+    {
+        $encoded = (string) ($attributes[$baseAttribute] ?? '');
+        if ($encoded === '') {
+            $parts = (int) ($attributes[$baseAttribute.'-parts'] ?? 0);
+            $this->assertGreaterThan(0, $parts, 'Expected a direct or chunked encoded payload.');
+
+            for ($index = 0; $index < $parts; $index++) {
+                $key = $baseAttribute.'-'.$index;
+                $this->assertArrayHasKey($key, $attributes);
+                $encoded .= (string) $attributes[$key];
+            }
+        }
+
+        $decoded = base64_decode($encoded, true);
+        $this->assertIsString($decoded);
+
+        return $decoded;
     }
 
     private function directive(string $csp, string $name): string
