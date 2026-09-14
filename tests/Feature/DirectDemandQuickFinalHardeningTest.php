@@ -9,10 +9,12 @@ use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
+use App\Http\Controllers\Admin\DirectDemandQuickMonetizeController;
 use App\Models\DemandAccount;
 use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
 use App\Models\DemandSite;
+use App\Models\DemandWidget;
 use App\Services\Demand\DemandAccountService;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
@@ -78,14 +80,33 @@ final class DirectDemandQuickFinalHardeningTest extends TestCase
 
     public function test_quick_csp_keeps_resource_only_origins_out_of_script_src_and_allows_reviewed_stylesheet(): void
     {
-        $tag = '<script async src="https://cdn.taboola.com/libtrc/horus-final/loader.js"></script>'
-            ."<iframe id=\"provider-frame\" src='https://securepubads.g.doubleclick.net/provider-frame'></iframe>"
+        $resourceTag = "<iframe id=\"provider-frame\" src='https://securepubads.g.doubleclick.net/provider-frame'></iframe>"
             .'<link rel=stylesheet href=https://pagead2.googlesyndication.com/provider.css>';
+        $resourceOriginsMethod = new \ReflectionMethod(DirectDemandQuickMonetizeController::class, 'resourceOrigins');
+        $resourceOriginsMethod->setAccessible(true);
+        $resourceOrigins = $resourceOriginsMethod->invoke(app(DirectDemandQuickMonetizeController::class), $resourceTag);
+
+        $this->assertSame(['https://securepubads.g.doubleclick.net'], $resourceOrigins['frame']);
+        $this->assertSame(['https://pagead2.googlesyndication.com'], $resourceOrigins['style']);
+
+        $tag = '<script async src="https://cdn.taboola.com/libtrc/horus-final/loader.js"></script>'
+            .'<div id="quick-style-zone"></div>';
 
         $this->adminSession()
             ->post(route('admin.demand.quick.store'), $this->payload($tag))
             ->assertRedirect()
             ->assertSessionHasNoErrors();
+
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $widgetConfiguration = (array) $widget->configuration;
+        $widgetConfiguration['isolation_allowed_origins'] = collect((array) ($widgetConfiguration['isolation_allowed_origins'] ?? []))
+            ->merge($resourceOrigins['all'])
+            ->unique()
+            ->values()
+            ->all();
+        $widgetConfiguration['isolation_frame_origins'] = $resourceOrigins['frame'];
+        $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
+        $widget->update(['configuration' => $widgetConfiguration]);
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.final_quick.candidates.0');
