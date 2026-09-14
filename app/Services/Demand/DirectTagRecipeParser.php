@@ -133,12 +133,21 @@ final class DirectTagRecipeParser
     private function attributes(string $source): array
     {
         $attributes = [];
-        preg_match_all('/([A-Za-z_:][-A-Za-z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+)))?/u', $source, $matches, PREG_SET_ORDER);
+        preg_match_all(
+            '/([A-Za-z_:][-A-Za-z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+)))?/u',
+            $source,
+            $matches,
+            PREG_SET_ORDER | PREG_UNMATCHED_AS_NULL,
+        );
         foreach ($matches as $match) {
             $name = strtolower((string) $match[1]);
             if ($name === '') {
                 continue;
             }
+            // PREG_UNMATCHED_AS_NULL makes the null-coalescing chain select the
+            // attribute form that actually matched. Without it PCRE supplies an
+            // empty string for the first unmatched capture, which used to erase
+            // perfectly valid single-quoted and unquoted values.
             $value = $match[2] ?? $match[3] ?? $match[4] ?? '';
             $attributes[$name] = html_entity_decode((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
