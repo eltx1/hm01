@@ -2,11 +2,17 @@
 
 use App\Http\Controllers\Admin\DemandNetworkController;
 use App\Http\Controllers\Admin\DirectDemandAccountController;
+use App\Http\Controllers\Admin\DirectDemandQuickMonetizeController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix('admin')->group(function (): void {
     Route::get('/demand', [DemandNetworkController::class, 'index'])
         ->middleware('permission:demand.view')->name('admin.demand.index');
+
+    Route::get('/demand/quick', [DirectDemandQuickMonetizeController::class, 'create'])
+        ->middleware('permission:demand.manage')->name('admin.demand.quick.create');
+    Route::post('/demand/quick', [DirectDemandQuickMonetizeController::class, 'store'])
+        ->middleware('permission:demand.manage')->name('admin.demand.quick.store');
 
     Route::get('/demand/accounts/create', [DirectDemandAccountController::class, 'create'])
         ->middleware('permission:demand.manage')->name('admin.demand.accounts.create');

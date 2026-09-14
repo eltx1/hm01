@@ -202,7 +202,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
             'scope' => DemandAccountScope::HorusMedia, 'integration_mode' => DemandIntegrationMode::DirectJs,
             'approval_status' => DemandApprovalStatus::Approved, 'is_enabled' => true, 'is_default' => false,
             'revenue_share_percent' => 10, 'fallback_priority' => 20, 'account_identifier' => 'custom-public',
-            'configuration' => ['allowed_script_origins' => ['https://ads.example.com']],
+            'configuration' => ['allowed_script_origins' => ['https://cdn.taboola.com']],
         ], $this->admin);
         $customSite = $service->assignSite($custom, $this->site, [
             'approval_status' => DemandApprovalStatus::Approved, 'is_enabled' => true, 'integration_mode' => DemandIntegrationMode::DirectJs,
@@ -211,7 +211,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
             'approval_status' => DemandApprovalStatus::Approved, 'is_enabled' => true, 'integration_mode' => DemandIntegrationMode::DirectJs,
             'placement_code' => 'custom-zone',
         ], $this->admin);
-        $tag = '<div id="custom-zone"></div><script src="https://ads.example.com/public.js"></script><script>window.providerQueue=window.providerQueue||[];</script>';
+        $tag = '<div id="custom-zone"></div><script src="https://cdn.taboola.com/public.js"></script><script>window.providerQueue=window.providerQueue||[];</script>';
 
         $this->adminSession()->post(route('admin.sites.demand.widgets.store', [$this->site, $customPlacement]), [
             'name' => 'Missing isolation', 'integration_mode' => 'DIRECT_JS', 'approval_status' => 'APPROVED', 'is_enabled' => 1,
@@ -221,7 +221,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->post(route('admin.sites.demand.widgets.store', [$this->site, $customPlacement]), [
             'name' => 'Isolated widget', 'integration_mode' => 'DIRECT_JS', 'approval_status' => 'APPROVED', 'is_enabled' => 1,
             'tag_review_approved' => 1, 'direct_tag_template' => $tag,
-            'configuration_json' => json_encode(['isolation_allowed_origins' => ['https://ads.example.com']]),
+            'configuration_json' => json_encode(['isolation_allowed_origins' => ['https://cdn.taboola.com']]),
         ])->assertRedirect();
 
         $widget = DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $customPlacement->id)->where('name', 'Isolated widget')->firstOrFail();

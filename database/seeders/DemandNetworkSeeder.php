@@ -6,6 +6,7 @@ use App\Enums\DemandIntegrationMode;
 use App\Enums\DemandNetworkCode;
 use App\Models\DemandNetwork;
 use App\Services\Demand\ConfiguredDemandConnector;
+use App\Services\Demand\CustomThirdPartyTagConnector;
 use App\Services\Demand\ExoClickConnector;
 use App\Services\Demand\MgidConnector;
 use App\Services\Demand\OutbrainConnector;
@@ -90,7 +91,7 @@ class DemandNetworkSeeder extends Seeder
             ],
             DemandNetworkCode::CustomThirdPartyTag->value => [
                 'name' => 'Custom Third-Party Tag',
-                'connector_class' => ConfiguredDemandConnector::class,
+                'connector_class' => CustomThirdPartyTagConnector::class,
                 'default_integration_mode' => DemandIntegrationMode::GamThirdPartyCreative,
                 'supports_direct_js' => true,
                 'supports_gam_creative' => true,

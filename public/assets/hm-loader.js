@@ -1345,9 +1345,10 @@ function nativeDefinition(config, code) {
 
     function nativeRendered(container, tag) {
         var policy = directRenderPolicy(tag || {});
-        if (policy.successSelector && document.querySelector) {
+        if (policy.successSelector) {
+            if (!document.querySelector) return false;
             try {
-                if (document.querySelector(policy.successSelector)) return true;
+                return Boolean(document.querySelector(policy.successSelector));
             } catch (error) {
                 return false;
             }
