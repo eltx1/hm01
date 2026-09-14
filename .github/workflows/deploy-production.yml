@@ -29,13 +29,13 @@ concurrency:
 
 jobs:
   deploy:
-    # Manual dispatch is always available for the first controlled deployment.
-    # Automatic workflow_run deployment remains fail-safe OFF until the owner
-    # explicitly enables HORUS_PRODUCTION_DEPLOY_ENABLED after that drill.
+    # Successful validated releases from main deploy automatically. Keep an
+    # explicit emergency opt-out without making normal production deployment
+    # depend on a repository variable being pre-created.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
-          (vars.HORUS_PRODUCTION_DEPLOY_ENABLED == 'true' &&
-           github.event.workflow_run.conclusion == 'success') }}
+          (github.event.workflow_run.conclusion == 'success' &&
+           vars.HORUS_PRODUCTION_DEPLOY_DISABLED != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -165,6 +165,27 @@ jobs:
              HORUS_DEPLOY_MYSQL_CONFIG_HELPER='$remote_dir/write-mysql-client-config.php' \
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
+
+      - name: Verify Quick Monetize control-plane route
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          status="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "curl --noproxy '*' --resolve app.horusmedia.net:443:127.0.0.1 -k -sS \
+              --output /dev/null --write-out '%{http_code}' \
+              https://app.horusmedia.net/admin/demand/quick")"
+          case "$status" in
+            302|303)
+              echo "Quick Monetize route is registered and protected by authentication: HTTP $status."
+              ;;
+            *)
+              echo "Quick Monetize route smoke test failed: HTTP $status" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Probe public production edge
         shell: bash
