@@ -74,7 +74,30 @@
             return;
         }
 
+        // Keep the host's light DOM empty. The immediately previous loader
+        // release fell through from an unmatched success selector to a generic
+        // child-node check. Mounting the frame in a ShadowRoot means that old
+        // loader still sees zero light-DOM children, so blocked/empty GPT cannot
+        // become a false success after an application rollback. Only the
+        // authoritative `data-hm-gpt-status="rendered"` selector can succeed.
+        if (typeof container.attachShadow !== 'function') {
+            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
+            return;
+        }
+        var mount;
+        try {
+            mount = container.shadowRoot || container.attachShadow({ mode: 'open' });
+        } catch (error) {
+            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
+            return;
+        }
+        if (!mount || typeof mount.appendChild !== 'function') {
+            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
+            return;
+        }
+
         container.setAttribute('data-hm-gpt-runtime-state', 'starting');
+        container.setAttribute('data-hm-gpt-rollback-safe', 'shadow');
         var frame = document.createElement('iframe');
         // Initialize from one actual declared size. Never combine the largest
         // width and height from different sizes into an undeclared rectangle.
@@ -104,7 +127,7 @@
         frame.onerror = function () {
             container.setAttribute('data-hm-gpt-runtime-state', 'failed');
         };
-        container.appendChild(frame);
+        mount.appendChild(frame);
     }
 
     function scan(root) {
