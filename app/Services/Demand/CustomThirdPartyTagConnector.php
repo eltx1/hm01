@@ -670,11 +670,15 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     private function assertNoQuickSelfNavigation(string $html): void
     {
+        $receiver = '(?:window|self|document|globalThis)';
+        $location = '(?:\.\s*location|\[\s*["\']location["\']\s*\])';
+        $href = '(?:\.\s*href|\[\s*["\']href["\']\s*\])';
+        $navigationMethod = '(?:\.\s*(?:assign|replace)|\[\s*["\'](?:assign|replace)["\']\s*\])';
         $navigationPatterns = [
-            '/(?<![\w.])(?:(?:window|self|document)\s*\.\s*)?location\s*(?:\.\s*href)?\s*=/i',
-            '/(?<![\w.])(?:(?:window|self|document)\s*\.\s*)?location\s*\.\s*(?:assign|replace)\s*\(/i',
-            '/(?:window|self|document)\s*\[\s*["\']location["\']\s*\]\s*(?:\.\s*href|\[\s*["\']href["\']\s*\])?\s*=/i',
-            '/(?:window|self|document)\s*\[\s*["\']location["\']\s*\]\s*\.\s*(?:assign|replace)\s*\(/i',
+            '/\b'.$receiver.'\s*'.$location.'\s*(?:'.$href.'\s*)?=/i',
+            '/\b'.$receiver.'\s*'.$location.'\s*'.$navigationMethod.'\s*\(/i',
+            '/(?<![\w.$])location\s*(?:'.$href.'\s*)?=/i',
+            '/(?<![\w.$])location\s*'.$navigationMethod.'\s*\(/i',
         ];
         foreach ($navigationPatterns as $pattern) {
             if (preg_match($pattern, $html)) {
@@ -686,16 +690,13 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     /** @return array<int, string> */
     private function externalScriptUrls(string $html): array
     {
-        if (! preg_match_all('/<script\b[^>]*\bsrc\s*=\s*(["\'])(.*?)\1/is', $html, $matches)) {
-            return [];
-        }
+        // Review and publication must share one HTML attribute parser. Re-parsing
+        // script tags here with a second quoted-only regex previously made
+        // single-quoted/unquoted tags pass one layer and fail another.
+        $parsed = (new DirectTagRecipeParser())->parse($html);
 
-        return collect($matches[2])
-            ->map(function ($url): string {
-                $url = html_entity_decode(trim((string) $url), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-                return str_starts_with($url, '//') ? 'https:'.$url : $url;
-            })
+        return collect((array) ($parsed['detectedScripts'] ?? []))
+            ->map(fn ($script): string => trim((string) ($script['url'] ?? '')))
             ->filter()
             ->unique()
             ->values()
