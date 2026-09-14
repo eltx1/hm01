@@ -8,18 +8,38 @@ const gptSource = await readFile(new URL('../../public/assets/hm-gpt-direct.js',
 
 function container(attributes, id = '') {
     const frames = [];
-    return {
+    const childNodes = [];
+    const target = {
         id,
         frames,
+        childNodes,
+        innerHTML: '',
+        shadowRoot: null,
         style: {},
         getAttribute(name) { return attributes[name] ?? null; },
         setAttribute(name, value) { attributes[name] = String(value); },
         appendChild(frame) {
+            childNodes.push(frame);
             frames.push(frame);
             queueMicrotask(() => frame.onload?.());
             return frame;
         },
+        attachShadow() {
+            if (target.shadowRoot) throw new Error('shadow root already attached');
+            const shadowChildren = [];
+            target.shadowRoot = {
+                childNodes: shadowChildren,
+                appendChild(frame) {
+                    shadowChildren.push(frame);
+                    frames.push(frame);
+                    queueMicrotask(() => frame.onload?.());
+                    return frame;
+                },
+            };
+            return target.shadowRoot;
+        },
     };
+    return target;
 }
 
 function iframe() {
@@ -113,6 +133,12 @@ function executeGptFrameDocument(frame, target, innerId, eventSize) {
     renderListener({ slot, isEmpty: false, size: eventSize });
 
     return innerNode;
+}
+
+function legacyLoaderWouldTreatGptAsRendered(target, attributes) {
+    if (attributes['data-hm-gpt-status'] === 'rendered') return true;
+    if (target.childNodes && target.childNodes.length) return true;
+    return Boolean(typeof target.innerHTML === 'string' && target.innerHTML.replace(/\s/g, '') !== '');
 }
 
 function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
@@ -221,6 +247,33 @@ test('Google GPT direct runtime waits for slotRenderEnded instead of treating if
     assert.ok(frame.srcdoc.includes('report("rendered",renderedSize)'));
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'loaded');
     assert.equal(attributes['data-hm-gpt-status'], undefined);
+    assert.equal(attributes['data-hm-gpt-rollback-safe'], 'shadow');
+    assert.ok(target.shadowRoot);
+    assert.equal(target.childNodes.length, 0);
+    assert.equal(target.innerHTML, '');
+    assert.equal(legacyLoaderWouldTreatGptAsRendered(target, attributes), false);
+});
+
+test('Google GPT runtime stays authoritative even with the pre-fix loader rollback heuristic', async () => {
+    const attributes = {
+        'data-hm-gpt-direct': '1',
+        'data-hm-gpt-ad-unit-path': '/1234567/rollback_safe',
+        'data-hm-gpt-sizes': '[[300,250]]',
+        'data-hm-gpt-inner-id': 'provider-rollback-safe',
+    };
+    const target = container(attributes, 'hm-gpt-placement-rollback-safe');
+
+    const { createdFrames } = run(gptSource, '[data-hm-gpt-direct="1"]', target);
+    await tick();
+
+    assert.equal(createdFrames.length, 1);
+    assert.equal(target.childNodes.length, 0, 'GPT frame must not appear in the host light DOM');
+    assert.equal(legacyLoaderWouldTreatGptAsRendered(target, attributes), false, 'iframe load alone must not satisfy the old loader fallback');
+
+    executeGptFrameDocument(createdFrames[0], target, 'provider-rollback-safe', [300, 250]);
+
+    assert.equal(attributes['data-hm-gpt-status'], 'rendered');
+    assert.equal(legacyLoaderWouldTreatGptAsRendered(target, attributes), true, 'real slotRenderEnded success remains visible to the old selector check');
 });
 
 test('Google GPT multi-size runtime starts at a declared size and resizes to the actual creative', async () => {
