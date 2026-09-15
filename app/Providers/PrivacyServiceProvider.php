@@ -16,7 +16,7 @@ final class PrivacyServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Route::middleware([PrivacyDiagnosticRequest::class, 'throttle:privacy-diagnostic-report'])->group(function (): void {
-            Route::options('/privacy-diagnostics/report', fn () => response('', 204));
+            Route::options('/privacy-diagnostics/report', [PrivacyDiagnosticReportController::class, 'options']);
             Route::post('/privacy-diagnostics/report', PrivacyDiagnosticReportController::class)
                 ->name('privacy-diagnostics.report');
         });
