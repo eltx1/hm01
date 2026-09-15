@@ -5,11 +5,17 @@ namespace App\Http\Controllers;
 use App\Services\Privacy\PrivacyReadinessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 final class PrivacyDiagnosticReportController extends Controller
 {
+    public function options(): Response
+    {
+        return response('', 204);
+    }
+
     public function __invoke(Request $request, PrivacyReadinessService $privacy): JsonResponse
     {
         $allowedKeys = ['loaderVersion', 'configVersion', 'hostname', 'timestamp', 'tcf', 'gpp', 'gpcDetected', 'configuredTimeoutAction', 'prebid', 'privacyGateRespected'];
