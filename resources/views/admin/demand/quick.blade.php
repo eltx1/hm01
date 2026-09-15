@@ -5,7 +5,10 @@
 @php
     $hasBlockingReason = $blockingReasons !== [];
     $groupedSites = $sites->groupBy(fn ($site) => $site->publisher?->display_name ?? 'Unassigned');
-    $presetGroups = collect($quickPresets)->groupBy(fn ($preset) => $preset['group'] ?? 'Formats');
+    // Preserve the original preset keys (responsive_display, sticky_bottom, ...).
+    // Without preserveKeys=true, Collection::groupBy() reindexes each group to 0..N,
+    // causing the UI to submit numeric values that fail backend validation.
+    $presetGroups = collect($quickPresets)->groupBy(fn ($preset) => $preset['group'] ?? 'Formats', true);
     $oldMode = old('placement_mode', old('placement_id') ? 'existing' : 'new');
 @endphp
 
@@ -87,8 +90,8 @@
                 @error('site_id')<span class="error">{{ $message }}</span>@enderror
             </label>
 
-            <label id="quick-preset-wrap">Ad format / surface
-                <select class="hm-input" name="placement_preset" id="quick-preset" @disabled($hasBlockingReason)>
+            <label id="quick-preset-wrap" style="{{ $oldMode === 'existing' ? 'display:none;' : '' }}">Ad format / surface
+                <select class="hm-input" name="placement_preset" id="quick-preset" @disabled($hasBlockingReason || $oldMode === 'existing')>
                     @foreach($presetGroups as $groupName => $groupPresets)
                         <optgroup label="{{ $groupName }}">
                             @foreach($groupPresets as $key => $preset)
@@ -108,8 +111,8 @@
                 <span>Use an existing placement instead <span class="muted">(Advanced)</span></span>
             </label>
 
-            <label class="full" id="quick-existing-wrap" hidden>Existing placement
-                <select class="hm-input" name="placement_id" id="quick-placement" @disabled($hasBlockingReason)>
+            <label class="full" id="quick-existing-wrap" style="{{ $oldMode === 'existing' ? '' : 'display:none;' }}">Existing placement
+                <select class="hm-input" name="placement_id" id="quick-placement" @disabled($hasBlockingReason || $oldMode !== 'existing')>
                     <option value="">Select placement</option>
                     @foreach($sites as $site)
                         @foreach($site->placements as $placement)
@@ -190,10 +193,17 @@
     const refreshMode = () => {
         const existing = useExisting.checked;
         mode.value = existing ? 'existing' : 'new';
-        existingWrap.hidden = !existing;
-        presetWrap.hidden = existing;
+
+        // Use inline display state instead of the hidden attribute because the
+        // admin form CSS can define label display rules that override UA hidden styling.
+        existingWrap.style.display = existing ? '' : 'none';
+        presetWrap.style.display = existing ? 'none' : '';
+
         placement.required = existing;
         preset.required = !existing;
+        placement.disabled = blocked || !existing;
+        preset.disabled = blocked || existing;
+
         refreshPlacements();
         submit.disabled = blocked || !site.value || (existing ? !placement.value : !preset.value);
     };
