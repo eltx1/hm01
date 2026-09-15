@@ -32,7 +32,8 @@
         <section class="metric-grid">
             @foreach([
                 ['Estimated earnings', $currency['estimated_earnings_minor'], 'Not finalized'],
-                ['Finalized earnings', $currency['finalized_earnings_minor'], 'Current period finalized rows'],
+                ['Finalized earnings', $currency['finalized_earnings_minor'], 'Current period finalized ad earnings'],
+                ['Affiliate earnings', $currency['affiliate_earnings_minor'], 'Latest finalized statement'],
                 ['Current payable', $currency['current_payable_minor'], 'Finalized statement liability'],
                 ['Below threshold', $currency['below_threshold_minor'], 'Not yet payable'],
                 ['Carry-forward', $currency['carry_forward_minor'], 'Remaining statement balance'],

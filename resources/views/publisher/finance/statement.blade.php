@@ -11,6 +11,7 @@
     @foreach([
         ['Opening balance', $statement->opening_balance_minor],
         ['Publisher earnings', $statement->publisher_earnings_minor],
+        ['Affiliate earnings', $statement->affiliate_earnings_minor],
         ['Deductions', $statement->deductions_minor],
         ['Paid', $statement->paid_minor],
         ['Balance due', $statement->balance_due_minor],
@@ -24,9 +25,25 @@
 <article>
     <p class="eyebrow">Publisher-visible detail</p><h2>Earnings lines</h2>
     @forelse($statement->line_items as $line)
+        @php($isAffiliate = ($line['source'] ?? '') === 'AFFILIATE')
         <div class="event">
-            <div><strong>{{ ($line['source'] ?? '') === 'ADJUSTMENT' ? 'Approved adjustment' : ($line['site'] ?? 'All Publisher inventory') }}</strong><br><span>{{ number_format((int) ($line['impressions'] ?? 0)) }} impressions</span></div>
-            <span>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) ($line['publisher_earnings_minor'] ?? 0)) }}</span>
+            <div>
+                <strong>
+                    @if($isAffiliate)
+                        Referral commission{{ filled($line['referred_publisher'] ?? null) ? ' · '.$line['referred_publisher'] : '' }}
+                    @elseif(($line['source'] ?? '') === 'ADJUSTMENT')
+                        Approved adjustment
+                    @else
+                        {{ $line['site'] ?? 'All Publisher inventory' }}
+                    @endif
+                </strong><br>
+                @if($isAffiliate)
+                    <span>{{ number_format(((int) ($line['affiliate_commission_rate_bp'] ?? 0)) / 100, 2) }}% of finalized referred Publisher earnings</span>
+                @else
+                    <span>{{ number_format((int) ($line['impressions'] ?? 0)) }} impressions</span>
+                @endif
+            </div>
+            <span>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) ($isAffiliate ? ($line['affiliate_earnings_minor'] ?? 0) : ($line['publisher_earnings_minor'] ?? 0))) }}</span>
         </div>
     @empty<p class="muted">No statement lines.</p>@endforelse
 </article>

@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::middleware('web')->group(base_path('routes/thoth-applications.php'));
             Route::middleware('web')->group(base_path('routes/site-quality-review.php'));
             Route::middleware('web')->group(base_path('routes/traffic-gate.php'));
+            Route::middleware('web')->group(base_path('routes/publisher-affiliates.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {

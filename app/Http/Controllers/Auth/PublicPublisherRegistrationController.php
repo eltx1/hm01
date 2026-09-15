@@ -8,25 +8,30 @@ use App\Services\PublisherApplications\PublisherApplicationLegalService;
 use App\Services\PublisherApplications\PublisherApplicationReadinessService;
 use App\Services\PublisherApplications\PublisherApplicationService;
 use App\Services\PublisherApplications\TurnstileVerifier;
+use App\Services\Reporting\PublisherAffiliateService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 final class PublicPublisherRegistrationController extends Controller
 {
-    public function create(PublisherApplicationReadinessService $readiness, PublisherApplicationLegalService $legal): View|Response
+    public function create(Request $request, PublisherApplicationReadinessService $readiness, PublisherApplicationLegalService $legal): View|Response
     {
         abort_unless(config('publisher-applications.public_registration_enabled'), 404);
         if (! $readiness->isReady()) {
             return response()->view('auth.publisher-registration-unavailable', status: 503);
         }
 
-        return view('auth.register-publisher', ['legalDocuments' => $legal->documents()]);
+        return view('auth.register-publisher', [
+            'legalDocuments' => $legal->documents(),
+            'referralCode' => Str::upper(trim((string) $request->query('ref', ''))),
+        ]);
     }
 
     public function store(
@@ -36,6 +41,7 @@ final class PublicPublisherRegistrationController extends Controller
         TurnstileVerifier $turnstile,
         PublisherApplicantEmailService $emails,
         PublisherApplicationReadinessService $readiness,
+        PublisherAffiliateService $affiliates,
     ): RedirectResponse|Response {
         abort_unless(config('publisher-applications.public_registration_enabled'), 404);
         if (! $readiness->isReady()) {
@@ -48,16 +54,9 @@ final class PublicPublisherRegistrationController extends Controller
         $data = $request->validate(array_merge([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email:rfc', 'max:255'],
-            // Keep a meaningful minimum without forcing composition rules that
-            // create avoidable signup friction. Rate limiting, password hashing,
-            // lockout controls, and normal password reset protections remain.
             'password' => ['required', 'confirmed', Password::min(10)],
             'publisher_name' => ['required', 'string', 'max:255'],
-            // Registration activates the Publisher account only. Website/domain
-            // fields are deliberately not accepted here, even if an older client
-            // sends them; every website has its own verification and review.
-            // Existing legacy applications that already have domain claims remain
-            // readable and completable through their compatibility flow.
+            'referral_code' => ['nullable', 'string', 'max:32'],
             '_company_website' => ['nullable', 'string', 'max:0'],
             'legal' => ['required', 'array'],
             'marketing_opt_in' => ['sometimes', 'boolean'],
@@ -66,11 +65,12 @@ final class PublicPublisherRegistrationController extends Controller
         $turnstile->verify($data['cf-turnstile-response'] ?? null);
 
         try {
-            $application = DB::transaction(function () use ($applications, $legal, $data, $request) {
+            $application = DB::transaction(function () use ($applications, $affiliates, $legal, $data, $request) {
                 $application = $applications->registerActive($data);
+                $affiliates->attribute($application->publisher, $data['referral_code'] ?? null);
                 $legal->record($application, $application->applicant, $data, $request);
 
-                return $application;
+                return $application->refresh()->load(['applicant', 'publisher']);
             });
         } catch (ValidationException $exception) {
             if (array_key_exists('email', $exception->errors())) {

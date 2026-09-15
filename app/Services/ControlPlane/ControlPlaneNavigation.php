@@ -40,6 +40,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Publishers', [
                 $this->item('Publisher accounts', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
+                $this->item('Publisher Affiliates', 'admin.publisher-affiliates.index', 'publishers.view', ['admin.publisher-affiliates.*']),
                 $this->item('Organizations', 'admin.organizations.index', 'organizations.view', ['admin.organizations.*']),
             ]),
             $this->group('Sites & Inventory', [
@@ -99,6 +100,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Reports & Earnings', [
                 $this->item('Earnings & Payments', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
+                $this->item('Affiliate referrals', 'publisher.affiliate.index', 'finance.publisher.view_own', ['publisher.affiliate.*']),
             ]),
             $this->group('Commercial', [
                 $this->item('Commercial terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),

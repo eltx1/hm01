@@ -25,6 +25,7 @@ final class FinancialPeriodService
 {
     public function __construct(
         private readonly PublisherStatementService $statements,
+        private readonly PublisherAffiliateService $affiliates,
         private readonly AuditRecorder $audit,
         private readonly MonetizationFinancialReadinessService $monetizationReadiness,
     ) {}
@@ -226,8 +227,7 @@ final class FinancialPeriodService
                 ->where('settlement_eligible', true)
                 ->get();
 
-            foreach ($daily->groupBy(fn (DailyReport $report) => $report->report_source_connection_id.'|'.$report->report_dimension_id
-            ) as $group) {
+            foreach ($daily->groupBy(fn (DailyReport $report) => $report->report_source_connection_id.'|'.$report->report_dimension_id) as $group) {
                 $first = $group->first();
                 $metrics = $this->sumMetrics($group->all());
                 $snapshot = [
@@ -259,6 +259,19 @@ final class FinancialPeriodService
                 $this->statements->generate($period, $publisher, $actor);
             }
 
+            $affiliateSummaries = $this->affiliates->reconcilePeriod($period, $actor);
+            foreach ($affiliateSummaries as $referrerPublisherId => $affiliateSummary) {
+                $referrer = Publisher::withoutGlobalScopes()->findOrFail($referrerPublisherId);
+                $this->statements->generate(
+                    $period,
+                    $referrer,
+                    $actor,
+                    (int) $affiliateSummary['total_minor'],
+                    $affiliateSummary['line_items'],
+                );
+            }
+            $affiliateCommissionTotal = (int) collect($affiliateSummaries)->sum('total_minor');
+
             $totals = $this->sumMetrics($daily->all());
             $approvedAdjustments = RevenueAdjustment::withoutGlobalScopes()
                 ->where('financial_period_id', $period->id)
@@ -274,6 +287,7 @@ final class FinancialPeriodService
             $totals['horus_earnings_minor'] = max(0, $totals['horus_earnings_minor'] - $horusImpact);
             $totals['mcm_partner_earnings_minor'] = max(0, $totals['mcm_partner_earnings_minor'] - $mcmImpact);
             $totals['approved_adjustments_minor'] = $adjustments;
+            $totals['affiliate_commissions_minor'] = $affiliateCommissionTotal;
             $snapshot = [
                 'period' => $period->period_key,
                 'currency' => $period->currency,

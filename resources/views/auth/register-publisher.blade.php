@@ -9,6 +9,12 @@
 <div class="notice"><strong>One-step setup:</strong> Create the account, then add a website from the dashboard. Only websites require Horus review.</div>
 <form method="POST" action="{{ route('publisher-registration.store') }}" class="form-stack publisher-application-form">
     @csrf
+    @if(filled(old('referral_code', $referralCode ?? null)))
+        <input type="hidden" name="referral_code" value="{{ old('referral_code', $referralCode) }}">
+        <div class="notice"><strong>Publisher referral:</strong> This account will be linked to the Publisher who invited you.</div>
+        @error('referral_code')<p class="field-error" role="alert">{{ $message }}</p>@enderror
+    @endif
+
     <label for="publisher-name"><span class="field-label">Full name <span class="required-marker" aria-hidden="true">Required</span></span></label>
     <input id="publisher-name" class="hm-input" name="name" value="{{ old('name') }}" required autocomplete="name" maxlength="255" @error('name') aria-invalid="true" aria-describedby="publisher-name-error" @enderror>
     @error('name')<p class="field-error" id="publisher-name-error" role="alert">{{ $message }}</p>@enderror

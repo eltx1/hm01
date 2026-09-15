@@ -26,8 +26,14 @@ final class PublisherStatementService
 {
     public function __construct(private readonly AuditRecorder $audit, private readonly SecureUploadService $uploads) {}
 
-    public function generate(FinancialPeriod $period, Publisher $publisher, ?User $actor): PublisherStatement
-    {
+    /** @param array<int, array<string, mixed>> $affiliateLineItems */
+    public function generate(
+        FinancialPeriod $period,
+        Publisher $publisher,
+        ?User $actor,
+        int $affiliateEarningsMinor = 0,
+        array $affiliateLineItems = [],
+    ): PublisherStatement {
         $rows = MonthlyReport::withoutGlobalScopes()
             ->with(['dimension.site', 'connection.source'])
             ->where('financial_period_id', $period->id)
@@ -59,12 +65,12 @@ final class PublisherStatementService
             })
             ->get();
         $adjustmentDeductions = (int) $adjustments->sum('amount_minor');
-        $publisherAdjustmentImpact = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0)
-        );
+        $publisherAdjustmentImpact = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0));
         $deductions = $baseDeductions + $adjustmentDeductions;
         $net = max(0, (int) $rows->sum('net_revenue_minor') - $adjustmentDeductions);
         $earnings = max(0, (int) $rows->sum('publisher_earnings_minor') - $publisherAdjustmentImpact);
-        $balance = $opening + $earnings;
+        $affiliateEarnings = max(0, $affiliateEarningsMinor);
+        $balance = $opening + $earnings + $affiliateEarnings;
 
         $contract = PublisherContract::withoutGlobalScopes()
             ->where('publisher_id', $publisher->id)
@@ -95,6 +101,7 @@ final class PublisherStatementService
                 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
                 'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),
                 'publisher_earnings_minor' => (int) $group->sum('publisher_earnings_minor'),
+                'affiliate_earnings_minor' => 0,
             ];
         })->values()->all();
         foreach ($adjustments as $adjustment) {
@@ -108,7 +115,21 @@ final class PublisherStatementService
                 'gross_revenue_minor' => 0,
                 'net_revenue_minor' => -((int) $adjustment->amount_minor),
                 'publisher_earnings_minor' => -((int) data_get($adjustment->metadata, 'publisher_impact_minor', 0)),
+                'affiliate_earnings_minor' => 0,
             ];
+        }
+        foreach ($affiliateLineItems as $affiliateLineItem) {
+            $lineItems[] = array_merge([
+                'source' => 'AFFILIATE',
+                'site_id' => null,
+                'site' => null,
+                'description' => 'Publisher referral commission',
+                'impressions' => 0,
+                'gross_revenue_minor' => 0,
+                'net_revenue_minor' => 0,
+                'publisher_earnings_minor' => 0,
+                'affiliate_earnings_minor' => 0,
+            ], $affiliateLineItem);
         }
 
         $snapshot = [
@@ -120,6 +141,7 @@ final class PublisherStatementService
             'deductions_minor' => $deductions,
             'net_revenue_minor' => $net,
             'publisher_earnings_minor' => $earnings,
+            'affiliate_earnings_minor' => $affiliateEarnings,
             'payment_threshold_minor' => $threshold,
             'approved_adjustment_ids' => $adjustments->pluck('id')->sort()->values()->all(),
             'line_items' => $lineItems,
@@ -147,6 +169,7 @@ final class PublisherStatementService
                 'deductions_minor' => $deductions,
                 'net_revenue_minor' => $net,
                 'publisher_earnings_minor' => $earnings,
+                'affiliate_earnings_minor' => $affiliateEarnings,
                 'paid_minor' => 0,
                 'balance_due_minor' => $balance,
                 'carry_forward_minor' => $carryForward,
@@ -168,6 +191,8 @@ final class PublisherStatementService
         $this->audit->record('reporting.publisher_statement.generated', $publisher->organization_id, $actor, $statement, newValues: [
             'statement_number' => $statement->statement_number,
             'period_key' => $period->period_key,
+            'publisher_earnings_minor' => $earnings,
+            'affiliate_earnings_minor' => $affiliateEarnings,
             'balance_due_minor' => $balance,
             'status' => $status->value,
             'snapshot_hash' => $hash,
@@ -276,6 +301,7 @@ final class PublisherStatementService
                 foreach ([
                     ['Opening balance', $statement->opening_balance_minor],
                     ['Publisher earnings', $statement->publisher_earnings_minor],
+                    ['Affiliate earnings', $statement->affiliate_earnings_minor],
                     ['Deductions', -((int) $statement->deductions_minor)],
                     ['Paid', $statement->paid_minor],
                     ['Balance due', $statement->balance_due_minor],
@@ -285,13 +311,16 @@ final class PublisherStatementService
                     fputcsv($handle, ['SUMMARY', $description, $amount, $statement->currency, '']);
                 }
                 foreach ($statement->line_items ?? [] as $row) {
-                    $description = ($row['source'] ?? '') === 'ADJUSTMENT'
-                        ? 'Approved adjustment'
-                        : ($row['site'] ?? 'All Publisher inventory');
+                    $isAffiliate = ($row['source'] ?? '') === 'AFFILIATE';
+                    $description = match ($row['source'] ?? '') {
+                        'ADJUSTMENT' => 'Approved adjustment',
+                        'AFFILIATE' => 'Publisher referral commission'.(filled($row['referred_publisher'] ?? null) ? ': '.$row['referred_publisher'] : ''),
+                        default => $row['site'] ?? 'All Publisher inventory',
+                    };
                     fputcsv($handle, [
-                        'PUBLISHER_EARNINGS',
+                        $isAffiliate ? 'AFFILIATE_EARNINGS' : 'PUBLISHER_EARNINGS',
                         Csv::safeCell($description),
-                        $row['publisher_earnings_minor'] ?? 0,
+                        $isAffiliate ? ($row['affiliate_earnings_minor'] ?? 0) : ($row['publisher_earnings_minor'] ?? 0),
                         $statement->currency,
                         $row['impressions'] ?? 0,
                     ]);
@@ -301,15 +330,16 @@ final class PublisherStatementService
                 return;
             }
 
-            fputcsv($handle, ['Source', 'Website', 'Impressions', 'Gross Revenue Minor', 'Net Revenue Minor', 'Publisher Earnings Minor']);
+            fputcsv($handle, ['Source', 'Website', 'Impressions', 'Gross Revenue Minor', 'Net Revenue Minor', 'Publisher Earnings Minor', 'Affiliate Earnings Minor']);
             foreach ($statement->line_items ?? [] as $row) {
                 fputcsv($handle, [
                     Csv::safeCell($row['source'] ?? ''),
-                    Csv::safeCell($row['site'] ?? ''),
+                    Csv::safeCell($row['site'] ?? ($row['referred_publisher'] ?? '')),
                     $row['impressions'] ?? 0,
                     $row['gross_revenue_minor'] ?? 0,
                     $row['net_revenue_minor'] ?? 0,
                     $row['publisher_earnings_minor'] ?? 0,
+                    $row['affiliate_earnings_minor'] ?? 0,
                 ]);
             }
             fclose($handle);
