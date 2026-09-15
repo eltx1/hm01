@@ -1,0 +1,85 @@
+const ELIGIBLE_ANCHOR = `    function eligibleElements(config) {\n        var nodes = [];`;
+const STICKY_BLOCK = `                            if (formatSettings.position && element.style && placement.type === 'STICKY') {\n                                element.style.position = 'fixed'; element.style.zIndex = '2147483000'; element.style.left = '50%'; element.style.transform = 'translateX(-50%)';\n                                element.style[formatSettings.position === 'top' ? 'top' : 'bottom'] = '0';\n                            }`;
+
+const HELPERS = `    function placementFormatSettings(placement) {
+        return placement && placement.format && placement.format.settings || {};
+    }
+
+    function placementElementExists(code) {
+        var found = false;
+        Array.prototype.forEach.call(nodeList('.hm-ad[data-placement], .hm-native[data-placement]'), function (node) {
+            if (node.getAttribute && node.getAttribute('data-placement') === code) found = true;
+        });
+        return found;
+    }
+
+    function placementViewportAllowed(settings) {
+        var width = Number(window.innerWidth || document.documentElement && document.documentElement.clientWidth || 0);
+        var minWidth = Number(settings.minViewportWidth || 0);
+        var maxWidth = Number(settings.maxViewportWidth || 0);
+        if (minWidth > 0 && width > 0 && width < minWidth) return false;
+        if (maxWidth > 0 && width > maxWidth) return false;
+        return true;
+    }
+
+    function autoMountPlacementElements(config) {
+        if (!document.createElement || !document.body || !document.body.appendChild) return;
+        (config.placements || []).forEach(function (placement) {
+            var settings = placementFormatSettings(placement);
+            if (!placement || !placement.enabled || placement.status !== 'active' || settings.autoMount !== true) return;
+            if (!placementViewportAllowed(settings) || placementElementExists(placement.code)) return;
+            var element = document.createElement('div');
+            element.className = placement.type === 'NATIVE' ? 'hm-native hm-auto-placement' : 'hm-ad hm-auto-placement';
+            element.setAttribute('data-placement', placement.code);
+            element.setAttribute('data-hm-auto-mounted', '1');
+            document.body.appendChild(element);
+        });
+    }
+
+    function applyStickyPosition(element, placement, settings) {
+        if (!element || !element.style || !placement || placement.type !== 'STICKY') return;
+        var position = String(settings.position || 'bottom').toLowerCase();
+        var style = element.style;
+        style.position = 'fixed';
+        style.zIndex = '2147483000';
+        style.top = '';
+        style.right = '';
+        style.bottom = '';
+        style.left = '';
+        style.transform = '';
+        if (position === 'right') {
+            style.right = '0';
+            style.top = '50%';
+            style.transform = 'translateY(-50%)';
+        } else if (position === 'left') {
+            style.left = '0';
+            style.top = '50%';
+            style.transform = 'translateY(-50%)';
+        } else {
+            style.left = '50%';
+            style.transform = 'translateX(-50%)';
+            style[position === 'top' ? 'top' : 'bottom'] = '0';
+        }
+    }
+
+`;
+
+export function applyPlacementPresetTransform(input) {
+    let source = String(input);
+
+    if (!source.includes('function autoMountPlacementElements(config)')) {
+        if (!source.includes(ELIGIBLE_ANCHOR)) {
+            throw new Error('Unable to locate eligibleElements anchor for placement preset runtime');
+        }
+        source = source.replace(ELIGIBLE_ANCHOR, `${HELPERS}    function eligibleElements(config) {\n        autoMountPlacementElements(config);\n        var nodes = [];`);
+    }
+
+    if (!source.includes('applyStickyPosition(element, placement, formatSettings);')) {
+        if (!source.includes(STICKY_BLOCK)) {
+            throw new Error('Unable to locate sticky positioning block for placement preset runtime');
+        }
+        source = source.replace(STICKY_BLOCK, `                            applyStickyPosition(element, placement, formatSettings);`);
+    }
+
+    return source;
+}
