@@ -47,4 +47,19 @@ class DirectDemandRouteRegistrationTest extends TestCase
         $this->assertStringContainsString('php artisan route:cache', $workflow);
         $this->assertStringContainsString('php artisan route:clear', $workflow);
     }
+
+    public function test_privacy_diagnostic_options_route_is_controller_backed_for_route_caching(): void
+    {
+        $provider = file_get_contents(app_path('Providers/PrivacyServiceProvider.php'));
+        $controller = file_get_contents(app_path('Http/Controllers/PrivacyDiagnosticReportController.php'));
+
+        $this->assertIsString($provider);
+        $this->assertIsString($controller);
+        $this->assertStringContainsString(
+            "Route::options('/privacy-diagnostics/report', [PrivacyDiagnosticReportController::class, 'options']);",
+            $provider,
+        );
+        $this->assertStringNotContainsString("Route::options('/privacy-diagnostics/report', fn", $provider);
+        $this->assertStringContainsString('public function options(): Response', $controller);
+    }
 }
