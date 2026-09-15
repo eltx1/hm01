@@ -44,19 +44,106 @@
         }
     }
 
+    function jsonAttribute(container, name, fallback) {
+        var raw = container.getAttribute(name);
+        if (!raw) return fallback;
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            return fallback;
+        }
+    }
+
+    function normalizedSize(value) {
+        if (!Array.isArray(value) || value.length !== 2) return null;
+        var width = positiveInteger(value[0], 0);
+        var height = positiveInteger(value[1], 0);
+        return width && height ? [width, height] : null;
+    }
+
+    function allowedSizes(container) {
+        var parsed = jsonAttribute(container, 'data-hm-isolated-sizes', []);
+        if (!Array.isArray(parsed)) return [];
+        var output = [];
+        parsed.forEach(function (candidate) {
+            var size = normalizedSize(candidate);
+            if (!size) return;
+            var key = size[0] + 'x' + size[1];
+            if (!output.some(function (existing) { return existing[0] + 'x' + existing[1] === key; })) output.push(size);
+        });
+        return output.slice(0, 20);
+    }
+
+    function sizeAllowed(size, sizes) {
+        if (!size || !sizes.length) return true;
+        return sizes.some(function (allowed) { return allowed[0] === size[0] && allowed[1] === size[1]; });
+    }
+
+    function viewportSize() {
+        var root = document.documentElement || {};
+        return [
+            Number(window.innerWidth || root.clientWidth || 0),
+            Number(window.innerHeight || root.clientHeight || 0),
+        ];
+    }
+
+    function mappingSize(container, sizes) {
+        var mappings = jsonAttribute(container, 'data-hm-isolated-size-map', []);
+        if (!Array.isArray(mappings) || !mappings.length) return null;
+        var viewport = viewportSize();
+        var viewportWidth = viewport[0];
+        var viewportHeight = viewport[1];
+
+        for (var index = 0; index < mappings.length && index < 100; index += 1) {
+            var mapping = mappings[index] || {};
+            var minWidth = Math.max(0, Number(mapping.minWidth || 0));
+            var minHeight = Math.max(0, Number(mapping.minHeight || 0));
+            var maxWidth = mapping.maxWidth == null ? 0 : Math.max(0, Number(mapping.maxWidth || 0));
+            var maxHeight = mapping.maxHeight == null ? 0 : Math.max(0, Number(mapping.maxHeight || 0));
+            if (viewportWidth && viewportWidth < minWidth) continue;
+            if (viewportHeight && viewportHeight < minHeight) continue;
+            if (maxWidth && viewportWidth && viewportWidth > maxWidth) continue;
+            if (maxHeight && viewportHeight && viewportHeight > maxHeight) continue;
+
+            var size = normalizedSize([mapping.width, mapping.height]);
+            if (size && sizeAllowed(size, sizes)) return size;
+        }
+        return null;
+    }
+
+    function selectedSize(container) {
+        var sizes = allowedSizes(container);
+        var mapped = mappingSize(container, sizes);
+        if (mapped) return mapped;
+        if (sizes.length) return sizes[0];
+        return [
+            positiveInteger(container.getAttribute('data-hm-isolated-width'), 300),
+            positiveInteger(container.getAttribute('data-hm-isolated-height'), 250),
+        ];
+    }
+
     function render(container) {
         if (!container || container.getAttribute('data-hm-isolated-runtime-state')) return;
 
         var html = decodeBase64(encodedPayload(container, 'data-hm-isolated-html'));
         var csp = decodeBase64(encodedPayload(container, 'data-hm-isolated-csp'));
-        var width = positiveInteger(container.getAttribute('data-hm-isolated-width'), 300);
-        var height = positiveInteger(container.getAttribute('data-hm-isolated-height'), 250);
+        var size = selectedSize(container);
+        var width = size[0];
+        var height = size[1];
         if (!html || !csp || /["<>]/.test(csp)) {
             container.setAttribute('data-hm-isolated-runtime-state', 'invalid');
             return;
         }
 
         container.setAttribute('data-hm-isolated-runtime-state', 'starting');
+        container.setAttribute('data-hm-isolated-selected-width', String(width));
+        container.setAttribute('data-hm-isolated-selected-height', String(height));
+        if (container.style) {
+            container.style.width = String(width) + 'px';
+            container.style.maxWidth = '100%';
+            container.style.minHeight = String(height) + 'px';
+        }
+
         var frame = document.createElement('iframe');
         frame.title = 'Advertisement';
         frame.setAttribute('aria-label', 'Advertisement');

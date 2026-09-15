@@ -22,6 +22,33 @@ const HELPERS = `    function placementFormatSettings(placement) {
         return true;
     }
 
+    function contentMountRoot() {
+        if (!document.querySelector) return null;
+        return document.querySelector('article') || document.querySelector('main');
+    }
+
+    function mountAutoPlacementElement(element, settings) {
+        var target = String(settings.autoMountTarget || 'body_end').toLowerCase();
+        var content = contentMountRoot();
+        if (target === 'article_mid' && content) {
+            var children = content.children || [];
+            var midpoint = Math.floor(children.length / 2);
+            if (children.length && content.insertBefore) {
+                content.insertBefore(element, children[midpoint] || null);
+                return;
+            }
+            if (content.appendChild) {
+                content.appendChild(element);
+                return;
+            }
+        }
+        if (target === 'article_end' && content && content.appendChild) {
+            content.appendChild(element);
+            return;
+        }
+        document.body.appendChild(element);
+    }
+
     function autoMountPlacementElements(config) {
         if (!document.createElement || !document.body || !document.body.appendChild) return;
         (config.placements || []).forEach(function (placement) {
@@ -32,14 +59,29 @@ const HELPERS = `    function placementFormatSettings(placement) {
             element.className = placement.type === 'NATIVE' ? 'hm-native hm-auto-placement' : 'hm-ad hm-auto-placement';
             element.setAttribute('data-placement', placement.code);
             element.setAttribute('data-hm-auto-mounted', '1');
-            document.body.appendChild(element);
+            element.setAttribute('data-hm-auto-mount-target', String(settings.autoMountTarget || 'body_end'));
+            mountAutoPlacementElement(element, settings);
         });
     }
 
     function applyStickyPosition(element, placement, settings) {
-        if (!element || !element.style || !placement || placement.type !== 'STICKY') return;
-        var position = String(settings.position || 'bottom').toLowerCase();
+        if (!element || !element.style || !placement) return;
+        var position = String(settings.position || '').toLowerCase();
         var style = element.style;
+
+        if (placement.type === 'VIDEO' && position === 'bottom_right') {
+            style.position = 'fixed';
+            style.zIndex = '2147483000';
+            style.right = '16px';
+            style.bottom = '16px';
+            style.left = '';
+            style.top = '';
+            style.transform = '';
+            return;
+        }
+
+        if (placement.type !== 'STICKY') return;
+        position = position || 'bottom';
         style.position = 'fixed';
         style.zIndex = '2147483000';
         style.top = '';
