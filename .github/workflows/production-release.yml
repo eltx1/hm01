@@ -81,7 +81,9 @@ jobs:
           touch database/production-smoke.sqlite
           APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan migrate:fresh --seed --force
           APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan schedule:list
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan route:cache
           APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan route:list >/dev/null
+          APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan route:clear
           APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan config:cache
           APP_ENV=production DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/production-smoke.sqlite" php artisan config:clear
           rm -f database/production-smoke.sqlite
