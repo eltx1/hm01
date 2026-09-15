@@ -136,11 +136,52 @@ final class PublisherAffiliateSystemTest extends TestCase
             ['key' => PublisherAffiliateService::SETTING_KEY],
             ['value' => ['commission_bp' => 1000], 'changed_by' => $admin->id],
         );
-        $referrer->update(['affiliate_commission_override_bp' => 750]);
 
-        $this->assertSame(750, app(PublisherAffiliateService::class)->effectiveRateBp($referrer->fresh()));
+        $service = app(PublisherAffiliateService::class);
+        $this->assertSame(1000, $service->defaultRateBp());
+        $this->assertSame(1000, $service->effectiveRateBp($referrer->fresh()));
+
+        $referrer->update(['affiliate_commission_override_bp' => 750]);
+        $this->assertSame(750, $service->effectiveRateBp($referrer->fresh()));
         $this->assertSame(500, $commission->fresh()->commission_rate_bp);
         $this->assertSame(500, $commission->fresh()->commission_minor);
+    }
+
+    public function test_closed_period_affiliate_ledger_cannot_be_rebuilt(): void
+    {
+        $this->affiliateContext();
+        $period = $this->period();
+        $period->update(['status' => FinancialPeriodStatus::Closed]);
+
+        $this->expectException(ValidationException::class);
+        app(PublisherAffiliateService::class)->reconcilePeriod($period->fresh(), null);
+    }
+
+    public function test_referral_created_after_period_end_does_not_backdate_commission(): void
+    {
+        [, $referrer, $referred] = $this->affiliateContext();
+        $period = $this->period();
+        $referred->update(['referred_at' => now()]);
+
+        PublisherStatement::withoutGlobalScopes()->create([
+            'organization_id' => $referred->organization_id,
+            'publisher_id' => $referred->id,
+            'financial_period_id' => $period->id,
+            'statement_number' => 'HM-AFF-SOURCE-004',
+            'status' => 'FINALIZED',
+            'currency' => 'USD',
+            'publisher_earnings_minor' => 10000,
+            'balance_due_minor' => 10000,
+            'line_items' => [],
+            'snapshot' => [],
+            'snapshot_hash' => hash('sha256', 'affiliate-source-004'),
+            'finalized_at' => now(),
+        ]);
+
+        $summary = app(PublisherAffiliateService::class)->reconcilePeriod($period, null);
+
+        $this->assertArrayNotHasKey($referrer->id, $summary);
+        $this->assertSame(0, PublisherAffiliateCommission::query()->where('financial_period_id', $period->id)->count());
     }
 
     public function test_existing_referral_attribution_is_not_replaced_by_a_later_signup_code(): void
@@ -184,7 +225,7 @@ final class PublisherAffiliateSystemTest extends TestCase
             'display_name' => 'Referred Publisher',
             'billing_email' => 'referred@example.test',
             'referred_by_publisher_id' => $referrer->id,
-            'referred_at' => now(),
+            'referred_at' => now()->subMonthsNoOverflow(2),
         ]);
 
         return [$admin, $referrer, $referred, $referrerUser, $referredUser];
