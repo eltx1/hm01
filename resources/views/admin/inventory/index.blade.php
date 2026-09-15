@@ -43,19 +43,53 @@
     @foreach($site->adUnits as $unit)<p><strong>{{ $unit->code }}</strong> · {{ $unit->sizes->map(fn($s) => $s->size_type === 'FLUID' ? 'fluid' : $s->width.'x'.$s->height)->join(', ') }} · {{ $unit->sync_status }}</p>@endforeach
 </article>
 <article>
-    <p class="eyebrow">Format-aware placement</p><h3>Create placement</h3>
-    <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.placements.store', $site) }}">@csrf
-        <label>Name<input class="hm-input" name="name" required></label><label>Code<input class="hm-input" name="code" required></label>
-        <label>Ad unit<select class="hm-input" name="ad_unit_id"><option value="">Native only</option>@foreach($site->adUnits as $unit)<option value="{{ $unit->id }}">{{ $unit->code }}</option>@endforeach</select></label>
-        <label>Format<select class="hm-input" name="ad_format_id"><option value="">Custom</option>@foreach($adFormats as $format)<option value="{{ $format->id }}">{{ $format->display_name }}</option>@endforeach</select></label>
-        <label>Type<select class="hm-input" name="type">@foreach(\App\Enums\PlacementType::cases() as $type)<option value="{{ $type->value }}">{{ $type->value }}</option>@endforeach</select></label>
-        <input type="hidden" name="status" value="ACTIVE"><label>Sizes<input class="hm-input" name="sizes_text" placeholder="Optional when the format supplies defaults"></label>
-        <label>Responsive rules<textarea class="hm-input" name="responsive_text" placeholder="1024x0-1920x1200|DESKTOP|728x90&#10;0x0-767x1200|MOBILE|300x250"></textarea></label>
-        <label>Format settings JSON<textarea class="hm-input" name="format_settings_json">{}</textarea></label><label>Targeting<textarea class="hm-input" name="targeting_text" placeholder="position=article_top"></textarea></label>
-        <input type="hidden" name="lazy_fetch_margin_percent" value="500"><input type="hidden" name="lazy_render_margin_percent" value="200"><input type="hidden" name="lazy_mobile_scaling" value="2">
-        <label><input type="checkbox" name="lazy_load_enabled" value="1" checked> Lazy load</label><label><input type="checkbox" name="collapse_empty_div" value="1" checked> Collapse empty</label>
-        <button class="hm-button-primary">Create and publish</button>
+    @php($placementPresets = app(\App\Services\Inventory\PlacementPresetCatalog::class)->choices())
+    <p class="eyebrow">Simple placement builder</p><h3>Create a placement in seconds</h3>
+    <p class="muted">Choose what the ad should look like. Horus fills in type, format, sizes, responsive mapping, and safe defaults automatically. Auto-mount formats do not need a publisher placeholder.</p>
+    <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.placements.simple', $site) }}">@csrf
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.7rem">
+            @foreach($placementPresets as $presetKey => $preset)
+                @continue($presetKey === \App\Services\Inventory\PlacementPresetCatalog::CUSTOM)
+                <label style="display:block;border:1px solid rgba(212,168,67,.28);border-radius:12px;padding:.8rem;cursor:pointer;background:rgba(255,255,255,.02)">
+                    <div style="display:flex;gap:.55rem;align-items:flex-start">
+                        <input type="radio" name="placement_preset" value="{{ $presetKey }}" @checked($presetKey === 'responsive_display') required style="margin-top:.25rem">
+                        <span><strong>{{ $preset['label'] }}</strong><br><span class="muted">{{ $preset['summary'] }}</span></span>
+                    </div>
+                    <div class="status-row" style="margin-top:.55rem"><span class="pill">{{ $preset['badge'] }}</span><span class="pill">{{ $preset['type'] }}</span></div>
+                </label>
+            @endforeach
+        </div>
+        <label>Placement name<input class="hm-input" name="name" placeholder="Article responsive or Bottom anchor" required></label>
+        <label>Code <span class="muted">(optional — generated automatically)</span><input class="hm-input" name="code" placeholder="Leave blank to auto-generate"></label>
+        <label>GAM ad unit <span class="muted">(optional for Direct Demand / Quick Monetize)</span><select class="hm-input" name="ad_unit_id"><option value="">No GAM ad unit — Direct Demand ready</option>@foreach($site->adUnits as $unit)<option value="{{ $unit->id }}">{{ $unit->code }}</option>@endforeach</select></label>
+        <button class="hm-button-primary">Create smart placement</button>
     </form>
+
+    <details style="margin-top:1rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.9rem">
+        <summary style="cursor:pointer;font-weight:700">Advanced / custom placement settings</summary>
+        <p class="muted">Use this only when you need custom formats, raw responsive breakpoints, targeting, or provider-specific format JSON.</p>
+        <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.placements.store', $site) }}">@csrf
+            <label>Name<input class="hm-input" name="name" required></label><label>Code<input class="hm-input" name="code" required></label>
+            <label>Ad unit<select class="hm-input" name="ad_unit_id"><option value="">Native / Direct Demand only</option>@foreach($site->adUnits as $unit)<option value="{{ $unit->id }}">{{ $unit->code }}</option>@endforeach</select></label>
+            <label>Format<select class="hm-input" name="ad_format_id"><option value="">Custom</option>@foreach($adFormats as $format)<option value="{{ $format->id }}">{{ $format->display_name }}</option>@endforeach</select></label>
+            <label>Type<select class="hm-input" name="type">@foreach(\App\Enums\PlacementType::cases() as $type)<option value="{{ $type->value }}">{{ $type->value }}</option>@endforeach</select></label>
+            <input type="hidden" name="status" value="ACTIVE"><label>Sizes<input class="hm-input" name="sizes_text" placeholder="Optional when the format supplies defaults"></label>
+            <label>Responsive rules<textarea class="hm-input" name="responsive_text" placeholder="1024x0-1920x1200|DESKTOP|728x90&#10;0x0-767x1200|MOBILE|300x250"></textarea></label>
+            <label>Format settings JSON<textarea class="hm-input" name="format_settings_json">{}</textarea></label><label>Targeting<textarea class="hm-input" name="targeting_text" placeholder="position=article_top"></textarea></label>
+            <input type="hidden" name="lazy_fetch_margin_percent" value="500"><input type="hidden" name="lazy_render_margin_percent" value="200"><input type="hidden" name="lazy_mobile_scaling" value="2">
+            <label><input type="checkbox" name="lazy_load_enabled" value="1" checked> Lazy load</label><label><input type="checkbox" name="collapse_empty_div" value="1" checked> Collapse empty</label>
+            <button class="hm-button-secondary">Create advanced placement</button>
+        </form>
+    </details>
+
+    @if($site->placements->isNotEmpty())
+        <div style="margin-top:1.1rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.9rem">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap"><div><p class="eyebrow">Ready inventory</p><h3 style="margin:.1rem 0">Current placements</h3></div><a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.create') }}">Use in Quick Monetize</a></div>
+            @foreach($site->placements as $placement)
+                <p><strong>{{ $placement->code }}</strong> · {{ $placement->type->value }} · <x-status-badge :status="$placement->status" /> @if($placement->sizes->contains(fn($size) => $size->device->value !== 'ALL' || $size->min_viewport_width !== null)) · Responsive @endif</p>
+            @endforeach
+        </div>
+    @endif
 </article>
 </section>
 
