@@ -13,7 +13,15 @@
 
 <section class="metric-grid">
     <article><p class="eyebrow">Referred Publishers</p><strong class="metric-small">{{ number_format($referralsCount) }}</strong></article>
-    <article><p class="eyebrow">Affiliate earnings</p><strong class="metric-small money">{{ \App\Support\Money::formatMinor($earnedMinor) }}</strong><span class="table-note">Across finalized commission records</span></article>
+    <article>
+        <p class="eyebrow">Affiliate earnings</p>
+        @forelse($earnedByCurrency as $total)
+            <strong class="metric-small money">{{ $total->currency }} {{ \App\Support\Money::formatMinor((int) $total->total_minor) }}</strong>
+        @empty
+            <strong class="metric-small money">—</strong>
+        @endforelse
+        <span class="table-note">Finalized totals are kept separate by currency</span>
+    </article>
     <article><p class="eyebrow">Current commission</p><strong class="metric-small">{{ number_format($effectiveRateBp / 100, 2) }}%</strong><span class="table-note">Applied to future finalized Publisher earnings</span></article>
 </section>
 
