@@ -61,6 +61,7 @@ final class PublisherFinanceService
                 'finalized_earnings_minor' => (int) $currentRows
                     ->where('finality', ReportFinality::Finalized)
                     ->sum('publisher_earnings_minor'),
+                'affiliate_earnings_minor' => (int) ($latest?->affiliate_earnings_minor ?? 0),
                 'current_payable_minor' => $latest && $this->isPayable($latest)
                     ? (int) $latest->balance_due_minor
                     : 0,
