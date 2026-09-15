@@ -12,6 +12,7 @@ use App\Models\PublisherStatement;
 use App\Services\Reporting\PublisherAffiliateService;
 use App\Services\Reporting\PublisherStatementService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
 use Tests\TestCase;
@@ -142,13 +143,24 @@ final class PublisherAffiliateSystemTest extends TestCase
         $this->assertSame(500, $commission->fresh()->commission_minor);
     }
 
-    public function test_invalid_referral_code_is_rejected_and_existing_attribution_cannot_be_replaced_by_signup_flow(): void
+    public function test_existing_referral_attribution_is_not_replaced_by_a_later_signup_code(): void
     {
         [, $referrer, $referred] = $this->affiliateContext();
         $service = app(PublisherAffiliateService::class);
 
-        $this->expectException(\Illuminate\Validation\ValidationException::class);
-        $service->attribute($referred->forceFill(['referred_by_publisher_id' => null])->tap(fn ($publisher) => $publisher->save()), 'NOT-A-REAL-CODE');
+        $result = $service->attribute($referred, 'NOT-A-REAL-CODE');
+
+        $this->assertSame($referrer->id, $result->referred_by_publisher_id);
+    }
+
+    public function test_invalid_referral_code_is_rejected_for_an_unattributed_publisher(): void
+    {
+        [, , $referred] = $this->affiliateContext();
+        $service = app(PublisherAffiliateService::class);
+        $referred->forceFill(['referred_by_publisher_id' => null, 'referred_at' => null])->save();
+
+        $this->expectException(ValidationException::class);
+        $service->attribute($referred->fresh(), 'NOT-A-REAL-CODE');
     }
 
     private function affiliateContext(): array
