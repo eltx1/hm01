@@ -21,7 +21,6 @@ final class PublisherAffiliateController extends Controller
         $publishers = Publisher::withoutGlobalScopes()
             ->with('referrer')
             ->withCount('referrals')
-            ->withSum(['affiliateCommissions as affiliate_earned_minor' => fn ($query) => $query->where('status', 'EARNED')], 'commission_minor')
             ->orderByDesc('referrals_count')
             ->orderBy('display_name')
             ->paginate(50, ['*'], 'publishers_page');
