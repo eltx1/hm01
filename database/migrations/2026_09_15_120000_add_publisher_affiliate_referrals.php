@@ -32,7 +32,12 @@ return new class extends Migration
             $table->ulid('id')->primary();
             $table->foreignUlid('referrer_publisher_id')->constrained('publishers')->restrictOnDelete();
             $table->foreignUlid('referred_publisher_id')->constrained('publishers')->restrictOnDelete();
-            $table->foreignUlid('source_publisher_statement_id')->unique()->constrained('publisher_statements')->restrictOnDelete();
+            $table->foreignUlid('source_publisher_statement_id');
+            $table->foreign(
+                'source_publisher_statement_id',
+                'pub_aff_source_stmt_fk',
+            )->references('id')->on('publisher_statements')->restrictOnDelete();
+            $table->unique('source_publisher_statement_id', 'pub_aff_source_stmt_unique');
             $table->foreignUlid('financial_period_id')->constrained('financial_periods')->restrictOnDelete();
             $table->string('currency', 3);
             $table->bigInteger('basis_minor');
