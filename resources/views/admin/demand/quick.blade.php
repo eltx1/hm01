@@ -44,7 +44,7 @@
         <p class="muted">The placement, provider isolation policy, publisher demand account and Direct Demand mappings were created or updated atomically.</p>
         <div class="status-row">
             <a class="hm-button-secondary button-link" href="{{ route('admin.demand.accounts.show', session('quick_account_id')) }}">Open generated demand account →</a>
-            <a class="section-anchor" href="{{ route('admin.inventory.index') }}">Open Inventory →</a>
+            <a class="section-anchor" href="{{ route('admin.sites.inventory.index', ['site' => $selectedSiteId]) }}">Open Inventory →</a>
         </div>
     </article>
 @endif
