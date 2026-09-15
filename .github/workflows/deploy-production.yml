@@ -29,13 +29,16 @@ concurrency:
 
 jobs:
   deploy:
-    # Manual dispatch is always available for the first controlled deployment.
-    # Automatic workflow_run deployment remains fail-safe OFF until the owner
-    # explicitly enables HORUS_PRODUCTION_DEPLOY_ENABLED after that drill.
+    # Trusted successful push validations from this repository deploy
+    # automatically. Manual dispatch remains available for controlled recovery.
+    # Set HORUS_PRODUCTION_DEPLOY_DISABLED=true to stop automatic deployment.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
-          (vars.HORUS_PRODUCTION_DEPLOY_ENABLED == 'true' &&
-           github.event.workflow_run.conclusion == 'success') }}
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_branch == 'main' &&
+           github.event.workflow_run.head_repository.full_name == github.repository &&
+           vars.HORUS_PRODUCTION_DEPLOY_DISABLED != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -67,6 +70,7 @@ jobs:
           script: |
             const runId = Number(process.env.RELEASE_RUN_ID);
             const expectedSha = process.env.RELEASE_SHA;
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`;
             const { data } = await github.rest.actions.getWorkflowRun({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -76,11 +80,13 @@ jobs:
             const failures = [];
             if (data.name !== 'Production release validation') failures.push(`workflow=${data.name}`);
             if (data.conclusion !== 'success') failures.push(`conclusion=${data.conclusion}`);
+            if (data.event !== 'push') failures.push(`event=${data.event}`);
             if (data.head_branch !== 'main') failures.push(`branch=${data.head_branch}`);
+            if (data.head_repository?.full_name !== expectedRepo) failures.push(`head_repository=${data.head_repository?.full_name ?? 'missing'}`);
             if (data.head_sha !== expectedSha) failures.push(`sha=${data.head_sha}`);
 
             if (failures.length > 0) {
-              core.setFailed(`Release run is not an approved successful main validation: ${failures.join(', ')}`);
+              core.setFailed(`Release run is not an approved successful main push validation from ${expectedRepo}: ${failures.join(', ')}`);
             }
 
       - name: Checkout trusted deployment tooling
@@ -165,6 +171,37 @@ jobs:
              HORUS_DEPLOY_MYSQL_CONFIG_HELPER='$remote_dir/write-mysql-client-config.php' \
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
+
+      - name: Verify Quick Monetize control-plane route
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          resolve_target="$ORIGIN_HEALTH_RESOLVE_IP"
+          if [[ "$resolve_target" == *:* ]]; then
+            resolve_target="[$resolve_target]"
+          fi
+
+          tls_arg=""
+          if [[ "$ORIGIN_HEALTH_INSECURE_TLS" == '1' ]]; then
+            tls_arg="--insecure"
+          fi
+
+          status="$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "curl --noproxy '*' --resolve 'app.horusmedia.net:443:$resolve_target' $tls_arg -sS \
+              --max-time 15 --output /dev/null --write-out '%{http_code}' \
+              https://app.horusmedia.net/admin/demand/quick")"
+          case "$status" in
+            302|303)
+              echo "Quick Monetize route is registered and protected by authentication: HTTP $status."
+              ;;
+            *)
+              echo "Quick Monetize route smoke test failed: HTTP $status" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Probe public production edge
         shell: bash

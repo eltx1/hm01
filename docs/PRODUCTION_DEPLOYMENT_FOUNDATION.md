@@ -117,12 +117,23 @@ or `migrate:rollback` during upgrades.
 ## GitHub production deployment
 
 `.github/workflows/deploy-production.yml` listens for a successful **Production
-release validation** run on `main`. Deployment is intentionally fail-safe OFF
-until the repository variable below is explicitly enabled:
+release validation** run on `main`. Automatic deployment is enabled for trusted
+`push` validation runs produced by this repository only. Pull-request validation
+runs, including fork pull requests, are never accepted as production release
+sources even if their branch happens to be named `main`.
+
+To stop **automatic** production deployment during an incident or maintenance
+window, set this repository variable:
 
 ```text
-HORUS_PRODUCTION_DEPLOY_ENABLED=true
+HORUS_PRODUCTION_DEPLOY_DISABLED=true
 ```
+
+Unset it or set it to any value other than `true` to restore normal automatic
+deployment after successful trusted `main` validation. The explicit
+`workflow_dispatch` path remains available for controlled recovery, but it still
+requires a successful trusted `main` **push** validation run ID and matching SHA;
+it cannot be pointed at a pull-request validation artifact.
 
 Configure the GitHub `production` environment with these secrets:
 
@@ -150,14 +161,17 @@ HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS=0
 For the current `app.horusmedia.net` origin, set
 `HORUS_PRODUCTION_ORIGIN_HEALTH_INSECURE_TLS=1` in the protected `production`
 environment because the local direct-origin certificate is self-signed. The
-workflow passes that opt-in only to the remote atomic runner. Its final public
-`https://app.horusmedia.net/up` request always retains normal certificate and
-hostname verification.
+workflow passes that opt-in only to direct-origin probes and the remote atomic
+runner. The post-deploy Quick Monetize route probe uses the same configured
+origin target and TLS policy. Its final public `https://app.horusmedia.net/up`
+request always retains normal certificate and hostname verification.
 
-The workflow downloads the exact artifact produced by the successful validation
-run, verifies `CHECKSUMS.txt`, transfers only the validated ZIP and deployment
-runner, runs the atomic deployment remotely, then performs a public `/up` check.
-Production deployments are serialized and are never cancelled mid-run.
+The workflow downloads the exact artifact produced by the successful trusted
+validation run, verifies `CHECKSUMS.txt`, transfers only the validated ZIP and
+deployment runner, runs the atomic deployment remotely, verifies that
+`/admin/demand/quick` is registered at the direct origin, then performs the
+public `/up` check. Production deployments are serialized and are never
+cancelled mid-run.
 
 ## Cron
 
