@@ -28,7 +28,7 @@
     <div class="workspace-heading"><div><p class="eyebrow">Publisher controls</p><h2>Referral attribution and rate overrides</h2></div></div>
     <div class="table-wrap">
         <table>
-            <thead><tr><th>Publisher</th><th>Referral code</th><th>Referrer</th><th>Referrals</th><th>Affiliate earned</th><th>Future rate</th><th>Manage</th></tr></thead>
+            <thead><tr><th>Publisher</th><th>Referral code</th><th>Referrer</th><th>Referrals</th><th>Future rate</th><th>Manage</th></tr></thead>
             <tbody>
             @foreach($publishers as $publisher)
                 <tr>
@@ -36,7 +36,6 @@
                     <td><code>{{ $publisher->referral_code }}</code></td>
                     <td>{{ $publisher->referrer?->display_name ?? 'Direct / none' }}</td>
                     <td>{{ number_format($publisher->referrals_count) }}</td>
-                    <td class="money">{{ \App\Support\Money::formatMinor((int) ($publisher->affiliate_earned_minor ?? 0)) }}</td>
                     <td>{{ $publisher->affiliate_commission_override_bp === null ? 'Default' : number_format($publisher->affiliate_commission_override_bp / 100, 2).'%' }}</td>
                     <td>
                         <details>
