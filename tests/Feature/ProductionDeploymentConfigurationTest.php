@@ -106,4 +106,45 @@ REGEX;
         $this->assertStringNotContainsString('--insecure', $matches['step']);
         $this->assertStringNotContainsString('-k ', $matches['step']);
     }
+
+    public function test_automatic_production_deploy_accepts_only_trusted_main_push_validations(): void
+    {
+        $workflow = file_get_contents(base_path('.github/workflows/deploy-production.yml'));
+        $runbook = file_get_contents(base_path('docs/PRODUCTION_DEPLOYMENT_FOUNDATION.md'));
+
+        $this->assertIsString($workflow);
+        $this->assertIsString($runbook);
+
+        $this->assertStringContainsString("github.event_name == 'workflow_dispatch'", $workflow);
+        $this->assertStringContainsString("github.event.workflow_run.event == 'push'", $workflow);
+        $this->assertStringContainsString("github.event.workflow_run.head_branch == 'main'", $workflow);
+        $this->assertStringContainsString('github.event.workflow_run.head_repository.full_name == github.repository', $workflow);
+        $this->assertStringContainsString("vars.HORUS_PRODUCTION_DEPLOY_DISABLED != 'true'", $workflow);
+        $this->assertStringNotContainsString('HORUS_PRODUCTION_DEPLOY_ENABLED', $workflow);
+
+        $this->assertStringContainsString("if (data.event !== 'push')", $workflow);
+        $this->assertStringContainsString('data.head_repository?.full_name !== expectedRepo', $workflow);
+        $this->assertStringContainsString("if (data.head_branch !== 'main')", $workflow);
+        $this->assertStringContainsString('HORUS_PRODUCTION_DEPLOY_DISABLED=true', $runbook);
+        $this->assertStringNotContainsString('HORUS_PRODUCTION_DEPLOY_ENABLED=true', $runbook);
+    }
+
+    public function test_quick_monetize_post_deploy_probe_uses_the_configured_origin_and_tls_policy(): void
+    {
+        $workflow = file_get_contents(base_path('.github/workflows/deploy-production.yml'));
+
+        $this->assertIsString($workflow);
+        preg_match('/- name: Verify Quick Monetize control-plane route(?<step>.*?)(?:\n\s{6}- name:|\z)/s', $workflow, $matches);
+        $this->assertArrayHasKey('step', $matches);
+
+        $step = $matches['step'];
+        $this->assertStringContainsString('$ORIGIN_HEALTH_RESOLVE_IP', $step);
+        $this->assertStringContainsString('$ORIGIN_HEALTH_INSECURE_TLS', $step);
+        $this->assertStringContainsString('resolve_target=', $step);
+        $this->assertStringContainsString('--insecure', $step);
+        $this->assertStringContainsString("--noproxy '*' --resolve", $step);
+        $this->assertStringContainsString('/admin/demand/quick', $step);
+        $this->assertStringContainsString('302|303)', $step);
+        $this->assertStringNotContainsString('app.horusmedia.net:443:127.0.0.1', $step);
+    }
 }
