@@ -25,7 +25,7 @@
 </article>
 
 <section class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Publisher controls</p><h2>Referral attribution and rate overrides</h2></div></div>
+    <div class="workspace-heading"><div><p class="eyebrow">Publisher controls</p><h2>Referral attribution, codes, and rate overrides</h2></div></div>
     <div class="table-wrap">
         <table>
             <thead><tr><th>Publisher</th><th>Referral code</th><th>Referrer</th><th>Referrals</th><th>Future rate</th><th>Manage</th></tr></thead>
@@ -43,6 +43,9 @@
                             <form method="POST" action="{{ route('admin.publisher-affiliates.publishers.update', $publisher) }}" class="form-stack" style="min-width:18rem">
                                 @csrf
                                 @method('PUT')
+                                <label>Referral code</label>
+                                <input class="hm-input" name="referral_code" value="{{ $publisher->referral_code }}" minlength="4" maxlength="32" pattern="[A-Za-z0-9_-]+" required>
+                                <p class="field-help">Changing the code invalidates the Publisher's old referral link. Finalized historical commissions are unaffected.</p>
                                 <label>Commission override %</label>
                                 <input class="hm-input" type="number" name="commission_percent" min="0" max="100" step="0.01" value="{{ $publisher->affiliate_commission_override_bp === null ? '' : number_format($publisher->affiliate_commission_override_bp / 100, 2, '.', '') }}" placeholder="Blank = global default">
                                 <label>Referred by</label>
