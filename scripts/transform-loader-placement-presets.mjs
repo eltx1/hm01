@@ -1,5 +1,6 @@
 const ELIGIBLE_ANCHOR = `    function eligibleElements(config) {\n        var nodes = [];`;
 const STICKY_BLOCK = `                            if (formatSettings.position && element.style && placement.type === 'STICKY') {\n                                element.style.position = 'fixed'; element.style.zIndex = '2147483000'; element.style.left = '50%'; element.style.transform = 'translateX(-50%)';\n                                element.style[formatSettings.position === 'top' ? 'top' : 'bottom'] = '0';\n                            }`;
+const NATIVE_ONLY_ANCHOR = `        nativeOnly.forEach(function (item) {\n            ensureElementId(item.element, config, item.placement);`;
 
 const HELPERS = `    function placementFormatSettings(placement) {
         return placement && placement.format && placement.format.settings || {};
@@ -61,6 +62,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
             element.setAttribute('data-hm-auto-mounted', '1');
             element.setAttribute('data-hm-auto-mount-target', String(settings.autoMountTarget || 'body_end'));
             mountAutoPlacementElement(element, settings);
+            applyPlacementPresetPresentation(element, placement, settings);
         });
     }
 
@@ -104,6 +106,31 @@ const HELPERS = `    function placementFormatSettings(placement) {
         }
     }
 
+    function ensurePlacementCloseControl(element, settings) {
+        if (!element || !element.appendChild || !document.createElement || !settings || settings.closeable !== true) return;
+        if (element.getAttribute && element.getAttribute('data-hm-placement-dismissed') === '1') return;
+        if (element.querySelector && element.querySelector('[data-hm-placement-close="1"]')) return;
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = '×';
+        button.setAttribute('aria-label', 'Close advertisement');
+        button.setAttribute('data-hm-placement-close', '1');
+        button.style.cssText = 'position:absolute;top:4px;right:4px;z-index:2147483001;min-width:28px;min-height:28px;padding:0 7px;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;cursor:pointer;';
+        button.addEventListener('click', function (event) {
+            if (event && event.preventDefault) event.preventDefault();
+            if (event && event.stopPropagation) event.stopPropagation();
+            if (element.setAttribute) element.setAttribute('data-hm-placement-dismissed', '1');
+            if (element.style) element.style.display = 'none';
+        });
+        element.appendChild(button);
+    }
+
+    function applyPlacementPresetPresentation(element, placement, settings) {
+        settings = settings || placementFormatSettings(placement);
+        applyStickyPosition(element, placement, settings);
+        ensurePlacementCloseControl(element, settings);
+    }
+
 `;
 
 export function applyPlacementPresetTransform(input) {
@@ -116,11 +143,18 @@ export function applyPlacementPresetTransform(input) {
         source = source.replace(ELIGIBLE_ANCHOR, `${HELPERS}    function eligibleElements(config) {\n        autoMountPlacementElements(config);\n        var nodes = [];`);
     }
 
-    if (!source.includes('applyStickyPosition(element, placement, formatSettings);')) {
+    if (!source.includes('applyPlacementPresetPresentation(element, placement, formatSettings);')) {
         if (!source.includes(STICKY_BLOCK)) {
             throw new Error('Unable to locate sticky positioning block for placement preset runtime');
         }
-        source = source.replace(STICKY_BLOCK, `                            applyStickyPosition(element, placement, formatSettings);`);
+        source = source.replace(STICKY_BLOCK, `                            applyPlacementPresetPresentation(element, placement, formatSettings);`);
+    }
+
+    if (!source.includes('applyPlacementPresetPresentation(item.element, item.placement, placementFormatSettings(item.placement));')) {
+        if (!source.includes(NATIVE_ONLY_ANCHOR)) {
+            throw new Error('Unable to locate Direct JS nativeOnly anchor for placement preset runtime');
+        }
+        source = source.replace(NATIVE_ONLY_ANCHOR, `${NATIVE_ONLY_ANCHOR}\n            applyPlacementPresetPresentation(item.element, item.placement, placementFormatSettings(item.placement));`);
     }
 
     return source;
