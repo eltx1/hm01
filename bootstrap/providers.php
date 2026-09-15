@@ -6,6 +6,7 @@ use App\Providers\ComplianceServiceProvider;
 use App\Providers\MonetizationServiceProvider;
 use App\Providers\NotificationServiceProvider;
 use App\Providers\OperationsServiceProvider;
+use App\Providers\PlacementPresetServiceProvider;
 use App\Providers\PrebidServiceProvider;
 use App\Providers\PrivacyServiceProvider;
 use App\Providers\ReportingServiceProvider;
@@ -24,4 +25,5 @@ return [
     NotificationServiceProvider::class,
     SupportServiceProvider::class,
     SettingsServiceProvider::class,
+    PlacementPresetServiceProvider::class,
 ];
