@@ -76,4 +76,12 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString('placement.disabled = blocked || !existing;', $html);
         $this->assertStringContainsString('preset.disabled = blocked || existing;', $html);
     }
+
+    private function adminSession(): static
+    {
+        $this->actingAs($this->admin);
+        $this->withSession(['two_factor_passed_at' => now()->timestamp]);
+
+        return $this;
+    }
 }
