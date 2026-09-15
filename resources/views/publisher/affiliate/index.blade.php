@@ -36,6 +36,31 @@
 
 <section class="workspace-section">
     <div class="workspace-heading">
+        <div><p class="eyebrow">Your referrals</p><h2>Publishers registered under your account</h2></div>
+    </div>
+    @if($referrals->count())
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Publisher</th><th>Joined referral program</th><th>Account status</th></tr></thead>
+                <tbody>
+                @foreach($referrals as $referral)
+                    <tr>
+                        <td><strong>{{ $referral->display_name }}</strong></td>
+                        <td>{{ $referral->referred_at?->toDateString() ?? '—' }}</td>
+                        <td><x-status-badge :status="$referral->status" /></td>
+                    </tr>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+        {{ $referrals->links() }}
+    @else
+        <x-empty-state title="No referred Publishers yet" description="Publishers who create an account from your referral link will appear here." />
+    @endif
+</section>
+
+<section class="workspace-section">
+    <div class="workspace-heading">
         <div><p class="eyebrow">Commission ledger</p><h2>Finalized affiliate earnings</h2></div>
     </div>
     @if($commissions->count())
