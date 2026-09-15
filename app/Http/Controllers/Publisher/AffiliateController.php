@@ -23,12 +23,20 @@ final class AffiliateController extends Controller
             ->latest('created_at')
             ->paginate(25);
 
+        $earnedByCurrency = PublisherAffiliateCommission::query()
+            ->selectRaw('currency, SUM(commission_minor) AS total_minor')
+            ->where('referrer_publisher_id', $publisher->id)
+            ->where('status', 'EARNED')
+            ->groupBy('currency')
+            ->orderBy('currency')
+            ->get();
+
         return view('publisher.affiliate.index', [
             'publisher' => $publisher,
             'referralUrl' => $affiliates->referralUrl($publisher),
             'effectiveRateBp' => $affiliates->effectiveRateBp($publisher),
             'referralsCount' => $publisher->referrals()->count(),
-            'earnedMinor' => (int) $publisher->affiliateCommissions()->where('status', 'EARNED')->sum('commission_minor'),
+            'earnedByCurrency' => $earnedByCurrency,
             'commissions' => $commissions,
         ]);
     }
