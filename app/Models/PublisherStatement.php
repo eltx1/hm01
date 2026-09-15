@@ -19,7 +19,7 @@ class PublisherStatement extends Model
         'organization_id', 'publisher_id', 'financial_period_id', 'statement_number',
         'status', 'currency', 'opening_balance_minor', 'gross_revenue_minor',
         'deductions_minor', 'net_revenue_minor', 'publisher_earnings_minor',
-        'paid_minor', 'balance_due_minor', 'carry_forward_minor',
+        'affiliate_earnings_minor', 'paid_minor', 'balance_due_minor', 'carry_forward_minor',
         'payment_threshold_minor', 'revenue_rule_version_id', 'line_items',
         'snapshot', 'snapshot_hash', 'finalized_at', 'finalized_by',
         'publisher_invoice_number', 'publisher_invoice_path',
@@ -33,6 +33,7 @@ class PublisherStatement extends Model
         return [
             'status' => PublisherStatementStatus::class,
             'publisher_invoice_status' => PublisherInvoiceStatus::class,
+            'affiliate_earnings_minor' => 'integer',
             'line_items' => 'array', 'snapshot' => 'array',
             'finalized_at' => 'datetime', 'publisher_invoice_uploaded_at' => 'datetime',
             'publisher_invoice_reviewed_at' => 'datetime',
@@ -52,6 +53,11 @@ class PublisherStatement extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(PublisherPayment::class);
+    }
+
+    public function affiliateSourceCommissions(): HasMany
+    {
+        return $this->hasMany(PublisherAffiliateCommission::class, 'source_publisher_statement_id');
     }
 
     public function invoiceRequired(): bool
