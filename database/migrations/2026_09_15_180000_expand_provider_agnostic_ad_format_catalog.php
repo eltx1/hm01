@@ -1,30 +1,59 @@
 <?php
 
-namespace Database\Seeders;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
-use App\Models\AdFormat;
-use Illuminate\Database\Seeder;
-
-class AdFormatSeeder extends Seeder
+return new class extends Migration
 {
-    public function run(): void
+    public function up(): void
     {
-        foreach ($this->formats() as $index => [$code, $name, $type, $media, $sizes, $capabilities, $defaults]) {
-            AdFormat::query()->updateOrCreate(['code' => $code], [
+        $this->upsertFormats($this->expandedFormats());
+    }
+
+    public function down(): void
+    {
+        DB::table('ad_formats')->whereIn('code', [
+            'display_in_article', 'display_high_impact', 'display_mobile', 'anchor_edge',
+            'native_recommendation', 'video_floating', 'contextual_in_image',
+            'edge_in_screen', 'page_skin', 'rich_media_expandable',
+        ])->delete();
+
+        $this->upsertFormats($this->legacyFormats());
+    }
+
+    /** @param array<int, array<int, mixed>> $formats */
+    private function upsertFormats(array $formats): void
+    {
+        $now = now();
+        foreach ($formats as $index => [$code, $name, $type, $media, $sizes, $capabilities, $defaults]) {
+            $existing = DB::table('ad_formats')->where('code', $code)->first();
+            $values = [
                 'display_name' => $name,
                 'placement_type' => $type,
                 'media_type' => $media,
-                'default_sizes' => $sizes,
-                'capabilities' => $capabilities,
-                'defaults' => $defaults,
+                'default_sizes' => json_encode($sizes, JSON_THROW_ON_ERROR),
+                'capabilities' => json_encode($capabilities, JSON_THROW_ON_ERROR),
+                'defaults' => json_encode($defaults, JSON_THROW_ON_ERROR),
                 'is_active' => true,
                 'sort_order' => $index * 10,
-            ]);
+                'updated_at' => $now,
+            ];
+
+            if ($existing) {
+                DB::table('ad_formats')->where('id', $existing->id)->update($values);
+            } else {
+                DB::table('ad_formats')->insert($values + [
+                    'id' => (string) Str::ulid(),
+                    'code' => $code,
+                    'created_at' => $now,
+                ]);
+            }
         }
     }
 
     /** @return array<int, array<int, mixed>> */
-    private function formats(): array
+    private function expandedFormats(): array
     {
         return [
             ['display_banner', 'Responsive Display', 'DISPLAY', 'banner', [[300, 250], [336, 280], [728, 90], [970, 250], [320, 100], [320, 50]], ['responsive' => true, 'multiSize' => true, 'providerAgnostic' => true, 'iabFlexible' => true, 'quickCompatible' => true], ['reserveSpace' => true, 'surface' => ['family' => 'display', 'mount' => 'in_page', 'position' => 'inline', 'responsive' => true, 'providerAgnostic' => true]]],
@@ -47,4 +76,19 @@ class AdFormatSeeder extends Seeder
             ['rich_media_expandable', 'Expandable Rich Media', 'CUSTOM', 'rich_media', [[300, 250], [970, 250]], ['responsive' => true, 'providerAgnosticSurface' => true, 'requiresProviderSupport' => true, 'providerManaged' => true, 'highImpact' => true, 'quickCompatible' => false], ['reserveSpace' => true, 'surface' => ['family' => 'rich_media', 'mount' => 'provider_managed', 'position' => 'inline', 'responsive' => true, 'providerAgnostic' => true]]],
         ];
     }
-}
+
+    /** @return array<int, array<int, mixed>> */
+    private function legacyFormats(): array
+    {
+        return [
+            ['display_banner', 'Display banner', 'DISPLAY', 'banner', [[300, 250], [336, 280], [728, 90], [970, 250]], ['responsive' => true, 'refresh' => true], ['reserveSpace' => true]],
+            ['display_fluid', 'Fluid / responsive', 'DISPLAY', 'banner', ['fluid'], ['responsive' => true, 'refresh' => true], ['reserveSpace' => true]],
+            ['native_infeed', 'Native in-feed', 'NATIVE', 'native', [], ['native' => true, 'refresh' => false], ['nativeContext' => 1]],
+            ['video_outstream', 'Outstream video', 'VIDEO', 'video', [[640, 360]], ['vast' => '4.3', 'omid' => '1.5'], ['plcmt' => 4, 'context' => 'outstream']],
+            ['sticky_anchor', 'Sticky anchor', 'STICKY', 'banner', [[320, 50], [728, 90]], ['sticky' => true, 'refresh' => true], ['position' => 'bottom', 'closeable' => true, 'reserveSpace' => false]],
+            ['web_interstitial', 'Web interstitial', 'INTERSTITIAL', 'banner', [], ['outOfPage' => true], ['triggers' => ['pageLoad', 'unhideWindow'], 'disableBackwardNavigation' => true]],
+            ['rewarded', 'Rewarded', 'REWARDED', 'video', [[640, 480]], ['outOfPage' => true, 'rewarded' => true], ['requireReadyEvent' => true, 'requireUserActivation' => true]],
+            ['side_rail', 'Desktop side rail', 'STICKY', 'banner', [[160, 600], [300, 600]], ['sticky' => true, 'desktopOnly' => true], ['position' => 'right', 'reserveSpace' => false]],
+        ];
+    }
+};
