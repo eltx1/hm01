@@ -185,7 +185,7 @@ final class DemandConfigurationBuilder
 
         $container = (array) ($tag['container'] ?? []);
         $element = strtolower((string) ($container['element'] ?? 'div'));
-        if (! in_array($element, ['div', 'span', 'aside', 'section'], true)) {
+        if (! in_array($element, ['div', 'span', 'aside', 'section', 'ins'], true)) {
             throw new \RuntimeException('Unsupported Direct Demand container element.');
         }
         $containerId = preg_replace('/[^A-Za-z0-9_:-]/', '-', (string) ($container['id'] ?? $tag['containerId'] ?? '')) ?: '';
@@ -194,7 +194,7 @@ final class DemandConfigurationBuilder
 
         $initialization = (array) ($tag['initialization'] ?? ['type' => 'NONE', 'parameters' => []]);
         $initializationType = strtoupper((string) ($initialization['type'] ?? 'NONE'));
-        if (! in_array($initializationType, ['NONE', 'MGID_QUEUE_LOAD', 'TABOOLA_QUEUE', 'OUTBRAIN_RESEARCH'], true)) {
+        if (! in_array($initializationType, ['NONE', 'MGID_QUEUE_LOAD', 'TABOOLA_QUEUE', 'OUTBRAIN_RESEARCH', 'EXOCLICK_SERVE'], true)) {
             throw new \RuntimeException('Unknown Direct Demand initialization action.');
         }
         $parameters = $this->publicParameters((array) ($initialization['parameters'] ?? []));
