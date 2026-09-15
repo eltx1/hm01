@@ -3,6 +3,7 @@
 namespace App\Services\Reporting;
 
 use App\Enums\AccountStatus;
+use App\Enums\FinancialPeriodStatus;
 use App\Models\FinancialPeriod;
 use App\Models\GlobalSetting;
 use App\Models\Publisher;
@@ -19,7 +20,8 @@ final class PublisherAffiliateService
 
     public function defaultRateBp(): int
     {
-        $value = GlobalSetting::query()->whereKey(self::SETTING_KEY)->value('value');
+        $setting = GlobalSetting::query()->find(self::SETTING_KEY);
+        $value = $setting?->value;
         $raw = is_array($value) ? ($value['commission_bp'] ?? null) : $value;
 
         return $this->normalizeRate($raw ?? self::DEFAULT_COMMISSION_BP);
@@ -87,12 +89,20 @@ final class PublisherAffiliateService
     }
 
     /**
-     * Rebuild the affiliate ledger for an in-progress period close.
+     * Rebuild the affiliate ledger only while a financial period is actively closing.
+     * Closed-period ledger rows are immutable accounting history.
      *
      * @return array<string, array{total_minor:int,line_items:array<int,array<string,mixed>>}>
      */
     public function reconcilePeriod(FinancialPeriod $period, ?User $actor): array
     {
+        $period = FinancialPeriod::query()->findOrFail($period->id);
+        if ($period->status !== FinancialPeriodStatus::Closing) {
+            throw ValidationException::withMessages([
+                'period' => 'Affiliate commissions can only be reconciled while the financial period is closing.',
+            ]);
+        }
+
         PublisherAffiliateCommission::query()
             ->where('financial_period_id', $period->id)
             ->delete();
@@ -108,6 +118,10 @@ final class PublisherAffiliateService
         foreach ($statements as $statement) {
             $referredPublisher = $statement->publisher;
             if (! $referredPublisher?->referred_by_publisher_id) {
+                continue;
+            }
+            if ($referredPublisher->referred_at
+                && $referredPublisher->referred_at->toDateString() > $period->ends_on->toDateString()) {
                 continue;
             }
 
@@ -140,6 +154,7 @@ final class PublisherAffiliateService
                 'metadata' => [
                     'source_statement_number' => $statement->statement_number,
                     'basis' => 'publisher_earnings_minor',
+                    'referred_at' => $referredPublisher->referred_at?->toIso8601String(),
                 ],
                 'calculated_by' => $actor?->id,
             ]);
