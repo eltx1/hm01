@@ -20,7 +20,11 @@
             <td><input type="checkbox" name="statement_ids[]" value="{{ $statement->id }}" @disabled(!$eligible) aria-label="Select {{ $statement->statement_number }}"></td>
             <td><strong><a class="text-link" href="{{ route('admin.finance.statements.show', $statement) }}">{{ $statement->statement_number }}</a></strong><span class="table-note">{{ $statement->publisher->display_name }}</span><x-status-badge :status="$statement->status" /></td>
             <td>{{ $statement->period->period_key }}<span class="table-note">Finalized {{ $statement->finalized_at?->toDateString() ?: '—' }}</span></td>
-            <td><strong>{{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }} {{ $statement->currency }}</strong><span class="table-note">Unreserved {{ \App\Support\Money::formatMinor($available) }}</span></td>
+            <td>
+                <strong>{{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }} {{ $statement->currency }}</strong>
+                <span class="table-note">Publisher {{ \App\Support\Money::formatMinor((int) $statement->publisher_earnings_minor) }} + Affiliate {{ \App\Support\Money::formatMinor((int) $statement->affiliate_earnings_minor) }}</span>
+                <span class="table-note">Unreserved {{ \App\Support\Money::formatMinor($available) }}</span>
+            </td>
             <td><x-status-badge :status="$statement->publisher_invoice_status" /><span class="table-note">{{ $statement->publisher_invoice_number ?: 'No invoice number' }}</span>
                 @if($statement->publisher_invoice_status === \App\Enums\PublisherInvoiceStatus::Received && auth()->user()->hasPermission('finance.statements.review'))
                     <details><summary class="text-link">Review invoice</summary>
