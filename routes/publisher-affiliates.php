@@ -4,7 +4,7 @@ use App\Http\Controllers\Admin\PublisherAffiliateController as AdminPublisherAff
 use App\Http\Controllers\Publisher\AffiliateController as PublisherAffiliateController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth', 'active', 'verified', 'dashboard.access'])
+Route::middleware(['auth', 'active', 'verified', 'dashboard.access', 'permission:finance.publisher.view_own'])
     ->get('/publisher/affiliate', [PublisherAffiliateController::class, 'index'])
     ->name('publisher.affiliate.index');
 
