@@ -29,4 +29,24 @@ class StaticEdgePublicParityWorkflowTest extends TestCase
         $this->assertStringContainsString('verify_snapshot "$RUNNER_TEMP/static-edge" "$CDN_URL"', $workflow);
         $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment within the verification window.', $workflow);
     }
+
+    public function test_static_edge_sync_requires_traffic_gate_origin_and_csp_before_confirmation(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/sync-production-static-edge.yml');
+
+        $this->assertIsString($workflow);
+        $this->assertStringContainsString('GATE_URL: https://verify.horusmedia.net', $workflow);
+        $this->assertStringContainsString('Verify Traffic Gate origin before confirmation', $workflow);
+        $this->assertStringContainsString('$GATE_URL/delivery-manifest.json', $workflow);
+        $this->assertStringContainsString('$GATE_URL/assets/traffic-gate/horus-traffic-gate.js', $workflow);
+        $this->assertStringContainsString("script-src 'self' https://challenges.cloudflare.com", $workflow);
+        $this->assertStringContainsString("connect-src 'self' https://challenges.cloudflare.com", $workflow);
+        $this->assertStringContainsString('Traffic Gate custom origin is stale, incomplete, or missing its enforced Turnstile CSP; refusing production confirmation.', $workflow);
+
+        $gateCheck = strpos($workflow, '- name: Verify Traffic Gate origin before confirmation');
+        $confirmation = strpos($workflow, '- name: Confirm manifest on production control plane');
+        $this->assertIsInt($gateCheck);
+        $this->assertIsInt($confirmation);
+        $this->assertLessThan($confirmation, $gateCheck, 'Traffic Gate verification must run before the production confirmation marker is written.');
+    }
 }
