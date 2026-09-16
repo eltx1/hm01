@@ -39,7 +39,7 @@ final class CloneQuickMonetizeDisplaySuite extends Command
         {--preset=* : Optional subset of supported display/edge presets}
         {--actor= : Optional user id override for audit attribution}';
 
-    protected $description = 'Clone one reviewed Quick Monetize GPT setup into the maintained display/edge preset suite';
+    protected $description = 'Clone one reviewed Quick Monetize GPT setup into every size-compatible display/edge preset';
 
     public function handle(
         QuickMonetizeService $quick,
@@ -74,6 +74,13 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             ->where('site_id', $site->id)
             ->where('code', $sourceCode)
             ->first();
+        if (! $source && $sourceCode === 'quick_sticky_bottom') {
+            $source = Placement::withoutGlobalScopes()->withTrashed()
+                ->where('site_id', $site->id)
+                ->get()
+                ->first(fn (Placement $placement): bool => (bool) data_get($placement->metadata, 'quick_monetize_generated', false)
+                    && (string) data_get($placement->metadata, 'placement_preset', '') === 'sticky_bottom');
+        }
         if (! $source || $source->trashed() || $source->status !== PlacementStatus::Active) {
             $this->error("Source placement [{$sourceCode}] must exist and be active on [{$siteKey}].");
             return self::FAILURE;
@@ -135,6 +142,17 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             return self::FAILURE;
         }
 
+        $sourceSizes = collect((array) ($blueprint['sizes'] ?? []))
+            ->filter(fn ($size): bool => is_array($size) && count($size) === 2 && (int) $size[0] > 0 && (int) $size[1] > 0)
+            ->map(fn (array $size): array => [(int) $size[0], (int) $size[1]])
+            ->unique(fn (array $size): string => $size[0].'x'.$size[1])
+            ->values()
+            ->all();
+        if ($sourceSizes === []) {
+            $this->error('The source Google GPT tag has no reusable fixed sizes.');
+            return self::FAILURE;
+        }
+
         $actor = $this->resolveActor($source, $demandPlacement, $demandSite, $account);
         if (! $actor) {
             $this->error('Could not resolve a live user for audit attribution. Pass --actor=<user-id>.');
@@ -142,8 +160,23 @@ final class CloneQuickMonetizeDisplaySuite extends Command
         }
 
         $created = 0;
-        $skipped = 0;
+        $alreadyActive = 0;
+        $incompatible = 0;
         foreach ($presets as $preset) {
+            try {
+                $sizes = $this->compatiblePresetFixedSizes($catalog, $preset, $sourceSizes);
+            } catch (ValidationException $exception) {
+                $message = collect($exception->errors())->flatten()->implode(' ');
+                $this->error("Could not resolve [{$preset}]: {$message}");
+                return self::FAILURE;
+            }
+
+            if ($sizes === []) {
+                $this->warn("SKIP {$preset}: the source GPT tag has no size supported by this preset.");
+                $incompatible++;
+                continue;
+            }
+
             $existing = $this->existingPreset($site, $preset);
             if ($existing) {
                 if ($existing->trashed() || $existing->status !== PlacementStatus::Active) {
@@ -151,12 +184,11 @@ final class CloneQuickMonetizeDisplaySuite extends Command
                     return self::FAILURE;
                 }
                 $this->line("SKIP {$preset}: active Quick placement [{$existing->code}] already exists.");
-                $skipped++;
+                $alreadyActive++;
                 continue;
             }
 
             try {
-                $sizes = $this->presetFixedSizes($catalog, $preset);
                 $tag = $this->canonicalGptTag(
                     (string) $blueprint['scriptUrl'],
                     (string) $blueprint['adUnitPath'],
@@ -188,7 +220,7 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             }
         }
 
-        $this->info("Quick display suite complete for {$siteKey}: {$created} created, {$skipped} already active.");
+        $this->info("Quick display suite complete for {$siteKey}: {$created} created, {$alreadyActive} already active, {$incompatible} incompatible with the source GPT sizes.");
         return self::SUCCESS;
     }
 
@@ -251,6 +283,20 @@ final class CloneQuickMonetizeDisplaySuite extends Command
         }
 
         return $sizes;
+    }
+
+    /**
+     * @param list<array{0:int,1:int}> $sourceSizes
+     * @return list<array{0:int,1:int}>
+     */
+    private function compatiblePresetFixedSizes(PlacementPresetCatalog $catalog, string $preset, array $sourceSizes): array
+    {
+        $source = collect($sourceSizes)->mapWithKeys(fn (array $size): array => [$size[0].'x'.$size[1] => true]);
+
+        return collect($this->presetFixedSizes($catalog, $preset))
+            ->filter(fn (array $size): bool => isset($source[$size[0].'x'.$size[1]]))
+            ->values()
+            ->all();
     }
 
     /** @param list<array{0:int,1:int}> $sizes */
