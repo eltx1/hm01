@@ -1,0 +1,92 @@
+name: LordAI Quick Monetize display suite
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy production
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lordai-quick-display-suite-v1
+  cancel-in-progress: false
+
+jobs:
+  rollout:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      SITE_KEY: hm_ircll0vkqq54jvt9gz85mrh2
+
+    steps:
+      - name: Validate production connection inputs
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          [[ "$SITE_KEY" =~ ^hm_[a-z0-9_-]+$ ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Create missing LordAI display and edge placements once
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-display-suite-v1.done"
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "REMOTE_HOME='$REMOTE_HOME' APP_ROOT='$app_root' SITE_KEY='$SITE_KEY' MARKER='$marker' bash -s" <<'REMOTE'
+          set -euo pipefail
+          if test -f "$MARKER"; then
+            echo "LordAI Quick display suite v1 already completed: $(cat "$MARKER")"
+            exit 0
+          fi
+          test -f "$APP_ROOT/artisan"
+          cd "$APP_ROOT"
+          php artisan quick-monetize:clone-display-suite "$SITE_KEY" --from=quick_sticky_bottom --no-interaction
+          install -d -m 700 "$(dirname "$MARKER")"
+          tmp="${MARKER}.tmp.$$"
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) deployment=${GITHUB_RUN_ID:-workflow}" > "$tmp"
+          chmod 600 "$tmp"
+          mv "$tmp" "$MARKER"
+          REMOTE
+
+      - name: Verify production database has the expected Quick suite
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$s=App\\Models\\Site::withoutGlobalScopes()->where('public_key','$SITE_KEY')->firstOrFail(); \$codes=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->whereIn('code',['quick_sticky_bottom','quick_responsive_display','quick_in_article_display','quick_high_impact_display','quick_mobile_display','quick_sticky_top','quick_side_rail_right','quick_side_rail_left'])->pluck('code')->sort()->values()->all(); if(count(\$codes)!==8){throw new RuntimeException('Expected 8 Quick display/edge placements, found '.count(\$codes));} echo json_encode(\$codes);\""
+
+      - name: Explain static-edge follow-up
+        run: echo 'The scheduled production static-edge sync will publish the new configuration within five minutes; the post-deploy sync may publish it sooner.'
