@@ -23,8 +23,9 @@ run_id="${GITHUB_RUN_ID:-local}"
 run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
 user_agent='Mozilla/5.0 Horus-Static-Sync/2.0'
 
-# The root manifest is not listed inside its own files map. Verify it explicitly
-# first so a stale/missing root can never be mistaken for a complete snapshot.
+# delivery-manifest.json is deliberately not listed inside its own files map.
+# Verify it first so a stale/missing root manifest can never be mistaken for a
+# complete deployment merely because all referenced artifacts still exist.
 remote_manifest="$tmp/delivery-manifest.json"
 if ! curl --fail --silent --show-error --location --globoff --max-time 20 \
     --retry 2 --retry-delay 1 \
@@ -67,8 +68,8 @@ export HORUS_VERIFY_RUN_ATTEMPT="$run_attempt"
 export HORUS_VERIFY_USER_AGENT="$user_agent"
 
 # Bounded parallelism keeps the supported 20k-file snapshot budget practical
-# without weakening parity. Every response body is streamed directly into
-# sha256sum, so the runner does not need to store the complete remote snapshot.
+# without weakening parity. Each body is streamed directly into sha256sum, so
+# the runner does not have to retain a second complete snapshot on disk.
 if ! xargs -0 -n2 -P "$concurrency" bash -c '
   set -euo pipefail
   expected="$1"
@@ -80,7 +81,7 @@ if ! xargs -0 -n2 -P "$concurrency" bash -c '
       --retry 2 --retry-delay 1 \
       --user-agent "$HORUS_VERIFY_USER_AGENT" \
       "$HORUS_VERIFY_BASE/$path?edge_verify=$HORUS_VERIFY_RUN_ID-$HORUS_VERIFY_RUN_ATTEMPT-$HORUS_VERIFY_PROBE" \
-    | sha256sum | awk "{print \\$1}"
+    | sha256sum | cut -d " " -f1
   )"
   if [[ "$actual" != "$expected" ]]; then
     echo "Public edge hash mismatch for $path at $HORUS_VERIFY_BASE: expected $expected, got $actual." >&2
