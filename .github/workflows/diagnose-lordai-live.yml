@@ -1,0 +1,33 @@
+name: Diagnose LordAI live Quick Monetize
+
+on:
+  push:
+    branches:
+      - diag/lordai-live-quick-monetize
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install diagnostic browser
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium
+      - name: Run live publisher diagnostic
+        run: node scripts/diagnose-live-publisher.mjs https://lordai.net/
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: lordai-live-quick-monetize-diagnostic
+          path: live-diagnostic/
+          retention-days: 7
