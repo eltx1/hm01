@@ -1,9 +1,16 @@
 name: Bootstrap Cloudflare static edge
 
+# This is an operator-only bootstrap/recovery workflow. It must never run on a
+# normal application push because its SQLite baseline intentionally contains no
+# live publisher/site configuration and would replace the production snapshot.
 on:
-  push:
-    branches: [main, ops/bootstrap-static-edge]
   workflow_dispatch:
+    inputs:
+      deploy_baseline:
+        description: Deploy the empty bootstrap baseline even when the Pages project already exists
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -65,6 +72,7 @@ jobs:
           headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
           response_file="$(mktemp)"
           trap 'rm -f "$response_file"' EXIT
+          created=false
 
           curl --silent --show-error "${headers[@]}" \
             "$api_root/pages/projects" --output "$response_file"
@@ -83,22 +91,27 @@ jobs:
               jq '{errors, messages}' "$response_file"
               exit 1
             }
+            created=true
             echo "Created Direct Upload Pages project $CLOUDFLARE_PAGES_PROJECT."
           fi
+          echo "created=$created" >> "$GITHUB_OUTPUT"
           echo "pages_url=https://$CLOUDFLARE_PAGES_PROJECT.pages.dev" >> "$GITHUB_OUTPUT"
 
       - uses: shivammathur/setup-php@v2
+        if: steps.pages_project.outputs.created == 'true' || inputs.deploy_baseline == true
         with:
           php-version: '8.2'
           extensions: pdo, sqlite, pdo_sqlite, mbstring, soap
           coverage: none
 
       - uses: actions/setup-node@v6
+        if: steps.pages_project.outputs.created == 'true' || inputs.deploy_baseline == true
         with:
           node-version: '22'
           cache: npm
 
       - name: Build clean deterministic baseline
+        if: steps.pages_project.outputs.created == 'true' || inputs.deploy_baseline == true
         shell: bash
         run: |
           set -euo pipefail
@@ -111,11 +124,18 @@ jobs:
           php scripts/validate-static-delivery.php cloudflare-pages-dist
 
       - name: Deploy baseline to Cloudflare Pages
+        if: steps.pages_project.outputs.created == 'true' || inputs.deploy_baseline == true
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy cloudflare-pages-dist --project-name=horus-media-cdn --branch=main
+
+      - name: Protect existing production snapshot
+        if: steps.pages_project.outputs.created != 'true' && inputs.deploy_baseline != true
+        shell: bash
+        run: |
+          echo 'Existing Pages project detected. Empty baseline deployment was intentionally skipped to preserve live publisher/site configs.'
 
       - name: Attach advertising CDN and verification domains
         id: domains
@@ -240,6 +260,7 @@ jobs:
           echo 'Authoritative Pages endpoint returned the loader successfully.'
 
       - uses: actions/upload-artifact@v7
+        if: steps.pages_project.outputs.created == 'true' || inputs.deploy_baseline == true
         with:
           name: cloudflare-static-edge-bootstrap-${{ github.sha }}
           path: |

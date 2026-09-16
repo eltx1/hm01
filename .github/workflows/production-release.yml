@@ -49,6 +49,7 @@ jobs:
           bash -n ops/deploy/horus-atomic-deploy.sh
           bash -n ops/deploy/horus-bootstrap-atomic-layout.sh
           bash -n scripts/verify-static-edge-public.sh
+          bash -n scripts/verify-traffic-gate-public.sh
           php -l ops/deploy/write-mysql-client-config.php
           bash tests/Deployment/mysql-client-config-test.sh
           bash tests/Deployment/bootstrap-layout-test.sh
@@ -77,6 +78,7 @@ jobs:
       - name: Smoke-test production environment template
         run: |
           rm -f .env database/production-smoke.sqlite
+          rm -f bootstrap/cache/config.php bootstrap/cache/routes-*.php bootstrap/cache/events.php
           cp .env.production.example .env
           php artisan key:generate --force
           touch database/production-smoke.sqlite

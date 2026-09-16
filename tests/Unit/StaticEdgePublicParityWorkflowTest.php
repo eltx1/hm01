@@ -39,7 +39,8 @@ class StaticEdgePublicParityWorkflowTest extends TestCase
         $this->assertStringContainsString('Verify exact Pages deployment and canonical edge', $workflow);
         $this->assertStringContainsString('scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$DEPLOYMENT_URL" "pages-$attempt" 32', $workflow);
         $this->assertStringContainsString('scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" "cdn-$attempt" 32', $workflow);
-        $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment within the verification window.', $workflow);
+        $this->assertStringContainsString('retrying from the pinned production host', $workflow);
+        $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment from either independent verification network.', $workflow);
         $this->assertStringContainsString('bash -n scripts/verify-static-edge-public.sh', $workflow);
         $this->assertStringContainsString('timeout-minutes: 30', $workflow);
     }
@@ -47,15 +48,22 @@ class StaticEdgePublicParityWorkflowTest extends TestCase
     public function test_static_edge_sync_requires_traffic_gate_origin_and_csp_before_confirmation(): void
     {
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/sync-production-static-edge.yml');
+        $gateVerifier = file_get_contents(dirname(__DIR__, 2).'/scripts/verify-traffic-gate-public.sh');
 
         $this->assertIsString($workflow);
+        $this->assertIsString($gateVerifier);
         $this->assertStringContainsString('GATE_URL: https://verify.horusmedia.net', $workflow);
         $this->assertStringContainsString('Verify Traffic Gate origin before confirmation', $workflow);
-        $this->assertStringContainsString('$GATE_URL/delivery-manifest.json', $workflow);
-        $this->assertStringContainsString('$GATE_URL/assets/traffic-gate/horus-traffic-gate.js', $workflow);
-        $this->assertStringContainsString("script-src 'self' https://challenges.cloudflare.com", $workflow);
-        $this->assertStringContainsString("connect-src 'self' https://challenges.cloudflare.com", $workflow);
-        $this->assertStringContainsString('Traffic Gate custom origin is stale, incomplete, or missing its enforced Turnstile CSP; refusing production confirmation.', $workflow);
+        $this->assertStringContainsString('scripts/verify-traffic-gate-public.sh "$RUNNER_TEMP/static-edge" "$GATE_URL"', $workflow);
+        $this->assertStringContainsString('retrying from the pinned production host', $workflow);
+        $this->assertStringContainsString('Traffic Gate custom origin is stale, incomplete, blocked from both verification networks, or missing its enforced Turnstile CSP; refusing production confirmation.', $workflow);
+
+        $this->assertStringContainsString('$base/delivery-manifest.json?edge_verify=', $gateVerifier);
+        $this->assertStringContainsString('$base/assets/traffic-gate/horus-traffic-gate.js?edge_verify=', $gateVerifier);
+        $this->assertStringContainsString("script-src 'self' https://challenges.cloudflare.com", $gateVerifier);
+        $this->assertStringContainsString("frame-src https://challenges.cloudflare.com", $gateVerifier);
+        $this->assertStringContainsString("connect-src 'self' https://challenges.cloudflare.com", $gateVerifier);
+        $this->assertStringContainsString("frame-ancestors https:", $gateVerifier);
 
         $gateCheck = strpos($workflow, '- name: Verify Traffic Gate origin before confirmation');
         $confirmation = strpos($workflow, '- name: Confirm manifest on production control plane');
