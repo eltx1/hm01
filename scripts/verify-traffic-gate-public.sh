@@ -51,7 +51,7 @@ if [[ "$manifest_status" != '200' ]]; then
   if [[ "$manifest_status" == '403' && "$waf_fallback" == '1' ]]; then
     script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     domain="${base#https://}"
-    "$script_dir/verify-cloudflare-pages-domain-active.sh" "$pages_project" "$domain"
+    bash "$script_dir/verify-cloudflare-pages-domain-active.sh" "$pages_project" "$domain"
     echo "Cloudflare WAF returned HTTP 403 for Traffic Gate $base after authoritative Pages verification; active custom-domain control-plane proof accepted."
     exit 0
   fi
