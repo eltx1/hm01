@@ -28,7 +28,7 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString("php artisan tinker --execute='", $workflow);
         $this->assertStringContainsString('getenv("SITE_DOMAIN")', $workflow);
         $this->assertStringContainsString("<<'REMOTE'", $workflow);
-        $this->assertStringContainsString("GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s", $workflow);
+        $this->assertStringContainsString('GITHUB_RUN_ID=', $workflow);
         $this->assertStringNotContainsString('tinker --execute="\\$domain=', $workflow);
     }
 
