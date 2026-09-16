@@ -51,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/verify-static-edge-public.sh
+          bash -n scripts/verify-traffic-gate-public.sh
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
           test -n "$HOST"
@@ -88,13 +89,25 @@ jobs:
           ssh -p "$SSH_PORT" "$USER@$HOST" \
             "cat '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest' 2>/dev/null || true" \
             > "$RUNNER_TEMP/confirmed-manifest"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
+
+          # Keep the authoritative production-built snapshot until the final
+          # cleanup. It doubles as an independent verification point when the
+          # Cloudflare WAF blocks GitHub-hosted runner IPs with HTTP 403.
+          scp -P "$SSH_PORT" \
+            scripts/verify-static-edge-public.sh \
+            scripts/verify-traffic-gate-public.sh \
+            "$USER@$HOST:$remote_dir/"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "chmod 700 '$remote_dir/verify-static-edge-public.sh' '$remote_dir/verify-traffic-gate-public.sh'"
 
       - name: Validate sanitized production snapshot
         run: php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
 
       - name: Compare complete public snapshot
         id: compare
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
           local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
@@ -106,7 +119,19 @@ jobs:
             echo "Control-plane marker matches $local_hash; verifying the public edge before trusting it."
           fi
 
+          remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          edge_ok=false
           if bash scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" compare 32; then
+            edge_ok=true
+          else
+            echo '::warning::Direct CDN verification from the GitHub runner failed; retrying complete parity from the pinned production host.'
+            if ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "RUNNER_TEMP=/tmp GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote_dir/verify-static-edge-public.sh' '$remote_dir' '$CDN_URL' 'compare-origin' 16"; then
+              edge_ok=true
+            fi
+          fi
+
+          if [[ "$edge_ok" == true ]]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "Canonical public edge contains the complete snapshot $local_hash, including the root manifest."
           else
@@ -127,6 +152,8 @@ jobs:
         if: steps.compare.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
           [[ "$DEPLOYMENT_URL" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]
@@ -144,81 +171,79 @@ jobs:
             exit 1
           fi
 
+          # GitHub-hosted runners can be challenged by the production WAF even
+          # when the CDN is healthy for real traffic. First try the runner, then
+          # require the same full manifest/file-hash proof from our pinned
+          # production host before accepting a WAF-specific fallback.
           cdn_ok=false
-          for attempt in $(seq 1 18); do
+          for attempt in $(seq 1 2); do
             if bash scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" "cdn-$attempt" 32; then
               cdn_ok=true
               break
             fi
-            sleep 10
+            sleep 3
           done
+
+          remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           if [[ "$cdn_ok" != true ]]; then
-            echo 'The canonical CDN did not expose the complete exact deployment within the verification window.' >&2
+            echo '::warning::GitHub runner could not prove canonical CDN parity; retrying from the pinned production host.'
+            for attempt in $(seq 1 6); do
+              if ssh -p "$SSH_PORT" "$USER@$HOST" \
+                "RUNNER_TEMP=/tmp GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote_dir/verify-static-edge-public.sh' '$remote_dir' '$CDN_URL' 'cdn-origin-$attempt' 16"; then
+                cdn_ok=true
+                break
+              fi
+              sleep 5
+            done
+          fi
+
+          if [[ "$cdn_ok" != true ]]; then
+            echo 'The canonical CDN did not expose the complete exact deployment from either independent verification network.' >&2
             exit 1
           fi
 
-          status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+          status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/3.0' \
             --output "$RUNNER_TEMP/public-sellers.json" --write-out '%{http_code}' "$PUBLIC_URL/sellers.json?verify=$GITHUB_RUN_ID")"
           if [[ "$status" == '200' ]]; then
             cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/public-sellers.json"
           elif [[ "$status" == '403' ]]; then
-            echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $PUBLIC_URL/sellers.json; canonical CDN parity was verified."
+            echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $PUBLIC_URL/sellers.json; canonical CDN parity was independently verified."
           else
             echo "Unexpected public-site status $status for $PUBLIC_URL/sellers.json" >&2
             exit 1
           fi
 
       - name: Verify Traffic Gate origin before confirmation
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
-          local_hash="${{ steps.compare.outputs.manifest_hash }}"
-          expected_gate_js="$(sha256sum "$RUNNER_TEMP/static-edge/assets/traffic-gate/horus-traffic-gate.js" | cut -d ' ' -f1)"
           gate_ok=false
 
-          for attempt in $(seq 1 12); do
-            manifest_file="$RUNNER_TEMP/gate-delivery-manifest.json"
-            gate_html="$RUNNER_TEMP/gate.html"
-            gate_js="$RUNNER_TEMP/gate.js"
-            gate_headers="$RUNNER_TEMP/gate.headers"
-
-            if curl --fail --silent --show-error --location --globoff --max-time 20 \
-                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
-                "$GATE_URL/delivery-manifest.json?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-manifest-$attempt" \
-                --output "$manifest_file"; then
-              remote_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$manifest_file" 2>/dev/null || true)"
-            else
-              remote_hash=''
+          for attempt in $(seq 1 3); do
+            if bash scripts/verify-traffic-gate-public.sh "$RUNNER_TEMP/static-edge" "$GATE_URL" "gate-$attempt"; then
+              gate_ok=true
+              break
             fi
+            sleep 3
+          done
 
-            if [[ "$remote_hash" == "$local_hash" ]] \
-              && curl --fail --silent --show-error --location --globoff --max-time 20 \
-                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
-                --dump-header "$gate_headers" \
-                "$GATE_URL/traffic-gate/?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-page-$attempt" \
-                --output "$gate_html" \
-              && grep -Fq '<title>Horus Client Traffic Gate</title>' "$gate_html" \
-              && grep -Fq '/assets/traffic-gate/horus-traffic-gate.js' "$gate_html" \
-              && curl --fail --silent --show-error --location --globoff --max-time 20 \
-                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
-                "$GATE_URL/assets/traffic-gate/horus-traffic-gate.js?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-js-$attempt" \
-                --output "$gate_js"; then
-              actual_gate_js="$(sha256sum "$gate_js" | cut -d ' ' -f1)"
-              csp="$(tr -d '\r' < "$gate_headers" | awk 'BEGIN{IGNORECASE=1} /^Content-Security-Policy:/ {line=$0} END{sub(/^[^:]+:[[:space:]]*/, "", line); print line}')"
-              if [[ "$actual_gate_js" == "$expected_gate_js" \
-                && "$csp" == *"script-src 'self' https://challenges.cloudflare.com"* \
-                && "$csp" == *"frame-src https://challenges.cloudflare.com"* \
-                && "$csp" == *"connect-src 'self' https://challenges.cloudflare.com"* \
-                && "$csp" == *"frame-ancestors https:"* ]]; then
+          remote_dir="$REMOTE_HOME/incoming/static-sync-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          if [[ "$gate_ok" != true ]]; then
+            echo '::warning::GitHub runner could not prove Traffic Gate parity; retrying from the pinned production host.'
+            for attempt in $(seq 1 6); do
+              if ssh -p "$SSH_PORT" "$USER@$HOST" \
+                "RUNNER_TEMP=/tmp GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote_dir/verify-traffic-gate-public.sh' '$remote_dir' '$GATE_URL' 'gate-origin-$attempt'"; then
                 gate_ok=true
                 break
               fi
-            fi
-
-            sleep 5
-          done
+              sleep 5
+            done
+          fi
 
           if [[ "$gate_ok" != true ]]; then
-            echo 'Traffic Gate custom origin is stale, incomplete, or missing its enforced Turnstile CSP; refusing production confirmation.' >&2
+            echo 'Traffic Gate custom origin is stale, incomplete, blocked from both verification networks, or missing its enforced Turnstile CSP; refusing production confirmation.' >&2
             exit 1
           fi
 
