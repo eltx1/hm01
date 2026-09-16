@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-display-suite-v2.done"
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "REMOTE_HOME='$REMOTE_HOME' APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' MARKER='$marker' bash -s" <<'REMOTE'
+          ssh -p "$SSH_PORT" "$USER@$HOST" "REMOTE_HOME='$REMOTE_HOME' APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' MARKER='$marker' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
           set -euo pipefail
           if test -f "$MARKER"; then
             echo "LordAI Quick display suite v2 already completed: $(cat "$MARKER")"
@@ -72,7 +72,21 @@ jobs:
           test -f "$APP_ROOT/artisan"
           cd "$APP_ROOT"
 
-          site_key="$(php artisan tinker --execute="\$domain=strtolower('$SITE_DOMAIN'); \$sites=App\\Models\\Site::withoutGlobalScopes()->whereNull('deleted_at')->get()->filter(fn(\$site)=>strtolower(preg_replace('/^www\\./i','',(string)\$site->primary_domain))===\$domain)->values(); if(\$sites->count()!==1){throw new RuntimeException('Expected exactly one live site for domain '.$domain.', found '.\$sites->count().'.');} echo 'HORUS_SITE_KEY='.\$sites->first()->public_key.PHP_EOL;" | grep -oE 'HORUS_SITE_KEY=hm_[a-z0-9_-]+' | tail -n 1 | cut -d= -f2)"
+          # Keep all PHP variables inside a single-quoted PsySH program so
+          # `set -u` can never interpret $domain/$sites/$site as shell vars.
+          # SITE_DOMAIN is inherited from the remote process environment.
+          site_key="$(php artisan tinker --execute='
+          $domain = strtolower((string) getenv("SITE_DOMAIN"));
+          $sites = App\Models\Site::withoutGlobalScopes()
+              ->whereNull("deleted_at")
+              ->get()
+              ->filter(fn ($site) => strtolower(preg_replace("/^www\\./i", "", (string) $site->primary_domain)) === $domain)
+              ->values();
+          if ($sites->count() !== 1) {
+              throw new RuntimeException("Expected exactly one live site for domain ".$domain.", found ".$sites->count().".");
+          }
+          echo "HORUS_SITE_KEY=".$sites->first()->public_key.PHP_EOL;
+          ' | grep -oE 'HORUS_SITE_KEY=hm_[a-z0-9_-]+' | tail -n 1 | cut -d= -f2)"
           [[ "$site_key" =~ ^hm_[a-z0-9_-]+$ ]]
           echo "Resolved $SITE_DOMAIN to current production site key $site_key."
 
@@ -91,7 +105,41 @@ jobs:
         run: |
           set -euo pipefail
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$domain=strtolower('$SITE_DOMAIN'); \$sites=App\\Models\\Site::withoutGlobalScopes()->whereNull('deleted_at')->get()->filter(fn(\$site)=>strtolower(preg_replace('/^www\\./i','',(string)\$site->primary_domain))===\$domain)->values(); if(\$sites->count()!==1){throw new RuntimeException('Expected exactly one live LordAI site.');} \$s=\$sites->first(); \$p=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->get()->filter(fn(\$x)=>(bool)data_get(\$x->metadata,'quick_monetize_generated',false) && \$x->status===App\\Enums\\PlacementStatus::Active); \$presets=\$p->map(fn(\$x)=>(string)data_get(\$x->metadata,'placement_preset',''))->filter()->unique()->values(); if(!\$presets->contains('sticky_bottom') || !\$presets->contains('sticky_top')){throw new RuntimeException('Bottom/top Quick anchors are not both active.');} if(!\$presets->intersect(['responsive_display','in_article_display','high_impact_display','mobile_display'])->count()){throw new RuntimeException('No compatible display surface was activated.');} echo json_encode(['site_key'=>\$s->public_key,'presets'=>\$presets->all()]);\""
+          ssh -p "$SSH_PORT" "$USER@$HOST" "APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_ROOT/artisan"
+          cd "$APP_ROOT"
+          php artisan tinker --execute='
+          $domain = strtolower((string) getenv("SITE_DOMAIN"));
+          $sites = App\Models\Site::withoutGlobalScopes()
+              ->whereNull("deleted_at")
+              ->get()
+              ->filter(fn ($site) => strtolower(preg_replace("/^www\\./i", "", (string) $site->primary_domain)) === $domain)
+              ->values();
+          if ($sites->count() !== 1) {
+              throw new RuntimeException("Expected exactly one live LordAI site, found ".$sites->count().".");
+          }
+          $site = $sites->first();
+          $placements = App\Models\Placement::withoutGlobalScopes()
+              ->where("site_id", $site->id)
+              ->whereNull("deleted_at")
+              ->get()
+              ->filter(fn ($placement) => (bool) data_get($placement->metadata, "quick_monetize_generated", false)
+                  && $placement->status === App\Enums\PlacementStatus::Active);
+          $presets = $placements
+              ->map(fn ($placement) => (string) data_get($placement->metadata, "placement_preset", ""))
+              ->filter()
+              ->unique()
+              ->values();
+          if (! $presets->contains("sticky_bottom") || ! $presets->contains("sticky_top")) {
+              throw new RuntimeException("Bottom/top Quick anchors are not both active.");
+          }
+          if (! $presets->intersect(["responsive_display", "in_article_display", "high_impact_display", "mobile_display"])->count()) {
+              throw new RuntimeException("No compatible display surface was activated.");
+          }
+          echo json_encode(["site_key" => $site->public_key, "presets" => $presets->all()], JSON_THROW_ON_ERROR).PHP_EOL;
+          '
+          REMOTE
 
       - name: Explain immediate static-edge follow-up
         run: echo 'A successful rollout automatically triggers the production static-edge sync, which must publish and verify the new LordAI production config before control-plane confirmation.'
