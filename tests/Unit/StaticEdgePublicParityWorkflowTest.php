@@ -12,10 +12,23 @@ class StaticEdgePublicParityWorkflowTest extends TestCase
 
         $this->assertIsString($workflow);
         $this->assertStringContainsString('Compare complete public snapshot', $workflow);
-        $this->assertStringContainsString("while IFS=\$'\\t' read -r expected path", $workflow);
         $this->assertStringContainsString('Control-plane marker matches $local_hash; verifying the public edge before trusting it.', $workflow);
         $this->assertStringContainsString('Canonical public edge is incomplete or stale; deployment is required.', $workflow);
+        $this->assertStringContainsString('scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" compare 32', $workflow);
         $this->assertStringNotContainsString('remote_hash="$confirmed_hash"', $workflow);
+    }
+
+    public function test_public_parity_verifier_includes_root_manifest_and_uses_bounded_parallelism(): void
+    {
+        $script = file_get_contents(dirname(__DIR__, 2).'/scripts/verify-static-edge-public.sh');
+
+        $this->assertIsString($script);
+        $this->assertStringContainsString('$base/delivery-manifest.json?edge_verify=', $script);
+        $this->assertStringContainsString('cmp -s "$manifest" "$remote_manifest"', $script);
+        $this->assertStringContainsString('xargs -0 -n2 -P "$concurrency"', $script);
+        $this->assertStringContainsString('concurrency="${4:-32}"', $script);
+        $this->assertStringContainsString('concurrency <= 64', $script);
+        $this->assertStringContainsString('| sha256sum | cut -d " " -f1', $script);
     }
 
     public function test_static_edge_sync_verifies_every_manifest_file_on_pages_and_the_canonical_cdn(): void
@@ -23,11 +36,12 @@ class StaticEdgePublicParityWorkflowTest extends TestCase
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/sync-production-static-edge.yml');
 
         $this->assertIsString($workflow);
-        $this->assertStringContainsString('foreach (($d["files"] ?? []) as $path => $sha)', $workflow);
         $this->assertStringContainsString('Verify exact Pages deployment and canonical edge', $workflow);
-        $this->assertStringContainsString('verify_snapshot "$RUNNER_TEMP/static-edge" "$DEPLOYMENT_URL"', $workflow);
-        $this->assertStringContainsString('verify_snapshot "$RUNNER_TEMP/static-edge" "$CDN_URL"', $workflow);
+        $this->assertStringContainsString('scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$DEPLOYMENT_URL" "pages-$attempt" 32', $workflow);
+        $this->assertStringContainsString('scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" "cdn-$attempt" 32', $workflow);
         $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment within the verification window.', $workflow);
+        $this->assertStringContainsString('bash -n scripts/verify-static-edge-public.sh', $workflow);
+        $this->assertStringContainsString('timeout-minutes: 30', $workflow);
     }
 
     public function test_static_edge_sync_requires_traffic_gate_origin_and_csp_before_confirmation(): void
