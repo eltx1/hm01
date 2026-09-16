@@ -35,11 +35,38 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             throw new StaticDeliveryException('MANIFEST_HASH_INVALID', 'Static delivery batch does not contain a valid manifest hash.');
         }
 
-        // The local confirmation marker is deliberately not sufficient proof. A
-        // previous sync may have written the marker while a custom-domain edge
-        // later lost or never exposed one of the committed config artifacts.
-        // Always prove the public edge before marking a batch as deployed.
-        $response = $this->request($this->manifestUrl(), ['expected' => $expected]);
+        // The production workflow writes this marker only after the complete
+        // snapshot has passed exact Pages/CDN verification. The marker is
+        // necessary, but never sufficient: stale markers must not hide missing
+        // site files or a broken Traffic Gate custom domain.
+        $confirmed = $this->confirmedManifest();
+        if ($confirmed === null || ! hash_equals($expected, $confirmed)) {
+            return null;
+        }
+
+        $canonicalManifest = $this->publicManifest($this->manifestUrl(), $expected);
+        if ($canonicalManifest === null
+            || ! $this->batchArtifactsArePublic($batch, $canonicalManifest, $this->manifestBaseUrl())) {
+            return null;
+        }
+
+        // Traffic Gate executes on verify.horusmedia.net and performs its own
+        // same-origin configuration read. Prove that custom domain independently
+        // instead of assuming canonical CDN parity automatically propagates there.
+        $gateManifest = $this->publicManifest($this->gateManifestUrl(), $expected);
+        if ($gateManifest === null
+            || ! $this->gateRuntimeIsPublic($gateManifest)
+            || ! $this->batchArtifactsArePublic($batch, $gateManifest, $this->gateOrigin())) {
+            return null;
+        }
+
+        return $this->confirmedResult($expected);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function publicManifest(string $url, string $expected): ?array
+    {
+        $response = $this->request($url, ['expected' => $expected]);
         if (! $response->successful()) {
             return null;
         }
@@ -50,14 +77,10 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             return null;
         }
 
-        if (! $this->batchArtifactsArePublic($batch, is_array($manifest) ? $manifest : [])) {
-            return null;
-        }
-
-        return $this->confirmedResult($published);
+        return $manifest;
     }
 
-    private function batchArtifactsArePublic(StaticDeliveryBatch $batch, array $rootManifest): bool
+    private function batchArtifactsArePublic(StaticDeliveryBatch $batch, array $rootManifest, string $baseUrl): bool
     {
         $items = $this->batchItems($batch);
         if ($items->isEmpty()) {
@@ -88,7 +111,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
                 return false;
             }
 
-            $siteManifestResponse = $this->request($this->publicUrl($manifestPath), ['expected' => $checksum]);
+            $siteManifestResponse = $this->request($this->publicUrl($baseUrl, $manifestPath), ['expected' => $checksum]);
             if (! $siteManifestResponse->successful()
                 || ! hash_equals($expectedManifestHash, hash('sha256', $siteManifestResponse->body()))) {
                 return false;
@@ -109,7 +132,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
                 return false;
             }
 
-            $immutableResponse = $this->request($this->publicUrl($immutablePath), ['expected' => $checksum]);
+            $immutableResponse = $this->request($this->publicUrl($baseUrl, $immutablePath), ['expected' => $checksum]);
             if (! $immutableResponse->successful() || ! hash_equals($checksum, hash('sha256', $immutableResponse->body()))) {
                 return false;
             }
@@ -118,8 +141,52 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             if (! isset($rootFiles[$aliasPath]) || ! hash_equals($checksum, (string) $rootFiles[$aliasPath])) {
                 return false;
             }
-            $aliasResponse = $this->request($this->publicUrl($aliasPath), ['expected' => $checksum]);
+            $aliasResponse = $this->request($this->publicUrl($baseUrl, $aliasPath), ['expected' => $checksum]);
             if (! $aliasResponse->successful() || ! hash_equals($checksum, hash('sha256', $aliasResponse->body()))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function gateRuntimeIsPublic(array $rootManifest): bool
+    {
+        $rootFiles = $rootManifest['files'] ?? null;
+        if (! is_array($rootFiles)) {
+            return false;
+        }
+
+        $javascriptPath = 'assets/traffic-gate/horus-traffic-gate.js';
+        $expectedJavascriptHash = $rootFiles[$javascriptPath] ?? null;
+        if (! is_string($expectedJavascriptHash) || ! preg_match('/^[a-f0-9]{64}$/', $expectedJavascriptHash)) {
+            return false;
+        }
+
+        $javascript = $this->request($this->publicUrl($this->gateOrigin(), $javascriptPath));
+        if (! $javascript->successful()
+            || ! hash_equals($expectedJavascriptHash, hash('sha256', $javascript->body()))) {
+            return false;
+        }
+
+        // Cloudflare Web Analytics may append a beacon to HTML at the edge, so
+        // do not compare the gate document byte-for-byte. Verify the Horus gate
+        // contract and the enforced CSP that actually protects Turnstile.
+        $page = $this->request($this->publicUrl($this->gateOrigin(), 'traffic-gate/'));
+        if (! $page->successful()
+            || ! str_contains($page->body(), '<title>Horus Client Traffic Gate</title>')
+            || ! str_contains($page->body(), '/assets/traffic-gate/horus-traffic-gate.js')) {
+            return false;
+        }
+
+        $csp = (string) $page->header('Content-Security-Policy');
+        foreach ([
+            "script-src 'self' https://challenges.cloudflare.com",
+            'frame-src https://challenges.cloudflare.com',
+            "connect-src 'self' https://challenges.cloudflare.com",
+            'frame-ancestors https:',
+        ] as $requiredDirective) {
+            if (! str_contains($csp, $requiredDirective)) {
                 return false;
             }
         }
@@ -158,16 +225,55 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
         return $url;
     }
 
-    private function publicUrl(string $path): string
+    private function manifestBaseUrl(): string
     {
         $manifestUrl = $this->manifestUrl();
         $suffix = '/delivery-manifest.json';
         if (! str_ends_with($manifestUrl, $suffix)) {
             throw new StaticDeliveryException('MANIFEST_URL_INVALID', 'External static delivery manifest URL must end with /delivery-manifest.json.');
         }
-        $base = substr($manifestUrl, 0, -strlen($suffix));
 
-        return rtrim($base, '/').'/'.ltrim($path, '/');
+        return substr($manifestUrl, 0, -strlen($suffix));
+    }
+
+    private function gateOrigin(): string
+    {
+        $url = rtrim((string) config('traffic_gate.origin'), '/');
+        $parts = parse_url($url);
+        $path = (string) ($parts['path'] ?? '');
+        if (($parts['scheme'] ?? null) !== 'https'
+            || blank($parts['host'] ?? null)
+            || isset($parts['user'])
+            || isset($parts['pass'])
+            || isset($parts['query'])
+            || isset($parts['fragment'])
+            || isset($parts['port'])
+            || ! in_array($path, ['', '/'], true)) {
+            throw new StaticDeliveryException('GATE_ORIGIN_INVALID', 'Traffic Gate origin must be a bare public HTTPS origin.');
+        }
+
+        return $url;
+    }
+
+    private function gateManifestUrl(): string
+    {
+        return $this->gateOrigin().'/delivery-manifest.json';
+    }
+
+    private function publicUrl(string $baseUrl, string $path): string
+    {
+        return rtrim($baseUrl, '/').'/'.ltrim($path, '/');
+    }
+
+    private function confirmedManifest(): ?string
+    {
+        $path = (string) config('static-delivery.external_sync.confirmation_path');
+        if ($path === '' || ! is_file($path) || ! is_readable($path)) {
+            return null;
+        }
+        $hash = trim((string) file_get_contents($path));
+
+        return preg_match('/^[a-f0-9]{64}$/', $hash) ? $hash : null;
     }
 
     private function confirmedResult(string $hash): StaticDeliveryResult
