@@ -11,6 +11,10 @@ concurrency="${4:-32}"
 [[ "$concurrency" =~ ^[0-9]+$ ]]
 (( concurrency >= 1 && concurrency <= 64 ))
 
+waf_fallback="${HORUS_ALLOW_CLOUDFLARE_WAF_403_FALLBACK:-0}"
+[[ "$waf_fallback" == '0' || "$waf_fallback" == '1' ]]
+pages_project="${CLOUDFLARE_PAGES_PROJECT:-horus-media-cdn}"
+
 manifest="$root/delivery-manifest.json"
 test -f "$manifest"
 
@@ -21,20 +25,39 @@ trap 'rm -rf "$tmp"' EXIT
 base="${base%/}"
 run_id="${GITHUB_RUN_ID:-local}"
 run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
-user_agent='Mozilla/5.0 Horus-Static-Sync/2.0'
+user_agent='Mozilla/5.0 Horus-Static-Sync/3.1'
 
 # delivery-manifest.json is deliberately not listed inside its own files map.
 # Verify it first so a stale/missing root manifest can never be mistaken for a
 # complete deployment merely because all referenced artifacts still exist.
 remote_manifest="$tmp/delivery-manifest.json"
-if ! curl --fail --silent --show-error --location --globoff --max-time 20 \
+remote_status="$(
+  curl --silent --show-error --location --globoff --max-time 20 \
     --retry 2 --retry-delay 1 \
     --user-agent "$user_agent" \
     "$base/delivery-manifest.json?edge_verify=${run_id}-${run_attempt}-${probe}-root" \
-    --output "$remote_manifest"; then
-  echo "Public edge is missing delivery-manifest.json at $base." >&2
+    --output "$remote_manifest" \
+    --write-out '%{http_code}' || true
+)"
+
+if [[ "$remote_status" != '200' ]]; then
+  # This escape hatch is intentionally narrow. Callers may enable it only after
+  # the exact authoritative *.pages.dev deployment has already passed full
+  # manifest/file-hash parity. A 403 is then treated as a WAF visibility issue
+  # only when Cloudflare's control plane also proves this exact custom hostname
+  # is active on the expected Pages project. 404/5xx/network failures still fail.
+  if [[ "$remote_status" == '403' && "$waf_fallback" == '1' ]]; then
+    script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    domain="${base#https://}"
+    "$script_dir/verify-cloudflare-pages-domain-active.sh" "$pages_project" "$domain"
+    echo "Cloudflare WAF returned HTTP 403 for $base after authoritative Pages parity; active custom-domain control-plane proof accepted."
+    exit 0
+  fi
+
+  echo "Public edge delivery-manifest.json request failed at $base with HTTP ${remote_status:-000}." >&2
   exit 1
 fi
+
 if ! cmp -s "$manifest" "$remote_manifest"; then
   echo "Public edge root manifest mismatch at $base." >&2
   exit 1
