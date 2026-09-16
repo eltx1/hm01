@@ -270,7 +270,7 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: application/javascript; charset=utf-8
 
 /traffic-gate/*
-  Cache-Control: public, max-age=300, must-revalidate
+  Cache-Control: public, max-age=300, must-revalidate, no-transform
   Content-Type: text/html; charset=utf-8
   Content-Security-Policy: default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:
   X-Content-Type-Options: nosniff
