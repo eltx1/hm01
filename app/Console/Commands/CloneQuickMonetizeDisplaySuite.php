@@ -1,0 +1,277 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Enums\DemandApprovalStatus;
+use App\Enums\DemandNetworkCode;
+use App\Enums\PlacementStatus;
+use App\Models\DemandAccount;
+use App\Models\DemandNetwork;
+use App\Models\DemandPlacement;
+use App\Models\DemandSite;
+use App\Models\DemandWidget;
+use App\Models\Placement;
+use App\Models\Site;
+use App\Models\User;
+use App\Services\Demand\GoogleGptManualTagParser;
+use App\Services\Demand\QuickMonetizeService;
+use App\Services\Inventory\PlacementPresetCatalog;
+use Illuminate\Console\Command;
+use Illuminate\Validation\ValidationException;
+use Throwable;
+
+final class CloneQuickMonetizeDisplaySuite extends Command
+{
+    /** @var list<string> */
+    public const DEFAULT_PRESETS = [
+        'responsive_display',
+        'in_article_display',
+        'high_impact_display',
+        'mobile_display',
+        'sticky_top',
+        'side_rail_right',
+        'side_rail_left',
+    ];
+
+    protected $signature = 'quick-monetize:clone-display-suite
+        {siteKey : Horus public site key}
+        {--from=quick_sticky_bottom : Existing Quick Monetize placement used as the trusted GPT blueprint}
+        {--preset=* : Optional subset of supported display/edge presets}
+        {--actor= : Optional user id override for audit attribution}';
+
+    protected $description = 'Clone one reviewed Quick Monetize GPT setup into the maintained display/edge preset suite';
+
+    public function handle(
+        QuickMonetizeService $quick,
+        PlacementPresetCatalog $catalog,
+        GoogleGptManualTagParser $gptParser,
+    ): int {
+        $siteKey = trim((string) $this->argument('siteKey'));
+        $sourceCode = trim((string) $this->option('from'));
+        if ($siteKey === '' || $sourceCode === '') {
+            $this->error('A site key and source placement code are required.');
+            return self::FAILURE;
+        }
+
+        $presets = array_values(array_unique(array_map('strval', (array) $this->option('preset'))));
+        if ($presets === []) {
+            $presets = self::DEFAULT_PRESETS;
+        }
+
+        $unsupported = array_values(array_diff($presets, self::DEFAULT_PRESETS));
+        if ($unsupported !== []) {
+            $this->error('Unsupported display-suite preset(s): '.implode(', ', $unsupported).'. Video/native/high-impact provider-managed formats require their own compatible demand tag and are intentionally excluded.');
+            return self::FAILURE;
+        }
+
+        $site = Site::withoutGlobalScopes()->where('public_key', $siteKey)->whereNull('deleted_at')->first();
+        if (! $site) {
+            $this->error("Site [{$siteKey}] was not found.");
+            return self::FAILURE;
+        }
+
+        $source = Placement::withoutGlobalScopes()->withTrashed()
+            ->where('site_id', $site->id)
+            ->where('code', $sourceCode)
+            ->first();
+        if (! $source || $source->trashed() || $source->status !== PlacementStatus::Active) {
+            $this->error("Source placement [{$sourceCode}] must exist and be active on [{$siteKey}].");
+            return self::FAILURE;
+        }
+
+        $network = DemandNetwork::query()->where('code', DemandNetworkCode::CustomThirdPartyTag->value)->first();
+        if (! $network) {
+            $this->error('The CUSTOM_THIRD_PARTY_TAG network is unavailable.');
+            return self::FAILURE;
+        }
+
+        $accountIds = DemandAccount::withoutGlobalScopes()
+            ->where('demand_network_id', $network->id)
+            ->where('publisher_id', $site->publisher_id)
+            ->where('is_enabled', true)
+            ->pluck('id');
+        $demandSite = DemandSite::withoutGlobalScopes()
+            ->whereIn('demand_account_id', $accountIds)
+            ->where('site_id', $site->id)
+            ->where('is_enabled', true)
+            ->latest('id')
+            ->first();
+        $demandPlacement = $demandSite
+            ? DemandPlacement::withoutGlobalScopes()
+                ->where('demand_site_id', $demandSite->id)
+                ->where('placement_id', $source->id)
+                ->where('is_enabled', true)
+                ->latest('id')
+                ->first()
+            : null;
+        $widget = $demandPlacement
+            ? DemandWidget::withoutGlobalScopes()
+                ->where('demand_placement_id', $demandPlacement->id)
+                ->where('approval_status', DemandApprovalStatus::Approved->value)
+                ->where('is_enabled', true)
+                ->latest('id')
+                ->get()
+                ->first(fn (DemandWidget $candidate): bool => (bool) data_get($candidate->configuration, 'quick_monetize_managed', false)
+                    && trim((string) $candidate->direct_tag_template) !== '')
+            : null;
+
+        if (! $widget) {
+            $this->error('The source placement has no enabled, approved Quick Monetize widget to clone.');
+            return self::FAILURE;
+        }
+
+        try {
+            $blueprint = $gptParser->parse((string) $widget->direct_tag_template);
+        } catch (Throwable $exception) {
+            $this->error('The source Quick Monetize tag is not a reusable canonical Google GPT tag: '.$exception->getMessage());
+            return self::FAILURE;
+        }
+        if (! is_array($blueprint)) {
+            $this->error('The source Quick Monetize tag is not Google GPT. This command intentionally clones only reviewed display GPT inventory.');
+            return self::FAILURE;
+        }
+
+        $account = $demandSite ? DemandAccount::withoutGlobalScopes()->find($demandSite->demand_account_id) : null;
+        $actor = $this->resolveActor($source, $demandPlacement, $demandSite, $account);
+        if (! $actor) {
+            $this->error('Could not resolve a live user for audit attribution. Pass --actor=<user-id>.');
+            return self::FAILURE;
+        }
+
+        $created = 0;
+        $skipped = 0;
+        foreach ($presets as $preset) {
+            $existing = $this->existingPreset($site, $preset);
+            if ($existing) {
+                if ($existing->trashed() || $existing->status !== PlacementStatus::Active) {
+                    $this->error("Quick preset [{$preset}] already exists but is deleted or inactive. Refusing to create a duplicate; repair or remove that placement first.");
+                    return self::FAILURE;
+                }
+                $this->line("SKIP {$preset}: active Quick placement [{$existing->code}] already exists.");
+                $skipped++;
+                continue;
+            }
+
+            try {
+                $sizes = $this->presetFixedSizes($catalog, $preset);
+                $tag = $this->canonicalGptTag(
+                    (string) $blueprint['scriptUrl'],
+                    (string) $blueprint['adUnitPath'],
+                    $sizes,
+                    $preset,
+                );
+                $choice = $catalog->choices()[$preset] ?? [];
+                $label = trim((string) ($choice['label'] ?? $preset));
+                $result = $quick->activate(
+                    $site->fresh(),
+                    $network,
+                    $actor,
+                    $tag,
+                    null,
+                    $preset,
+                    'Quick · '.$label,
+                );
+                /** @var Placement $placement */
+                $placement = $result['placement'];
+                $this->info("CREATED {$preset}: {$placement->code} (".$this->formatSizes($sizes).')');
+                $created++;
+            } catch (ValidationException $exception) {
+                $message = collect($exception->errors())->flatten()->implode(' ');
+                $this->error("Failed to activate [{$preset}]: {$message}");
+                return self::FAILURE;
+            } catch (Throwable $exception) {
+                $this->error("Failed to activate [{$preset}]: {$exception->getMessage()}");
+                return self::FAILURE;
+            }
+        }
+
+        $this->info("Quick display suite complete for {$siteKey}: {$created} created, {$skipped} already active.");
+        return self::SUCCESS;
+    }
+
+    private function resolveActor(
+        Placement $source,
+        ?DemandPlacement $demandPlacement,
+        ?DemandSite $demandSite,
+        ?DemandAccount $account,
+    ): ?User {
+        $requested = trim((string) $this->option('actor'));
+        $ids = array_values(array_unique(array_filter([
+            $requested !== '' ? $requested : null,
+            $source->updated_by,
+            $source->created_by,
+            $demandPlacement?->updated_by,
+            $demandPlacement?->created_by,
+            $demandSite?->updated_by,
+            $demandSite?->created_by,
+            $account?->updated_by,
+            $account?->created_by,
+        ])));
+
+        foreach ($ids as $id) {
+            $user = User::withoutGlobalScopes()->with('organization')->whereNull('deleted_at')->find($id);
+            if ($user) {
+                return $user;
+            }
+        }
+
+        return null;
+    }
+
+    private function existingPreset(Site $site, string $preset): ?Placement
+    {
+        return Placement::withoutGlobalScopes()->withTrashed()
+            ->where('site_id', $site->id)
+            ->get()
+            ->first(function (Placement $placement) use ($preset): bool {
+                return (bool) data_get($placement->metadata, 'quick_monetize_generated', false)
+                    && (string) data_get($placement->metadata, 'placement_preset', '') === $preset;
+            });
+    }
+
+    /** @return list<array{0:int,1:int}> */
+    private function presetFixedSizes(PlacementPresetCatalog $catalog, string $preset): array
+    {
+        $resolved = $catalog->apply($preset, []);
+        $sizes = collect((array) ($resolved['sizes'] ?? []))
+            ->filter(fn ($size): bool => is_array($size)
+                && strtoupper((string) ($size['size_type'] ?? '')) === 'FIXED'
+                && (int) ($size['width'] ?? 0) > 0
+                && (int) ($size['height'] ?? 0) > 0)
+            ->map(fn (array $size): array => [(int) $size['width'], (int) $size['height']])
+            ->unique(fn (array $size): string => $size[0].'x'.$size[1])
+            ->values()
+            ->all();
+
+        if ($sizes === []) {
+            throw ValidationException::withMessages(['placement_preset' => "Preset [{$preset}] has no fixed display sizes and cannot inherit a Google GPT display tag."]);
+        }
+
+        return $sizes;
+    }
+
+    /** @param list<array{0:int,1:int}> $sizes */
+    private function canonicalGptTag(string $scriptUrl, string $adUnitPath, array $sizes, string $preset): string
+    {
+        $containerId = 'gpt-horus-'.str_replace('_', '-', $preset);
+        $script = htmlspecialchars($scriptUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $path = json_encode($adUnitPath, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $id = json_encode($containerId, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $encodedSizes = json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+
+        return '<script async src="'.$script.'"></script>'
+            .'<div id="'.$containerId.'"></div>'
+            .'<script>window.googletag = window.googletag || {cmd: []};'
+            .'googletag.cmd.push(function () {'
+            .'googletag.defineSlot('.$path.', '.$encodedSizes.', '.$id.').addService(googletag.pubads());'
+            .'googletag.enableServices();'
+            .'googletag.display('.$id.');'
+            .'});</script>';
+    }
+
+    /** @param list<array{0:int,1:int}> $sizes */
+    private function formatSizes(array $sizes): string
+    {
+        return implode(', ', array_map(fn (array $size): string => $size[0].'x'.$size[1], $sizes));
+    }
+}
