@@ -24,7 +24,7 @@ jobs:
     env:
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
-      SITE_KEY: hm_ircll0vkqq54jvt9gz85mrh2
+      SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2
 
     steps:
       - name: Validate production connection inputs
@@ -55,7 +55,7 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Create missing LordAI display and edge placements once
+      - name: Create missing compatible LordAI display and edge placements once
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
@@ -79,14 +79,14 @@ jobs:
           mv "$tmp" "$MARKER"
           REMOTE
 
-      - name: Verify production database has the expected Quick suite
+      - name: Verify production has a compatible Quick expansion
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$s=App\\Models\\Site::withoutGlobalScopes()->where('public_key','$SITE_KEY')->firstOrFail(); \$codes=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->whereIn('code',['quick_sticky_bottom','quick_responsive_display','quick_in_article_display','quick_high_impact_display','quick_mobile_display','quick_sticky_top','quick_side_rail_right','quick_side_rail_left'])->pluck('code')->sort()->values()->all(); if(count(\$codes)!==8){throw new RuntimeException('Expected 8 Quick display/edge placements, found '.count(\$codes));} echo json_encode(\$codes);\""
+          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$s=App\\Models\\Site::withoutGlobalScopes()->where('public_key','$SITE_KEY')->firstOrFail(); \$p=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->get()->filter(fn(\$x)=>(bool)data_get(\$x->metadata,'quick_monetize_generated',false) && \$x->status===App\\Enums\\PlacementStatus::Active); \$presets=\$p->map(fn(\$x)=>(string)data_get(\$x->metadata,'placement_preset',''))->filter()->unique()->values(); if(!\$presets->contains('sticky_bottom') || !\$presets->contains('sticky_top')){throw new RuntimeException('Bottom/top Quick anchors are not both active.');} if(!\$presets->intersect(['responsive_display','in_article_display','high_impact_display','mobile_display'])->count()){throw new RuntimeException('No compatible display surface was activated.');} echo json_encode(\$presets->all());\""
 
       - name: Explain static-edge follow-up
-        run: echo 'The scheduled production static-edge sync will publish the new configuration within five minutes; the post-deploy sync may publish it sooner.'
+        run: echo 'The scheduled production static-edge sync will publish the newly generated production config within five minutes; the post-deploy sync may publish it sooner.'
