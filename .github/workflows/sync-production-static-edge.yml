@@ -23,12 +23,13 @@ jobs:
   sync:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: production
     env:
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
       CDN_URL: https://cdn.horusmedia.net
+      GATE_URL: https://verify.horusmedia.net
       PUBLIC_URL: https://horusmedia.net
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -49,6 +50,7 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          bash -n scripts/verify-static-edge-public.sh
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
           test -n "$HOST"
@@ -91,26 +93,25 @@ jobs:
       - name: Validate sanitized production snapshot
         run: php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
 
-      - name: Compare public manifest
+      - name: Compare complete public snapshot
         id: compare
         run: |
           set -euo pipefail
           local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
           [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
           echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
+
           confirmed_hash="$(tr -d '[:space:]' < "$RUNNER_TEMP/confirmed-manifest")"
-          remote_hash=""
-          if [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ ]]; then
-            remote_hash="$confirmed_hash"
-          else
-            remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
-              | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
+          if [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ && "$confirmed_hash" == "$local_hash" ]]; then
+            echo "Control-plane marker matches $local_hash; verifying the public edge before trusting it."
           fi
-          if [[ "$local_hash" == "$remote_hash" ]]; then
+
+          if bash scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" compare 32; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "Public edge already has manifest $local_hash."
+            echo "Canonical public edge contains the complete snapshot $local_hash, including the root manifest."
           else
             echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Canonical public edge is incomplete or stale; deployment is required."
           fi
 
       - name: Deploy live snapshot to Cloudflare Pages
@@ -122,39 +123,104 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
 
-      - name: Verify canonical public artifacts
+      - name: Verify exact Pages deployment and canonical edge
         if: steps.compare.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
           [[ "$DEPLOYMENT_URL" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]
+
+          pages_ok=false
           for attempt in $(seq 1 18); do
-            if curl -fsSL --max-time 20 "$DEPLOYMENT_URL/delivery-manifest.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/remote-manifest.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/delivery-manifest.json" "$RUNNER_TEMP/remote-manifest.json" \
-              && curl -fsSL --max-time 20 "$DEPLOYMENT_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/deployment-sellers.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/deployment-sellers.json"; then
+            if bash scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$DEPLOYMENT_URL" "pages-$attempt" 32; then
+              pages_ok=true
               break
-            fi
-            if [[ "$attempt" == '18' ]]; then
-              echo 'Cloudflare Pages did not expose the exact deployment within the verification window.' >&2
-              exit 1
             fi
             sleep 10
           done
+          if [[ "$pages_ok" != true ]]; then
+            echo 'Cloudflare Pages did not expose the complete exact deployment within the verification window.' >&2
+            exit 1
+          fi
 
-          for url in "$CDN_URL/sellers.json" "$PUBLIC_URL/sellers.json"; do
-            status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/1.0' \
-              --output "$RUNNER_TEMP/custom-sellers.json" --write-out '%{http_code}' "$url?verify=$GITHUB_RUN_ID")"
-            if [[ "$status" == '200' ]]; then
-              cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/custom-sellers.json"
-            elif [[ "$status" == '403' ]]; then
-              echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $url; the exact Pages deployment was verified."
-            else
-              echo "Unexpected custom-domain status $status for $url" >&2
-              exit 1
+          cdn_ok=false
+          for attempt in $(seq 1 18); do
+            if bash scripts/verify-static-edge-public.sh "$RUNNER_TEMP/static-edge" "$CDN_URL" "cdn-$attempt" 32; then
+              cdn_ok=true
+              break
             fi
+            sleep 10
           done
+          if [[ "$cdn_ok" != true ]]; then
+            echo 'The canonical CDN did not expose the complete exact deployment within the verification window.' >&2
+            exit 1
+          fi
+
+          status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+            --output "$RUNNER_TEMP/public-sellers.json" --write-out '%{http_code}' "$PUBLIC_URL/sellers.json?verify=$GITHUB_RUN_ID")"
+          if [[ "$status" == '200' ]]; then
+            cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/public-sellers.json"
+          elif [[ "$status" == '403' ]]; then
+            echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $PUBLIC_URL/sellers.json; canonical CDN parity was verified."
+          else
+            echo "Unexpected public-site status $status for $PUBLIC_URL/sellers.json" >&2
+            exit 1
+          fi
+
+      - name: Verify Traffic Gate origin before confirmation
+        run: |
+          set -euo pipefail
+          local_hash="${{ steps.compare.outputs.manifest_hash }}"
+          expected_gate_js="$(sha256sum "$RUNNER_TEMP/static-edge/assets/traffic-gate/horus-traffic-gate.js" | cut -d ' ' -f1)"
+          gate_ok=false
+
+          for attempt in $(seq 1 12); do
+            manifest_file="$RUNNER_TEMP/gate-delivery-manifest.json"
+            gate_html="$RUNNER_TEMP/gate.html"
+            gate_js="$RUNNER_TEMP/gate.js"
+            gate_headers="$RUNNER_TEMP/gate.headers"
+
+            if curl --fail --silent --show-error --location --globoff --max-time 20 \
+                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+                "$GATE_URL/delivery-manifest.json?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-manifest-$attempt" \
+                --output "$manifest_file"; then
+              remote_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$manifest_file" 2>/dev/null || true)"
+            else
+              remote_hash=''
+            fi
+
+            if [[ "$remote_hash" == "$local_hash" ]] \
+              && curl --fail --silent --show-error --location --globoff --max-time 20 \
+                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+                --dump-header "$gate_headers" \
+                "$GATE_URL/traffic-gate/?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-page-$attempt" \
+                --output "$gate_html" \
+              && grep -Fq '<title>Horus Client Traffic Gate</title>' "$gate_html" \
+              && grep -Fq '/assets/traffic-gate/horus-traffic-gate.js' "$gate_html" \
+              && curl --fail --silent --show-error --location --globoff --max-time 20 \
+                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+                "$GATE_URL/assets/traffic-gate/horus-traffic-gate.js?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-js-$attempt" \
+                --output "$gate_js"; then
+              actual_gate_js="$(sha256sum "$gate_js" | cut -d ' ' -f1)"
+              csp="$(tr -d '\r' < "$gate_headers" | awk 'BEGIN{IGNORECASE=1} /^Content-Security-Policy:/ {line=$0} END{sub(/^[^:]+:[[:space:]]*/, "", line); print line}')"
+              if [[ "$actual_gate_js" == "$expected_gate_js" \
+                && "$csp" == *"script-src 'self' https://challenges.cloudflare.com"* \
+                && "$csp" == *"frame-src https://challenges.cloudflare.com"* \
+                && "$csp" == *"connect-src 'self' https://challenges.cloudflare.com"* \
+                && "$csp" == *"frame-ancestors https:"* ]]; then
+                gate_ok=true
+                break
+              fi
+            fi
+
+            sleep 5
+          done
+
+          if [[ "$gate_ok" != true ]]; then
+            echo 'Traffic Gate custom origin is stale, incomplete, or missing its enforced Turnstile CSP; refusing production confirmation.' >&2
+            exit 1
+          fi
 
       - name: Confirm manifest on production control plane
         env:
