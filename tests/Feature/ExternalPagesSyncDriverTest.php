@@ -123,19 +123,30 @@ class ExternalPagesSyncDriverTest extends TestCase
         $batch = new StaticDeliveryBatch(['manifest_hash' => $hash]);
         $batch->setRelation('items', collect([$item]));
 
-        Http::fake([
-            'https://cdn.example.test/delivery-manifest.json*' => Http::response($rootManifest),
-            "https://cdn.example.test/configs/{$siteKey}/manifest.json*" => Http::response($siteManifestBody, 200, ['Content-Type' => 'application/json']),
-            "https://cdn.example.test/{$immutablePath}*" => Http::response($configBody, 200, ['Content-Type' => 'application/json']),
-            "https://cdn.example.test/configs/{$siteKey}/production.json*" => Http::response($configBody, 200, ['Content-Type' => 'application/json']),
-        ]);
+        $siteManifestMissing = false;
+        Http::fake(function ($request) use (&$siteManifestMissing, $rootManifest, $siteKey, $siteManifestBody, $immutablePath, $configBody) {
+            $url = $request->url();
+            if (str_starts_with($url, 'https://cdn.example.test/delivery-manifest.json')) {
+                return Http::response($rootManifest);
+            }
+            if (str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/manifest.json")) {
+                return $siteManifestMissing
+                    ? Http::response([], 404)
+                    : Http::response($siteManifestBody, 200, ['Content-Type' => 'application/json']);
+            }
+            if (str_starts_with($url, "https://cdn.example.test/{$immutablePath}")) {
+                return Http::response($configBody, 200, ['Content-Type' => 'application/json']);
+            }
+            if (str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/production.json")) {
+                return Http::response($configBody, 200, ['Content-Type' => 'application/json']);
+            }
+
+            return Http::response([], 404);
+        });
 
         $this->assertTrue(app(ExternalPagesSyncDriver::class)->probe($batch)?->confirmedDeployed);
 
-        Http::fake([
-            'https://cdn.example.test/delivery-manifest.json*' => Http::response($rootManifest),
-            "https://cdn.example.test/configs/{$siteKey}/manifest.json*" => Http::response([], 404),
-        ]);
+        $siteManifestMissing = true;
         $this->assertNull(app(ExternalPagesSyncDriver::class)->probe($batch));
     }
 }
