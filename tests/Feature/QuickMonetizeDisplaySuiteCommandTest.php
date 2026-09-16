@@ -69,7 +69,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         );
     }
 
-    public function test_command_creates_the_full_display_edge_suite_and_is_idempotent(): void
+    public function test_command_creates_every_size_compatible_display_edge_surface_and_is_idempotent(): void
     {
         $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
 
@@ -85,14 +85,16 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             'quick_high_impact_display',
             'quick_mobile_display',
             'quick_sticky_top',
-            'quick_side_rail_right',
-            'quick_side_rail_left',
         ];
 
         $placements = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->get();
         $this->assertEqualsCanonicalizing($expected, $placements->pluck('code')->all());
-        $this->assertSame(8, $placements->count());
-        $this->assertSame(8, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
+        $this->assertSame(6, $placements->count());
+        $this->assertSame(6, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_left']);
+        $this->assertStringContainsString('2 incompatible with the source GPT sizes', Artisan::output());
+
         foreach (array_slice($expected, 1) as $code) {
             $placement = $placements->firstWhere('code', $code);
             $this->assertNotNull($placement);
@@ -106,7 +108,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             'siteKey' => $this->site->public_key,
         ]);
         $this->assertSame(0, $exit, Artisan::output());
-        $this->assertSame(8, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
+        $this->assertSame(6, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
         $this->assertSame($versionCount, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
@@ -122,22 +124,41 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_floating']);
     }
 
-    public function test_command_generates_preset_specific_gpt_sizes_from_the_catalog(): void
+    public function test_command_never_invents_sizes_missing_from_the_source_gpt_tag(): void
+    {
+        $exit = Artisan::call('quick-monetize:clone-display-suite', [
+            'siteKey' => $this->site->public_key,
+            '--preset' => ['responsive_display'],
+        ]);
+        $this->assertSame(0, $exit, Artisan::output());
+
+        $placement = Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_responsive_display')
+            ->firstOrFail();
+        $widget = DemandWidget::withoutGlobalScopes()
+            ->whereHas('demandPlacement', fn ($query) => $query->where('placement_id', $placement->id))
+            ->where('is_enabled', true)
+            ->firstOrFail();
+        $tag = preg_replace('/\s+/', '', (string) $widget->direct_tag_template) ?: '';
+
+        $this->assertStringContainsString('[[728,90],[320,100],[320,50]]', $tag);
+        $this->assertStringNotContainsString('[300,250]', $tag);
+        $this->assertStringNotContainsString('[336,280]', $tag);
+        $this->assertStringNotContainsString('[970,250]', $tag);
+        $this->assertStringContainsString('/1234567/lordai_display', $tag);
+    }
+
+    public function test_incompatible_side_rail_is_skipped_instead_of_fabricating_vertical_gpt_sizes(): void
     {
         $exit = Artisan::call('quick-monetize:clone-display-suite', [
             'siteKey' => $this->site->public_key,
             '--preset' => ['side_rail_right'],
         ]);
+
         $this->assertSame(0, $exit, Artisan::output());
-
-        $rail = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->where('code', 'quick_side_rail_right')->firstOrFail();
-        $widget = DemandWidget::withoutGlobalScopes()
-            ->whereHas('demandPlacement', fn ($query) => $query->where('placement_id', $rail->id))
-            ->where('is_enabled', true)
-            ->firstOrFail();
-
-        $this->assertStringContainsString('[[160,600],[300,600]]', preg_replace('/\s+/', '', (string) $widget->direct_tag_template) ?: '');
-        $this->assertStringContainsString('/1234567/lordai_display', (string) $widget->direct_tag_template);
+        $this->assertStringContainsString('no size supported by this preset', Artisan::output());
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
     }
 
     private function sourceTag(): string
