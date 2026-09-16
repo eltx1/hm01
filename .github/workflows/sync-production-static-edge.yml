@@ -91,26 +91,58 @@ jobs:
       - name: Validate sanitized production snapshot
         run: php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
 
-      - name: Compare public manifest
+      - name: Compare complete public snapshot
         id: compare
         run: |
           set -euo pipefail
+
+          verify_snapshot() {
+            local root="$1"
+            local base="${2%/}"
+            local probe="$3"
+            local remote_file="$RUNNER_TEMP/static-edge-public.bin"
+            while IFS=$'\t' read -r expected path; do
+              [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$path" != /* && "$path" != *..* ]]
+              case "$path" in
+                _headers|_routes.json) continue ;;
+              esac
+              if ! curl --fail --silent --show-error --location --globoff --max-time 20 \
+                --retry 2 --retry-delay 1 \
+                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+                "${base}/${path}?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${probe}" \
+                --output "$remote_file"; then
+                echo "Public edge is missing ${path} at ${base}." >&2
+                return 1
+              fi
+              actual="$(sha256sum "$remote_file" | awk '{print $1}')"
+              if [[ "$actual" != "$expected" ]]; then
+                echo "Public edge hash mismatch for ${path} at ${base}: expected ${expected}, got ${actual}." >&2
+                return 1
+              fi
+            done < <(php -r '
+              $d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+              foreach (($d["files"] ?? []) as $path => $sha) {
+                echo $sha, "\t", $path, "\n";
+              }
+            ' "$root/delivery-manifest.json")
+          }
+
           local_hash="$(php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d["manifestHash"] ?? "";' "$RUNNER_TEMP/static-edge/delivery-manifest.json")"
           [[ "$local_hash" =~ ^[0-9a-f]{64}$ ]]
           echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
+
           confirmed_hash="$(tr -d '[:space:]' < "$RUNNER_TEMP/confirmed-manifest")"
-          remote_hash=""
-          if [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ ]]; then
-            remote_hash="$confirmed_hash"
-          else
-            remote_hash="$(curl -fsSL --max-time 20 "$CDN_URL/delivery-manifest.json?sync=$GITHUB_RUN_ID" \
-              | php -r '$d=json_decode(stream_get_contents(STDIN), true); echo is_array($d) ? ($d["manifestHash"] ?? "") : "";' || true)"
+          if [[ "$confirmed_hash" =~ ^[0-9a-f]{64}$ && "$confirmed_hash" == "$local_hash" ]]; then
+            echo "Control-plane marker matches $local_hash; verifying the public edge before trusting it."
           fi
-          if [[ "$local_hash" == "$remote_hash" ]]; then
+
+          if verify_snapshot "$RUNNER_TEMP/static-edge" "$CDN_URL" compare; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "Public edge already has manifest $local_hash."
+            echo "Canonical public edge contains the complete snapshot $local_hash."
           else
             echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Canonical public edge is incomplete or stale; deployment is required."
           fi
 
       - name: Deploy live snapshot to Cloudflare Pages
@@ -122,39 +154,78 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
 
-      - name: Verify canonical public artifacts
+      - name: Verify exact Pages deployment and canonical edge
         if: steps.compare.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
           [[ "$DEPLOYMENT_URL" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]
+
+          verify_snapshot() {
+            local root="$1"
+            local base="${2%/}"
+            local probe="$3"
+            local remote_file="$RUNNER_TEMP/static-edge-public.bin"
+            while IFS=$'\t' read -r expected path; do
+              [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$path" != /* && "$path" != *..* ]]
+              case "$path" in
+                _headers|_routes.json) continue ;;
+              esac
+              if ! curl --fail --silent --show-error --location --globoff --max-time 20 \
+                --retry 1 --retry-delay 1 \
+                --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+                "${base}/${path}?edge_verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${probe}" \
+                --output "$remote_file"; then
+                return 1
+              fi
+              actual="$(sha256sum "$remote_file" | awk '{print $1}')"
+              [[ "$actual" == "$expected" ]] || return 1
+            done < <(php -r '
+              $d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+              foreach (($d["files"] ?? []) as $path => $sha) {
+                echo $sha, "\t", $path, "\n";
+              }
+            ' "$root/delivery-manifest.json")
+          }
+
+          pages_ok=false
           for attempt in $(seq 1 18); do
-            if curl -fsSL --max-time 20 "$DEPLOYMENT_URL/delivery-manifest.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/remote-manifest.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/delivery-manifest.json" "$RUNNER_TEMP/remote-manifest.json" \
-              && curl -fsSL --max-time 20 "$DEPLOYMENT_URL/sellers.json?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/deployment-sellers.json" \
-              && cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/deployment-sellers.json"; then
+            if verify_snapshot "$RUNNER_TEMP/static-edge" "$DEPLOYMENT_URL" "pages-$attempt"; then
+              pages_ok=true
               break
-            fi
-            if [[ "$attempt" == '18' ]]; then
-              echo 'Cloudflare Pages did not expose the exact deployment within the verification window.' >&2
-              exit 1
             fi
             sleep 10
           done
+          if [[ "$pages_ok" != true ]]; then
+            echo 'Cloudflare Pages did not expose the complete exact deployment within the verification window.' >&2
+            exit 1
+          fi
 
-          for url in "$CDN_URL/sellers.json" "$PUBLIC_URL/sellers.json"; do
-            status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/1.0' \
-              --output "$RUNNER_TEMP/custom-sellers.json" --write-out '%{http_code}' "$url?verify=$GITHUB_RUN_ID")"
-            if [[ "$status" == '200' ]]; then
-              cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/custom-sellers.json"
-            elif [[ "$status" == '403' ]]; then
-              echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $url; the exact Pages deployment was verified."
-            else
-              echo "Unexpected custom-domain status $status for $url" >&2
-              exit 1
+          cdn_ok=false
+          for attempt in $(seq 1 18); do
+            if verify_snapshot "$RUNNER_TEMP/static-edge" "$CDN_URL" "cdn-$attempt"; then
+              cdn_ok=true
+              break
             fi
+            sleep 10
           done
+          if [[ "$cdn_ok" != true ]]; then
+            echo 'The canonical CDN did not expose the complete exact deployment within the verification window.' >&2
+            exit 1
+          fi
+
+          status="$(curl -sSL --max-time 20 --user-agent 'Mozilla/5.0 Horus-Static-Sync/2.0' \
+            --output "$RUNNER_TEMP/public-sellers.json" --write-out '%{http_code}' "$PUBLIC_URL/sellers.json?verify=$GITHUB_RUN_ID")"
+          if [[ "$status" == '200' ]]; then
+            cmp -s "$RUNNER_TEMP/static-edge/sellers.json" "$RUNNER_TEMP/public-sellers.json"
+          elif [[ "$status" == '403' ]]; then
+            echo "::warning::Cloudflare WAF blocked the GitHub Runner probe for $PUBLIC_URL/sellers.json; canonical CDN parity was verified."
+          else
+            echo "Unexpected public-site status $status for $PUBLIC_URL/sellers.json" >&2
+            exit 1
+          fi
 
       - name: Confirm manifest on production control plane
         env:
