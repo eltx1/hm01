@@ -1,12 +1,6 @@
-const pageUrl = process.argv[2] || 'https://lordai.net/';
-const headers = { 'user-agent': 'Mozilla/5.0 Horus-Live-Inventory/1.0' };
-
-const pageResponse = await fetch(pageUrl, { headers, redirect: 'follow' });
-if (!pageResponse.ok) throw new Error(`publisher page HTTP ${pageResponse.status}`);
-const html = await pageResponse.text();
-const siteMatch = html.match(/data-site-key=["']([A-Za-z0-9_-]{3,64})["']/i);
-if (!siteMatch) throw new Error('Horus data-site-key not found on publisher page');
-const siteKey = siteMatch[1];
+const siteKey = process.argv[2] || 'hm_ircll0vkqq54jvt9gz85mrh2';
+if (!/^[A-Za-z0-9_-]{3,64}$/.test(siteKey)) throw new Error('invalid site key');
+const headers = { 'user-agent': 'Mozilla/5.0 Horus-Live-Inventory/1.1', accept: 'application/json' };
 
 const manifestUrl = `https://cdn.horusmedia.net/configs/${encodeURIComponent(siteKey)}/manifest.json`;
 const manifestResponse = await fetch(manifestUrl, { headers });
@@ -28,6 +22,8 @@ const placements = (config.placements || []).map((p) => ({
   eligible: p.eligible ?? null,
   sizes: p.sizes ?? null,
   adUnitPath: p.adUnitPath ?? null,
+  mount: p.mount ?? null,
+  formatSettings: p.formatSettings ?? null,
 }));
 
 const direct = Object.entries(config.directDemand?.placements || {}).map(([code, p]) => ({
