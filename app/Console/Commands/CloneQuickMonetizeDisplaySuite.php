@@ -60,7 +60,7 @@ final class CloneQuickMonetizeDisplaySuite extends Command
 
         $unsupported = array_values(array_diff($presets, self::DEFAULT_PRESETS));
         if ($unsupported !== []) {
-            $this->error('Unsupported display-suite preset(s): '.implode(', ', $unsupported).'. Video/native/high-impact provider-managed formats require their own compatible demand tag and are intentionally excluded.');
+            $this->error('Unsupported display-suite preset(s): '.implode(', ', $unsupported).'. Video/native/provider-managed formats require their own compatible demand tag and are intentionally excluded.');
             return self::FAILURE;
         }
 
@@ -85,24 +85,28 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             return self::FAILURE;
         }
 
-        $accountIds = DemandAccount::withoutGlobalScopes()
+        $accounts = DemandAccount::withoutGlobalScopes()
             ->where('demand_network_id', $network->id)
             ->where('publisher_id', $site->publisher_id)
             ->where('is_enabled', true)
-            ->pluck('id');
-        $demandSite = DemandSite::withoutGlobalScopes()
-            ->whereIn('demand_account_id', $accountIds)
+            ->get()
+            ->filter(fn (DemandAccount $candidate): bool => (bool) data_get($candidate->configuration, 'quick_monetize_managed', false));
+        $demandSites = DemandSite::withoutGlobalScopes()
+            ->whereIn('demand_account_id', $accounts->pluck('id'))
             ->where('site_id', $site->id)
+            ->where('is_enabled', true)
+            ->get();
+        $demandPlacement = DemandPlacement::withoutGlobalScopes()
+            ->whereIn('demand_site_id', $demandSites->pluck('id'))
+            ->where('placement_id', $source->id)
             ->where('is_enabled', true)
             ->latest('id')
             ->first();
-        $demandPlacement = $demandSite
-            ? DemandPlacement::withoutGlobalScopes()
-                ->where('demand_site_id', $demandSite->id)
-                ->where('placement_id', $source->id)
-                ->where('is_enabled', true)
-                ->latest('id')
-                ->first()
+        $demandSite = $demandPlacement
+            ? $demandSites->firstWhere('id', $demandPlacement->demand_site_id)
+            : null;
+        $account = $demandSite
+            ? $accounts->firstWhere('id', $demandSite->demand_account_id)
             : null;
         $widget = $demandPlacement
             ? DemandWidget::withoutGlobalScopes()
@@ -115,8 +119,8 @@ final class CloneQuickMonetizeDisplaySuite extends Command
                     && trim((string) $candidate->direct_tag_template) !== '')
             : null;
 
-        if (! $widget) {
-            $this->error('The source placement has no enabled, approved Quick Monetize widget to clone.');
+        if (! $widget || ! $demandSite || ! $account) {
+            $this->error('The source placement has no enabled, approved Quick Monetize mapping/widget to clone.');
             return self::FAILURE;
         }
 
@@ -131,7 +135,6 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             return self::FAILURE;
         }
 
-        $account = $demandSite ? DemandAccount::withoutGlobalScopes()->find($demandSite->demand_account_id) : null;
         $actor = $this->resolveActor($source, $demandPlacement, $demandSite, $account);
         if (! $actor) {
             $this->error('Could not resolve a live user for audit attribution. Pass --actor=<user-id>.');
