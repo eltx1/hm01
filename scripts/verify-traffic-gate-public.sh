@@ -89,9 +89,11 @@ if [[ "$actual_gate_js" != "$expected_gate_js" ]]; then
 fi
 
 csp="$(tr -d '\r' < "$gate_headers" | awk 'BEGIN{IGNORECASE=1} /^Content-Security-Policy:/ {line=$0} END{sub(/^[^:]+:[[:space:]]*/, "", line); print line}')"
+cache_control="$(tr -d '\r' < "$gate_headers" | awk 'BEGIN{IGNORECASE=1} /^Cache-Control:/ {line=$0} END{sub(/^[^:]+:[[:space:]]*/, "", line); print line}')"
 [[ "$csp" == *"script-src 'self' https://challenges.cloudflare.com"* ]]
 [[ "$csp" == *"frame-src https://challenges.cloudflare.com"* ]]
 [[ "$csp" == *"connect-src 'self' https://challenges.cloudflare.com"* ]]
 [[ "$csp" == *"frame-ancestors https:"* ]]
+[[ "$cache_control" == *"no-transform"* ]]
 
 echo "Traffic Gate public origin verified at $base with manifest $expected_manifest_hash."
