@@ -2,7 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ConfigEnvironment;
+use App\Models\Site;
 use App\Models\StaticDeliveryBatch;
+use App\Models\StaticDeliveryItem;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Drivers\ExternalPagesSyncDriver;
@@ -48,7 +51,7 @@ class ExternalPagesSyncDriverTest extends TestCase
         $this->assertFalse($submitted->confirmedDeployed);
         $this->assertSame('manifest:'.$hash, $submitted->remoteId);
 
-        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => $hash])]);
+        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => $hash, 'files' => []])]);
         $confirmed = $driver->probe($batch);
 
         $this->assertTrue($confirmed?->confirmedDeployed);
@@ -61,23 +64,78 @@ class ExternalPagesSyncDriverTest extends TestCase
         $batch = new StaticDeliveryBatch(['manifest_hash' => str_repeat('a', 64)]);
         $driver = app(ExternalPagesSyncDriver::class);
 
-        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => str_repeat('b', 64)])]);
+        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => str_repeat('b', 64), 'files' => []])]);
         $this->assertNull($driver->probe($batch));
 
         Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response([], 503)]);
         $this->assertNull($driver->probe($batch));
     }
 
-    public function test_external_sync_accepts_the_post_deploy_control_plane_marker_without_an_origin_http_probe(): void
+    public function test_control_plane_marker_never_bypasses_public_edge_verification(): void
     {
+        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
         $hash = str_repeat('c', 64);
         file_put_contents($this->confirmationPath, $hash."\n");
-        Http::fake(fn () => Http::response([], 500));
+        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response([], 503)]);
 
         $confirmed = app(ExternalPagesSyncDriver::class)
             ->probe(new StaticDeliveryBatch(['manifest_hash' => $hash]));
 
-        $this->assertTrue($confirmed?->confirmedDeployed);
-        Http::assertNothingSent();
+        $this->assertNull($confirmed);
+        Http::assertSent(fn ($request) => str_starts_with($request->url(), 'https://cdn.example.test/delivery-manifest.json'));
+    }
+
+    public function test_external_sync_confirms_changed_site_manifest_alias_and_immutable_config_are_public(): void
+    {
+        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
+        $hash = str_repeat('d', 64);
+        $siteKey = 'hm_test1234567890';
+        $configBody = '{"configVersion":1,"siteKey":"'.$siteKey.'"}';
+        $checksum = hash('sha256', $configBody);
+        $immutablePath = "configs/{$siteKey}/production.v1.".substr($checksum, 0, 16).'.json';
+        $siteManifestBody = json_encode([
+            'siteKey' => $siteKey,
+            'generatedAt' => '2026-09-16T00:00:00+00:00',
+            'environments' => [
+                'production' => [
+                    'version' => 1,
+                    'path' => '/'.$immutablePath,
+                    'sha256' => $checksum,
+                ],
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $siteManifestHash = hash('sha256', $siteManifestBody);
+        $rootManifest = [
+            'manifestHash' => $hash,
+            'files' => [
+                "configs/{$siteKey}/manifest.json" => $siteManifestHash,
+                $immutablePath => $checksum,
+                "configs/{$siteKey}/production.json" => $checksum,
+            ],
+        ];
+
+        $site = new Site(['public_key' => $siteKey]);
+        $item = new StaticDeliveryItem([
+            'environment' => ConfigEnvironment::Production,
+            'checksum' => $checksum,
+        ]);
+        $item->setRelation('site', $site);
+        $batch = new StaticDeliveryBatch(['manifest_hash' => $hash]);
+        $batch->setRelation('items', collect([$item]));
+
+        Http::fake([
+            'https://cdn.example.test/delivery-manifest.json*' => Http::response($rootManifest),
+            "https://cdn.example.test/configs/{$siteKey}/manifest.json*" => Http::response($siteManifestBody, 200, ['Content-Type' => 'application/json']),
+            "https://cdn.example.test/{$immutablePath}*" => Http::response($configBody, 200, ['Content-Type' => 'application/json']),
+            "https://cdn.example.test/configs/{$siteKey}/production.json*" => Http::response($configBody, 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $this->assertTrue(app(ExternalPagesSyncDriver::class)->probe($batch)?->confirmedDeployed);
+
+        Http::fake([
+            'https://cdn.example.test/delivery-manifest.json*' => Http::response($rootManifest),
+            "https://cdn.example.test/configs/{$siteKey}/manifest.json*" => Http::response([], 404),
+        ]);
+        $this->assertNull(app(ExternalPagesSyncDriver::class)->probe($batch));
     }
 }
