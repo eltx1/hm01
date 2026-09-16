@@ -25,10 +25,14 @@ const fixture = `
 })();
 `;
 
-test('placement preset transform injects safe auto-mount, Direct JS positioning, and close controls exactly once', () => {
+test('placement preset transform injects safe auto-mount, article-aware roots, Direct JS positioning, and close controls exactly once', () => {
     const transformed = applyPlacementPresetTransform(fixture);
     assert.match(transformed, /function autoMountPlacementElements\(config\)/);
     assert.match(transformed, /function mountAutoPlacementElement\(element, settings\)/);
+    assert.match(transformed, /\[itemprop="articleBody"\]/);
+    assert.match(transformed, /\.entry-content/);
+    assert.match(transformed, /\.post-content/);
+    assert.match(transformed, /\.article-content/);
     assert.match(transformed, /article_mid/);
     assert.match(transformed, /article_end/);
     assert.match(transformed, /bottom_right/);
