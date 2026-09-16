@@ -14,13 +14,21 @@ use Tests\TestCase;
 
 class ExternalPagesSyncDriverTest extends TestCase
 {
+    private const GATE_JS = "(() => { window.__horusGate = true; })();\n";
+    private const GATE_PAGE = '<!doctype html><title>Horus Client Traffic Gate</title><script src="/assets/traffic-gate/horus-traffic-gate.js" defer></script>';
+    private const GATE_CSP = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors https:";
+
     private string $confirmationPath;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->confirmationPath = storage_path('framework/testing/confirmed-manifest-'.bin2hex(random_bytes(4)));
-        config(['static-delivery.external_sync.confirmation_path' => $this->confirmationPath]);
+        config([
+            'static-delivery.external_sync.confirmation_path' => $this->confirmationPath,
+            'static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json',
+            'traffic_gate.origin' => 'https://verify.example.test',
+        ]);
     }
 
     protected function tearDown(): void
@@ -40,9 +48,8 @@ class ExternalPagesSyncDriverTest extends TestCase
         $this->assertInstanceOf(ExternalPagesSyncDriver::class, app(StaticDeliveryDriverInterface::class));
     }
 
-    public function test_external_sync_waits_for_and_confirms_the_exact_public_manifest(): void
+    public function test_external_sync_requires_workflow_confirmation_then_confirms_exact_public_edges(): void
     {
-        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
         $hash = str_repeat('a', 64);
         $driver = app(ExternalPagesSyncDriver::class);
         $batch = new StaticDeliveryBatch(['manifest_hash' => $hash]);
@@ -51,7 +58,12 @@ class ExternalPagesSyncDriverTest extends TestCase
         $this->assertFalse($submitted->confirmedDeployed);
         $this->assertSame('manifest:'.$hash, $submitted->remoteId);
 
-        Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => $hash, 'files' => []])]);
+        $rootManifest = $this->rootManifest($hash);
+        $this->fakeHealthyEdges($rootManifest);
+
+        $this->assertNull($driver->probe($batch), 'Public files alone must not bypass the production workflow confirmation marker.');
+
+        file_put_contents($this->confirmationPath, $hash."\n");
         $confirmed = $driver->probe($batch);
 
         $this->assertTrue($confirmed?->confirmedDeployed);
@@ -60,8 +72,9 @@ class ExternalPagesSyncDriverTest extends TestCase
 
     public function test_external_sync_does_not_confirm_a_stale_or_unavailable_manifest(): void
     {
-        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
-        $batch = new StaticDeliveryBatch(['manifest_hash' => str_repeat('a', 64)]);
+        $hash = str_repeat('a', 64);
+        file_put_contents($this->confirmationPath, $hash."\n");
+        $batch = new StaticDeliveryBatch(['manifest_hash' => $hash]);
         $driver = app(ExternalPagesSyncDriver::class);
 
         Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response(['manifestHash' => str_repeat('b', 64), 'files' => []])]);
@@ -73,7 +86,6 @@ class ExternalPagesSyncDriverTest extends TestCase
 
     public function test_control_plane_marker_never_bypasses_public_edge_verification(): void
     {
-        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
         $hash = str_repeat('c', 64);
         file_put_contents($this->confirmationPath, $hash."\n");
         Http::fake(['https://cdn.example.test/delivery-manifest.json*' => Http::response([], 503)]);
@@ -85,10 +97,10 @@ class ExternalPagesSyncDriverTest extends TestCase
         Http::assertSent(fn ($request) => str_starts_with($request->url(), 'https://cdn.example.test/delivery-manifest.json'));
     }
 
-    public function test_external_sync_confirms_changed_site_manifest_alias_and_immutable_config_are_public(): void
+    public function test_external_sync_requires_changed_site_artifacts_on_cdn_and_traffic_gate_origin(): void
     {
-        config(['static-delivery.external_sync.manifest_url' => 'https://cdn.example.test/delivery-manifest.json']);
         $hash = str_repeat('d', 64);
+        file_put_contents($this->confirmationPath, $hash."\n");
         $siteKey = 'hm_test1234567890';
         $configBody = '{"configVersion":1,"siteKey":"'.$siteKey.'"}';
         $checksum = hash('sha256', $configBody);
@@ -105,14 +117,11 @@ class ExternalPagesSyncDriverTest extends TestCase
             ],
         ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $siteManifestHash = hash('sha256', $siteManifestBody);
-        $rootManifest = [
-            'manifestHash' => $hash,
-            'files' => [
-                "configs/{$siteKey}/manifest.json" => $siteManifestHash,
-                $immutablePath => $checksum,
-                "configs/{$siteKey}/production.json" => $checksum,
-            ],
-        ];
+        $rootManifest = $this->rootManifest($hash, [
+            "configs/{$siteKey}/manifest.json" => $siteManifestHash,
+            $immutablePath => $checksum,
+            "configs/{$siteKey}/production.json" => $checksum,
+        ]);
 
         $site = new Site(['public_key' => $siteKey]);
         $item = new StaticDeliveryItem([
@@ -123,21 +132,31 @@ class ExternalPagesSyncDriverTest extends TestCase
         $batch = new StaticDeliveryBatch(['manifest_hash' => $hash]);
         $batch->setRelation('items', collect([$item]));
 
-        $siteManifestMissing = false;
-        Http::fake(function ($request) use (&$siteManifestMissing, $rootManifest, $siteKey, $siteManifestBody, $immutablePath, $configBody) {
+        $gateSiteManifestMissing = false;
+        Http::fake(function ($request) use (&$gateSiteManifestMissing, $rootManifest, $siteKey, $siteManifestBody, $immutablePath, $configBody) {
             $url = $request->url();
-            if (str_starts_with($url, 'https://cdn.example.test/delivery-manifest.json')) {
+            if (str_starts_with($url, 'https://cdn.example.test/delivery-manifest.json')
+                || str_starts_with($url, 'https://verify.example.test/delivery-manifest.json')) {
                 return Http::response($rootManifest);
             }
-            if (str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/manifest.json")) {
-                return $siteManifestMissing
+            if (str_starts_with($url, 'https://verify.example.test/assets/traffic-gate/horus-traffic-gate.js')) {
+                return Http::response(self::GATE_JS, 200, ['Content-Type' => 'application/javascript']);
+            }
+            if (str_starts_with($url, 'https://verify.example.test/traffic-gate/')) {
+                return Http::response(self::GATE_PAGE, 200, ['Content-Security-Policy' => self::GATE_CSP]);
+            }
+            if (str_starts_with($url, "https://verify.example.test/configs/{$siteKey}/manifest.json")) {
+                return $gateSiteManifestMissing
                     ? Http::response([], 404)
                     : Http::response($siteManifestBody, 200, ['Content-Type' => 'application/json']);
             }
-            if (str_starts_with($url, "https://cdn.example.test/{$immutablePath}")) {
-                return Http::response($configBody, 200, ['Content-Type' => 'application/json']);
+            if (str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/manifest.json")) {
+                return Http::response($siteManifestBody, 200, ['Content-Type' => 'application/json']);
             }
-            if (str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/production.json")) {
+            if (str_starts_with($url, "https://cdn.example.test/{$immutablePath}")
+                || str_starts_with($url, "https://verify.example.test/{$immutablePath}")
+                || str_starts_with($url, "https://cdn.example.test/configs/{$siteKey}/production.json")
+                || str_starts_with($url, "https://verify.example.test/configs/{$siteKey}/production.json")) {
                 return Http::response($configBody, 200, ['Content-Type' => 'application/json']);
             }
 
@@ -146,7 +165,28 @@ class ExternalPagesSyncDriverTest extends TestCase
 
         $this->assertTrue(app(ExternalPagesSyncDriver::class)->probe($batch)?->confirmedDeployed);
 
-        $siteManifestMissing = true;
+        $gateSiteManifestMissing = true;
         $this->assertNull(app(ExternalPagesSyncDriver::class)->probe($batch));
+    }
+
+    private function rootManifest(string $hash, array $files = []): array
+    {
+        return [
+            'manifestHash' => $hash,
+            'files' => array_merge([
+                'assets/traffic-gate/horus-traffic-gate.js' => hash('sha256', self::GATE_JS),
+                'traffic-gate/index.html' => hash('sha256', self::GATE_PAGE),
+            ], $files),
+        ];
+    }
+
+    private function fakeHealthyEdges(array $rootManifest): void
+    {
+        Http::fake([
+            'https://cdn.example.test/delivery-manifest.json*' => Http::response($rootManifest),
+            'https://verify.example.test/delivery-manifest.json*' => Http::response($rootManifest),
+            'https://verify.example.test/assets/traffic-gate/horus-traffic-gate.js*' => Http::response(self::GATE_JS, 200, ['Content-Type' => 'application/javascript']),
+            'https://verify.example.test/traffic-gate/*' => Http::response(self::GATE_PAGE, 200, ['Content-Security-Policy' => self::GATE_CSP]),
+        ]);
     }
 }
