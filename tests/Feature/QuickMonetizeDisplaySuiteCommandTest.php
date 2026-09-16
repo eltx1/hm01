@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ConfigEnvironment;
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
@@ -11,6 +12,7 @@ use App\Models\DemandNetwork;
 use App\Models\DemandWidget;
 use App\Models\Placement;
 use App\Services\Demand\QuickMonetizeService;
+use App\Services\Inventory\SiteConfigurationBuilder;
 use Database\Seeders\DemandNetworkSeeder;
 use Database\Seeders\InventoryDeliverySeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -101,6 +103,17 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             $this->assertTrue((bool) data_get($placement->metadata, 'quick_monetize_generated'));
             $this->assertTrue((bool) data_get($placement->format_settings, 'autoMount'));
         }
+
+        $public = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 0);
+        foreach (array_slice($expected, 1) as $code) {
+            $placement = collect((array) ($public['placements'] ?? []))->firstWhere('code', $code);
+            $this->assertIsArray($placement);
+            $this->assertTrue((bool) ($placement['enabled'] ?? false), $code.' must be public and enabled.');
+            $this->assertSame('DIRECT_JS', $placement['renderer'] ?? null, $code.' must be owned by Direct JS.');
+            $this->assertTrue((bool) data_get($placement, 'format.settings.autoMount'), $code.' must auto-mount from the permanent loader.');
+            $this->assertNotEmpty(data_get($public, 'directDemand.placements.'.$code.'.candidates', []), $code.' must expose a public Direct Demand candidate.');
+        }
+
         $this->assertGreaterThan($beforeVersions, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
 
         $versionCount = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
