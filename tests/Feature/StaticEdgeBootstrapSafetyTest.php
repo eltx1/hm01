@@ -34,20 +34,34 @@ class StaticEdgeBootstrapSafetyTest extends TestCase
         $this->assertLessThan($wrangler, $guardAfterDeployStep, 'The baseline deploy guard must appear before the Wrangler deployment command.');
     }
 
-    public function test_production_sync_has_independent_waf_safe_edge_verification(): void
+    public function test_production_sync_has_guarded_waf_safe_edge_verification(): void
     {
         $workflow = file_get_contents(base_path('.github/workflows/sync-production-static-edge.yml'));
+        $staticVerifier = file_get_contents(base_path('scripts/verify-static-edge-public.sh'));
         $gateVerifier = file_get_contents(base_path('scripts/verify-traffic-gate-public.sh'));
+        $domainVerifier = file_get_contents(base_path('scripts/verify-cloudflare-pages-domain-active.sh'));
 
         $this->assertIsString($workflow);
+        $this->assertIsString($staticVerifier);
         $this->assertIsString($gateVerifier);
-        $this->assertStringContainsString('scripts/verify-traffic-gate-public.sh', $workflow);
+        $this->assertIsString($domainVerifier);
+
+        $this->assertStringContainsString('CLOUDFLARE_PAGES_PROJECT:', $workflow);
         $this->assertStringContainsString('pinned production host', $workflow);
         $this->assertStringContainsString('$remote_dir/verify-static-edge-public.sh', $workflow);
         $this->assertStringContainsString('$remote_dir/verify-traffic-gate-public.sh', $workflow);
-        $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment from either independent verification network.', $workflow);
-        $this->assertStringContainsString('refusing production confirmation.', $workflow);
+        $this->assertStringContainsString('HORUS_ALLOW_CLOUDFLARE_WAF_403_FALLBACK=1', $workflow);
+        $this->assertStringContainsString('gate_waf_fallback=1', $workflow);
+        $this->assertStringContainsString('no guarded WAF 403 proof was available', $workflow);
+        $this->assertStringContainsString('blocked without a guarded WAF proof', $workflow);
         $this->assertStringNotContainsString('ssh -o StrictHostKeyChecking=no', $workflow);
+
+        $this->assertStringContainsString('HTTP ${remote_status:-000}', $staticVerifier);
+        $this->assertStringContainsString('HTTP ${manifest_status:-000}', $gateVerifier);
+        $this->assertStringContainsString('verify-cloudflare-pages-domain-active.sh', $staticVerifier);
+        $this->assertStringContainsString('verify-cloudflare-pages-domain-active.sh', $gateVerifier);
+        $this->assertStringContainsString('/pages/projects/$project/domains', $domainVerifier);
+        $this->assertStringContainsString('.name == $domain and .status == "active"', $domainVerifier);
 
         $this->assertStringContainsString('delivery-manifest.json', $gateVerifier);
         $this->assertStringContainsString('horus-traffic-gate.js', $gateVerifier);
