@@ -26,7 +26,7 @@ jobs:
       - name: Run live publisher diagnostic
         run: node scripts/diagnose-live-publisher.mjs https://lordai.net/
       - name: Inspect live Horus inventory
-        run: node scripts/inspect-live-horus-config.mjs hm_ircll0vkqq54jvt9gz85mrh2
+        run: node scripts/inspect-live-horus-config-browser.mjs https://lordai.net/
       - uses: actions/upload-artifact@v7
         if: always()
         with:
