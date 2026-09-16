@@ -25,7 +25,12 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
     function contentMountRoot() {
         if (!document.querySelector) return null;
-        return document.querySelector('article') || document.querySelector('main');
+        return document.querySelector('[itemprop="articleBody"]')
+            || document.querySelector('.entry-content')
+            || document.querySelector('.post-content')
+            || document.querySelector('.article-content')
+            || document.querySelector('article')
+            || document.querySelector('main');
     }
 
     function mountAutoPlacementElement(element, settings) {
