@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lordai-quick-display-suite-v1
+  group: lordai-quick-display-suite-v2
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
     env:
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
-      SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2
+      SITE_DOMAIN: lordai.net
 
     steps:
       - name: Validate production connection inputs
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" == /* ]]
-          [[ "$SITE_KEY" =~ ^hm_[a-z0-9_-]+$ ]]
+          [[ "$SITE_DOMAIN" =~ ^[a-z0-9.-]+$ ]]
           test -n "$HOST"
           test -n "$USER"
           test -n "$SSH_KEY"
@@ -61,20 +61,25 @@ jobs:
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
-          marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-display-suite-v1.done"
+          marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-display-suite-v2.done"
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "REMOTE_HOME='$REMOTE_HOME' APP_ROOT='$app_root' SITE_KEY='$SITE_KEY' MARKER='$marker' bash -s" <<'REMOTE'
+          ssh -p "$SSH_PORT" "$USER@$HOST" "REMOTE_HOME='$REMOTE_HOME' APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' MARKER='$marker' bash -s" <<'REMOTE'
           set -euo pipefail
           if test -f "$MARKER"; then
-            echo "LordAI Quick display suite v1 already completed: $(cat "$MARKER")"
+            echo "LordAI Quick display suite v2 already completed: $(cat "$MARKER")"
             exit 0
           fi
           test -f "$APP_ROOT/artisan"
           cd "$APP_ROOT"
-          php artisan quick-monetize:clone-display-suite "$SITE_KEY" --from=quick_sticky_bottom --no-interaction
+
+          site_key="$(php artisan tinker --execute="\$domain=strtolower('$SITE_DOMAIN'); \$sites=App\\Models\\Site::withoutGlobalScopes()->whereNull('deleted_at')->get()->filter(fn(\$site)=>strtolower(preg_replace('/^www\\./i','',(string)\$site->primary_domain))===\$domain)->values(); if(\$sites->count()!==1){throw new RuntimeException('Expected exactly one live site for domain '.$domain.', found '.\$sites->count().'.');} echo 'HORUS_SITE_KEY='.\$sites->first()->public_key.PHP_EOL;" | grep -oE 'HORUS_SITE_KEY=hm_[a-z0-9_-]+' | tail -n 1 | cut -d= -f2)"
+          [[ "$site_key" =~ ^hm_[a-z0-9_-]+$ ]]
+          echo "Resolved $SITE_DOMAIN to current production site key $site_key."
+
+          php artisan quick-monetize:clone-display-suite "$site_key" --from=quick_sticky_bottom --no-interaction
           install -d -m 700 "$(dirname "$MARKER")"
           tmp="${MARKER}.tmp.$$"
-          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) deployment=${GITHUB_RUN_ID:-workflow}" > "$tmp"
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) site=$SITE_DOMAIN key=$site_key deployment=${GITHUB_RUN_ID:-workflow}" > "$tmp"
           chmod 600 "$tmp"
           mv "$tmp" "$MARKER"
           REMOTE
@@ -86,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$s=App\\Models\\Site::withoutGlobalScopes()->where('public_key','$SITE_KEY')->firstOrFail(); \$p=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->get()->filter(fn(\$x)=>(bool)data_get(\$x->metadata,'quick_monetize_generated',false) && \$x->status===App\\Enums\\PlacementStatus::Active); \$presets=\$p->map(fn(\$x)=>(string)data_get(\$x->metadata,'placement_preset',''))->filter()->unique()->values(); if(!\$presets->contains('sticky_bottom') || !\$presets->contains('sticky_top')){throw new RuntimeException('Bottom/top Quick anchors are not both active.');} if(!\$presets->intersect(['responsive_display','in_article_display','high_impact_display','mobile_display'])->count()){throw new RuntimeException('No compatible display surface was activated.');} echo json_encode(\$presets->all());\""
+          ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan tinker --execute=\"\$domain=strtolower('$SITE_DOMAIN'); \$sites=App\\Models\\Site::withoutGlobalScopes()->whereNull('deleted_at')->get()->filter(fn(\$site)=>strtolower(preg_replace('/^www\\./i','',(string)\$site->primary_domain))===\$domain)->values(); if(\$sites->count()!==1){throw new RuntimeException('Expected exactly one live LordAI site.');} \$s=\$sites->first(); \$p=App\\Models\\Placement::withoutGlobalScopes()->where('site_id',\$s->id)->whereNull('deleted_at')->get()->filter(fn(\$x)=>(bool)data_get(\$x->metadata,'quick_monetize_generated',false) && \$x->status===App\\Enums\\PlacementStatus::Active); \$presets=\$p->map(fn(\$x)=>(string)data_get(\$x->metadata,'placement_preset',''))->filter()->unique()->values(); if(!\$presets->contains('sticky_bottom') || !\$presets->contains('sticky_top')){throw new RuntimeException('Bottom/top Quick anchors are not both active.');} if(!\$presets->intersect(['responsive_display','in_article_display','high_impact_display','mobile_display'])->count()){throw new RuntimeException('No compatible display surface was activated.');} echo json_encode(['site_key'=>\$s->public_key,'presets'=>\$presets->all()]);\""
 
-      - name: Explain static-edge follow-up
-        run: echo 'The scheduled production static-edge sync will publish the newly generated production config within five minutes; the post-deploy sync may publish it sooner.'
+      - name: Explain immediate static-edge follow-up
+        run: echo 'A successful rollout automatically triggers the production static-edge sync, which must publish and verify the new LordAI production config before control-plane confirmation.'
