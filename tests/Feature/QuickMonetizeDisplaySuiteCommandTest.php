@@ -136,7 +136,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             ->where('is_enabled', true)
             ->firstOrFail();
 
-        $this->assertStringContainsString('[[300,600],[160,600]]', preg_replace('/\s+/', '', (string) $widget->direct_tag_template) ?: '');
+        $this->assertStringContainsString('[[160,600],[300,600]]', preg_replace('/\s+/', '', (string) $widget->direct_tag_template) ?: '');
         $this->assertStringContainsString('/1234567/lordai_display', (string) $widget->direct_tag_template);
     }
 
