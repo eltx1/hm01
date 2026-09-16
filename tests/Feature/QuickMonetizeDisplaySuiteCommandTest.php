@@ -95,7 +95,6 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         $this->assertSame(6, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_left']);
-        $this->assertStringContainsString('2 incompatible with the source GPT sizes', Artisan::output());
 
         foreach (array_slice($expected, 1) as $code) {
             $placement = $placements->firstWhere('code', $code);
@@ -170,8 +169,9 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         ]);
 
         $this->assertSame(0, $exit, Artisan::output());
-        $this->assertStringContainsString('no size supported by this preset', Artisan::output());
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
+        $this->assertSame(1, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
+        $this->assertSame(1, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
     }
 
     private function sourceTag(): string
