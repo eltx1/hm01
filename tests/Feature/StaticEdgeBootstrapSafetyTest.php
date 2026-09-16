@@ -43,11 +43,11 @@ class StaticEdgeBootstrapSafetyTest extends TestCase
         $this->assertIsString($gateVerifier);
         $this->assertStringContainsString('scripts/verify-traffic-gate-public.sh', $workflow);
         $this->assertStringContainsString('pinned production host', $workflow);
-        $this->assertStringContainsString("'$remote_dir/verify-static-edge-public.sh'", $workflow);
-        $this->assertStringContainsString("'$remote_dir/verify-traffic-gate-public.sh'", $workflow);
+        $this->assertStringContainsString('$remote_dir/verify-static-edge-public.sh', $workflow);
+        $this->assertStringContainsString('$remote_dir/verify-traffic-gate-public.sh', $workflow);
         $this->assertStringContainsString('The canonical CDN did not expose the complete exact deployment from either independent verification network.', $workflow);
         $this->assertStringContainsString('refusing production confirmation.', $workflow);
-        $this->assertStringNotContainsString("ssh -o StrictHostKeyChecking=no", $workflow);
+        $this->assertStringNotContainsString('ssh -o StrictHostKeyChecking=no', $workflow);
 
         $this->assertStringContainsString('delivery-manifest.json', $gateVerifier);
         $this->assertStringContainsString('horus-traffic-gate.js', $gateVerifier);
