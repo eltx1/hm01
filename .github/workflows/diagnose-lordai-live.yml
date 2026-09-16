@@ -25,8 +25,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Run live publisher diagnostic
         run: node scripts/diagnose-live-publisher.mjs https://lordai.net/
-      - name: Probe GAM ad unit independently of Horus
-        run: node scripts/probe-live-gam-slot.mjs https://lordai.net/ /23055873217/lordai.net
+      - name: Prove Horus GPT runtime with Google test inventory
+        run: node scripts/probe-horus-gpt-sample.mjs https://lordai.net/
       - uses: actions/upload-artifact@v7
         if: always()
         with:
