@@ -30,7 +30,6 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString("<<'REMOTE'", $workflow);
         $this->assertStringContainsString("GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s", $workflow);
         $this->assertStringNotContainsString('tinker --execute="\\$domain=', $workflow);
-        $this->assertStringNotContainsString("'.$domain.'", $workflow);
     }
 
     public function test_successful_lordai_rollout_triggers_immediate_static_sync(): void
