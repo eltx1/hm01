@@ -25,8 +25,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Run live publisher diagnostic
         run: node scripts/diagnose-live-publisher.mjs https://lordai.net/
-      - name: Compare iframe GPT fill paths
-        run: node scripts/probe-gpt-iframe-matrix.mjs https://lordai.net/
+      - name: Inspect live Horus inventory
+        run: node scripts/inspect-live-horus-config.mjs https://lordai.net/
       - uses: actions/upload-artifact@v7
         if: always()
         with:
