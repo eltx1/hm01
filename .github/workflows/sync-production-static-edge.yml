@@ -8,6 +8,7 @@ on:
   workflow_run:
     workflows:
       - Deploy production
+      - LordAI Quick Monetize display suite
     types:
       - completed
   workflow_dispatch:
@@ -142,14 +143,69 @@ jobs:
             echo "Canonical public edge is incomplete or stale; deployment is required."
           fi
 
-      - name: Deploy live snapshot to Cloudflare Pages
+      # Cloudflare Pages can occasionally return a transient internal Function
+      # publication error after every static file has uploaded successfully.
+      # Keep the deploy fail-closed, but retry the whole atomic Pages publish
+      # rather than leaving production on the previous loader/config snapshot.
+      - name: Deploy live snapshot to Cloudflare Pages · attempt 1
         if: steps.compare.outputs.deploy == 'true'
-        id: deploy
+        id: deploy_attempt_1
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
+
+      - name: Deploy live snapshot to Cloudflare Pages · attempt 2
+        if: steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success'
+        id: deploy_attempt_2
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
+
+      - name: Deploy live snapshot to Cloudflare Pages · attempt 3
+        if: steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success' && steps.deploy_attempt_2.outcome != 'success'
+        id: deploy_attempt_3
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
+
+      - name: Resolve successful Pages deployment
+        if: steps.compare.outputs.deploy == 'true'
+        id: deploy
+        env:
+          ATTEMPT_1_OUTCOME: ${{ steps.deploy_attempt_1.outcome }}
+          ATTEMPT_1_URL: ${{ steps.deploy_attempt_1.outputs.deployment-url }}
+          ATTEMPT_2_OUTCOME: ${{ steps.deploy_attempt_2.outcome }}
+          ATTEMPT_2_URL: ${{ steps.deploy_attempt_2.outputs.deployment-url }}
+          ATTEMPT_3_OUTCOME: ${{ steps.deploy_attempt_3.outcome }}
+          ATTEMPT_3_URL: ${{ steps.deploy_attempt_3.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          deployment_url=''
+          for candidate in \
+            "$ATTEMPT_1_OUTCOME|$ATTEMPT_1_URL" \
+            "$ATTEMPT_2_OUTCOME|$ATTEMPT_2_URL" \
+            "$ATTEMPT_3_OUTCOME|$ATTEMPT_3_URL"; do
+            outcome="${candidate%%|*}"
+            url="${candidate#*|}"
+            if [[ "$outcome" == 'success' && "$url" =~ ^https://[A-Za-z0-9.-]+\.pages\.dev/?$ ]]; then
+              deployment_url="$url"
+              break
+            fi
+          done
+          if [[ -z "$deployment_url" ]]; then
+            echo 'All Cloudflare Pages deployment attempts failed; refusing to confirm the production manifest.' >&2
+            exit 1
+          fi
+          echo "deployment-url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Verify exact Pages deployment and canonical edge
         if: steps.compare.outputs.deploy == 'true'
