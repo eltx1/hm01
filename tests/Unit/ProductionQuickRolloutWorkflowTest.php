@@ -12,12 +12,24 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
 
         $this->assertIsString($workflow);
         $this->assertStringContainsString('SITE_DOMAIN: lordai.net', $workflow);
-        $this->assertStringContainsString("primary_domain", $workflow);
-        $this->assertStringContainsString("Expected exactly one live site for domain", $workflow);
-        $this->assertStringContainsString("HORUS_SITE_KEY=hm_", $workflow);
+        $this->assertStringContainsString('primary_domain', $workflow);
+        $this->assertStringContainsString('Expected exactly one live site for domain', $workflow);
+        $this->assertStringContainsString('HORUS_SITE_KEY=hm_', $workflow);
         $this->assertStringContainsString('quick-monetize:clone-display-suite "$site_key"', $workflow);
         $this->assertStringContainsString('lordai-quick-display-suite-v2.done', $workflow);
         $this->assertStringNotContainsString('SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2', $workflow);
+    }
+
+    public function test_lordai_remote_tinker_program_cannot_expand_php_variables_as_shell_variables(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-display-suite.yml');
+
+        $this->assertIsString($workflow);
+        $this->assertStringContainsString("php artisan tinker --execute='", $workflow);
+        $this->assertStringContainsString('getenv("SITE_DOMAIN")', $workflow);
+        $this->assertStringContainsString("<<'REMOTE'", $workflow);
+        $this->assertStringContainsString('GITHUB_RUN_ID=', $workflow);
+        $this->assertStringNotContainsString('tinker --execute="\\$domain=', $workflow);
     }
 
     public function test_successful_lordai_rollout_triggers_immediate_static_sync(): void
