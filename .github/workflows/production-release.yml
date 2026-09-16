@@ -50,6 +50,7 @@ jobs:
           bash -n ops/deploy/horus-bootstrap-atomic-layout.sh
           bash -n scripts/verify-static-edge-public.sh
           bash -n scripts/verify-traffic-gate-public.sh
+          bash -n scripts/verify-cloudflare-pages-domain-active.sh
           php -l ops/deploy/write-mysql-client-config.php
           bash tests/Deployment/mysql-client-config-test.sh
           bash tests/Deployment/bootstrap-layout-test.sh
