@@ -32,6 +32,20 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringNotContainsString('tinker --execute="\\$domain=', $workflow);
     }
 
+    public function test_manual_lordai_repair_supports_read_only_dry_run_preview(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+
+        $this->assertIsString($workflow);
+        $this->assertStringContainsString('dry_run:', $workflow);
+        $this->assertStringContainsString('default: true', $workflow);
+        $this->assertStringContainsString("if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true", $workflow);
+        $this->assertStringContainsString('Preview LordAI Quick surface reconciliation', $workflow);
+        $this->assertStringContainsString('"dry_run" => true', $workflow);
+        $this->assertStringContainsString('"would_disable" => $plannedDisabled->all()', $workflow);
+        $this->assertStringContainsString("github.event_name == 'workflow_dispatch' && inputs.dry_run == false", $workflow);
+    }
+
     public function test_successful_lordai_repair_triggers_immediate_static_sync(): void
     {
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
