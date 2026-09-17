@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
+use App\Enums\PlacementStatus;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
@@ -71,6 +72,61 @@ final class QuickMonetizeSurfaceOwnershipTest extends TestCase
         $widget = DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->firstOrFail();
         $this->assertStringContainsString('/1234567/top_b', (string) $widget->direct_tag_template);
         $this->assertStringNotContainsString('/1234567/top_a', (string) $widget->direct_tag_template);
+    }
+
+    public function test_active_quick_surface_is_reused_when_a_disabled_historical_duplicate_remains_after_repair(): void
+    {
+        $this->seedIdentity();
+        $this->seed([InventoryDeliverySeeder::class, AdFormatSeeder::class, DemandNetworkSeeder::class]);
+
+        $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');
+        $admin = $this->makeUser($horus, RoleName::SuperAdmin);
+        $publisherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Repair Publisher');
+        $publisherUser = $this->makeUser($publisherOrg, RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser, [
+            'legal_name' => 'Repair Publisher',
+            'display_name' => 'Repair Publisher',
+        ]);
+        $site = $this->makeSiteFor($publisher, $publisherUser, [
+            'display_name' => 'Repair Site',
+            'primary_domain' => 'repair.example.org',
+            'default_revenue_share_percent' => 80,
+            'native_demand_enabled' => false,
+        ]);
+        $site->update([
+            'status' => SiteStatus::Active,
+            'serving_mode' => ServingMode::HorusDirect,
+            'native_demand_enabled' => false,
+        ]);
+        $site->servingSettings()->update([
+            'serving_mode' => ServingMode::HorusDirect,
+            'native_demand_enabled' => false,
+        ]);
+        $site->siteConfig()->update(['status' => 'ACTIVE', 'immediate_pause' => false]);
+
+        $network = DemandNetwork::query()->where('code', 'CUSTOM_THIRD_PARTY_TAG')->firstOrFail();
+        $service = app(QuickMonetizeService::class);
+        $first = $service->activate($site->fresh(), $network, $admin, $this->tag('/1234567/top_live'), null, 'sticky_top', 'Top Live');
+
+        $live = Placement::withoutGlobalScopes()->whereKey($first['placement']->id)->firstOrFail();
+        $historical = $live->replicate();
+        $historical->code = 'quick_sticky_top_legacy';
+        $historical->name = 'Legacy Top';
+        $historical->status = PlacementStatus::Disabled;
+        $historical->save();
+
+        $again = $service->activate($site->fresh(), $network, $admin, $this->tag('/1234567/top_updated'), null, 'sticky_top', 'Top Updated');
+
+        $this->assertSame($live->id, $again['placement']->id);
+        $this->assertSame(1, Placement::withoutGlobalScopes()
+            ->where('site_id', $site->id)
+            ->where('status', PlacementStatus::Active->value)
+            ->get()
+            ->filter(fn (Placement $placement): bool => data_get($placement->metadata, 'placement_preset') === 'sticky_top')
+            ->count());
+
+        $widget = DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->firstOrFail();
+        $this->assertStringContainsString('/1234567/top_updated', (string) $widget->direct_tag_template);
     }
 
     private function tag(string $path): string
