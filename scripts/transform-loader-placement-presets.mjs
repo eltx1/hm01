@@ -149,7 +149,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
         button.setAttribute('aria-label', 'Close advertisement');
         button.setAttribute('aria-hidden', 'true');
         button.setAttribute('data-hm-placement-close', '1');
-        button.style.cssText = 'display:none;position:absolute;top:4px;right:4px;z-index:2147483001;min-width:28px;min-height:28px;padding:0 7px;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;cursor:pointer;';
+        button.style.cssText = 'display:none;position:absolute;top:4px;right:4px;z-index:2147483001;width:28px;height:28px;min-width:28px;min-height:28px;max-width:28px;max-height:28px;box-sizing:border-box;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;overflow:hidden;cursor:pointer;';
         setImportantStyle(button.style, 'display', 'none');
         setImportantStyle(button.style, 'position', 'absolute');
         setImportantStyle(button.style, 'top', '4px');
@@ -159,6 +159,16 @@ const HELPERS = `    function placementFormatSettings(placement) {
         setImportantStyle(button.style, 'bottom', 'auto');
         setImportantStyle(button.style, 'transform', 'none');
         setImportantStyle(button.style, 'margin', '0');
+        setImportantStyle(button.style, 'box-sizing', 'border-box');
+        setImportantStyle(button.style, 'width', '28px');
+        setImportantStyle(button.style, 'height', '28px');
+        setImportantStyle(button.style, 'min-width', '28px');
+        setImportantStyle(button.style, 'min-height', '28px');
+        setImportantStyle(button.style, 'max-width', '28px');
+        setImportantStyle(button.style, 'max-height', '28px');
+        setImportantStyle(button.style, 'padding', '0');
+        setImportantStyle(button.style, 'line-height', '28px');
+        setImportantStyle(button.style, 'overflow', 'hidden');
         button.addEventListener('click', function (event) {
             if (event && event.preventDefault) event.preventDefault();
             if (event && event.stopPropagation) event.stopPropagation();
