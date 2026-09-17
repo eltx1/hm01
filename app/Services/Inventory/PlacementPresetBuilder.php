@@ -6,6 +6,7 @@ use App\Enums\PlacementStatus;
 use App\Models\Placement;
 use App\Models\Site;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -30,6 +31,21 @@ final class PlacementPresetBuilder
         bool $publish = true,
         bool $quickMount = false,
     ): Placement {
+        // A Quick surface has one stable identity per site+preset. Make that
+        // guarantee hold for double-clicks/retries too, not only sequential
+        // requests: enter a transaction when needed, lock the site row, then
+        // perform the lookup/create while the lock is held.
+        if ($quickMount && DB::transactionLevel() === 0) {
+            return DB::transaction(fn (): Placement => $this->create(
+                $site,
+                $preset,
+                $actor,
+                $overrides,
+                $publish,
+                true,
+            ));
+        }
+
         $choice = $this->presets->choices()[$preset] ?? null;
         $label = is_array($choice) ? (string) ($choice['label'] ?? 'Placement') : 'Placement';
 
@@ -40,6 +56,7 @@ final class PlacementPresetBuilder
         // remains available when an operator intentionally needs two surfaces
         // of the same type.
         if ($quickMount) {
+            Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
             $existing = $this->existingQuickPreset($site, $preset);
             if ($existing) {
                 return $existing;
