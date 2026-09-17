@@ -74,9 +74,11 @@ PASS allows immediately. ERROR, TIMEOUT, UNAVAILABLE, or another unresolved tech
 
 PASS allows immediately. A technical failure or an initial-wait stall may move the state to `WAITING_FOR_ACTIVITY` when `activityRecoveryEnabled` is true.
 
-Recovery accepts only meaningful browser activity. Native events whose `isTrusted` property is available must have `isTrusted === true`. Supported signals are pointer down, touch start, a meaningful non-modifier keydown, and a meaningful scroll displacement. Programmatic `dispatchEvent()` does not qualify in modern browsers because the generated event is not trusted.
+Recovery accepts meaningful browser activity before the bounded deadline. Native events whose `isTrusted` property is available must have `isTrusted === true`. Supported signals are pointer down, touch start, a meaningful non-modifier keydown, and a meaningful scroll displacement. Programmatic `dispatchEvent()` does not qualify in modern browsers because the generated event is not trusted.
 
-After accepted activity the state becomes `SOFT_ALLOWED`. Without accepted activity the document remains non-monetized; the failure is not labelled as bot or invalid traffic.
+If no explicit `DENIED` result was received and the invisible Turnstile path remains technically unavailable, errored, timed out, or stalled, BALANCED transitions to `SOFT_ALLOWED` at the configured `maxWaitMs` deadline. This prevents a third-party verification outage from permanently suppressing publisher monetization. Explicit `DENIED` still maps to `BLOCKED` and never fails open.
+
+The Traffic Gate remains non-visible throughout this recovery path; the Publisher is never asked to show a challenge or require a visitor interaction merely to release ads.
 
 ### PERMISSIVE
 
@@ -84,7 +86,9 @@ PASS allows immediately. Technical ERROR/TIMEOUT/UNAVAILABLE or a stall remains 
 
 ## Timer and cleanup behavior
 
-`initialWaitMs` is the slow/stall recovery threshold. It never delays PASS. `maxWaitMs` bounds strict/permissive waiting and frame/listener cleanup. The parent does not retain an unbounded Promise waiting forever for a gate response.
+`initialWaitMs` is the slow/stall recovery threshold. It never delays PASS. `maxWaitMs` is a hard availability bound for PERMISSIVE and for BALANCED technical/stall recovery; BALANCED may recover earlier from trusted activity. STRICT remains fail-closed on technical failure. Explicit `DENIED` remains fail-closed under every policy.
+
+When BALANCED enters activity recovery because the invisible frame or Turnstile path failed technically, the gate iframe/message resources are cleaned up while the bounded max-wait timer is preserved. This prevents both leaked gate resources and an indefinite ad outage.
 
 Final PASS, SOFT_ALLOWED, BLOCKED, or DISABLED decisions remove unnecessary frame/message/timer/activity resources. BALANCED activity listeners exist only while the state is intentionally waiting for a trusted recovery signal.
 
