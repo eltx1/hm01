@@ -27,6 +27,7 @@ final readonly class TrafficGateConfiguration
         return [
             'enabled' => $this->enabled,
             'provider' => $this->provider,
+            'widgetMode' => $this->widgetMode,
             'gateOrigin' => $this->gateOrigin,
             'siteKey' => $this->siteKey,
             'policy' => $this->policy->value,
