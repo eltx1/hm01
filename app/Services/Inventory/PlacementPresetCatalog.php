@@ -121,8 +121,18 @@ final class PlacementPresetCatalog
 
     private function edgeAnchor(string $position): array
     {
+        // Keep the allowlist explicit: trusted GPT may preserve reviewed passback
+        // banner sizes, while arbitrary display dimensions still fail closed.
+        $compactCompatibilitySizes = [[120, 90], [220, 90]];
+        $mobileSizes = [[300, 50], [300, 100], [320, 50], [320, 100]];
+        $desktopSizes = [[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]];
+
         return [
-            'sizes' => array_merge($this->fixed([[320, 50], [320, 100], [728, 90], [970, 90]]), $this->responsive('MOBILE', 0, 0, 767, 65535, [[320, 50], [320, 100]]), $this->responsive('DESKTOP', 768, 0, null, null, [[728, 90], [970, 90]])),
+            'sizes' => array_merge(
+                $this->fixed(array_merge($compactCompatibilitySizes, $mobileSizes, $desktopSizes)),
+                $this->responsive('MOBILE', 0, 0, 767, 65535, $mobileSizes),
+                $this->responsive('DESKTOP', 768, 0, null, null, $desktopSizes),
+            ),
             'format_settings' => ['position' => $position, 'closeable' => true, 'reserveSpace' => false, 'autoMount' => true], 'lazy_load_enabled' => false, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
         ];
     }
