@@ -20,6 +20,19 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringNotContainsString('SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2', $workflow);
     }
 
+    public function test_automatic_lordai_repair_requires_the_upstream_deploy_job_to_have_completed_successfully(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+
+        $this->assertIsString($workflow);
+        $this->assertStringContainsString('Require upstream production deploy job success', $workflow);
+        $this->assertStringContainsString("if: github.event_name == 'workflow_run'", $workflow);
+        $this->assertStringContainsString('github.rest.actions.listJobsForWorkflowRun', $workflow);
+        $this->assertStringContainsString("jobs.filter((job) => job.name === 'deploy')", $workflow);
+        $this->assertStringContainsString("deploy.status !== 'completed' || deploy.conclusion !== 'success'", $workflow);
+        $this->assertStringContainsString('Upstream deploy job did not complete successfully', $workflow);
+    }
+
     public function test_lordai_remote_tinker_program_cannot_expand_php_variables_as_shell_variables(): void
     {
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
