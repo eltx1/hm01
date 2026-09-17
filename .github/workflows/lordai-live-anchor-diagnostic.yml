@@ -31,7 +31,7 @@ jobs:
         env:
           BROWSER_NAME: ${{ matrix.browser }}
         run: |
-          cat > "$RUNNER_TEMP/lordai-anchor-diagnostic.mjs" <<'JS'
+          cat > .lordai-anchor-diagnostic.mjs <<'JS'
           import { chromium, webkit } from '@playwright/test';
           import fs from 'node:fs';
 
@@ -143,7 +143,7 @@ jobs:
           console.log(JSON.stringify(report, null, 2));
           await browser.close();
           JS
-          node "$RUNNER_TEMP/lordai-anchor-diagnostic.mjs"
+          node .lordai-anchor-diagnostic.mjs
       - uses: actions/upload-artifact@v7
         if: always()
         with:
