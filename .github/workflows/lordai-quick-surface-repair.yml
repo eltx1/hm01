@@ -100,11 +100,17 @@ jobs:
 
           $keepers = collect();
           foreach ($keepPresets as $preset) {
+              $canonicalCode = "quick_".$preset;
               $active = $quickPlacements
                   ->filter(fn ($placement) => ! $placement->trashed()
                       && (string) data_get($placement->metadata, "placement_preset", "") === $preset
                       && $placement->status === App\Enums\PlacementStatus::Active)
-                  ->sortByDesc(fn ($placement) => sprintf("%s-%s", optional($placement->created_at)->format("YmdHis.u") ?: "0", $placement->id))
+                  ->sortByDesc(fn ($placement) => sprintf(
+                      "%d-%s-%s",
+                      (string) $placement->code === $canonicalCode ? 1 : 0,
+                      optional($placement->created_at)->format("YmdHis.u") ?: "0",
+                      $placement->id
+                  ))
                   ->values();
               if ($active->isEmpty()) {
                   throw new RuntimeException("No active Quick Monetize surface exists for required preset ".$preset.".");
