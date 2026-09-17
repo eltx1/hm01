@@ -27,15 +27,23 @@ jobs:
         run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
       - name: Install browser
         run: npx playwright install --with-deps ${{ matrix.browser }}
-      - name: Inspect live LordAI anchors
+      - name: Inspect production anchors in isolated LordAI origin
         env:
           BROWSER_NAME: ${{ matrix.browser }}
+          SITE_KEY: hm_ircll0vkqq54jvt9gz85mrh2
+          EDGE_URL: https://702069fd.horus-media-cdn.pages.dev
         run: |
+          set -euo pipefail
+          curl -fsSL "$EDGE_URL/delivery-manifest.json" -o "lordai-${BROWSER_NAME}-delivery-manifest.json"
+          curl -fsSL "$EDGE_URL/configs/$SITE_KEY/production.json" -o "lordai-${BROWSER_NAME}-production.json"
+          curl -fsSL "$EDGE_URL/assets/hm-loader.min.js" -o /dev/null
           cat > .lordai-anchor-diagnostic.mjs <<'JS'
           import { chromium, webkit } from '@playwright/test';
           import fs from 'node:fs';
 
           const browserName = process.env.BROWSER_NAME;
+          const siteKey = process.env.SITE_KEY;
+          const edge = process.env.EDGE_URL.replace(/\/$/, '');
           const engine = browserName === 'webkit' ? webkit : chromium;
           const browser = await engine.launch({ headless: true });
           const context = await browser.newContext({
@@ -51,15 +59,28 @@ jobs:
           page.on('pageerror', error => events.push({ type: 'pageerror', text: String(error && error.stack || error) }));
           page.on('requestfailed', request => {
             const url = request.url();
-            if (/horusmedia|googlesyndication|doubleclick|securepubads|gampad/i.test(url)) {
+            if (/horus|googlesyndication|doubleclick|securepubads|gampad/i.test(url)) {
               events.push({ type: 'requestfailed', url, reason: request.failure()?.errorText || null });
             }
           });
           page.on('response', response => {
             const url = response.url();
-            if (/horusmedia|googlesyndication|doubleclick|securepubads|gampad/i.test(url) && response.status() >= 400) {
+            if (/horus|googlesyndication|doubleclick|securepubads|gampad/i.test(url) && response.status() >= 400) {
               events.push({ type: 'http', status: response.status(), url });
             }
+          });
+
+          await page.route('https://lordai.net/**', async route => {
+            const request = route.request();
+            if (request.isNavigationRequest() && request.resourceType() === 'document') {
+              await route.fulfill({
+                status: 200,
+                contentType: 'text/html; charset=utf-8',
+                body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;min-height:2000px;background:#fff"><main style="padding-top:140px">Horus isolated production runtime</main><script async src="${edge}/assets/hm-loader.min.js" data-site-key="${siteKey}" data-config-base="${edge}/configs"></script></body></html>`,
+              });
+              return;
+            }
+            await route.continue();
           });
 
           const response = await page.goto('https://lordai.net/', { waitUntil: 'domcontentloaded', timeout: 90000 });
@@ -79,19 +100,10 @@ jobs:
               if (!node || !window.getComputedStyle) return null;
               const s = getComputedStyle(node);
               return {
-                display: s.display,
-                visibility: s.visibility,
-                opacity: s.opacity,
-                position: s.position,
-                zIndex: s.zIndex,
-                overflow: s.overflow,
-                width: s.width,
-                height: s.height,
-                top: s.top,
-                right: s.right,
-                bottom: s.bottom,
-                left: s.left,
-                transform: s.transform,
+                display: s.display, visibility: s.visibility, opacity: s.opacity,
+                position: s.position, zIndex: s.zIndex, overflow: s.overflow,
+                width: s.width, height: s.height, top: s.top, right: s.right,
+                bottom: s.bottom, left: s.left, transform: s.transform,
               };
             }
             const placements = Array.from(document.querySelectorAll('.hm-ad[data-placement], .hm-native[data-placement]')).map(element => {
@@ -99,21 +111,17 @@ jobs:
               const close = element.querySelector('[data-hm-placement-close="1"]');
               const shadow = direct && direct.shadowRoot;
               const frame = shadow && shadow.querySelector('iframe');
-              let frameDoc = null;
               let frameBody = null;
               let frameIframes = [];
               try {
-                frameDoc = frame && frame.contentDocument;
-                frameBody = frameDoc && frameDoc.body ? frameDoc.body.innerHTML.slice(0, 4000) : null;
+                const frameDoc = frame && frame.contentDocument;
+                frameBody = frameDoc && frameDoc.body ? frameDoc.body.innerHTML.slice(0, 8000) : null;
                 frameIframes = frameDoc ? Array.from(frameDoc.querySelectorAll('iframe')).map(child => ({ attrs: attrs(child), rect: rect(child), style: style(child) })) : [];
               } catch (error) {
                 frameBody = 'FRAME_INSPECTION_ERROR:' + String(error);
               }
               return {
-                code: element.getAttribute('data-placement'),
-                attrs: attrs(element),
-                rect: rect(element),
-                style: style(element),
+                code: element.getAttribute('data-placement'), attrs: attrs(element), rect: rect(element), style: style(element),
                 close: close ? { attrs: attrs(close), rect: rect(close), style: style(close) } : null,
                 direct: direct ? { attrs: attrs(direct), rect: rect(direct), style: style(direct) } : null,
                 shadow: shadow ? { childCount: shadow.childNodes.length } : null,
@@ -121,17 +129,14 @@ jobs:
               };
             });
             return {
-              href: location.href,
-              title: document.title,
-              readyState: document.readyState,
+              href: location.href, title: document.title, readyState: document.readyState,
               viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
               loader: window.__HORUS_MEDIA_LOADER_STATE__ ? {
                 configVersion: window.__HORUS_MEDIA_LOADER_STATE__.config?.configVersion || null,
                 siteKey: window.__HORUS_MEDIA_LOADER_STATE__.config?.siteKey || null,
                 nativeRendered: window.__HORUS_MEDIA_LOADER_STATE__.nativeRendered || {},
               } : null,
-              gptRuntime: window.__HORUS_GPT_DIRECT_RUNTIME_V1__ ? true : false,
-              placements,
+              gptRuntime: Boolean(window.__HORUS_GPT_DIRECT_RUNTIME_V1__), placements,
             };
           });
 
@@ -151,4 +156,6 @@ jobs:
           path: |
             lordai-${{ matrix.browser }}-report.json
             lordai-${{ matrix.browser }}.png
+            lordai-${{ matrix.browser }}-delivery-manifest.json
+            lordai-${{ matrix.browser }}-production.json
           retention-days: 7
