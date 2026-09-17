@@ -131,7 +131,7 @@ final class QuickMonetizeSurfaceOwnershipTest extends TestCase
 
     private function tag(string $path): string
     {
-        $pathJson = json_encode($path, JSON_THROW_ON_ERROR);
+        $pathJson = json_encode($path, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 
         return <<<HTML
 <script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
