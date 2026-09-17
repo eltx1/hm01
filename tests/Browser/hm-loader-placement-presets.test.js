@@ -16,6 +16,14 @@ const fixture = `
             item.element.setAttribute('data-hm-status', 'direct-demand');
         });
     }
+    function directContainer(entry, candidate) {
+        var tag = candidate.tag || {};
+        var recipe = tag.container || {};
+        var container = document.createElement('div');
+        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});
+        if (entry.element.appendChild) entry.element.appendChild(container);
+        return container;
+    }
     function renderPlacement(element, placement, formatSettings) {
                             if (formatSettings.position && element.style && placement.type === 'STICKY') {
                                 element.style.position = 'fixed'; element.style.zIndex = '2147483000'; element.style.left = '50%'; element.style.transform = 'translateX(-50%)';
@@ -25,7 +33,7 @@ const fixture = `
 })();
 `;
 
-test('placement preset transform injects safe auto-mount, article-aware roots, Direct JS positioning, and close controls exactly once', () => {
+test('placement preset transform injects safe auto-mount, hardened surface ownership, and responsive Direct GPT mapping exactly once', () => {
     const transformed = applyPlacementPresetTransform(fixture);
     assert.match(transformed, /function autoMountPlacementElements\(config\)/);
     assert.match(transformed, /function mountAutoPlacementElement\(element, settings\)/);
@@ -36,19 +44,31 @@ test('placement preset transform injects safe auto-mount, article-aware roots, D
     assert.match(transformed, /article_mid/);
     assert.match(transformed, /article_end/);
     assert.match(transformed, /bottom_right/);
-    assert.match(transformed, /style\.right = '0'/);
+    assert.match(transformed, /function setImportantStyle\(style, name, value\)/);
+    assert.match(transformed, /style\.setProperty\(name, value, 'important'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'position', 'fixed'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'z-index', '2147483000'\)/);
     assert.match(transformed, /function ensurePlacementCloseControl\(element, settings\)/);
     assert.match(transformed, /data-hm-placement-close/);
     assert.match(transformed, /Close advertisement/);
+    assert.match(transformed, /display:none;position:absolute/);
+    assert.match(transformed, /function placementRendered\(element\)/);
+    assert.match(transformed, /attributeFilter: \['data-hm-status'\]/);
     assert.match(transformed, /data-hm-placement-dismissed/);
+    assert.match(transformed, /function attachDirectResponsiveMapping\(container, entry\)/);
+    assert.match(transformed, /data-hm-gpt-size-map/);
+    assert.match(transformed, /JSON\.stringify\(mappings\)/);
     assert.match(transformed, /applyPlacementPresetPresentation\(element, placement, formatSettings\);/);
     assert.match(transformed, /applyPlacementPresetPresentation\(item\.element, item\.placement, placementFormatSettings\(item\.placement\)\);/);
     assert.match(transformed, /mountAutoPlacementElement\(element, settings\);\n            applyPlacementPresetPresentation\(element, placement, settings\);/);
+    assert.match(transformed, /attachDirectResponsiveMapping\(container, entry\);/);
     assert.doesNotMatch(transformed, /formatSettings\.position === 'top' \? 'top' : 'bottom'/);
 
     const twice = applyPlacementPresetTransform(transformed);
     assert.equal(twice, transformed);
     assert.equal((twice.match(/function autoMountPlacementElements\(config\)/g) || []).length, 1);
     assert.equal((twice.match(/function ensurePlacementCloseControl\(element, settings\)/g) || []).length, 1);
+    assert.equal((twice.match(/function attachDirectResponsiveMapping\(container, entry\)/g) || []).length, 1);
     assert.equal((twice.match(/applyPlacementPresetPresentation\(item\.element, item\.placement, placementFormatSettings\(item\.placement\)\);/g) || []).length, 1);
+    assert.equal((twice.match(/attachDirectResponsiveMapping\(container, entry\);/g) || []).length, 1);
 });
