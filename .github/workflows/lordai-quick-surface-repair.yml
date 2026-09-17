@@ -7,6 +7,12 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview the production reconciliation without mutating data or dispatching static-edge sync
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -17,8 +23,141 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      SITE_DOMAIN: lordai.net
+
+    steps:
+      - name: Validate production connection inputs
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          [[ "$SITE_DOMAIN" =~ ^[a-z0-9.-]+$ ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Preview LordAI Quick surface reconciliation
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_ROOT/artisan"
+          cd "$APP_ROOT"
+          php artisan tinker --execute='
+          $domain = strtolower((string) getenv("SITE_DOMAIN"));
+          $sites = App\Models\Site::withoutGlobalScopes()
+              ->whereNull("deleted_at")
+              ->get()
+              ->filter(fn ($site) => strtolower(preg_replace("/^www\\./i", "", (string) $site->primary_domain)) === $domain)
+              ->values();
+          if ($sites->count() !== 1) {
+              throw new RuntimeException("Expected exactly one live site for domain ".$domain.", found ".$sites->count().".");
+          }
+          $site = $sites->first();
+          $keepPresets = collect(["sticky_bottom", "sticky_top"]);
+          $rolloutCodes = collect([
+              "quick_responsive_display",
+              "quick_in_article_display",
+              "quick_high_impact_display",
+              "quick_mobile_display",
+          ]);
+          $quickPlacements = App\Models\Placement::withoutGlobalScopes()
+              ->withTrashed()
+              ->where("site_id", $site->id)
+              ->get()
+              ->filter(fn ($placement) => (bool) data_get($placement->metadata, "quick_monetize_generated", false))
+              ->values();
+
+          $keepers = collect();
+          foreach ($keepPresets as $preset) {
+              $canonicalCode = "quick_".$preset;
+              $active = $quickPlacements
+                  ->filter(fn ($placement) => ! $placement->trashed()
+                      && (string) data_get($placement->metadata, "placement_preset", "") === $preset
+                      && $placement->status === App\Enums\PlacementStatus::Active)
+                  ->sortByDesc(fn ($placement) => sprintf(
+                      "%d-%s-%s",
+                      (string) $placement->code === $canonicalCode ? 1 : 0,
+                      optional($placement->created_at)->format("YmdHis.u") ?: "0",
+                      $placement->id
+                  ))
+                  ->values();
+              if ($active->isEmpty()) {
+                  throw new RuntimeException("No active Quick Monetize surface exists for required preset ".$preset.".");
+              }
+              $keepers->put($preset, $active->first());
+          }
+
+          $plannedDisabled = $quickPlacements
+              ->filter(function ($placement) use ($keepers, $keepPresets, $rolloutCodes): bool {
+                  if ($placement->trashed()) return false;
+                  $preset = (string) data_get($placement->metadata, "placement_preset", "");
+                  $keeper = $keepers->get($preset);
+                  $duplicateAnchor = $keepPresets->contains($preset) && (! $keeper || $keeper->id !== $placement->id);
+                  $rolloutDisplay = $rolloutCodes->contains((string) $placement->code);
+                  return $duplicateAnchor || $rolloutDisplay;
+              })
+              ->map(function ($placement) use ($keepers, $keepPresets): array {
+                  $preset = (string) data_get($placement->metadata, "placement_preset", "");
+                  $keeper = $keepers->get($preset);
+                  $duplicateAnchor = $keepPresets->contains($preset) && (! $keeper || $keeper->id !== $placement->id);
+                  return [
+                      "code" => $placement->code,
+                      "preset" => $preset,
+                      "reason" => $duplicateAnchor ? "duplicate_anchor" : "removed_display_suite_rollout",
+                  ];
+              })
+              ->values();
+          $preserved = $quickPlacements
+              ->filter(fn ($placement) => ! $placement->trashed() && $placement->status === App\Enums\PlacementStatus::Active)
+              ->reject(fn ($placement) => $plannedDisabled->contains(fn ($planned) => $planned["code"] === $placement->code))
+              ->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])
+              ->values();
+
+          echo json_encode([
+              "dry_run" => true,
+              "site_key" => $site->public_key,
+              "kept_anchors" => $keepers->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])->values()->all(),
+              "would_disable" => $plannedDisabled->all(),
+              "would_preserve" => $preserved->all(),
+              "would_publish_production_config" => true,
+              "would_dispatch_static_edge_sync" => true,
+          ], JSON_THROW_ON_ERROR).PHP_EOL;
+          '
+          REMOTE
+
   repair:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
