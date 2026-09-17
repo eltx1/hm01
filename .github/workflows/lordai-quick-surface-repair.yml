@@ -195,7 +195,35 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Resolve one-time repair state
+        id: repair_state
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          repair_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.done"
+          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.static-edge-dispatched"
+          state="$(ssh -p "$SSH_PORT" "$USER@$HOST" "REPAIR_MARKER='$repair_marker' DISPATCH_MARKER='$dispatch_marker' bash -s" <<'REMOTE'
+          set -euo pipefail
+          if ! test -f "$REPAIR_MARKER"; then
+            printf '%s' repair
+          elif ! test -f "$DISPATCH_MARKER"; then
+            printf '%s' dispatch
+          else
+            printf '%s' complete
+          fi
+          REMOTE
+          )"
+          case "$state" in
+            repair|dispatch|complete) ;;
+            *) echo "Unexpected LordAI repair state: $state" >&2; exit 1 ;;
+          esac
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "LordAI Quick surface repair state: $state"
+
       - name: Reconcile LordAI Quick surfaces to one top and one bottom anchor
+        if: steps.repair_state.outputs.state == 'repair'
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
@@ -390,8 +418,26 @@ jobs:
           REMOTE
 
       - name: Trigger immediate static-edge reconciliation
+        if: steps.repair_state.outputs.state == 'repair' || steps.repair_state.outputs.state == 'dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh workflow run sync-production-static-edge.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+      - name: Mark static-edge reconciliation dispatched
+        if: steps.repair_state.outputs.state == 'repair' || steps.repair_state.outputs.state == 'dispatch'
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.static-edge-dispatched"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "DISPATCH_MARKER='$dispatch_marker' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          install -d -m 700 "$(dirname "$DISPATCH_MARKER")"
+          tmp="${DISPATCH_MARKER}.tmp.$$"
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) dispatch_run=${GITHUB_RUN_ID:-workflow}" > "$tmp"
+          chmod 600 "$tmp"
+          mv "$tmp" "$DISPATCH_MARKER"
+          REMOTE
