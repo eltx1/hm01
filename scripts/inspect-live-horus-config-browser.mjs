@@ -1,6 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { chromium } from '@playwright/test';
 
 const target = process.argv[2] || 'https://lordai.net/';
+const outDir = path.resolve('live-diagnostic');
+fs.mkdirSync(outDir, { recursive: true });
+
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({
   viewport: { width: 1440, height: 1200 },
@@ -57,7 +62,7 @@ const direct = Object.entries(config.directDemand?.placements || {}).map(([code,
   })),
 }));
 
-console.log('LIVE_CONFIG_SUMMARY=' + JSON.stringify({
+const summary = {
   configUrl,
   siteKey: config.siteKey ?? null,
   configVersion: config.configVersion ?? null,
@@ -66,6 +71,9 @@ console.log('LIVE_CONFIG_SUMMARY=' + JSON.stringify({
   placements,
   directDemandEnabled: config.directDemandEnabled ?? null,
   direct,
-}, null, 2));
+};
+
+fs.writeFileSync(path.join(outDir, 'live-config-summary.json'), JSON.stringify(summary, null, 2));
+console.log('LIVE_CONFIG_SUMMARY=' + JSON.stringify(summary, null, 2));
 
 await browser.close();
