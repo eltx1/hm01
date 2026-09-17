@@ -43,8 +43,10 @@ test('BALANCED initial stall keeps the bound gate channel alive so a late valid 
 });
 
 test('BALANCED technical recovery preserves a bounded fallback instead of stranding monetization forever', () => {
+    assert.match(loader, /function trafficGateEnsureMaxTimer\(\)/);
+    assert.match(loader, /trafficGateEnsureMaxTimer\(\);\s*if \(!settings\.valid\)/, 'the max-wait deadline must exist before validation, crypto, or iframe creation can fail');
     assert.match(loader, /preserveMaxTimer:\s*true,\s*preserveActivity:\s*true/);
-    assert.match(loader, /policy === 'BALANCED'[\s\S]*trafficGateAllow\(TRAFFIC_GATE_STATES\.softAllowed, 'MAX_WAIT_FALLBACK'\)/);
+    assert.match(loader, /if \(gate\.settings && gate\.settings\.policy === 'BALANCED'\) \{[\s\S]*trafficGateAllow\(TRAFFIC_GATE_STATES\.softAllowed, 'MAX_WAIT_FALLBACK'\)/);
     assert.match(loader, /gate\.status === TRAFFIC_GATE_STATES\.blocked[\s\S]*return/);
 });
 
