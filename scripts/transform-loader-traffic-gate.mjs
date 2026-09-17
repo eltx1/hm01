@@ -85,6 +85,7 @@ const trafficGateRuntime = String.raw`
         var siteKey = String(config && config.siteKey || '');
         var publicSiteKey = String(selected.siteKey || '');
         var valid = selected.provider === TRAFFIC_GATE_PROVIDER
+            && String(selected.widgetMode || '').toUpperCase() === 'INVISIBLE'
             && ['STRICT', 'BALANCED', 'PERMISSIVE'].indexOf(policy) !== -1
             && origin !== null
             && /^[A-Za-z0-9_-]{3,64}$/.test(siteKey)
@@ -99,6 +100,7 @@ const trafficGateRuntime = String.raw`
             origin: origin,
             siteKey: siteKey,
             turnstileSiteKey: publicSiteKey,
+            widgetMode: 'INVISIBLE',
             policy: policy || 'BALANCED',
             initialWaitMs: initialWaitMs,
             maxWaitMs: maxWaitMs,
