@@ -25,7 +25,12 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Run live publisher diagnostic
         run: node scripts/diagnose-live-publisher.mjs https://lordai.net/
+      - name: Probe current-main GPT in publisher document context
+        if: always()
+        run: node scripts/probe-current-main-gpt-publisher.mjs
       - name: Inspect live Horus inventory
+        if: always()
+        continue-on-error: true
         run: node scripts/inspect-live-horus-config-browser.mjs https://lordai.net/
       - uses: actions/upload-artifact@v7
         if: always()
