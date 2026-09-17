@@ -2,6 +2,7 @@
 
 return [
     'provider' => 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY',
+    'widget_mode' => 'INVISIBLE',
     'origin' => env('HORUS_TRAFFIC_GATE_ORIGIN', 'https://verify.horusmedia.net'),
     'enabled' => false,
     'site_key' => env('HORUS_TRAFFIC_GATE_SITE_KEY'),
