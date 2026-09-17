@@ -1,15 +1,16 @@
 (function (window, document) {
     'use strict';
 
-    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V1__';
+    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V2__';
     if (window[STATE_KEY]) {
         if (typeof window[STATE_KEY].scan === 'function') window[STATE_KEY].scan();
         return;
     }
 
-    var state = window[STATE_KEY] = { observer: null, scan: scan };
+    var state = window[STATE_KEY] = { observer: null, scan: scan, libraryInjected: false };
     var SELECTOR = '[data-hm-gpt-direct="1"]';
     var GPT_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
+    var RUNTIME_VERSION = '2';
 
     function validPath(value) {
         return /^\/[0-9]{1,20}\/[A-Za-z0-9_.\-/]{1,240}$/.test(String(value || ''));
@@ -91,12 +92,6 @@
             return right.minHeight - left.minHeight;
         });
 
-        // A valid responsive mapping is authoritative. If no mapping applies to
-        // this viewport, or the applicable mapping has no overlap with the
-        // reviewed GPT declaration, this surface must no-fill. Falling back to
-        // the full declaration can resurrect desktop sizes on mobile (or mobile
-        // sizes on desktop), which defeats placement ownership and can overflow
-        // the viewport.
         if (!matches.length) return [];
 
         for (var index = 0; index < matches.length; index += 1) {
@@ -111,105 +106,204 @@
         return /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(String(value || ''));
     }
 
-    function frameDocument(adUnitPath, allowedSizes, innerId, parentId) {
-        var pathJson = JSON.stringify(adUnitPath);
-        var sizesJson = JSON.stringify(allowedSizes);
-        var idJson = JSON.stringify(innerId);
-        var parentIdJson = JSON.stringify(parentId);
-        var initialSize = allowedSizes[0];
-        var width = initialSize[0];
-        var height = initialSize[1];
+    function normalizedRenderedSize(size, allowedSizes) {
+        var normalized = normalizedSize(size);
+        if (!normalized) return null;
+        for (var index = 0; index < allowedSizes.length; index += 1) {
+            if (allowedSizes[index][0] === normalized[0] && allowedSizes[index][1] === normalized[1]) return normalized;
+        }
+        return null;
+    }
 
-        return '<!doctype html><html><head><meta charset="utf-8">'
-            + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            + '<style>html,body{margin:0;padding:0;overflow:hidden;background:transparent}#' + innerId + '{width:' + width + 'px;height:' + height + 'px}</style>'
-            + '<script>window.googletag=window.googletag||{cmd:[]};googletag.cmd.push(function(){'
-            + 'var parentId=' + parentIdJson + ';var innerId=' + idJson + ';var allowedSizes=' + sizesJson + ';'
-            + 'function normalizedRenderedSize(size){if(!Array.isArray(size)||size.length!==2)return null;var w=Number(size[0]),h=Number(size[1]);if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||w>10000||h<1||h>10000)return null;for(var i=0;i<allowedSizes.length;i+=1){if(allowedSizes[i][0]===w&&allowedSizes[i][1]===h)return[w,h];}return null;}'
-            + 'function resize(size){if(!size)return;var w=String(size[0]),h=String(size[1]);var node=document.getElementById(innerId);if(node){node.style.width=w+"px";node.style.height=h+"px";}var frame=window.frameElement;if(frame){frame.setAttribute("width",w);frame.setAttribute("height",h);frame.style.width=w+"px";frame.style.height=h+"px";}try{var target=parent.document.getElementById(parentId);if(target){target.setAttribute("data-hm-gpt-rendered-width",w);target.setAttribute("data-hm-gpt-rendered-height",h);target.style.width=w+"px";target.style.height=h+"px";target.style.maxWidth="100%";}}catch(e){}}'
-            + 'function report(status,size){if(size)resize(size);try{var target=parent.document.getElementById(parentId);if(target){target.setAttribute("data-hm-gpt-runtime-state",status);target.setAttribute("data-hm-gpt-status",status);}}catch(e){}}'
-            + 'var slot=googletag.defineSlot(' + pathJson + ',' + sizesJson + ',' + idJson + ');'
-            + 'if(!slot){report("failed");return;}'
-            + 'if(slot.setForceSafeFrame){slot.setForceSafeFrame(true);}'
-            + 'var pubads=googletag.pubads();'
-            + 'if(pubads&&pubads.addEventListener){pubads.addEventListener("slotRenderEnded",function(event){if(event&&event.slot===slot){if(event.isEmpty){report("empty");return;}var renderedSize=normalizedRenderedSize(event.size);if(!renderedSize){report("failed");return;}report("rendered",renderedSize);}});}'
-            + 'slot.addService(pubads);googletag.enableServices();googletag.display(' + idJson + ');});<\/script>'
-            + '<script async src="' + GPT_URL + '"><\/script></head><body><div id="' + innerId + '"></div></body></html>';
+    function report(container, status, size) {
+        if (size) {
+            var width = String(size[0]);
+            var height = String(size[1]);
+            container.setAttribute('data-hm-gpt-rendered-width', width);
+            container.setAttribute('data-hm-gpt-rendered-height', height);
+            if (container.style) {
+                container.style.width = width + 'px';
+                container.style.height = height + 'px';
+                container.style.maxWidth = '100%';
+            }
+        }
+        container.setAttribute('data-hm-gpt-runtime-state', status);
+        container.setAttribute('data-hm-gpt-status', status);
+    }
+
+    function destroySlot(slot) {
+        try {
+            if (window.googletag && typeof window.googletag.destroySlots === 'function') window.googletag.destroySlots([slot]);
+        } catch (error) {
+            // A failed cleanup must never promote a failed/empty slot to success.
+        }
+    }
+
+    function startSlot(container, adUnitPath, allowedSizes) {
+        if (!container || container.getAttribute('data-hm-gpt-runtime-version') !== RUNTIME_VERSION) return;
+        var currentState = String(container.getAttribute('data-hm-gpt-runtime-state') || '');
+        if (currentState === 'failed' || currentState === 'empty' || currentState === 'rendered' || currentState === 'requested') return;
+
+        var googletag = window.googletag;
+        if (!googletag || typeof googletag.defineSlot !== 'function' || typeof googletag.pubads !== 'function' || typeof googletag.display !== 'function') {
+            report(container, 'failed');
+            return;
+        }
+
+        var slot;
+        var pubads;
+        try {
+            slot = googletag.defineSlot(adUnitPath, allowedSizes, container.id);
+            if (!slot) {
+                report(container, 'failed');
+                return;
+            }
+            pubads = googletag.pubads();
+            if (!pubads || typeof slot.addService !== 'function') {
+                report(container, 'failed');
+                destroySlot(slot);
+                return;
+            }
+        } catch (error) {
+            report(container, 'failed');
+            if (slot) destroySlot(slot);
+            return;
+        }
+
+        var finished = false;
+        var onRender = function (event) {
+            if (finished || !event || event.slot !== slot) return;
+            finished = true;
+            if (pubads && typeof pubads.removeEventListener === 'function') {
+                try { pubads.removeEventListener('slotRenderEnded', onRender); } catch (error) { /* no-op */ }
+            }
+            if (event.isEmpty) {
+                report(container, 'empty');
+                destroySlot(slot);
+                return;
+            }
+            var renderedSize = normalizedRenderedSize(event.size, allowedSizes);
+            if (!renderedSize) {
+                report(container, 'failed');
+                destroySlot(slot);
+                return;
+            }
+            report(container, 'rendered', renderedSize);
+        };
+
+        try {
+            if (typeof pubads.addEventListener !== 'function') {
+                report(container, 'failed');
+                destroySlot(slot);
+                return;
+            }
+            pubads.addEventListener('slotRenderEnded', onRender);
+            slot.addService(pubads);
+            container.setAttribute('data-hm-gpt-runtime-state', 'requested');
+            if (typeof googletag.enableServices === 'function') googletag.enableServices();
+            googletag.display(container.id);
+        } catch (error) {
+            if (!finished) {
+                finished = true;
+                report(container, 'failed');
+                destroySlot(slot);
+            }
+        }
+    }
+
+    function scriptSource(script) {
+        if (!script) return '';
+        if (typeof script.src === 'string') return script.src;
+        if (script.getAttribute) return String(script.getAttribute('src') || '');
+        return '';
+    }
+
+    function existingGptScript() {
+        if (window.googletag && window.googletag.apiReady) return true;
+        if (!document.getElementsByTagName) return false;
+        var scripts = document.getElementsByTagName('script') || [];
+        for (var index = 0; index < scripts.length; index += 1) {
+            var source = scriptSource(scripts[index]);
+            if (source === GPT_URL || source.indexOf(GPT_URL + '?') === 0) return true;
+        }
+        return false;
+    }
+
+    function ensureGptLibrary() {
+        window.googletag = window.googletag || { cmd: [] };
+        window.googletag.cmd = window.googletag.cmd || [];
+        if (existingGptScript()) return true;
+        if (state.libraryInjected) return true;
+        if (!document.createElement) return false;
+
+        var parent = document.head;
+        if (!parent && document.getElementsByTagName) {
+            var heads = document.getElementsByTagName('head') || [];
+            parent = heads.length ? heads[0] : null;
+        }
+        parent = parent || document.body;
+        if (!parent || typeof parent.appendChild !== 'function') return false;
+
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = GPT_URL;
+        if (script.setAttribute) {
+            script.setAttribute('crossorigin', 'anonymous');
+            script.setAttribute('data-hm-gpt-library', '1');
+        }
+        script.onerror = function () {
+            state.libraryInjected = false;
+            Array.prototype.forEach.call(document.querySelectorAll ? document.querySelectorAll(SELECTOR) : [], function (container) {
+                if (container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION
+                    && container.getAttribute('data-hm-gpt-runtime-state') === 'queued') {
+                    report(container, 'failed');
+                }
+            });
+        };
+        state.libraryInjected = true;
+        parent.appendChild(script);
+        return true;
     }
 
     function render(container) {
-        if (!container || container.getAttribute('data-hm-gpt-runtime-state')) return;
+        if (!container || container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION) return;
 
         var adUnitPath = container.getAttribute('data-hm-gpt-ad-unit-path');
         var declaredSizes = sizes(container.getAttribute('data-hm-gpt-sizes'));
         var containerId = String(container.id || '');
-        var innerId = String(container.getAttribute('data-hm-gpt-inner-id') || '');
-        if (!validPath(adUnitPath) || !declaredSizes || !validId(containerId) || !validId(innerId)) {
+        var providerInnerId = String(container.getAttribute('data-hm-gpt-inner-id') || '');
+        if (!validPath(adUnitPath) || !declaredSizes || !validId(containerId) || !validId(providerInnerId)) {
+            container.setAttribute('data-hm-gpt-runtime-version', RUNTIME_VERSION);
             container.setAttribute('data-hm-gpt-runtime-state', 'invalid');
             return;
         }
+
         var allowedSizes = eligibleSizes(container, declaredSizes);
+        container.setAttribute('data-hm-gpt-runtime-version', RUNTIME_VERSION);
+        container.setAttribute('data-hm-gpt-document-context', 'publisher');
         if (!allowedSizes.length) {
             container.setAttribute('data-hm-gpt-runtime-state', 'ineligible');
             return;
         }
         container.setAttribute('data-hm-gpt-eligible-sizes', JSON.stringify(allowedSizes));
 
-        // Keep the host's light DOM empty. The immediately previous loader
-        // release fell through from an unmatched success selector to a generic
-        // child-node check. Mounting the frame in a ShadowRoot means that old
-        // loader still sees zero light-DOM children, so blocked/empty GPT cannot
-        // become a false success after an application rollback. Only the
-        // authoritative `data-hm-gpt-status="rendered"` selector can succeed.
-        if (typeof container.attachShadow !== 'function') {
-            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
-            return;
-        }
-        var mount;
-        try {
-            mount = container.shadowRoot || container.attachShadow({ mode: 'open' });
-        } catch (error) {
-            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
-            return;
-        }
-        if (!mount || typeof mount.appendChild !== 'function') {
-            container.setAttribute('data-hm-gpt-runtime-state', 'unsupported');
-            return;
-        }
-
-        container.setAttribute('data-hm-gpt-runtime-state', 'starting');
-        container.setAttribute('data-hm-gpt-rollback-safe', 'shadow');
-        var frame = document.createElement('iframe');
-        // Initialize from one actual viewport-eligible declared size. Never
-        // combine the largest width and height from different sizes into an
-        // undeclared rectangle.
         var initialSize = allowedSizes[0];
-        var width = initialSize[0];
-        var height = initialSize[1];
+        if (container.style) {
+            container.style.width = String(initialSize[0]) + 'px';
+            container.style.height = String(initialSize[1]) + 'px';
+            container.style.maxWidth = '100%';
+        }
+        container.setAttribute('data-hm-gpt-runtime-state', 'queued');
 
-        frame.title = 'Advertisement';
-        frame.setAttribute('aria-label', 'Advertisement');
-        frame.setAttribute('data-hm-gpt-direct-frame', '1');
-        frame.setAttribute('width', String(width));
-        frame.setAttribute('height', String(height));
-        frame.setAttribute('scrolling', 'no');
-        frame.setAttribute('frameborder', '0');
-        frame.style.border = '0';
-        frame.style.display = 'block';
-        frame.style.maxWidth = '100%';
-        container.style.width = String(width) + 'px';
-        container.style.height = String(height) + 'px';
-        container.style.maxWidth = '100%';
-        frame.srcdoc = frameDocument(adUnitPath, allowedSizes, innerId, containerId);
-        frame.onload = function () {
-            if (container.getAttribute('data-hm-gpt-runtime-state') === 'starting') {
-                container.setAttribute('data-hm-gpt-runtime-state', 'loaded');
-            }
-        };
-        frame.onerror = function () {
-            container.setAttribute('data-hm-gpt-runtime-state', 'failed');
-        };
-        mount.appendChild(frame);
+        window.googletag = window.googletag || { cmd: [] };
+        window.googletag.cmd = window.googletag.cmd || [];
+        if (!window.googletag.cmd || typeof window.googletag.cmd.push !== 'function') {
+            report(container, 'failed');
+            return;
+        }
+
+        window.googletag.cmd.push(function () { startSlot(container, adUnitPath, allowedSizes); });
+        if (!ensureGptLibrary()) report(container, 'failed');
     }
 
     function scan(root) {
