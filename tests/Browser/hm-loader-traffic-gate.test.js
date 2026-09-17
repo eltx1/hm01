@@ -748,6 +748,8 @@ test('nonce comes from browser crypto, HELLO is bounded, iframe is non-visible, 
     assert.match(hello.payload.pageNonce, /^[a-f0-9]{48}$/);
     assert.equal(hello.targetOrigin, GATE_ORIGIN);
     assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/`);
+    assert.equal(runtime.gateFrame.style.values.width, '320px');
+    assert.equal(runtime.gateFrame.style.values.height, '90px');
     assert.equal(runtime.gateFrame.style.values.left, '-10000px');
     assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
 
@@ -756,6 +758,41 @@ test('nonce comes from browser crypto, HELLO is bounded, iframe is non-visible, 
     assert.equal(runtime.metrics.localStorageWrites, 0);
     assert.equal(runtime.metrics.hellos.length, 1);
     assert.ok(!JSON.stringify(runtime.metrics.hellos).includes('must-never-be-used'));
+});
+
+test('Managed Turnstile interaction temporarily exposes only the trusted gate frame and re-hides it before PASS', async () => {
+    const runtime = createHarness(baseConfig({ policy: 'STRICT' }));
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+
+    assert.equal(runtime.gateFrame.getAttribute('aria-hidden'), 'true');
+    assert.equal(runtime.gateFrame.getAttribute('tabindex'), '-1');
+    assert.equal(runtime.gateFrame.style.values.left, '-10000px');
+    assert.equal(runtime.gateFrame.style.values.opacity, '0');
+    assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
+
+    runtime.sendGate('INTERACTION_REQUIRED');
+    await runtime.flush();
+    assert.equal(runtime.gateFrame.getAttribute('aria-hidden'), 'false');
+    assert.equal(runtime.gateFrame.getAttribute('tabindex'), '0');
+    assert.equal(runtime.gateFrame.style.values.left, '50%');
+    assert.equal(runtime.gateFrame.style.values.bottom, '16px');
+    assert.equal(runtime.gateFrame.style.values.transform, 'translateX(-50%)');
+    assert.equal(runtime.gateFrame.style.values.opacity, '1');
+    assert.equal(runtime.gateFrame.style.values['pointer-events'], 'auto');
+    assertNoMonetization(runtime.metrics);
+
+    runtime.sendGate('INTERACTION_COMPLETE');
+    await runtime.flush();
+    assert.equal(runtime.gateFrame.getAttribute('aria-hidden'), 'true');
+    assert.equal(runtime.gateFrame.style.values.left, '-10000px');
+    assert.equal(runtime.gateFrame.style.values.opacity, '0');
+    assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
+
+    runtime.sendGate('PASS');
+    await boot;
+    await runtime.flush();
+    assert.equal(runtime.metrics.gptScripts, 1);
 });
 
 test('Traffic Gate outcomes create no Laravel/analytics/reporting request', async () => {
