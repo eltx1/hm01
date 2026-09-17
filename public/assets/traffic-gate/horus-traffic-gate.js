@@ -318,6 +318,7 @@
         const timings = validTimings(gate?.timings);
         if (!gate || gate.enabled !== true || gate.readiness !== 'READY'
             || gate.provider !== PROVIDER || gate.gateOrigin !== GATE_ORIGIN
+            || String(gate.widgetMode || '').toUpperCase() !== 'INVISIBLE'
             || !validTurnstileSiteKey(gate.siteKey) || !timings) {
             fail('GATE_NOT_READY');
             return;
