@@ -62,6 +62,16 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /setImportantStyle\(button\.style, 'left', 'auto'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'bottom', 'auto'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'transform', 'none'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'box-sizing', 'border-box'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'width', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'height', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'min-width', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'min-height', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'max-width', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'max-height', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'padding', '0'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'line-height', '28px'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'overflow', 'hidden'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'display', visible \? 'block' : 'none'\)/);
     assert.match(transformed, /function placementRendered\(element\)/);
     assert.match(transformed, /attributeFilter: \['data-hm-status'\]/);
