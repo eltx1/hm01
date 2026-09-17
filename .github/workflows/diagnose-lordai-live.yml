@@ -28,6 +28,9 @@ jobs:
       - name: Probe current-main GPT in publisher document context
         if: always()
         run: node scripts/probe-current-main-gpt-publisher.mjs
+      - name: Probe raw provider GPT tag
+        if: always()
+        run: node scripts/probe-raw-provider-gpt.mjs
       - name: Inspect live Horus inventory
         if: always()
         continue-on-error: true
