@@ -52,6 +52,8 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /data-hm-placement-close/);
     assert.match(transformed, /Close advertisement/);
     assert.match(transformed, /display:none;position:absolute/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'display', 'none'\)/);
+    assert.match(transformed, /setImportantStyle\(button\.style, 'display', visible \? 'block' : 'none'\)/);
     assert.match(transformed, /function placementRendered\(element\)/);
     assert.match(transformed, /attributeFilter: \['data-hm-status'\]/);
     assert.match(transformed, /data-hm-placement-dismissed/);
