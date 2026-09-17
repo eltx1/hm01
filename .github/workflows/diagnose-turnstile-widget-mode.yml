@@ -1,0 +1,28 @@
+name: Diagnose Turnstile widget mode
+
+on:
+  push:
+    branches:
+      - diag/turnstile-widget-mode-20260918
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SITEKEY: 0x4AAAAAAEYna6MkiSg2Ca6e
+    steps:
+      - name: Inspect Turnstile widget mode
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          response="$(curl -fsS             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/challenges/widgets/$SITEKEY")"
+          success="$(jq -r '.success // false' <<<"$response")"
+          test "$success" = "true"
+          jq -c '{success, result:{sitekey:.result.sitekey,name:.result.name,mode:.result.mode,domains:.result.domains,clearance_level:.result.clearance_level,modified_on:.result.modified_on}}' <<<"$response"
