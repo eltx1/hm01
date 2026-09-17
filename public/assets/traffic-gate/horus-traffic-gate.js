@@ -17,8 +17,6 @@
     const TYPES = Object.freeze({
         hello: 'HORUS_TRAFFIC_GATE_HELLO',
         ready: 'HORUS_TRAFFIC_GATE_READY',
-        interactionRequired: 'HORUS_TRAFFIC_GATE_INTERACTION_REQUIRED',
-        interactionComplete: 'HORUS_TRAFFIC_GATE_INTERACTION_COMPLETE',
         pass: 'HORUS_TRAFFIC_GATE_PASS',
         error: 'HORUS_TRAFFIC_GATE_ERROR',
         timeout: 'HORUS_TRAFFIC_GATE_TIMEOUT',
@@ -284,12 +282,9 @@
             const renderedWidgetId = window.turnstile.render(widgetContainer, {
                 sitekey: siteKey,
                 execution: 'render',
-                appearance: 'interaction-only',
-                size: 'flexible',
                 retry: 'never',
                 'response-field': false,
-                'before-interactive-callback': () => post(TYPES.interactionRequired, { provider: PROVIDER }),
-                'after-interactive-callback': () => post(TYPES.interactionComplete, { provider: PROVIDER }),
+                'before-interactive-callback': () => fail('INTERACTIVE_WIDGET_NOT_ALLOWED'),
                 callback: () => finish(TYPES.pass, STATES.passed, { provider: PROVIDER }),
                 'error-callback': (errorCode) => handleTurnstileError(errorCode, timings),
                 'timeout-callback': () => timeout('TURNSTILE_TIMEOUT'),
