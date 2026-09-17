@@ -127,6 +127,50 @@ const trafficGateRuntime = String.raw`
         gate.messageListener = null;
     }
 
+    function trafficGateHideInteractionFrame() {
+        var gate = trafficGateRuntimeState();
+        var iframe = gate.iframe;
+        if (!iframe || !iframe.style || !iframe.style.setProperty) return;
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.setAttribute('tabindex', '-1');
+        iframe.style.setProperty('position', 'fixed');
+        iframe.style.setProperty('width', '320px');
+        iframe.style.setProperty('max-width', 'calc(100vw - 24px)');
+        iframe.style.setProperty('height', '90px');
+        iframe.style.setProperty('left', '-10000px');
+        iframe.style.setProperty('right', 'auto');
+        iframe.style.setProperty('top', '-10000px');
+        iframe.style.setProperty('bottom', 'auto');
+        iframe.style.setProperty('transform', 'none');
+        iframe.style.setProperty('border', '0');
+        iframe.style.setProperty('opacity', '0');
+        iframe.style.setProperty('pointer-events', 'none');
+        iframe.style.setProperty('z-index', '2147483646');
+        iframe.style.setProperty('background', 'transparent');
+    }
+
+    function trafficGateShowInteractionFrame() {
+        var gate = trafficGateRuntimeState();
+        var iframe = gate.iframe;
+        if (!iframe || !iframe.style || !iframe.style.setProperty) return;
+        iframe.setAttribute('aria-hidden', 'false');
+        iframe.setAttribute('tabindex', '0');
+        iframe.style.setProperty('position', 'fixed');
+        iframe.style.setProperty('width', '320px');
+        iframe.style.setProperty('max-width', 'calc(100vw - 24px)');
+        iframe.style.setProperty('height', '90px');
+        iframe.style.setProperty('left', '50%');
+        iframe.style.setProperty('right', 'auto');
+        iframe.style.setProperty('top', 'auto');
+        iframe.style.setProperty('bottom', '16px');
+        iframe.style.setProperty('transform', 'translateX(-50%)');
+        iframe.style.setProperty('border', '0');
+        iframe.style.setProperty('opacity', '1');
+        iframe.style.setProperty('pointer-events', 'auto');
+        iframe.style.setProperty('z-index', '2147483646');
+        iframe.style.setProperty('background', 'transparent');
+    }
+
     function trafficGateRemoveIframe() {
         var gate = trafficGateRuntimeState();
         var iframe = gate.iframe;
@@ -325,6 +369,14 @@ const trafficGateRuntime = String.raw`
         if (message.pageNonce !== gate.pageNonce) return;
         var type = String(message.type || '');
         if (type === 'HORUS_TRAFFIC_GATE_READY') return;
+        if (type === 'HORUS_TRAFFIC_GATE_INTERACTION_REQUIRED') {
+            trafficGateShowInteractionFrame();
+            return;
+        }
+        if (type === 'HORUS_TRAFFIC_GATE_INTERACTION_COMPLETE') {
+            trafficGateHideInteractionFrame();
+            return;
+        }
         if (type === 'HORUS_TRAFFIC_GATE_PASS') {
             trafficGateAllow(TRAFFIC_GATE_STATES.passed, 'PASS');
             return;
@@ -385,13 +437,19 @@ const trafficGateRuntime = String.raw`
             iframe.setAttribute('data-hm-traffic-gate', '1');
             if (iframe.style && iframe.style.setProperty) {
                 iframe.style.setProperty('position', 'fixed');
-                iframe.style.setProperty('width', '1px');
-                iframe.style.setProperty('height', '1px');
+                iframe.style.setProperty('width', '320px');
+                iframe.style.setProperty('max-width', 'calc(100vw - 24px)');
+                iframe.style.setProperty('height', '90px');
                 iframe.style.setProperty('left', '-10000px');
+                iframe.style.setProperty('right', 'auto');
                 iframe.style.setProperty('top', '-10000px');
+                iframe.style.setProperty('bottom', 'auto');
+                iframe.style.setProperty('transform', 'none');
                 iframe.style.setProperty('border', '0');
                 iframe.style.setProperty('opacity', '0');
                 iframe.style.setProperty('pointer-events', 'none');
+                iframe.style.setProperty('z-index', '2147483646');
+                iframe.style.setProperty('background', 'transparent');
             }
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED');
