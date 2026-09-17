@@ -167,6 +167,33 @@ jobs:
       SITE_DOMAIN: lordai.net
 
     steps:
+      - name: Require upstream production deploy job success
+        if: github.event_name == 'workflow_run'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const upstreamRunId = Number(context.payload.workflow_run?.id || 0);
+            if (!Number.isSafeInteger(upstreamRunId) || upstreamRunId < 1) {
+              core.setFailed('Missing trusted upstream Deploy production workflow run id.');
+              return;
+            }
+
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: upstreamRunId,
+              per_page: 100,
+            });
+            const deployJobs = jobs.filter((job) => job.name === 'deploy');
+            if (deployJobs.length !== 1) {
+              core.setFailed(`Expected exactly one upstream deploy job, found ${deployJobs.length}.`);
+              return;
+            }
+            const deploy = deployJobs[0];
+            if (deploy.status !== 'completed' || deploy.conclusion !== 'success') {
+              core.setFailed(`Upstream deploy job did not complete successfully: status=${deploy.status}, conclusion=${deploy.conclusion}.`);
+            }
+
       - name: Validate production connection inputs
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
