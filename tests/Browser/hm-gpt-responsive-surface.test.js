@@ -25,7 +25,7 @@ function makeContainer(attributes) {
     return target;
 }
 
-function runAtWidth(width) {
+function runAtWidth(width, overrides = {}) {
     const attributes = {
         'data-hm-gpt-direct': '1',
         'data-hm-gpt-ad-unit-path': '/1234567/lordai_anchor',
@@ -35,6 +35,7 @@ function runAtWidth(width) {
             { viewport: [0, 0], maxViewport: [767, 65535], sizes: [[300, 50], [300, 100], [320, 50], [320, 100]] },
             { viewport: [768, 0], maxViewport: [0, 0], sizes: [[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]] },
         ]),
+        ...overrides,
     };
     const target = makeContainer(attributes);
     const document = {
@@ -85,4 +86,31 @@ test('trusted GPT runtime exposes only desktop-mapped sizes to GPT on a desktop 
     );
     assert.doesNotMatch(frame.srcdoc, /300,50/);
     assert.match(frame.srcdoc, /980,90/);
+});
+
+test('valid mobile mapping with no declared-size intersection fails closed instead of restoring an oversized desktop slot', () => {
+    const { attributes, frame } = runAtWidth(390, {
+        'data-hm-gpt-sizes': '[[728,90]]',
+        'data-hm-gpt-size-map': JSON.stringify([
+            { viewport: [0, 0], maxViewport: [767, 65535], sizes: [[300, 250]] },
+            { viewport: [768, 0], maxViewport: [0, 0], sizes: [[728, 90]] },
+        ]),
+    });
+
+    assert.equal(frame, undefined);
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'ineligible');
+    assert.equal(attributes['data-hm-gpt-eligible-sizes'], undefined);
+});
+
+test('mobile-only mapping no-fills on desktop when no mapping applies to the viewport', () => {
+    const { attributes, frame } = runAtWidth(1440, {
+        'data-hm-gpt-sizes': '[[320,50],[320,100]]',
+        'data-hm-gpt-size-map': JSON.stringify([
+            { viewport: [0, 0], maxViewport: [767, 65535], sizes: [[320, 50], [320, 100]] },
+        ]),
+    });
+
+    assert.equal(frame, undefined);
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'ineligible');
+    assert.equal(attributes['data-hm-gpt-eligible-sizes'], undefined);
 });
