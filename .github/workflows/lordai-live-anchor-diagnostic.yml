@@ -21,141 +21,66 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Install frontend dependencies
-        run: npm ci
-      - name: Install pinned Playwright
-        run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
-      - name: Install browser
-        run: npx playwright install --with-deps ${{ matrix.browser }}
-      - name: Inspect production anchors in isolated LordAI origin
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Probe production GPT runtime directly
         env:
           BROWSER_NAME: ${{ matrix.browser }}
           SITE_KEY: hm_ircll0vkqq54jvt9gz85mrh2
           EDGE_URL: https://702069fd.horus-media-cdn.pages.dev
         run: |
           set -euo pipefail
-          curl -fsSL "$EDGE_URL/delivery-manifest.json" -o "lordai-${BROWSER_NAME}-delivery-manifest.json"
-          curl -fsSL "$EDGE_URL/configs/$SITE_KEY/production.json" -o "lordai-${BROWSER_NAME}-production.json"
-          curl -fsSL "$EDGE_URL/assets/hm-loader.min.js" -o /dev/null
-          cat > .lordai-anchor-diagnostic.mjs <<'JS'
+          curl -fsSL "$EDGE_URL/configs/$SITE_KEY/production.json" -o production.json
+          RUNTIME_PATH="$(jq -r '.directDemand.placements.quick_sticky_top.candidates[0].tag.scriptUrl | sub("^https://cdn\\.horusmedia\\.net"; "")' production.json)"
+          test -n "$RUNTIME_PATH"
+          curl -fsSL "$EDGE_URL$RUNTIME_PATH" -o hm-gpt-runtime.js
+          export RUNTIME_URL="$EDGE_URL$RUNTIME_PATH"
+          export TOP_CONTAINER_ID="$(jq -r '.directDemand.placements.quick_sticky_top.candidates[0].tag.containerId' production.json)"
+          export TOP_INNER_ID="$(jq -r '.directDemand.placements.quick_sticky_top.candidates[0].tag.attributes["data-hm-gpt-inner-id"]' production.json)"
+          export TOP_AD_UNIT="$(jq -r '.directDemand.placements.quick_sticky_top.candidates[0].tag.attributes["data-hm-gpt-ad-unit-path"]' production.json)"
+          export TOP_SIZES="$(jq -c '.directDemand.placements.quick_sticky_top.candidates[0].tag.render.allowedSizes' production.json)"
+          export TOP_MAP="$(jq -c '.placements[] | select(.code=="quick_sticky_top") | .responsiveMappings' production.json)"
+          cat > .probe.mjs <<'JS'
           import { chromium, webkit } from '@playwright/test';
           import fs from 'node:fs';
-
           const browserName = process.env.BROWSER_NAME;
-          const siteKey = process.env.SITE_KEY;
-          const edge = process.env.EDGE_URL.replace(/\/$/, '');
           const engine = browserName === 'webkit' ? webkit : chromium;
-          const browser = await engine.launch({ headless: true });
-          const context = await browser.newContext({
-            viewport: { width: 390, height: 844 },
-            deviceScaleFactor: 3,
-            isMobile: true,
-            hasTouch: true,
-            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
-          });
+          const browser = await engine.launch({headless:true});
+          const context = await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:3,isMobile:true,hasTouch:true,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1'});
           const page = await context.newPage();
-          const events = [];
-          page.on('console', msg => events.push({ type: 'console', level: msg.type(), text: msg.text() }));
-          page.on('pageerror', error => events.push({ type: 'pageerror', text: String(error && error.stack || error) }));
-          page.on('requestfailed', request => {
-            const url = request.url();
-            if (/horus|googlesyndication|doubleclick|securepubads|gampad/i.test(url)) {
-              events.push({ type: 'requestfailed', url, reason: request.failure()?.errorText || null });
-            }
-          });
-          page.on('response', response => {
-            const url = response.url();
-            if (/horus|googlesyndication|doubleclick|securepubads|gampad/i.test(url) && response.status() >= 400) {
-              events.push({ type: 'http', status: response.status(), url });
-            }
-          });
-
-          await page.route('https://lordai.net/**', async route => {
-            const request = route.request();
-            if (request.isNavigationRequest() && request.resourceType() === 'document') {
-              await route.fulfill({
-                status: 200,
-                contentType: 'text/html; charset=utf-8',
-                body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;min-height:2000px;background:#fff"><main style="padding-top:140px">Horus isolated production runtime</main><script async src="${edge}/assets/hm-loader.min.js" data-site-key="${siteKey}" data-config-base="${edge}/configs"></script></body></html>`,
-              });
-              return;
-            }
-            await route.continue();
-          });
-
-          const response = await page.goto('https://lordai.net/', { waitUntil: 'domcontentloaded', timeout: 90000 });
-          await page.waitForTimeout(12000);
-
-          const report = await page.evaluate(() => {
-            function attrs(node) {
-              if (!node || !node.attributes) return {};
-              return Array.from(node.attributes).reduce((out, attr) => { out[attr.name] = attr.value; return out; }, {});
-            }
-            function rect(node) {
-              if (!node || !node.getBoundingClientRect) return null;
-              const r = node.getBoundingClientRect();
-              return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left };
-            }
-            function style(node) {
-              if (!node || !window.getComputedStyle) return null;
-              const s = getComputedStyle(node);
-              return {
-                display: s.display, visibility: s.visibility, opacity: s.opacity,
-                position: s.position, zIndex: s.zIndex, overflow: s.overflow,
-                width: s.width, height: s.height, top: s.top, right: s.right,
-                bottom: s.bottom, left: s.left, transform: s.transform,
-              };
-            }
-            const placements = Array.from(document.querySelectorAll('.hm-ad[data-placement], .hm-native[data-placement]')).map(element => {
-              const direct = element.querySelector('[data-hm-gpt-direct="1"]');
-              const close = element.querySelector('[data-hm-placement-close="1"]');
-              const shadow = direct && direct.shadowRoot;
-              const frame = shadow && shadow.querySelector('iframe');
-              let frameBody = null;
-              let frameIframes = [];
-              try {
-                const frameDoc = frame && frame.contentDocument;
-                frameBody = frameDoc && frameDoc.body ? frameDoc.body.innerHTML.slice(0, 8000) : null;
-                frameIframes = frameDoc ? Array.from(frameDoc.querySelectorAll('iframe')).map(child => ({ attrs: attrs(child), rect: rect(child), style: style(child) })) : [];
-              } catch (error) {
-                frameBody = 'FRAME_INSPECTION_ERROR:' + String(error);
-              }
-              return {
-                code: element.getAttribute('data-placement'), attrs: attrs(element), rect: rect(element), style: style(element),
-                close: close ? { attrs: attrs(close), rect: rect(close), style: style(close) } : null,
-                direct: direct ? { attrs: attrs(direct), rect: rect(direct), style: style(direct) } : null,
-                shadow: shadow ? { childCount: shadow.childNodes.length } : null,
-                frame: frame ? { attrs: attrs(frame), rect: rect(frame), style: style(frame), body: frameBody, childIframes: frameIframes } : null,
-              };
-            });
-            return {
-              href: location.href, title: document.title, readyState: document.readyState,
-              viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
-              loader: window.__HORUS_MEDIA_LOADER_STATE__ ? {
-                configVersion: window.__HORUS_MEDIA_LOADER_STATE__.config?.configVersion || null,
-                siteKey: window.__HORUS_MEDIA_LOADER_STATE__.config?.siteKey || null,
-                nativeRendered: window.__HORUS_MEDIA_LOADER_STATE__.nativeRendered || {},
-              } : null,
-              gptRuntime: Boolean(window.__HORUS_GPT_DIRECT_RUNTIME_V1__), placements,
-            };
-          });
-
-          report.browser = browserName;
-          report.navigationStatus = response ? response.status() : null;
-          report.events = events;
-          fs.writeFileSync(`lordai-${browserName}-report.json`, JSON.stringify(report, null, 2));
-          await page.screenshot({ path: `lordai-${browserName}.png`, fullPage: false });
-          console.log(JSON.stringify(report, null, 2));
+          const events=[];
+          page.on('response',r=>{const u=r.url();if(/doubleclick|googlesyndication|securepubads|gampad|horus/i.test(u))events.push({type:'response',status:r.status(),url:u});});
+          page.on('requestfailed',r=>{const u=r.url();if(/doubleclick|googlesyndication|securepubads|gampad|horus/i.test(u))events.push({type:'failed',url:u,error:r.failure()?.errorText||null});});
+          page.on('console',m=>events.push({type:'console',level:m.type(),text:m.text()}));
+          const esc=(v)=>String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+          const html=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#eee;min-height:844px"><div id="anchor-shell" style="position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:2147483000"><div id="${esc(process.env.TOP_CONTAINER_ID)}" data-hm-gpt-direct="1" data-hm-gpt-ad-unit-path="${esc(process.env.TOP_AD_UNIT)}" data-hm-gpt-sizes="${esc(process.env.TOP_SIZES)}" data-hm-gpt-inner-id="${esc(process.env.TOP_INNER_ID)}" data-hm-gpt-size-map="${esc(process.env.TOP_MAP)}"></div></div><script src="${esc(process.env.RUNTIME_URL)}"></script><main style="padding-top:180px;font:24px sans-serif">Direct GPT probe</main></body></html>`;
+          await page.route('https://lordai.net/**',async route=>{if(route.request().isNavigationRequest()){await route.fulfill({status:200,contentType:'text/html',body:html});return;}await route.continue();});
+          await page.goto('https://lordai.net/',{waitUntil:'domcontentloaded',timeout:60000});
+          const snapshots=[];
+          for(const delay of [500,1500,3000,6000,12000]){
+            await page.waitForTimeout(delay-(snapshots.length? [500,1500,3000,6000][snapshots.length-1]:0));
+            snapshots.push(await page.evaluate(()=>{
+              const d=document.querySelector('[data-hm-gpt-direct="1"]'); const s=d&&d.shadowRoot; const f=s&&s.querySelector('iframe'); let body=null, kids=[];
+              try{const doc=f&&f.contentDocument;body=doc&&doc.body?doc.body.innerHTML.slice(0,8000):null;kids=doc?Array.from(doc.querySelectorAll('iframe')).map(x=>({id:x.id,name:x.name,width:x.getBoundingClientRect().width,height:x.getBoundingClientRect().height,src:x.src||null})):[];}catch(e){body='ERR:'+e;}
+              const r=d&&d.getBoundingClientRect(); const fr=f&&f.getBoundingClientRect();
+              return {t:performance.now(),attrs:d?Object.fromEntries(Array.from(d.attributes).map(a=>[a.name,a.value])):null,rect:r?{x:r.x,y:r.y,width:r.width,height:r.height}:null,frame:fr?{x:fr.x,y:fr.y,width:fr.width,height:fr.height}:null,frameBody:body,childFrames:kids};
+            }));
+          }
+          const report={browser:browserName,snapshots,events};
+          fs.writeFileSync(`probe-${browserName}.json`,JSON.stringify(report,null,2));
+          await page.screenshot({path:`probe-${browserName}.png`,fullPage:false});
+          console.log(JSON.stringify(report,null,2));
           await browser.close();
           JS
-          node .lordai-anchor-diagnostic.mjs
+          node .probe.mjs
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: lordai-live-anchor-${{ matrix.browser }}
+          name: lordai-gpt-probe-${{ matrix.browser }}
           path: |
-            lordai-${{ matrix.browser }}-report.json
-            lordai-${{ matrix.browser }}.png
-            lordai-${{ matrix.browser }}-delivery-manifest.json
-            lordai-${{ matrix.browser }}-production.json
+            probe-${{ matrix.browser }}.json
+            probe-${{ matrix.browser }}.png
+            production.json
+            hm-gpt-runtime.js
           retention-days: 7
