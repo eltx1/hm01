@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V2__';
+    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V3__';
     if (window[STATE_KEY]) {
         if (typeof window[STATE_KEY].scan === 'function') window[STATE_KEY].scan();
         return;
@@ -10,7 +10,9 @@
     var state = window[STATE_KEY] = { observer: null, scan: scan, libraryInjected: false };
     var SELECTOR = '[data-hm-gpt-direct="1"]';
     var GPT_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-    var RUNTIME_VERSION = '2';
+    var RUNTIME_VERSION = '3';
+    var MIN_RENDER_RATIO = 0.4;
+    var MAX_RENDER_RATIO = 2;
 
     function validPath(value) {
         return /^\/[0-9]{1,20}\/[A-Za-z0-9_.\-/]{1,240}$/.test(String(value || ''));
@@ -109,9 +111,28 @@
     function normalizedRenderedSize(size, allowedSizes) {
         var normalized = normalizedSize(size);
         if (!normalized) return null;
-        for (var index = 0; index < allowedSizes.length; index += 1) {
-            if (allowedSizes[index][0] === normalized[0] && allowedSizes[index][1] === normalized[1]) return normalized;
+
+        for (var exactIndex = 0; exactIndex < allowedSizes.length; exactIndex += 1) {
+            if (allowedSizes[exactIndex][0] === normalized[0] && allowedSizes[exactIndex][1] === normalized[1]) return normalized;
         }
+
+        // Google Ad Manager can legitimately return a rendered creative whose
+        // pixel dimensions differ from the requested slot because of ad-slot
+        // expansion/contraction or creatives configured to differ from the ad
+        // unit size. Treat that trusted GPT result as valid only when it remains
+        // reasonably close to at least one reviewed/requested size. This keeps
+        // the original placement boundary while avoiding false rejection of
+        // normal GAM responses such as a 980x100 creative for a 980x90 request.
+        for (var index = 0; index < allowedSizes.length; index += 1) {
+            var requested = allowedSizes[index];
+            var widthRatio = normalized[0] / requested[0];
+            var heightRatio = normalized[1] / requested[1];
+            if (widthRatio >= MIN_RENDER_RATIO && widthRatio <= MAX_RENDER_RATIO
+                && heightRatio >= MIN_RENDER_RATIO && heightRatio <= MAX_RENDER_RATIO) {
+                return normalized;
+            }
+        }
+
         return null;
     }
 
@@ -135,7 +156,7 @@
         try {
             if (window.googletag && typeof window.googletag.destroySlots === 'function') window.googletag.destroySlots([slot]);
         } catch (error) {
-            // A failed cleanup must never promote a failed/empty slot to success.
+            // Cleanup failure must never promote a failed/empty slot to success.
         }
     }
 
