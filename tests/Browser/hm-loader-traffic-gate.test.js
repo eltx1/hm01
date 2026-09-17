@@ -638,6 +638,42 @@ test('PERMISSIVE technical timeout soft-allows only after bounded maxWaitMs', as
     assert.equal(runtime.metrics.gptScripts, 1);
 });
 
+test('BALANCED invisible gate technical failure cannot strand ads beyond bounded maxWaitMs', async () => {
+    const config = baseConfig({ policy: 'BALANCED' });
+    config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+    const runtime = createHarness(config, { gateAutoResponse: 'ERROR', timerScale: 0.01 });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(runtime.metrics);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'WAITING_FOR_ACTIVITY');
+
+    // No click, scroll, keypress, or visible challenge is required. BALANCED
+    // keeps the gate invisible and releases only after the bounded deadline
+    // when the failure was technical rather than an explicit DENIED result.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.flush();
+
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().reason, 'MAX_WAIT_FALLBACK');
+    assert.equal(runtime.metrics.gptScripts, 1);
+});
+
+test('BALANCED invisible iframe failure also soft-allows at maxWait while DENIED remains blocked', async () => {
+    const config = baseConfig({ policy: 'BALANCED' });
+    config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+    const runtime = createHarness(config, { iframeFailure: true, timerScale: 0.01 });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'WAITING_FOR_ACTIVITY');
+    assertNoMonetization(runtime.metrics);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.flush();
+
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.metrics.gptScripts, 1);
+});
+
 test('BALANCED stalled gate enters activity recovery at initialWaitMs without classifying the visitor', async () => {
     const runtime = createHarness(baseConfig({ policy: 'BALANCED' }), { timerScale: 0.01 });
     const boot = runtime.sandbox.HorusMediaLoader.boot();
