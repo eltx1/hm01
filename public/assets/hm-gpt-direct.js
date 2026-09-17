@@ -91,17 +91,20 @@
             return right.minHeight - left.minHeight;
         });
 
+        // A valid responsive mapping is authoritative. If no mapping applies to
+        // this viewport, or the applicable mapping has no overlap with the
+        // reviewed GPT declaration, this surface must no-fill. Falling back to
+        // the full declaration can resurrect desktop sizes on mobile (or mobile
+        // sizes on desktop), which defeats placement ownership and can overflow
+        // the viewport.
+        if (!matches.length) return [];
+
         for (var index = 0; index < matches.length; index += 1) {
             var selected = matches[index].sizes.filter(function (size) { return allowed[sizeKey(size)]; });
             if (selected.length) return selected;
         }
 
-        // A malformed or incomplete mapping must never make an oversized slot
-        // mandatory. Prefer declared sizes that physically fit the viewport;
-        // if none fit, preserve the reviewed declaration and let GPT fail/empty
-        // rather than inventing a new dimension.
-        var fitting = allowedSizes.filter(function (size) { return !width || size[0] <= width; });
-        return fitting.length ? fitting : allowedSizes.slice();
+        return [];
     }
 
     function validId(value) {
@@ -147,7 +150,7 @@
         }
         var allowedSizes = eligibleSizes(container, declaredSizes);
         if (!allowedSizes.length) {
-            container.setAttribute('data-hm-gpt-runtime-state', 'invalid');
+            container.setAttribute('data-hm-gpt-runtime-state', 'ineligible');
             return;
         }
         container.setAttribute('data-hm-gpt-eligible-sizes', JSON.stringify(allowedSizes));
