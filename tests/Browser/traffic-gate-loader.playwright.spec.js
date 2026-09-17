@@ -144,11 +144,7 @@ function turnstileSlowPassStub() {
             render(container, options) {
                 const frame = document.createElement('iframe');
                 frame.src = 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/task52';
-                options['before-interactive-callback']?.();
-                frame.onload = () => setTimeout(() => {
-                    options['after-interactive-callback']?.();
-                    options.callback('XXXX.DUMMY.TOKEN.XXXX');
-                }, 800);
+                frame.onload = () => setTimeout(() => options.callback('XXXX.DUMMY.TOKEN.XXXX'), 800);
                 container.appendChild(frame);
                 return 'task52';
             },
@@ -201,8 +197,8 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
     expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
     const gateFrame = page.locator('iframe[data-hm-traffic-gate="1"]');
     await expect(gateFrame).toHaveCount(1);
-    await expect(gateFrame).toHaveCSS('opacity', '1');
-    await expect(gateFrame).toHaveCSS('pointer-events', 'auto');
+    await expect(gateFrame).toHaveCSS('opacity', '0');
+    await expect(gateFrame).toHaveCSS('pointer-events', 'none');
     expect(requests.some(item => item.url.includes('securepubads.g.doubleclick.net'))).toBe(false);
     expect(requests.some(item => item.url.includes('horus-prebid.min.js'))).toBe(false);
 
