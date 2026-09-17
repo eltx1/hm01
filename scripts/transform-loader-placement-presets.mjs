@@ -78,10 +78,9 @@ const HELPERS = `    function placementFormatSettings(placement) {
         else style[name.replace(/-([a-z])/g, function (_, letter) { return letter.toUpperCase(); })] = value;
     }
 
-    function clearPositionStyle(style, name) {
+    function resetPositionStyle(style, name) {
         if (!style) return;
-        if (style.removeProperty) style.removeProperty(name);
-        else style[name.replace(/-([a-z])/g, function (_, letter) { return letter.toUpperCase(); })] = '';
+        setImportantStyle(style, name, name === 'transform' ? 'none' : 'auto');
     }
 
     function applyStickyPosition(element, placement, settings) {
@@ -94,9 +93,10 @@ const HELPERS = `    function placementFormatSettings(placement) {
             setImportantStyle(style, 'z-index', '2147483000');
             setImportantStyle(style, 'right', '16px');
             setImportantStyle(style, 'bottom', '16px');
-            clearPositionStyle(style, 'left');
-            clearPositionStyle(style, 'top');
-            clearPositionStyle(style, 'transform');
+            resetPositionStyle(style, 'left');
+            resetPositionStyle(style, 'top');
+            resetPositionStyle(style, 'transform');
+            setImportantStyle(style, 'margin', '0');
             setImportantStyle(style, 'max-width', 'calc(100vw - 32px)');
             return;
         }
@@ -105,11 +105,12 @@ const HELPERS = `    function placementFormatSettings(placement) {
         position = position || 'bottom';
         setImportantStyle(style, 'position', 'fixed');
         setImportantStyle(style, 'z-index', '2147483000');
-        clearPositionStyle(style, 'top');
-        clearPositionStyle(style, 'right');
-        clearPositionStyle(style, 'bottom');
-        clearPositionStyle(style, 'left');
-        clearPositionStyle(style, 'transform');
+        resetPositionStyle(style, 'top');
+        resetPositionStyle(style, 'right');
+        resetPositionStyle(style, 'bottom');
+        resetPositionStyle(style, 'left');
+        resetPositionStyle(style, 'transform');
+        setImportantStyle(style, 'margin', '0');
         setImportantStyle(style, 'max-width', '100vw');
         if (position === 'right') {
             setImportantStyle(style, 'right', '0');
@@ -150,6 +151,14 @@ const HELPERS = `    function placementFormatSettings(placement) {
         button.setAttribute('data-hm-placement-close', '1');
         button.style.cssText = 'display:none;position:absolute;top:4px;right:4px;z-index:2147483001;min-width:28px;min-height:28px;padding:0 7px;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;cursor:pointer;';
         setImportantStyle(button.style, 'display', 'none');
+        setImportantStyle(button.style, 'position', 'absolute');
+        setImportantStyle(button.style, 'top', '4px');
+        setImportantStyle(button.style, 'right', '4px');
+        setImportantStyle(button.style, 'z-index', '2147483001');
+        setImportantStyle(button.style, 'left', 'auto');
+        setImportantStyle(button.style, 'bottom', 'auto');
+        setImportantStyle(button.style, 'transform', 'none');
+        setImportantStyle(button.style, 'margin', '0');
         button.addEventListener('click', function (event) {
             if (event && event.preventDefault) event.preventDefault();
             if (event && event.stopPropagation) event.stopPropagation();
