@@ -131,10 +131,19 @@ final class QuickMonetizeSurfaceOwnershipTest extends TestCase
 
     private function tag(string $path): string
     {
-        return '<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>'
-            .'<div id="gpt-passback"></div>'
-            .'<script>window.googletag=window.googletag||{cmd:[]};googletag.cmd.push(function(){'
-            .'googletag.defineSlot('.json_encode($path).',[[300,50],[320,50],[728,90]],"gpt-passback").addService(googletag.pubads());'
-            .'googletag.enableServices();googletag.display("gpt-passback");});</script>';
+        $pathJson = json_encode($path, JSON_THROW_ON_ERROR);
+
+        return <<<HTML
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<div id="gpt-passback"></div>
+<script>
+window.googletag = window.googletag || {cmd: []};
+googletag.cmd.push(function() {
+  googletag.defineSlot({$pathJson}, [[300, 50], [320, 50], [728, 90]], 'gpt-passback').addService(googletag.pubads());
+  googletag.enableServices();
+  googletag.display('gpt-passback');
+});
+</script>
+HTML;
     }
 }
