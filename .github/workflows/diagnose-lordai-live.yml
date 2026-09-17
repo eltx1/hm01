@@ -33,3 +33,5 @@ jobs:
           name: lordai-live-quick-monetize-diagnostic
           path: live-diagnostic/
           retention-days: 7
+
+# Diagnostic rerun after PR #140 production deployment.
