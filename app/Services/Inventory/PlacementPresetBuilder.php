@@ -111,25 +111,33 @@ final class PlacementPresetBuilder
                 && (string) data_get($placement->metadata, 'placement_preset', '') === $preset)
             ->values();
 
-        if ($matches->count() > 1) {
+        $active = $matches
+            ->filter(fn (Placement $placement): bool => ! $placement->trashed()
+                && $placement->status === PlacementStatus::Active)
+            ->values();
+
+        if ($active->count() > 1) {
             throw ValidationException::withMessages([
-                'placement_preset' => "Multiple Quick Monetize surfaces already exist for [{$preset}]. Refusing to create another duplicate; reconcile the existing inventory first.",
+                'placement_preset' => "Multiple active Quick Monetize surfaces already exist for [{$preset}]. Refusing to choose between overlapping inventory; reconcile the duplicates first.",
             ]);
         }
 
         /** @var Placement|null $existing */
-        $existing = $matches->first();
-        if (! $existing) {
-            return null;
+        $existing = $active->first();
+        if ($existing) {
+            // Historical disabled/deleted duplicates may remain for audit and
+            // rollback after a repair. They must not block the one canonical
+            // active surface from being safely reused on future activations.
+            return $existing;
         }
 
-        if ($existing->trashed() || $existing->status !== PlacementStatus::Active) {
+        if ($matches->isNotEmpty()) {
             throw ValidationException::withMessages([
-                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but is deleted or inactive. Repair or explicitly reuse that inventory instead of creating a duplicate.",
+                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but no active canonical surface is available. Repair or explicitly reuse that inventory instead of creating a duplicate.",
             ]);
         }
 
-        return $existing;
+        return null;
     }
 
     private function defaultQuickMountTarget(string $preset): string
