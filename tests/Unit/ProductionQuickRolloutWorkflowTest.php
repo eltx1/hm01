@@ -46,14 +46,23 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString("github.event_name == 'workflow_dispatch' && inputs.dry_run == false", $workflow);
     }
 
-    public function test_successful_lordai_repair_triggers_immediate_static_sync(): void
+    public function test_successful_lordai_repair_dispatches_static_sync_once_and_retries_only_an_unmarked_dispatch(): void
     {
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
 
         $this->assertIsString($workflow);
+        $this->assertStringContainsString('Resolve one-time repair state', $workflow);
+        $this->assertStringContainsString('id: repair_state', $workflow);
+        $this->assertStringContainsString('lordai-quick-surface-repair-v1.static-edge-dispatched', $workflow);
+        $this->assertStringContainsString("printf '%s' repair", $workflow);
+        $this->assertStringContainsString("printf '%s' dispatch", $workflow);
+        $this->assertStringContainsString("printf '%s' complete", $workflow);
+        $this->assertStringContainsString("if: steps.repair_state.outputs.state == 'repair'", $workflow);
+        $this->assertStringContainsString("if: steps.repair_state.outputs.state == 'repair' || steps.repair_state.outputs.state == 'dispatch'", $workflow);
         $this->assertStringContainsString('Trigger immediate static-edge reconciliation', $workflow);
         $this->assertStringContainsString('gh workflow run sync-production-static-edge.yml', $workflow);
         $this->assertStringContainsString('--ref main', $workflow);
+        $this->assertStringContainsString('Mark static-edge reconciliation dispatched', $workflow);
     }
 
     public function test_static_sync_retries_transient_cloudflare_pages_publication_failure_and_stays_fail_closed(): void
