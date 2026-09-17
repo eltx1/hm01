@@ -23,7 +23,7 @@ use Throwable;
 final class CloneQuickMonetizeDisplaySuite extends Command
 {
     /** @var list<string> */
-    public const DEFAULT_PRESETS = [
+    public const SUPPORTED_PRESETS = [
         'responsive_display',
         'in_article_display',
         'high_impact_display',
@@ -36,10 +36,10 @@ final class CloneQuickMonetizeDisplaySuite extends Command
     protected $signature = 'quick-monetize:clone-display-suite
         {siteKey : Horus public site key}
         {--from=quick_sticky_bottom : Existing Quick Monetize placement used as the trusted GPT blueprint}
-        {--preset=* : Optional subset of supported display/edge presets}
+        {--preset=* : Explicit display/edge preset(s) to clone}
         {--actor= : Optional user id override for audit attribution}';
 
-    protected $description = 'Clone one reviewed Quick Monetize GPT setup into every size-compatible display/edge preset';
+    protected $description = 'Clone one reviewed Quick Monetize GPT setup into explicitly selected size-compatible display/edge presets';
 
     public function handle(
         QuickMonetizeService $quick,
@@ -53,12 +53,16 @@ final class CloneQuickMonetizeDisplaySuite extends Command
             return self::FAILURE;
         }
 
-        $presets = array_values(array_unique(array_map('strval', (array) $this->option('preset'))));
+        $presets = array_values(array_unique(array_filter(array_map(
+            fn ($preset): string => trim((string) $preset),
+            (array) $this->option('preset'),
+        ))));
         if ($presets === []) {
-            $presets = self::DEFAULT_PRESETS;
+            $this->error('Refusing an implicit display-suite rollout. Pass at least one explicit --preset=<surface>.');
+            return self::FAILURE;
         }
 
-        $unsupported = array_values(array_diff($presets, self::DEFAULT_PRESETS));
+        $unsupported = array_values(array_diff($presets, self::SUPPORTED_PRESETS));
         if ($unsupported !== []) {
             $this->error('Unsupported display-suite preset(s): '.implode(', ', $unsupported).'. Video/native/provider-managed formats require their own compatible demand tag and are intentionally excluded.');
             return self::FAILURE;
