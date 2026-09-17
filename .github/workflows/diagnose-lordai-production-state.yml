@@ -1,0 +1,196 @@
+name: Diagnose LordAI production monetization state
+
+on:
+  push:
+    branches:
+      - diag/lordai-production-state-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+      SITE_DOMAIN: lordai.net
+    steps:
+      - name: Validate production connection inputs
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" == /* ]]
+          test -n "$HOST"
+          test -n "$USER"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+
+      - name: Configure pinned SSH trust
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Inspect live site, anchors, demand mappings, widgets, and published config state
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_ROOT/artisan"
+          cd "$APP_ROOT"
+          php artisan tinker --execute='
+          $domain = strtolower((string) getenv("SITE_DOMAIN"));
+          $sites = App\Models\Site::withoutGlobalScopes()
+              ->whereNull("deleted_at")
+              ->get()
+              ->filter(fn ($site) => strtolower(preg_replace("/^www\\./i", "", (string) $site->primary_domain)) === $domain)
+              ->values();
+          if ($sites->count() !== 1) {
+              throw new RuntimeException("Expected exactly one live site for domain ".$domain.", found ".$sites->count().".");
+          }
+          $site = $sites->first();
+          $siteConfig = App\Models\SiteConfig::withoutGlobalScopes()->where("site_id", $site->id)->first();
+          $serving = App\Models\SiteServingSetting::withoutGlobalScopes()->where("site_id", $site->id)->first();
+
+          $placements = App\Models\Placement::withoutGlobalScopes()
+              ->withTrashed()
+              ->with(["sizes"])
+              ->where("site_id", $site->id)
+              ->get()
+              ->filter(fn ($placement) => (bool) data_get($placement->metadata, "quick_monetize_generated", false))
+              ->values();
+
+          $placementRows = $placements->map(function ($placement) {
+              $mappings = App\Models\DemandPlacement::withoutGlobalScopes()
+                  ->where("placement_id", $placement->id)
+                  ->get();
+
+              $mappingRows = $mappings->map(function ($mapping) {
+                  $demandSite = App\Models\DemandSite::withoutGlobalScopes()->find($mapping->demand_site_id);
+                  $account = $demandSite ? App\Models\DemandAccount::withoutGlobalScopes()->withTrashed()->find($demandSite->demand_account_id) : null;
+                  $widgets = App\Models\DemandWidget::withoutGlobalScopes()
+                      ->where("demand_placement_id", $mapping->id)
+                      ->get()
+                      ->map(function ($widget) {
+                          $tag = (string) $widget->direct_tag_template;
+                          preg_match("#defineSlot\\(["\x27]([^"\x27]+)["\x27]#", $tag, $pathMatch);
+                          preg_match("#defineSlot\\([^,]+,\\s*(\\[[^;]+?\\])\\s*,#", $tag, $sizeMatch);
+                          return [
+                              "id" => $widget->id,
+                              "enabled" => (bool) $widget->is_enabled,
+                              "approval" => $widget->approval_status?->value,
+                              "integration_mode" => $widget->integration_mode?->value,
+                              "tag_sha256" => hash("sha256", $tag),
+                              "has_google_gpt" => str_contains($tag, "securepubads.g.doubleclick.net/tag/js/gpt.js"),
+                              "ad_unit_path" => $pathMatch[1] ?? null,
+                              "declared_sizes_expression" => $sizeMatch[1] ?? null,
+                          ];
+                      })->values();
+
+                  return [
+                      "id" => $mapping->id,
+                      "enabled" => (bool) $mapping->is_enabled,
+                      "approval" => $mapping->approval_status?->value,
+                      "integration_mode" => $mapping->integration_mode?->value,
+                      "placement_code" => $mapping->placement_code,
+                      "sync_status" => $mapping->sync_status?->value,
+                      "demand_site" => $demandSite ? [
+                          "id" => $demandSite->id,
+                          "enabled" => (bool) $demandSite->is_enabled,
+                          "approval" => $demandSite->approval_status?->value,
+                          "integration_mode" => $demandSite->integration_mode?->value,
+                      ] : null,
+                      "account" => $account ? [
+                          "id" => $account->id,
+                          "public_key" => $account->public_key,
+                          "enabled" => (bool) $account->is_enabled,
+                          "approval" => $account->approval_status?->value,
+                          "integration_mode" => $account->integration_mode?->value,
+                          "scope" => $account->scope?->value,
+                          "quick_managed" => (bool) data_get($account->configuration, "quick_monetize_managed", false),
+                      ] : null,
+                      "widgets" => $widgets->all(),
+                  ];
+              })->values();
+
+              return [
+                  "id" => $placement->id,
+                  "code" => $placement->code,
+                  "name" => $placement->name,
+                  "deleted" => $placement->trashed(),
+                  "status" => $placement->status?->value,
+                  "type" => $placement->type?->value,
+                  "preset" => data_get($placement->metadata, "placement_preset"),
+                  "format_settings" => $placement->format_settings,
+                  "collapse_empty_div" => (bool) $placement->collapse_empty_div,
+                  "safeframe_enabled" => (bool) $placement->safeframe_enabled,
+                  "sizes" => $placement->sizes->map(fn ($size) => [
+                      "width" => $size->width,
+                      "height" => $size->height,
+                      "type" => $size->size_type,
+                      "device" => $size->device,
+                      "active" => (bool) $size->is_active,
+                      "min_viewport_width" => $size->min_viewport_width,
+                      "max_viewport_width" => $size->max_viewport_width,
+                  ])->values()->all(),
+                  "demand_mappings" => $mappingRows->all(),
+              ];
+          })->values();
+
+          $latestProduction = App\Models\ConfigVersion::withoutGlobalScopes()
+              ->where("site_id", $site->id)
+              ->where("environment", "PRODUCTION")
+              ->orderByDesc("created_at")
+              ->first();
+
+          echo "PRODUCTION_STATE=".json_encode([
+              "site" => [
+                  "id" => $site->id,
+                  "public_key" => $site->public_key,
+                  "domain" => $site->primary_domain,
+                  "status" => $site->status?->value,
+                  "serving_mode" => $site->serving_mode?->value,
+                  "prebid_enabled" => (bool) $site->prebid_enabled,
+                  "native_demand_enabled" => (bool) $site->native_demand_enabled,
+              ],
+              "site_config" => $siteConfig ? [
+                  "status" => $siteConfig->status,
+                  "immediate_pause" => (bool) $siteConfig->immediate_pause,
+                  "production_version" => $siteConfig->production_version,
+                  "preview_version" => $siteConfig->preview_version,
+                  "test_version" => $siteConfig->test_version,
+                  "cache_ttl_seconds" => $siteConfig->cache_ttl_seconds,
+              ] : null,
+              "serving_settings" => $serving ? [
+                  "serving_mode" => $serving->serving_mode?->value,
+                  "native_demand_enabled" => (bool) $serving->native_demand_enabled,
+              ] : null,
+              "latest_production_config" => $latestProduction ? [
+                  "id" => $latestProduction->id,
+                  "version" => $latestProduction->version,
+                  "status" => $latestProduction->status,
+                  "created_at" => optional($latestProduction->created_at)->toIso8601String(),
+              ] : null,
+              "quick_placements" => $placementRows->all(),
+          ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
+          '
+          REMOTE
