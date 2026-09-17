@@ -12,6 +12,7 @@ const trafficGateRuntime = String.raw`
     var TRAFFIC_GATE_PROTOCOL_VERSION = 1;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
     var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
+    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 6000;
     var TRAFFIC_GATE_STATES = {
         disabled: 'DISABLED', booting: 'BOOTING', pending: 'PENDING', passed: 'PASSED',
         error: 'ERROR', timeout: 'TIMEOUT', unavailable: 'UNAVAILABLE',
@@ -119,6 +120,18 @@ const trafficGateRuntime = String.raw`
             window.clearTimeout(gate[name]);
             gate[name] = null;
         }
+    }
+
+    function trafficGateEnsureMaxTimer() {
+        var gate = trafficGateRuntimeState();
+        if (gate.maxTimer !== null || !gate.settings) return;
+        var policy = String(gate.settings.policy || '').toUpperCase();
+        if (policy !== 'BALANCED' && policy !== 'PERMISSIVE') return;
+        var delay = Number(gate.settings.maxWaitMs);
+        if (!Number.isInteger(delay) || delay < 2000 || delay > 15000) {
+            delay = TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS;
+        }
+        gate.maxTimer = window.setTimeout(trafficGateOnMaxWait, delay);
     }
 
     function trafficGateRemoveMessageListener() {
@@ -269,13 +282,18 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (gate.settings.policy === 'BALANCED') {
+            trafficGateEnsureMaxTimer();
             if (enterBalancedRecovery(reason, false)) return;
-            trafficGateCleanup();
+            // Trusted-activity recovery is optional; the bounded availability
+            // fallback is not. With activity recovery disabled, clean the
+            // invisible gate runtime but keep the max-wait timer alive.
+            trafficGateCleanup({ preserveMaxTimer: true });
             settleTrafficGateDecision();
             return;
         }
         // PERMISSIVE technical failures remain blocked until the bounded max-wait
         // timer soft-allows. Keep the bounded decision pending until that fallback.
+        trafficGateEnsureMaxTimer();
         trafficGateCleanup({ preserveMaxTimer: true });
     }
 
@@ -296,11 +314,12 @@ const trafficGateRuntime = String.raw`
             trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
             return;
         }
-        if (gate.settings && gate.settings.policy === 'BALANCED' && gate.settings.activityRecoveryEnabled === true) {
+        if (gate.settings && gate.settings.policy === 'BALANCED') {
             // BALANCED is a soft traffic-quality filter, not a permanent
             // availability dependency. If the invisible Turnstile path never
             // yields PASS or DENIED, release monetization at the configured
-            // bounded deadline. Explicit DENIED remains fail-closed above.
+            // bounded deadline regardless of whether early trusted-activity
+            // recovery is enabled. Explicit DENIED remains fail-closed above.
             trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
             return;
         }
@@ -372,6 +391,9 @@ const trafficGateRuntime = String.raw`
         gate.startedAt = Date.now();
         trafficGateSetState(TRAFFIC_GATE_STATES.booting, null);
         var decision = trafficGateDecisionPromise();
+        // Establish the bounded availability deadline before any operation
+        // that can fail (configuration validation, crypto, iframe creation).
+        trafficGateEnsureMaxTimer();
         if (!settings.valid) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'INVALID_CONFIGURATION');
             return decision;
@@ -429,7 +451,7 @@ const trafficGateRuntime = String.raw`
 
         trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
         gate.initialTimer = window.setTimeout(trafficGateOnInitialWait, settings.initialWaitMs);
-        gate.maxTimer = window.setTimeout(trafficGateOnMaxWait, settings.maxWaitMs);
+        trafficGateEnsureMaxTimer();
         try {
             var parent = document.body || document.documentElement;
             if (!parent || !parent.appendChild) throw new Error('No frame parent');
