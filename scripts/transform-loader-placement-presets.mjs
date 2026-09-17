@@ -1,6 +1,7 @@
 const ELIGIBLE_ANCHOR = `    function eligibleElements(config) {\n        var nodes = [];`;
 const STICKY_BLOCK = `                            if (formatSettings.position && element.style && placement.type === 'STICKY') {\n                                element.style.position = 'fixed'; element.style.zIndex = '2147483000'; element.style.left = '50%'; element.style.transform = 'translateX(-50%)';\n                                element.style[formatSettings.position === 'top' ? 'top' : 'bottom'] = '0';\n                            }`;
 const NATIVE_ONLY_ANCHOR = `        nativeOnly.forEach(function (item) {\n            ensureElementId(item.element, config, item.placement);`;
+const DIRECT_CONTAINER_ANCHOR = `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        if (entry.element.appendChild) entry.element.appendChild(container);`;
 
 const HELPERS = `    function placementFormatSettings(placement) {
         return placement && placement.format && placement.format.settings || {};
@@ -71,44 +72,71 @@ const HELPERS = `    function placementFormatSettings(placement) {
         });
     }
 
+    function setImportantStyle(style, name, value) {
+        if (!style) return;
+        if (style.setProperty) style.setProperty(name, value, 'important');
+        else style[name.replace(/-([a-z])/g, function (_, letter) { return letter.toUpperCase(); })] = value;
+    }
+
+    function resetPositionStyle(style, name) {
+        if (!style) return;
+        setImportantStyle(style, name, name === 'transform' ? 'none' : 'auto');
+    }
+
     function applyStickyPosition(element, placement, settings) {
         if (!element || !element.style || !placement) return;
         var position = String(settings.position || '').toLowerCase();
         var style = element.style;
 
         if (placement.type === 'VIDEO' && position === 'bottom_right') {
-            style.position = 'fixed';
-            style.zIndex = '2147483000';
-            style.right = '16px';
-            style.bottom = '16px';
-            style.left = '';
-            style.top = '';
-            style.transform = '';
+            setImportantStyle(style, 'position', 'fixed');
+            setImportantStyle(style, 'z-index', '2147483000');
+            setImportantStyle(style, 'right', '16px');
+            setImportantStyle(style, 'bottom', '16px');
+            resetPositionStyle(style, 'left');
+            resetPositionStyle(style, 'top');
+            resetPositionStyle(style, 'transform');
+            setImportantStyle(style, 'margin', '0');
+            setImportantStyle(style, 'max-width', 'calc(100vw - 32px)');
             return;
         }
 
         if (placement.type !== 'STICKY') return;
         position = position || 'bottom';
-        style.position = 'fixed';
-        style.zIndex = '2147483000';
-        style.top = '';
-        style.right = '';
-        style.bottom = '';
-        style.left = '';
-        style.transform = '';
+        setImportantStyle(style, 'position', 'fixed');
+        setImportantStyle(style, 'z-index', '2147483000');
+        resetPositionStyle(style, 'top');
+        resetPositionStyle(style, 'right');
+        resetPositionStyle(style, 'bottom');
+        resetPositionStyle(style, 'left');
+        resetPositionStyle(style, 'transform');
+        setImportantStyle(style, 'margin', '0');
+        setImportantStyle(style, 'max-width', '100vw');
         if (position === 'right') {
-            style.right = '0';
-            style.top = '50%';
-            style.transform = 'translateY(-50%)';
+            setImportantStyle(style, 'right', '0');
+            setImportantStyle(style, 'top', '50%');
+            setImportantStyle(style, 'transform', 'translateY(-50%)');
         } else if (position === 'left') {
-            style.left = '0';
-            style.top = '50%';
-            style.transform = 'translateY(-50%)';
+            setImportantStyle(style, 'left', '0');
+            setImportantStyle(style, 'top', '50%');
+            setImportantStyle(style, 'transform', 'translateY(-50%)');
         } else {
-            style.left = '50%';
-            style.transform = 'translateX(-50%)';
-            style[position === 'top' ? 'top' : 'bottom'] = '0';
+            setImportantStyle(style, 'left', '50%');
+            setImportantStyle(style, 'transform', 'translateX(-50%)');
+            setImportantStyle(style, position === 'top' ? 'top' : 'bottom', '0');
         }
+    }
+
+    function placementRendered(element) {
+        if (!element || !element.getAttribute) return false;
+        return String(element.getAttribute('data-hm-status') || '').toLowerCase() === 'rendered';
+    }
+
+    function syncPlacementCloseControl(element, button) {
+        if (!button || !button.style) return;
+        var visible = placementRendered(element);
+        setImportantStyle(button.style, 'display', visible ? 'block' : 'none');
+        if (button.setAttribute) button.setAttribute('aria-hidden', visible ? 'false' : 'true');
     }
 
     function ensurePlacementCloseControl(element, settings) {
@@ -119,15 +147,51 @@ const HELPERS = `    function placementFormatSettings(placement) {
         button.type = 'button';
         button.textContent = '×';
         button.setAttribute('aria-label', 'Close advertisement');
+        button.setAttribute('aria-hidden', 'true');
         button.setAttribute('data-hm-placement-close', '1');
-        button.style.cssText = 'position:absolute;top:4px;right:4px;z-index:2147483001;min-width:28px;min-height:28px;padding:0 7px;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;cursor:pointer;';
+        button.style.cssText = 'display:none;position:absolute;top:4px;right:4px;z-index:2147483001;width:28px;height:28px;min-width:28px;min-height:28px;max-width:28px;max-height:28px;box-sizing:border-box;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;overflow:hidden;cursor:pointer;';
+        setImportantStyle(button.style, 'display', 'none');
+        setImportantStyle(button.style, 'position', 'absolute');
+        setImportantStyle(button.style, 'top', '4px');
+        setImportantStyle(button.style, 'right', '4px');
+        setImportantStyle(button.style, 'z-index', '2147483001');
+        setImportantStyle(button.style, 'left', 'auto');
+        setImportantStyle(button.style, 'bottom', 'auto');
+        setImportantStyle(button.style, 'transform', 'none');
+        setImportantStyle(button.style, 'margin', '0');
+        setImportantStyle(button.style, 'box-sizing', 'border-box');
+        setImportantStyle(button.style, 'width', '28px');
+        setImportantStyle(button.style, 'height', '28px');
+        setImportantStyle(button.style, 'min-width', '28px');
+        setImportantStyle(button.style, 'min-height', '28px');
+        setImportantStyle(button.style, 'max-width', '28px');
+        setImportantStyle(button.style, 'max-height', '28px');
+        setImportantStyle(button.style, 'padding', '0');
+        setImportantStyle(button.style, 'line-height', '28px');
+        setImportantStyle(button.style, 'overflow', 'hidden');
         button.addEventListener('click', function (event) {
             if (event && event.preventDefault) event.preventDefault();
             if (event && event.stopPropagation) event.stopPropagation();
+            if (button.__hmPlacementObserver && button.__hmPlacementObserver.disconnect) button.__hmPlacementObserver.disconnect();
             if (element.setAttribute) element.setAttribute('data-hm-placement-dismissed', '1');
-            if (element.style) element.style.display = 'none';
+            if (element.style) setImportantStyle(element.style, 'display', 'none');
         });
         element.appendChild(button);
+        syncPlacementCloseControl(element, button);
+        if (typeof window.MutationObserver === 'function') {
+            var observer = new window.MutationObserver(function () { syncPlacementCloseControl(element, button); });
+            observer.observe(element, { attributes: true, attributeFilter: ['data-hm-status'] });
+            button.__hmPlacementObserver = observer;
+        }
+    }
+
+    function attachDirectResponsiveMapping(container, entry) {
+        if (!container || !container.getAttribute || !container.setAttribute || !entry || !entry.placement) return;
+        if (container.getAttribute('data-hm-gpt-direct') !== '1') return;
+        var mappings = entry.placement.responsiveMappings;
+        if (!Array.isArray(mappings) || !mappings.length) return;
+        try { container.setAttribute('data-hm-gpt-size-map', JSON.stringify(mappings)); }
+        catch (error) { /* fail safely: the GPT runtime will use its declared-size fallback */ }
     }
 
     function applyPlacementPresetPresentation(element, placement, settings) {
@@ -160,6 +224,13 @@ export function applyPlacementPresetTransform(input) {
             throw new Error('Unable to locate Direct JS nativeOnly anchor for placement preset runtime');
         }
         source = source.replace(NATIVE_ONLY_ANCHOR, `${NATIVE_ONLY_ANCHOR}\n            applyPlacementPresetPresentation(item.element, item.placement, placementFormatSettings(item.placement));`);
+    }
+
+    if (!source.includes('attachDirectResponsiveMapping(container, entry);')) {
+        if (!source.includes(DIRECT_CONTAINER_ANCHOR)) {
+            throw new Error('Unable to locate Direct Demand container anchor for responsive GPT mapping');
+        }
+        source = source.replace(DIRECT_CONTAINER_ANCHOR, `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        attachDirectResponsiveMapping(container, entry);\n        if (entry.element.appendChild) entry.element.appendChild(container);`);
     }
 
     return source;

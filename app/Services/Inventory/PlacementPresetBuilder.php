@@ -2,10 +2,13 @@
 
 namespace App\Services\Inventory;
 
+use App\Enums\PlacementStatus;
 use App\Models\Placement;
 use App\Models\Site;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 final class PlacementPresetBuilder
 {
@@ -28,8 +31,38 @@ final class PlacementPresetBuilder
         bool $publish = true,
         bool $quickMount = false,
     ): Placement {
+        // A Quick surface has one stable identity per site+preset. Make that
+        // guarantee hold for double-clicks/retries too, not only sequential
+        // requests: enter a transaction when needed, lock the site row, then
+        // perform the lookup/create while the lock is held.
+        if ($quickMount && DB::transactionLevel() === 0) {
+            return DB::transaction(fn (): Placement => $this->create(
+                $site,
+                $preset,
+                $actor,
+                $overrides,
+                $publish,
+                true,
+            ));
+        }
+
         $choice = $this->presets->choices()[$preset] ?? null;
         $label = is_array($choice) ? (string) ($choice['label'] ?? 'Placement') : 'Placement';
+
+        // Quick Monetize is a one-click surface workflow, not a placement clone
+        // button. Repeated activation of the same preset must update/reuse the
+        // existing generated surface instead of silently creating overlapping
+        // sticky anchors (or duplicate in-page inventory). Advanced inventory
+        // remains available when an operator intentionally needs two surfaces
+        // of the same type.
+        if ($quickMount) {
+            Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
+            $existing = $this->existingQuickPreset($site, $preset);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
         $name = trim((string) ($overrides['name'] ?? ''));
         if ($name === '') {
             $name = $quickMount ? 'Quick · '.$label : $label;
@@ -66,6 +99,45 @@ final class PlacementPresetBuilder
         }
 
         return $this->inventory->createPlacement($site, $data, $actor, $publish);
+    }
+
+    private function existingQuickPreset(Site $site, string $preset): ?Placement
+    {
+        $matches = Placement::withoutGlobalScopes()
+            ->withTrashed()
+            ->where('site_id', $site->id)
+            ->get()
+            ->filter(fn (Placement $placement): bool => (bool) data_get($placement->metadata, 'quick_monetize_generated', false)
+                && (string) data_get($placement->metadata, 'placement_preset', '') === $preset)
+            ->values();
+
+        $active = $matches
+            ->filter(fn (Placement $placement): bool => ! $placement->trashed()
+                && $placement->status === PlacementStatus::Active)
+            ->values();
+
+        if ($active->count() > 1) {
+            throw ValidationException::withMessages([
+                'placement_preset' => "Multiple active Quick Monetize surfaces already exist for [{$preset}]. Refusing to choose between overlapping inventory; reconcile the duplicates first.",
+            ]);
+        }
+
+        /** @var Placement|null $existing */
+        $existing = $active->first();
+        if ($existing) {
+            // Historical disabled/deleted duplicates may remain for audit and
+            // rollback after a repair. They must not block the one canonical
+            // active surface from being safely reused on future activations.
+            return $existing;
+        }
+
+        if ($matches->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but no active canonical surface is available. Repair or explicitly reuse that inventory instead of creating a duplicate.",
+            ]);
+        }
+
+        return null;
     }
 
     private function defaultQuickMountTarget(string $preset): string

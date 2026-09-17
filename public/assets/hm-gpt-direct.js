@@ -15,21 +15,96 @@
         return /^\/[0-9]{1,20}\/[A-Za-z0-9_.\-/]{1,240}$/.test(String(value || ''));
     }
 
+    function normalizedSize(size) {
+        if (!Array.isArray(size) || size.length !== 2) return null;
+        var width = Number(size[0]);
+        var height = Number(size[1]);
+        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || width > 10000 || height < 1 || height > 10000) return null;
+        return [width, height];
+    }
+
     function sizes(value) {
         try {
             var decoded = JSON.parse(String(value || ''));
             if (!Array.isArray(decoded) || !decoded.length || decoded.length > 20) return null;
-            var normalized = decoded.map(function (size) {
-                if (!Array.isArray(size) || size.length !== 2) return null;
-                var width = Number(size[0]);
-                var height = Number(size[1]);
-                if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || width > 10000 || height < 1 || height > 10000) return null;
-                return [width, height];
-            });
+            var normalized = decoded.map(normalizedSize);
             return normalized.every(Boolean) ? normalized : null;
         } catch (error) {
             return null;
         }
+    }
+
+    function sizeKey(size) {
+        return size[0] + 'x' + size[1];
+    }
+
+    function sizeMappings(value) {
+        if (!value) return [];
+        try {
+            var decoded = JSON.parse(String(value));
+            if (!Array.isArray(decoded) || decoded.length > 100) return [];
+            return decoded.map(function (mapping) {
+                mapping = mapping || {};
+                var viewport = Array.isArray(mapping.viewport) ? mapping.viewport : [0, 0];
+                var maximum = Array.isArray(mapping.maxViewport) ? mapping.maxViewport : [0, 0];
+                var mappedSizes = Array.isArray(mapping.sizes) ? mapping.sizes.map(normalizedSize).filter(Boolean) : [];
+                return {
+                    minWidth: Math.max(0, Number(viewport[0] || 0)),
+                    minHeight: Math.max(0, Number(viewport[1] || 0)),
+                    maxWidth: Math.max(0, Number(maximum[0] || 0)),
+                    maxHeight: Math.max(0, Number(maximum[1] || 0)),
+                    sizes: mappedSizes,
+                };
+            }).filter(function (mapping) { return mapping.sizes.length > 0; });
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function viewportSize() {
+        var root = document.documentElement || {};
+        return [
+            Number(window.innerWidth || root.clientWidth || 0),
+            Number(window.innerHeight || root.clientHeight || 0),
+        ];
+    }
+
+    function eligibleSizes(container, allowedSizes) {
+        var mappings = sizeMappings(container.getAttribute('data-hm-gpt-size-map'));
+        if (!mappings.length) return allowedSizes.slice();
+
+        var viewport = viewportSize();
+        var width = viewport[0];
+        var height = viewport[1];
+        if (!width && !height) return allowedSizes.slice();
+
+        var allowed = {};
+        allowedSizes.forEach(function (size) { allowed[sizeKey(size)] = true; });
+        var matches = mappings.filter(function (mapping) {
+            if (width && width < mapping.minWidth) return false;
+            if (height && height < mapping.minHeight) return false;
+            if (mapping.maxWidth && width && width > mapping.maxWidth) return false;
+            if (mapping.maxHeight && height && height > mapping.maxHeight) return false;
+            return true;
+        }).sort(function (left, right) {
+            if (right.minWidth !== left.minWidth) return right.minWidth - left.minWidth;
+            return right.minHeight - left.minHeight;
+        });
+
+        // A valid responsive mapping is authoritative. If no mapping applies to
+        // this viewport, or the applicable mapping has no overlap with the
+        // reviewed GPT declaration, this surface must no-fill. Falling back to
+        // the full declaration can resurrect desktop sizes on mobile (or mobile
+        // sizes on desktop), which defeats placement ownership and can overflow
+        // the viewport.
+        if (!matches.length) return [];
+
+        for (var index = 0; index < matches.length; index += 1) {
+            var selected = matches[index].sizes.filter(function (size) { return allowed[sizeKey(size)]; });
+            if (selected.length) return selected;
+        }
+
+        return [];
     }
 
     function validId(value) {
@@ -66,13 +141,19 @@
         if (!container || container.getAttribute('data-hm-gpt-runtime-state')) return;
 
         var adUnitPath = container.getAttribute('data-hm-gpt-ad-unit-path');
-        var allowedSizes = sizes(container.getAttribute('data-hm-gpt-sizes'));
+        var declaredSizes = sizes(container.getAttribute('data-hm-gpt-sizes'));
         var containerId = String(container.id || '');
         var innerId = String(container.getAttribute('data-hm-gpt-inner-id') || '');
-        if (!validPath(adUnitPath) || !allowedSizes || !validId(containerId) || !validId(innerId)) {
+        if (!validPath(adUnitPath) || !declaredSizes || !validId(containerId) || !validId(innerId)) {
             container.setAttribute('data-hm-gpt-runtime-state', 'invalid');
             return;
         }
+        var allowedSizes = eligibleSizes(container, declaredSizes);
+        if (!allowedSizes.length) {
+            container.setAttribute('data-hm-gpt-runtime-state', 'ineligible');
+            return;
+        }
+        container.setAttribute('data-hm-gpt-eligible-sizes', JSON.stringify(allowedSizes));
 
         // Keep the host's light DOM empty. The immediately previous loader
         // release fell through from an unmatched success selector to a generic
@@ -99,8 +180,9 @@
         container.setAttribute('data-hm-gpt-runtime-state', 'starting');
         container.setAttribute('data-hm-gpt-rollback-safe', 'shadow');
         var frame = document.createElement('iframe');
-        // Initialize from one actual declared size. Never combine the largest
-        // width and height from different sizes into an undeclared rectangle.
+        // Initialize from one actual viewport-eligible declared size. Never
+        // combine the largest width and height from different sizes into an
+        // undeclared rectangle.
         var initialSize = allowedSizes[0];
         var width = initialSize[0];
         var height = initialSize[1];

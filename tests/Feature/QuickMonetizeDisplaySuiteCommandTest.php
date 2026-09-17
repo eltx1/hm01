@@ -71,12 +71,33 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         );
     }
 
-    public function test_command_creates_every_size_compatible_display_edge_surface_and_is_idempotent(): void
+    public function test_command_requires_explicit_presets_instead_of_expanding_every_surface_implicitly(): void
+    {
+        $exit = Artisan::call('quick-monetize:clone-display-suite', [
+            'siteKey' => $this->site->public_key,
+        ]);
+
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('Refusing an implicit display-suite rollout', Artisan::output());
+        $this->assertSame(1, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
+    }
+
+    public function test_command_creates_every_explicit_size_compatible_display_edge_surface_and_is_idempotent(): void
     {
         $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $presets = [
+            'responsive_display',
+            'in_article_display',
+            'high_impact_display',
+            'mobile_display',
+            'sticky_top',
+            'side_rail_right',
+            'side_rail_left',
+        ];
 
         $exit = Artisan::call('quick-monetize:clone-display-suite', [
             'siteKey' => $this->site->public_key,
+            '--preset' => $presets,
         ]);
 
         $this->assertSame(0, $exit, Artisan::output());
@@ -118,6 +139,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         $versionCount = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
         $exit = Artisan::call('quick-monetize:clone-display-suite', [
             'siteKey' => $this->site->public_key,
+            '--preset' => $presets,
         ]);
         $this->assertSame(0, $exit, Artisan::output());
         $this->assertSame(6, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
