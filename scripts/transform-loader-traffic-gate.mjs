@@ -246,7 +246,11 @@ const trafficGateRuntime = String.raw`
         installTrafficGateActivityRecovery();
         settleTrafficGateDecision();
         trafficGateClearTimer('initialTimer');
-        if (!keepGateRuntime) trafficGateCleanup({ preserveActivity: true });
+        // BALANCED technical failures may recover immediately from trusted
+        // activity, but must never strand monetization forever. Preserve the
+        // bounded max-wait timer even after the invisible gate iframe/runtime
+        // is cleaned up so a non-DENIED technical failure can soft-allow.
+        if (!keepGateRuntime) trafficGateCleanup({ preserveMaxTimer: true, preserveActivity: true });
         return true;
     }
 
@@ -293,7 +297,11 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (gate.settings && gate.settings.policy === 'BALANCED' && gate.settings.activityRecoveryEnabled === true) {
-            enterBalancedRecovery('MAX_WAIT', false);
+            // BALANCED is a soft traffic-quality filter, not a permanent
+            // availability dependency. If the invisible Turnstile path never
+            // yields PASS or DENIED, release monetization at the configured
+            // bounded deadline. Explicit DENIED remains fail-closed above.
+            trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
             return;
         }
         trafficGateSetState(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
