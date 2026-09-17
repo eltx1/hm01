@@ -6,23 +6,14 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
 
 function makeContainer(attributes) {
-    const frames = [];
-    const target = {
+    return {
         id: 'hm-gpt-responsive-test',
         style: {},
-        shadowRoot: null,
-        frames,
+        childNodes: [],
+        innerHTML: '',
         getAttribute(name) { return attributes[name] ?? null; },
         setAttribute(name, value) { attributes[name] = String(value); },
-        attachShadow() {
-            const root = {
-                appendChild(frame) { frames.push(frame); return frame; },
-            };
-            target.shadowRoot = root;
-            return root;
-        },
     };
-    return target;
 }
 
 function runAtWidth(width, overrides = {}) {
@@ -38,58 +29,76 @@ function runAtWidth(width, overrides = {}) {
         ...overrides,
     };
     const target = makeContainer(attributes);
+    const definitions = [];
+    const displayCalls = [];
+    const listeners = [];
+    const pubads = {
+        addEventListener(name, callback) { if (name === 'slotRenderEnded') listeners.push(callback); },
+        removeEventListener(name, callback) {
+            if (name !== 'slotRenderEnded') return;
+            const index = listeners.indexOf(callback);
+            if (index >= 0) listeners.splice(index, 1);
+        },
+    };
+    const googletag = {
+        apiReady: true,
+        cmd: { push(callback) { callback(); } },
+        defineSlot(path, sizes, id) {
+            const slot = { path, sizes, id, addService() { return slot; } };
+            definitions.push(slot);
+            return slot;
+        },
+        pubads() { return pubads; },
+        enableServices() {},
+        display(id) { displayCalls.push(id); },
+        destroySlots() { return true; },
+    };
     const document = {
         documentElement: { clientWidth: width, clientHeight: 900 },
+        head: { appendChild() {} },
         querySelectorAll(query) { return query === '[data-hm-gpt-direct="1"]' ? [target] : []; },
-        createElement(tag) {
-            assert.equal(tag, 'iframe');
-            const frameAttributes = {};
-            return {
-                style: {},
-                srcdoc: '',
-                setAttribute(name, value) { frameAttributes[name] = String(value); },
-                getAttribute(name) { return frameAttributes[name] ?? null; },
-            };
-        },
+        getElementsByTagName(tag) { return tag === 'script' ? [] : []; },
+        createElement() { throw new Error('GPT library must not be reinjected when apiReady is true'); },
     };
     class MutationObserver {
         constructor(callback) { this.callback = callback; }
         observe() {}
     }
-    const sandbox = { document, MutationObserver, console, innerWidth: width, innerHeight: 900 };
+    const sandbox = { document, MutationObserver, console, innerWidth: width, innerHeight: 900, googletag };
     sandbox.window = sandbox;
     vm.runInNewContext(source, sandbox, { filename: 'hm-gpt-direct.js' });
-    return { target, attributes, frame: target.frames[0] };
+    return { target, attributes, definitions, displayCalls };
 }
 
 test('trusted GPT runtime exposes only mobile-mapped sizes to GPT on a mobile viewport', () => {
-    const { attributes, frame } = runAtWidth(390);
-    assert.ok(frame);
-    assert.equal(frame.getAttribute('width'), '300');
-    assert.equal(frame.getAttribute('height'), '50');
+    const { attributes, definitions, displayCalls, target } = runAtWidth(390);
+    assert.equal(definitions.length, 1);
     assert.deepEqual(
-        JSON.parse(attributes['data-hm-gpt-eligible-sizes']),
+        JSON.parse(JSON.stringify(definitions[0].sizes)),
         [[300, 50], [300, 100], [320, 50], [320, 100]],
     );
-    assert.match(frame.srcdoc, /\[\[300,50\],\[300,100\],\[320,50\],\[320,100\]\]/);
-    assert.doesNotMatch(frame.srcdoc, /980,90/);
+    assert.deepEqual(JSON.parse(attributes['data-hm-gpt-eligible-sizes']), [[300, 50], [300, 100], [320, 50], [320, 100]]);
+    assert.equal(definitions[0].id, 'hm-gpt-responsive-test');
+    assert.deepEqual(displayCalls, ['hm-gpt-responsive-test']);
+    assert.equal(target.style.width, '300px');
+    assert.equal(target.style.height, '50px');
+    assert.equal(attributes['data-hm-gpt-document-context'], 'publisher');
 });
 
 test('trusted GPT runtime exposes only desktop-mapped sizes to GPT on a desktop viewport', () => {
-    const { attributes, frame } = runAtWidth(1440);
-    assert.ok(frame);
-    assert.equal(frame.getAttribute('width'), '728');
-    assert.equal(frame.getAttribute('height'), '90');
+    const { attributes, definitions, target } = runAtWidth(1440);
+    assert.equal(definitions.length, 1);
     assert.deepEqual(
-        JSON.parse(attributes['data-hm-gpt-eligible-sizes']),
+        JSON.parse(JSON.stringify(definitions[0].sizes)),
         [[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]],
     );
-    assert.doesNotMatch(frame.srcdoc, /300,50/);
-    assert.match(frame.srcdoc, /980,90/);
+    assert.deepEqual(JSON.parse(attributes['data-hm-gpt-eligible-sizes']), [[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]]);
+    assert.equal(target.style.width, '728px');
+    assert.equal(target.style.height, '90px');
 });
 
 test('valid mobile mapping with no declared-size intersection fails closed instead of restoring an oversized desktop slot', () => {
-    const { attributes, frame } = runAtWidth(390, {
+    const { attributes, definitions, displayCalls } = runAtWidth(390, {
         'data-hm-gpt-sizes': '[[728,90]]',
         'data-hm-gpt-size-map': JSON.stringify([
             { viewport: [0, 0], maxViewport: [767, 65535], sizes: [[300, 250]] },
@@ -97,20 +106,28 @@ test('valid mobile mapping with no declared-size intersection fails closed inste
         ]),
     });
 
-    assert.equal(frame, undefined);
+    assert.equal(definitions.length, 0);
+    assert.equal(displayCalls.length, 0);
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'ineligible');
     assert.equal(attributes['data-hm-gpt-eligible-sizes'], undefined);
 });
 
 test('mobile-only mapping no-fills on desktop when no mapping applies to the viewport', () => {
-    const { attributes, frame } = runAtWidth(1440, {
+    const { attributes, definitions, displayCalls } = runAtWidth(1440, {
         'data-hm-gpt-sizes': '[[320,50],[320,100]]',
         'data-hm-gpt-size-map': JSON.stringify([
             { viewport: [0, 0], maxViewport: [767, 65535], sizes: [[320, 50], [320, 100]] },
         ]),
     });
 
-    assert.equal(frame, undefined);
+    assert.equal(definitions.length, 0);
+    assert.equal(displayCalls.length, 0);
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'ineligible');
     assert.equal(attributes['data-hm-gpt-eligible-sizes'], undefined);
+});
+
+test('responsive GPT runtime contains no iframe or srcdoc execution path', () => {
+    assert.doesNotMatch(source, /srcdoc/i);
+    assert.doesNotMatch(source, /createElement\(['"]iframe['"]\)/);
+    assert.doesNotMatch(source, /setForceSafeFrame/);
 });
