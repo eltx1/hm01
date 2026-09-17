@@ -2,10 +2,12 @@
 
 namespace App\Services\Inventory;
 
+use App\Enums\PlacementStatus;
 use App\Models\Placement;
 use App\Models\Site;
 use App\Models\User;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 final class PlacementPresetBuilder
 {
@@ -30,6 +32,20 @@ final class PlacementPresetBuilder
     ): Placement {
         $choice = $this->presets->choices()[$preset] ?? null;
         $label = is_array($choice) ? (string) ($choice['label'] ?? 'Placement') : 'Placement';
+
+        // Quick Monetize is a one-click surface workflow, not a placement clone
+        // button. Repeated activation of the same preset must update/reuse the
+        // existing generated surface instead of silently creating overlapping
+        // sticky anchors (or duplicate in-page inventory). Advanced inventory
+        // remains available when an operator intentionally needs two surfaces
+        // of the same type.
+        if ($quickMount) {
+            $existing = $this->existingQuickPreset($site, $preset);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
         $name = trim((string) ($overrides['name'] ?? ''));
         if ($name === '') {
             $name = $quickMount ? 'Quick · '.$label : $label;
@@ -66,6 +82,37 @@ final class PlacementPresetBuilder
         }
 
         return $this->inventory->createPlacement($site, $data, $actor, $publish);
+    }
+
+    private function existingQuickPreset(Site $site, string $preset): ?Placement
+    {
+        $matches = Placement::withoutGlobalScopes()
+            ->withTrashed()
+            ->where('site_id', $site->id)
+            ->get()
+            ->filter(fn (Placement $placement): bool => (bool) data_get($placement->metadata, 'quick_monetize_generated', false)
+                && (string) data_get($placement->metadata, 'placement_preset', '') === $preset)
+            ->values();
+
+        if ($matches->count() > 1) {
+            throw ValidationException::withMessages([
+                'placement_preset' => "Multiple Quick Monetize surfaces already exist for [{$preset}]. Refusing to create another duplicate; reconcile the existing inventory first.",
+            ]);
+        }
+
+        /** @var Placement|null $existing */
+        $existing = $matches->first();
+        if (! $existing) {
+            return null;
+        }
+
+        if ($existing->trashed() || $existing->status !== PlacementStatus::Active) {
+            throw ValidationException::withMessages([
+                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but is deleted or inactive. Repair or explicitly reuse that inventory instead of creating a duplicate.",
+            ]);
+        }
+
+        return $existing;
     }
 
     private function defaultQuickMountTarget(string $preset): string
