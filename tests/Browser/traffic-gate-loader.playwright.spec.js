@@ -144,7 +144,11 @@ function turnstileSlowPassStub() {
             render(container, options) {
                 const frame = document.createElement('iframe');
                 frame.src = 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/task52';
-                frame.onload = () => setTimeout(() => options.callback('XXXX.DUMMY.TOKEN.XXXX'), 800);
+                options['before-interactive-callback']?.();
+                frame.onload = () => setTimeout(() => {
+                    options['after-interactive-callback']?.();
+                    options.callback('XXXX.DUMMY.TOKEN.XXXX');
+                }, 800);
                 container.appendChild(frame);
                 return 'task52';
             },
@@ -195,6 +199,10 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
     await page.goto(PUBLISHER + '/');
     await page.waitForTimeout(650);
     expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+    const gateFrame = page.locator('iframe[data-hm-traffic-gate="1"]');
+    await expect(gateFrame).toHaveCount(1);
+    await expect(gateFrame).toHaveCSS('opacity', '1');
+    await expect(gateFrame).toHaveCSS('pointer-events', 'auto');
     expect(requests.some(item => item.url.includes('securepubads.g.doubleclick.net'))).toBe(false);
     expect(requests.some(item => item.url.includes('horus-prebid.min.js'))).toBe(false);
 
@@ -206,6 +214,7 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
     expect(metrics.prebidAuctions).toBe(1);
     expect(metrics.bridgeTargeting).toBe(1);
     expect(metrics.gamRequests).toBe(1);
+    await expect(page.locator('iframe[data-hm-traffic-gate="1"]')).toHaveCount(0);
     expect(await page.locator('.hm-ad[data-placement="gam_slot"]').count()).toBe(1);
     expect(await page.locator('.hm-ad[data-placement="gam_slot"][data-hm-defined="1"]').count()).toBe(1);
     expect(requests.some(item => item.url.startsWith('https://app.horusmedia.net/'))).toBe(false);
