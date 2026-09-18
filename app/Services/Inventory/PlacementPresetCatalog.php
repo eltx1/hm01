@@ -133,7 +133,19 @@ final class PlacementPresetCatalog
                 $this->responsive('MOBILE', 0, 0, 767, 65535, $mobileSizes),
                 $this->responsive('DESKTOP', 768, 0, null, null, $desktopSizes),
             ),
-            'format_settings' => ['position' => $position, 'closeable' => true, 'reserveSpace' => false, 'autoMount' => true], 'lazy_load_enabled' => false, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
+            'format_settings' => [
+                'position' => $position,
+                'closeable' => true,
+                'reserveSpace' => false,
+                'autoMount' => true,
+                'surface' => [
+                    'family' => 'edge',
+                    'mount' => 'auto_body',
+                    'position' => $position,
+                    'responsive' => true,
+                    'providerAgnostic' => true,
+                ],
+            ], 'lazy_load_enabled' => false, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
         ];
     }
 

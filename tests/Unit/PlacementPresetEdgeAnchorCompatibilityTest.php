@@ -51,6 +51,9 @@ final class PlacementPresetEdgeAnchorCompatibilityTest extends TestCase
         $this->assertSame([[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]], $desktop);
         $this->assertNotContains([300, 250], $fixed);
         $this->assertSame('top', data_get($preset, 'format_settings.position'));
+        $this->assertSame('top', data_get($preset, 'format_settings.surface.position'));
+        $this->assertSame('edge', data_get($preset, 'format_settings.surface.family'));
+        $this->assertSame('auto_body', data_get($preset, 'format_settings.surface.mount'));
         $this->assertTrue((bool) data_get($preset, 'format_settings.autoMount'));
     }
 }

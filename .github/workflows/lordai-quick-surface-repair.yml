@@ -19,7 +19,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: lordai-quick-surface-repair-v1
+  group: lordai-quick-surface-repair-v2
   cancel-in-progress: false
 
 jobs:
@@ -150,6 +150,8 @@ jobs:
               "kept_anchors" => $keepers->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])->values()->all(),
               "would_disable" => $plannedDisabled->all(),
               "would_preserve" => $preserved->all(),
+              "would_align_anchor_surface_positions" => ["sticky_bottom" => "bottom", "sticky_top" => "top"],
+              "would_pin_loader_release" => "2.0.0",
               "would_publish_production_config" => true,
               "would_dispatch_static_edge_sync" => true,
           ], JSON_THROW_ON_ERROR).PHP_EOL;
@@ -229,8 +231,8 @@ jobs:
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
-          repair_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.done"
-          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.static-edge-dispatched"
+          repair_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v2.done"
+          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v2.static-edge-dispatched"
           state="$(ssh -p "$SSH_PORT" "$USER@$HOST" "REPAIR_MARKER='$repair_marker' DISPATCH_MARKER='$dispatch_marker' bash -s" <<'REMOTE'
           set -euo pipefail
           if ! test -f "$REPAIR_MARKER"; then
@@ -256,7 +258,7 @@ jobs:
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
-          marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.done"
+          marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v2.done"
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
           ssh -p "$SSH_PORT" "$USER@$HOST" "APP_ROOT='$app_root' SITE_DOMAIN='$SITE_DOMAIN' MARKER='$marker' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -322,9 +324,82 @@ jobs:
               throw new RuntimeException("Could not resolve a live audit actor from the retained Quick surfaces.");
           }
 
+          $loaderVersion = "2.0.0";
+          $loaderSourcePath = "assets/hm-loader.js";
+          $loaderMinifiedPath = "assets/hm-loader.min.js";
+          $loaderMinifiedFile = public_path($loaderMinifiedPath);
+          if (! is_file(public_path($loaderSourcePath)) || ! is_file($loaderMinifiedFile)) {
+              throw new RuntimeException("Canonical Loader assets are missing from the deployed release.");
+          }
+          $loaderChecksum = hash_file("sha256", $loaderMinifiedFile);
+          if (! is_string($loaderChecksum) || ! preg_match("/^[a-f0-9]{64}$/", $loaderChecksum)) {
+              throw new RuntimeException("Could not calculate the canonical Loader checksum.");
+          }
+
           $audit = app(App\Services\Audit\AuditRecorder::class);
           $disabled = collect();
-          Illuminate\Support\Facades\DB::transaction(function () use ($quickPlacements, $keepers, $keepPresets, $rolloutCodes, $actor, $site, $audit, &$disabled): void {
+          $aligned = collect();
+          $loaderRelease = null;
+          Illuminate\Support\Facades\DB::transaction(function () use ($quickPlacements, $keepers, $keepPresets, $rolloutCodes, $actor, $site, $audit, $loaderVersion, $loaderSourcePath, $loaderMinifiedPath, $loaderChecksum, &$disabled, &$aligned, &$loaderRelease): void {
+              App\Models\LoaderRelease::query()
+                  ->where("version", "!=", $loaderVersion)
+                  ->where("is_active", true)
+                  ->update(["is_active" => false, "updated_at" => now()]);
+              $loaderRelease = App\Models\LoaderRelease::query()->updateOrCreate(
+                  ["version" => $loaderVersion],
+                  [
+                      "source_path" => $loaderSourcePath,
+                      "minified_path" => $loaderMinifiedPath,
+                      "checksum" => $loaderChecksum,
+                      "is_active" => true,
+                      "notes" => "Permanent Loader with safe release handoff, Traffic Gate, Click Guard, and multi-engine delivery.",
+                      "published_at" => now(),
+                  ]
+              );
+
+              $siteConfig = App\Models\SiteConfig::withoutGlobalScopes()
+                  ->where("site_id", $site->id)
+                  ->lockForUpdate()
+                  ->firstOrFail();
+              $previousLoaderReleaseId = $siteConfig->loader_release_id;
+              if ($previousLoaderReleaseId !== $loaderRelease->id) {
+                  $siteConfig->update(["loader_release_id" => $loaderRelease->id]);
+                  $audit->record(
+                      "ops.quick_surface_repair.loader_release_aligned",
+                      $site->organization_id,
+                      $actor,
+                      $siteConfig,
+                      ["loader_release_id" => $previousLoaderReleaseId],
+                      ["loader_release_id" => $loaderRelease->id, "loader_version" => $loaderVersion, "loader_checksum" => $loaderChecksum],
+                      ["site_id" => $site->id, "source" => "lordai-quick-surface-repair-v2"]
+                  );
+              }
+
+              foreach ($keepers as $preset => $placement) {
+                  $position = $preset === "sticky_top" ? "top" : "bottom";
+                  $settings = is_array($placement->format_settings) ? $placement->format_settings : [];
+                  $before = $settings;
+                  data_set($settings, "position", $position);
+                  data_set($settings, "surface.family", "edge");
+                  data_set($settings, "surface.mount", "auto_body");
+                  data_set($settings, "surface.position", $position);
+                  data_set($settings, "surface.responsive", true);
+                  data_set($settings, "surface.providerAgnostic", true);
+                  if ($settings !== $before) {
+                      $placement->update(["format_settings" => $settings, "updated_by" => $actor->id]);
+                      $audit->record(
+                          "ops.quick_surface_repair.anchor_geometry_aligned",
+                          $placement->organization_id,
+                          $actor,
+                          $placement,
+                          ["format_settings" => $before],
+                          ["format_settings" => $settings],
+                          ["site_id" => $site->id, "placement_code" => $placement->code, "preset" => $preset, "source" => "lordai-quick-surface-repair-v2"]
+                      );
+                  }
+                  $aligned->push(["code" => $placement->code, "preset" => $preset, "position" => $position]);
+              }
+
               foreach ($quickPlacements as $placement) {
                   if ($placement->trashed()) continue;
                   $preset = (string) data_get($placement->metadata, "placement_preset", "");
@@ -397,13 +472,23 @@ jobs:
                   [],
                   [
                       "kept" => $keepers->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])->values()->all(),
+                      "aligned" => $aligned->values()->all(),
+                      "loader_version" => $loaderVersion,
+                      "loader_checksum" => $loaderChecksum,
                       "disabled" => $disabled->values()->all(),
                   ],
-                  ["source" => "lordai-quick-surface-repair-v1"]
+                  ["source" => "lordai-quick-surface-repair-v2"]
               );
           });
 
-          app(App\Services\Inventory\SiteConfigPublisher::class)->publishActiveProduction($site->fresh(), $actor);
+          $published = app(App\Services\Inventory\SiteConfigPublisher::class)->publishActiveProduction(
+              $site->fresh(),
+              $actor,
+              App\Enums\StaticDeliveryPriority::Urgent
+          );
+          if (! $published || data_get($published->payload, "loader.version") !== $loaderVersion) {
+              throw new RuntimeException("Published LordAI configuration did not select Loader ".$loaderVersion.".");
+          }
 
           $activeQuick = App\Models\Placement::withoutGlobalScopes()
               ->where("site_id", $site->id)
@@ -416,6 +501,14 @@ jobs:
           foreach (["sticky_bottom", "sticky_top"] as $preset) {
               if ($activePresets->filter(fn ($value) => $value === $preset)->count() !== 1) {
                   throw new RuntimeException("Expected exactly one active ".$preset." after reconciliation.");
+              }
+          }
+          foreach ($keepers as $preset => $placement) {
+              $expectedPosition = $preset === "sticky_top" ? "top" : "bottom";
+              $livePlacement = $activeQuick->firstWhere("id", $placement->id);
+              if (! $livePlacement || data_get($livePlacement->format_settings, "position") !== $expectedPosition
+                  || data_get($livePlacement->format_settings, "surface.position") !== $expectedPosition) {
+                  throw new RuntimeException("Anchor geometry verification failed for ".$preset.".");
               }
           }
           $remainingRolloutDisplays = $activeQuick->filter(fn ($placement) => $rolloutCodes->contains((string) $placement->code))->values();
@@ -431,7 +524,10 @@ jobs:
               ->values();
           echo json_encode([
               "site_key" => $site->public_key,
+              "config_version" => $published->version,
+              "loader_version" => data_get($published->payload, "loader.version"),
               "active_anchors" => $activeAnchors->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])->values()->all(),
+              "aligned_anchors" => $aligned->values()->all(),
               "preserved_quick_surfaces" => $preservedQuick->map(fn ($placement) => ["code" => $placement->code, "preset" => data_get($placement->metadata, "placement_preset")])->values()->all(),
               "disabled" => $disabled->values()->all(),
           ], JSON_THROW_ON_ERROR).PHP_EOL;
@@ -459,7 +555,7 @@ jobs:
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
           set -euo pipefail
-          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v1.static-edge-dispatched"
+          dispatch_marker="$REMOTE_HOME/shared/storage/app/ops/lordai-quick-surface-repair-v2.static-edge-dispatched"
           ssh -p "$SSH_PORT" "$USER@$HOST" "DISPATCH_MARKER='$dispatch_marker' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
           set -euo pipefail
           install -d -m 700 "$(dirname "$DISPATCH_MARKER")"

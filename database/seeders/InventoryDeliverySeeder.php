@@ -12,17 +12,17 @@ class InventoryDeliverySeeder extends Seeder
     {
         $source = public_path('assets/hm-loader.js');
         $minified = public_path('assets/hm-loader.min.js');
-        $checksum = is_file($minified) ? hash_file('sha256', $minified) : hash('sha256', 'hm-loader-1.3.0');
+        $checksum = is_file($minified) ? hash_file('sha256', $minified) : hash('sha256', 'hm-loader-2.0.0');
 
-        LoaderRelease::query()->where('version', '!=', '1.3.0')->update(['is_active' => false]);
+        LoaderRelease::query()->where('version', '!=', '2.0.0')->update(['is_active' => false]);
         LoaderRelease::query()->updateOrCreate(
-            ['version' => '1.3.0'],
+            ['version' => '2.0.0'],
             [
                 'source_path' => 'assets/hm-loader.js',
                 'minified_path' => 'assets/hm-loader.min.js',
                 'checksum' => $checksum,
                 'is_active' => true,
-                'notes' => 'Browser Prebid and GAM delivery with modular native-demand fallback controlled by static configuration.',
+                'notes' => 'Permanent Loader with GAM, standalone Prebid, Direct Demand, Traffic Gate, Click Guard, and release handoff support.',
                 'published_at' => now(),
             ],
         );

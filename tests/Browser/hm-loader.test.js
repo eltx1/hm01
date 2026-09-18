@@ -66,11 +66,12 @@ function createHarness(config, {
     gpc = false,
     diagnosticToken = null,
     deferredGpt = false,
+    delegatedLoader = false,
 } = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
         pageTargeting: {}, slotTargeting: {}, lazy: null, singleRequest: 0,
-        pageConfigs: [], privacySettings: [], tcfCallback: null, diagnosticPosts: [], cleanedUrls: [],
+        pageConfigs: [], privacySettings: [], tcfCallback: null, diagnosticPosts: [], cleanedUrls: [], delegatedLoads: 0,
     };
     const elements = placementCodes.map(element);
     const scriptAttributes = {
@@ -132,6 +133,17 @@ function createHarness(config, {
                     metrics.gptLoads += 1;
                     if (deferredGpt) metrics.releaseGpt = () => node.onload?.();
                     else queueMicrotask(() => node.onload?.());
+                    return;
+                }
+                if (delegatedLoader && /\/assets\/hm-loader\.min\.js(?:\?|$)/.test(String(node.src || ''))) {
+                    metrics.delegatedLoads += 1;
+                    queueMicrotask(() => {
+                        const previousScript = document.currentScript;
+                        document.currentScript = node;
+                        vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.delegated.js' });
+                        document.currentScript = previousScript;
+                        node.onload?.();
+                    });
                 }
             },
         },
@@ -236,6 +248,31 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.fetches.length, 3);
     assert.match(metrics.fetches[1], /\/manifest\.json$/);
     assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
+});
+
+test('release mismatch hands boot to the delegated Loader without sharing a deadlocked boot Promise', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, { delegatedLoader: true });
+
+    await sandbox.HorusMediaLoader.boot();
+
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
+    assert.equal(sandbox.__HM_DISABLE_AUTOBOOT__, true);
+
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(metrics.gptLoads, 1);
 });
 
 test('concurrent scans while GPT loads reserve one GAM slot owner', async () => {
