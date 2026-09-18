@@ -65,6 +65,22 @@ Optional development attributes:
 
 Production publishers normally need only `data-site-key`.
 
+### Quick auto-mount and primary content
+
+Quick Monetize surfaces do not require one new publisher snippet per ad. The permanent Loader can create their placement containers automatically from public configuration. Edge placements such as top/bottom sticky anchors mount against the document viewport and do not need content discovery.
+
+In-content placements are CMS- and content-type-agnostic. The Loader first looks for an explicit publisher landmark:
+
+```html
+<main data-hm-content-root>
+    <!-- article, video player, gallery, feed, tool, SPA view, etc. -->
+</main>
+```
+
+That attribute is optional. Without it, the Loader uses standard semantic/application primary-content landmarks such as `[itemprop="articleBody"]`, common content classes, `[role="main"]`, `#primary`, `#main`, `#content`, `article`, and `main`. It never requires WordPress. If no safe primary-content region can be identified, an automatic middle placement falls back to the document end rather than guessing inside navigation, headers, or application chrome. Advanced/manual placements remain available when a publisher needs an exact slot location.
+
+The permanent Loader itself must be installed in the global/site-wide template (or application root layout) for every URL that should be monetized. Installing the Loader only in homepage content does not make it available on internal routes.
+
 ## Inventory model
 
 ### Ad units
