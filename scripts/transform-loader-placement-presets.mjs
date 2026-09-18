@@ -68,8 +68,11 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
         if (middleTarget && content) {
             var children = contentMountChildren(content);
-            var midpoint = Math.floor(children.length / 2);
-            if (children.length && content.insertBefore) {
+            // With one primary block (for example a video player), "middle"
+            // has no safe split point; append after it instead of placing the ad
+            // before the only piece of content.
+            if (children.length > 1 && content.insertBefore) {
+                var midpoint = Math.floor(children.length / 2);
                 content.insertBefore(element, children[midpoint] || null);
                 return;
             }
