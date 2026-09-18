@@ -67,7 +67,7 @@ function runAtWidth(width, overrides = {}) {
     const sandbox = { document, MutationObserver, console, innerWidth: width, innerHeight: 900, googletag };
     sandbox.window = sandbox;
     vm.runInNewContext(source, sandbox, { filename: 'hm-gpt-direct.js' });
-    return { target, attributes, definitions, displayCalls };
+    return { target, attributes, definitions, displayCalls, listeners };
 }
 
 test('trusted GPT runtime exposes only mobile-mapped sizes to GPT on a mobile viewport', () => {
@@ -130,4 +130,43 @@ test('responsive GPT runtime contains no iframe or srcdoc execution path', () =>
     assert.doesNotMatch(source, /srcdoc/i);
     assert.doesNotMatch(source, /createElement\(['"]iframe['"]\)/);
     assert.doesNotMatch(source, /setForceSafeFrame/);
+});
+
+
+test('trusted GPT runtime accepts an official fluid-only native slot', () => {
+    const { attributes, definitions, displayCalls, listeners, target } = runAtWidth(390, {
+        'data-hm-gpt-sizes': '["fluid"]',
+        'data-hm-gpt-size-map': '',
+    });
+
+    assert.equal(definitions.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), ['fluid']);
+    assert.deepEqual(displayCalls, ['hm-gpt-responsive-test']);
+    assert.equal(target.style.width, '100%');
+    assert.equal(target.style.height, '');
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'requested');
+
+    assert.equal(listeners.length, 1);
+    listeners[0]({ slot: definitions[0], isEmpty: false, size: null });
+
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'rendered');
+    assert.equal(attributes['data-hm-gpt-status'], 'rendered');
+});
+
+test('trusted GPT runtime preserves fluid alongside fixed in-article sizes', () => {
+    const { definitions, listeners, attributes } = runAtWidth(1440, {
+        'data-hm-gpt-sizes': '[[300,250],[336,280],"fluid"]',
+        'data-hm-gpt-size-map': '',
+    });
+
+    assert.equal(definitions.length, 1);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(definitions[0].sizes)),
+        [[300, 250], [336, 280], 'fluid'],
+    );
+
+    listeners[0]({ slot: definitions[0], isEmpty: false, size: [320, 180] });
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'rendered');
+    assert.equal(attributes['data-hm-gpt-rendered-width'], '320');
+    assert.equal(attributes['data-hm-gpt-rendered-height'], '180');
 });
