@@ -93,8 +93,15 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $containerId = 'hm-gpt-'.$placement->id;
         $sizes = $gpt['sizes'];
         $placementSizes = $this->placementSizes($placement);
-        if ($placementSizes === []) throw new RuntimeException('The selected Horus placement has no active fixed display size for Google GPT.');
-        foreach ($sizes as $size) if (! collect($placementSizes)->contains(fn (array $allowed): bool => $allowed === $size)) throw new RuntimeException('The Google GPT slot size '.implode('x', $size).' is not enabled on the selected Horus placement.');
+        if ($placementSizes === []) throw new RuntimeException('The selected Horus placement has no active fixed or fluid display size for Google GPT.');
+        $allowedSizeKeys = collect($placementSizes)
+            ->mapWithKeys(fn ($allowed): array => [$this->gptSizeKey($allowed) => true]);
+        foreach ($sizes as $size) {
+            if (! $allowedSizeKeys->has($this->gptSizeKey($size))) {
+                $label = $size === 'fluid' ? 'fluid' : implode('x', $size);
+                throw new RuntimeException('The Google GPT slot size '.$label.' is not enabled on the selected Horus placement.');
+            }
+        }
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
         $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'], 'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-gpt-inner-id' => $providerContainerId];
@@ -227,6 +234,32 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     }
 
     private function externalScriptUrls(string $html): array { $parsed = (new DirectTagRecipeParser())->parse($html); return collect((array) ($parsed['detectedScripts'] ?? []))->map(fn ($script): string => trim((string) ($script['url'] ?? '')))->filter()->unique()->values()->all(); }
-    private function placementSizes(DemandPlacement $placement): array { $placement->loadMissing('placement.sizes'); return $placement->placement->sizes->where('is_active', true)->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)->map(fn ($size): array => [(int) $size->width, (int) $size->height])->unique(fn (array $size): string => $size[0].'x'.$size[1])->values()->all(); }
+
+    /** @return array<int, array{0:int,1:int}|string> */
+    private function placementSizes(DemandPlacement $placement): array
+    {
+        $placement->loadMissing('placement.sizes');
+        $active = $placement->placement->sizes->where('is_active', true);
+        $sizes = $active
+            ->filter(fn ($size) => $size->size_type === 'FIXED' && $size->width && $size->height)
+            ->map(fn ($size): array => [(int) $size->width, (int) $size->height])
+            ->unique(fn (array $size): string => $size[0].'x'.$size[1])
+            ->values()
+            ->all();
+
+        if ($active->contains(fn ($size): bool => $size->size_type === 'FLUID')) {
+            $sizes[] = 'fluid';
+        }
+
+        return $sizes;
+    }
+
+    private function gptSizeKey(mixed $size): string
+    {
+        return $size === 'fluid'
+            ? 'fluid'
+            : (is_array($size) && count($size) === 2 ? ((int) $size[0]).'x'.((int) $size[1]) : 'invalid');
+    }
+
     private function isolationOrigins(array $configuration, bool $strictDns): array { return collect((array) ($configuration['isolation_allowed_origins'] ?? []))->map(fn ($origin) => $strictDns ? $this->canonicalHttpsOrigin((string) $origin) : $this->legacyHttpsOrigin((string) $origin))->filter()->unique()->take(20)->values()->all(); }
 }
