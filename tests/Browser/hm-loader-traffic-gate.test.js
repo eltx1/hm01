@@ -165,6 +165,7 @@ function createHarness(config, {
     deferredTcf = false,
     timerScale = 0.02,
     iframeFailure = false,
+    cryptoUnavailable = false,
 } = {}) {
     const metrics = {
         fetches: [],
@@ -423,7 +424,7 @@ function createHarness(config, {
         scrollY: 0,
         pageXOffset: 0,
         pageYOffset: 0,
-        crypto: {
+        crypto: cryptoUnavailable ? undefined : {
             getRandomValues(bytes) {
                 for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 17 + 11) % 256;
                 return bytes;
@@ -613,15 +614,23 @@ test('BALANCED meaningful trusted scroll can recover but disabled activity recov
         assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
         assert.equal(runtime.metrics.gptScripts, 1);
     });
-    await t.test('recovery disabled', async () => {
+    await t.test('trusted activity disabled still keeps the bounded availability fallback', async () => {
         const config = baseConfig({ policy: 'BALANCED' });
         config.trafficGate.activityRecoveryEnabled = false;
-        const runtime = createHarness(config, { gateAutoResponse: 'ERROR' });
+        config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+        const runtime = createHarness(config, { gateAutoResponse: 'ERROR', timerScale: 0.01 });
         await runtime.sandbox.HorusMediaLoader.boot();
+
         runtime.dispatchTrusted('pointerdown');
         await runtime.flush();
         assertNoMonetization(runtime.metrics);
         assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'ERROR');
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await runtime.flush();
+        assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+        assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().reason, 'MAX_WAIT_FALLBACK');
+        assert.equal(runtime.metrics.gptScripts, 1);
     });
 });
 
@@ -635,6 +644,59 @@ test('PERMISSIVE technical timeout soft-allows only after bounded maxWaitMs', as
     await boot;
     await runtime.flush();
     assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.metrics.gptScripts, 1);
+});
+
+test('BALANCED invisible gate technical failure cannot strand ads beyond bounded maxWaitMs', async () => {
+    const config = baseConfig({ policy: 'BALANCED' });
+    config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+    const runtime = createHarness(config, { gateAutoResponse: 'ERROR', timerScale: 0.01 });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(runtime.metrics);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'WAITING_FOR_ACTIVITY');
+
+    // No click, scroll, keypress, or visible challenge is required. BALANCED
+    // keeps the gate invisible and releases only after the bounded deadline
+    // when the failure was technical rather than an explicit DENIED result.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.flush();
+
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().reason, 'MAX_WAIT_FALLBACK');
+    assert.equal(runtime.metrics.gptScripts, 1);
+});
+
+test('BALANCED invisible iframe failure also soft-allows at maxWait while DENIED remains blocked', async () => {
+    const config = baseConfig({ policy: 'BALANCED' });
+    config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+    const runtime = createHarness(config, { iframeFailure: true, timerScale: 0.01 });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'WAITING_FOR_ACTIVITY');
+    assertNoMonetization(runtime.metrics);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.flush();
+
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.metrics.gptScripts, 1);
+});
+
+test('BALANCED early crypto failure is also bounded before iframe timers would normally exist', async () => {
+    const config = baseConfig({ policy: 'BALANCED' });
+    config.trafficGate.timings = { initialWaitMs: 500, maxWaitMs: 2000, retryIntervalMs: 500 };
+    const runtime = createHarness(config, { cryptoUnavailable: true, timerScale: 0.01 });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'WAITING_FOR_ACTIVITY');
+    assertNoMonetization(runtime.metrics);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await runtime.flush();
+
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'SOFT_ALLOWED');
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().reason, 'MAX_WAIT_FALLBACK');
     assert.equal(runtime.metrics.gptScripts, 1);
 });
 

@@ -491,6 +491,7 @@
 
     function canRequestAds(config) {
         if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;
+        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;
         if (state.privacyDecision && state.privacyDecision.blocked) return false;
         return !clickGuardBlocked(config);
     }
@@ -1891,12 +1892,16 @@ function nativeDefinition(config, code) {
 
     function maybeDelegateRelease(config, script) {
         var selected = config.loader || {};
-        if (!selected.assetUrl || !selected.version || selected.version === VERSION || window.__HM_RELEASE_DELEGATED__) return false;
+        if (!selected.assetUrl || !selected.version || selected.version === VERSION) return null;
+        if (String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__) return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        if (window.__HM_RELEASE_DELEGATED__) return null;
         try {
-            if (new URL(selected.assetUrl, window.location.href).hostname === 'app.horusmedia.net') return false;
+            if (new URL(selected.assetUrl, window.location.href).hostname === 'app.horusmedia.net') return null;
         } catch (error) {
-            return false;
+            return null;
         }
+
         window.__HM_RELEASE_DELEGATED__ = true;
         var replacement = document.createElement('script');
         replacement.async = true;
@@ -1904,19 +1909,100 @@ function nativeDefinition(config, code) {
         replacement.setAttribute('data-site-key', config.siteKey);
         replacement.setAttribute('data-config-base', configBase(script));
         replacement.setAttribute('data-environment', String(scriptData(script, 'environment') || 'production'));
-        (document.head || document.documentElement).appendChild(replacement);
-        return true;
+        replacement.setAttribute('data-delegated-handoff', '1');
+
+        // The delegated release shares the public Loader state key for backwards
+        // compatibility. Suppress its implicit autoboot and hand control over
+        // explicitly after the replacement script has installed its API. This
+        // prevents the replacement from inheriting the current boot Promise and
+        // returning it before either release reaches scan().
+        var hadAutobootFlag = Object.prototype.hasOwnProperty.call(window, '__HM_DISABLE_AUTOBOOT__');
+        var previousAutobootFlag = window.__HM_DISABLE_AUTOBOOT__;
+        window.__HM_DISABLE_AUTOBOOT__ = true;
+
+        var handoffPromise = new Promise(function (resolve) {
+            var settled = false;
+            var loadCompleted = false;
+            var timeout = window.setTimeout(function () {
+                if (loadCompleted) return;
+                finish(new Error('Delegated Loader release timed out'));
+            }, 15000);
+
+            function restoreAutobootFlag() {
+                if (hadAutobootFlag) window.__HM_DISABLE_AUTOBOOT__ = previousAutobootFlag;
+                else {
+                    try { delete window.__HM_DISABLE_AUTOBOOT__; }
+                    catch (error) { window.__HM_DISABLE_AUTOBOOT__ = false; }
+                }
+            }
+
+            function finish(error) {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timeout);
+                if (error) {
+                    // A timed-out or failed replacement must stay fail-closed even
+                    // if the browser completes its download later or publisher
+                    // code requests a forced refresh against the old runtime.
+                    window.__HM_RELEASE_HANDOFF_FAILED__ = true;
+                    window.__HM_DISABLE_AUTOBOOT__ = true;
+                    replacement.onload = null;
+                    replacement.onerror = null;
+                    try {
+                        if (replacement.parentNode) replacement.parentNode.removeChild(replacement);
+                        else if (typeof replacement.remove === 'function') replacement.remove();
+                    } catch (removalError) {}
+                    log(config, 'Delegated Loader release stopped safely', error);
+                } else {
+                    restoreAutobootFlag();
+                }
+                resolve(true);
+            }
+
+            replacement.onload = function () {
+                if (settled) return;
+                loadCompleted = true;
+                window.clearTimeout(timeout);
+                restoreAutobootFlag();
+                var delegatedLoader = window.HorusMediaLoader;
+                if (!delegatedLoader || typeof delegatedLoader.boot !== 'function') {
+                    finish(new Error('Delegated Loader release did not install a boot API'));
+                    return;
+                }
+                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement })).then(function () {
+                    finish(null);
+                }).catch(finish);
+            };
+            replacement.onerror = function () {
+                if (settled) return;
+                finish(new Error('Delegated Loader release failed to load'));
+            };
+
+            try {
+                (document.head || document.documentElement).appendChild(replacement);
+            } catch (error) {
+                finish(error);
+            }
+        });
+        window.__HM_RELEASE_HANDOFF_PROMISE__ = handoffPromise;
+        return handoffPromise.finally(function () {
+            if (window.__HM_RELEASE_HANDOFF_PROMISE__ === handoffPromise) window.__HM_RELEASE_HANDOFF_PROMISE__ = null;
+        });
     }
 
     function boot(options) {
         options = options || {};
+        if (window.__HM_RELEASE_HANDOFF_FAILED__ && !options.delegatedHandoff) return Promise.resolve([]);
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__ && !options.delegatedHandoff) {
+            return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        }
         var script = options.script || findScript();
         var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
         if (!siteKey || !window.fetch) return Promise.resolve([]);
         if (state.booting && !options.force) return state.booting;
 
-        state.booting = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
+        var bootPromise = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
             if (normalizeControls(globalControls).adServingDisabled) {
                 state.config = { siteKey: siteKey, status: 'paused', controls: globalControls };
                 log(state.config, 'Global advertising kill switch is active');
@@ -1947,7 +2033,8 @@ function nativeDefinition(config, code) {
                 log(config, 'Click Guard blocked future advertising requests in this browser');
                 return [];
             }
-            if (maybeDelegateRelease(config, script)) return [];
+            var delegation = maybeDelegateRelease(config, script);
+            if (delegation) return delegation.then(function () { return []; });
             installSpaSupport();
             return scan(config);
             });
@@ -1955,9 +2042,12 @@ function nativeDefinition(config, code) {
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
         }).finally(function () {
-            state.booting = null;
+            // A delegated release may have started a newer boot on the shared
+            // state object. Only the Promise that owns the slot may clear it.
+            if (state.booting === bootPromise) state.booting = null;
         });
-        return state.booting;
+        state.booting = bootPromise;
+        return bootPromise;
     }
 
     window.HorusMediaLoader = {

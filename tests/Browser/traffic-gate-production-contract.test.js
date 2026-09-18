@@ -9,6 +9,7 @@ const loader = applyTrafficGateTransform(loaderBase);
 const configSource = await readFile(new URL('../../config/traffic_gate.php', import.meta.url), 'utf8');
 const realBrowserSuite = await readFile(new URL('./traffic-gate.playwright.spec.js', import.meta.url), 'utf8');
 const snapshotBuilder = await readFile(new URL('../../app/Services/StaticDelivery/StaticDeliverySnapshotBuilder.php', import.meta.url), 'utf8');
+const bootstrapWorkflow = await readFile(new URL('../../.github/workflows/bootstrap-cloudflare-static-edge.yml', import.meta.url), 'utf8');
 
 const ALWAYS_PASS_INVISIBLE = '1x00000000000000000000BB';
 const ALWAYS_FAIL_INVISIBLE = '2x00000000000000000000BB';
@@ -39,6 +40,22 @@ test('BALANCED initial stall keeps the bound gate channel alive so a late valid 
     assert.ok(loader.includes("enterBalancedRecovery('INITIAL_WAIT_STALL', true)"));
     assert.match(loader, /if \(type === 'HORUS_TRAFFIC_GATE_PASS'\) \{\s*trafficGateAllow\(TRAFFIC_GATE_STATES\.passed, 'PASS'\);/);
     assert.match(loader, /function trafficGateMessageListener\(event\)[\s\S]*event\.source !== gate\.iframe\.contentWindow/);
+});
+
+test('BALANCED technical recovery preserves a bounded fallback instead of stranding monetization forever', () => {
+    assert.match(loader, /function trafficGateEnsureMaxTimer\(\)/);
+    assert.match(loader, /trafficGateEnsureMaxTimer\(\);\s*if \(!settings\.valid\)/, 'the max-wait deadline must exist before validation, crypto, or iframe creation can fail');
+    assert.match(loader, /preserveMaxTimer:\s*true,\s*preserveActivity:\s*true/);
+    assert.match(loader, /if \(gate\.settings && gate\.settings\.policy === 'BALANCED'\) \{[\s\S]*trafficGateAllow\(TRAFFIC_GATE_STATES\.softAllowed, 'MAX_WAIT_FALLBACK'\)/);
+    assert.match(loader, /gate\.status === TRAFFIC_GATE_STATES\.blocked[\s\S]*return/);
+});
+
+test('production bootstrap provisions only an invisible Turnstile widget for the hidden gate origin', () => {
+    assert.match(bootstrapWorkflow, /Ensure invisible Turnstile widget exists/);
+    assert.match(bootstrapWorkflow, /\.mode == "invisible"/);
+    assert.match(bootstrapWorkflow, /domains:\["verify\.horusmedia\.net"\]/);
+    assert.match(bootstrapWorkflow, /mode:"invisible"/);
+    assert.match(bootstrapWorkflow, /clearance_level:"no_clearance"/);
 });
 
 test('terminal decisions clean up the frame and make duplicate late messages inert', () => {

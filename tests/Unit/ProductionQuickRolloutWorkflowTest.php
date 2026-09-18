@@ -16,7 +16,9 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString('Expected exactly one live site for domain', $workflow);
         $this->assertStringContainsString('sticky_bottom', $workflow);
         $this->assertStringContainsString('sticky_top', $workflow);
-        $this->assertStringContainsString('lordai-quick-surface-repair-v1.done', $workflow);
+        $this->assertStringContainsString('lordai-quick-surface-repair-v2.done', $workflow);
+        $this->assertStringContainsString('"would_pin_loader_release" => "2.0.0"', $workflow);
+        $this->assertStringContainsString('"would_align_anchor_surface_positions"', $workflow);
         $this->assertStringNotContainsString('SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2', $workflow);
     }
 
@@ -66,7 +68,7 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertIsString($workflow);
         $this->assertStringContainsString('Resolve one-time repair state', $workflow);
         $this->assertStringContainsString('id: repair_state', $workflow);
-        $this->assertStringContainsString('lordai-quick-surface-repair-v1.static-edge-dispatched', $workflow);
+        $this->assertStringContainsString('lordai-quick-surface-repair-v2.static-edge-dispatched', $workflow);
         $this->assertStringContainsString("printf '%s' repair", $workflow);
         $this->assertStringContainsString("printf '%s' dispatch", $workflow);
         $this->assertStringContainsString("printf '%s' complete", $workflow);
@@ -76,6 +78,21 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString('gh workflow run sync-production-static-edge.yml', $workflow);
         $this->assertStringContainsString('--ref main', $workflow);
         $this->assertStringContainsString('Mark static-edge reconciliation dispatched', $workflow);
+    }
+
+    public function test_lordai_repair_aligns_loader_metadata_and_anchor_geometry_before_urgent_publication(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+
+        $this->assertIsString($workflow);
+        $this->assertStringContainsString('$loaderVersion = "2.0.0";', $workflow);
+        $this->assertStringContainsString('App\\Models\\LoaderRelease::query()->updateOrCreate', $workflow);
+        $this->assertStringContainsString('["loader_release_id" => $loaderRelease->id]', $workflow);
+        $this->assertStringContainsString('data_set($settings, "surface.position", $position);', $workflow);
+        $this->assertStringContainsString('ops.quick_surface_repair.anchor_geometry_aligned', $workflow);
+        $this->assertStringContainsString('ops.quick_surface_repair.loader_release_aligned', $workflow);
+        $this->assertStringContainsString('App\\Enums\\StaticDeliveryPriority::Urgent', $workflow);
+        $this->assertStringContainsString('data_get($published->payload, "loader.version") !== $loaderVersion', $workflow);
     }
 
     public function test_static_sync_retries_transient_cloudflare_pages_publication_failure_and_stays_fail_closed(): void

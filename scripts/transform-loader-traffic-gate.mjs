@@ -12,6 +12,7 @@ const trafficGateRuntime = String.raw`
     var TRAFFIC_GATE_PROTOCOL_VERSION = 1;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
     var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
+    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 6000;
     var TRAFFIC_GATE_STATES = {
         disabled: 'DISABLED', booting: 'BOOTING', pending: 'PENDING', passed: 'PASSED',
         error: 'ERROR', timeout: 'TIMEOUT', unavailable: 'UNAVAILABLE',
@@ -119,6 +120,18 @@ const trafficGateRuntime = String.raw`
             window.clearTimeout(gate[name]);
             gate[name] = null;
         }
+    }
+
+    function trafficGateEnsureMaxTimer() {
+        var gate = trafficGateRuntimeState();
+        if (gate.maxTimer !== null || !gate.settings) return;
+        var policy = String(gate.settings.policy || '').toUpperCase();
+        if (policy !== 'BALANCED' && policy !== 'PERMISSIVE') return;
+        var delay = Number(gate.settings.maxWaitMs);
+        if (!Number.isInteger(delay) || delay < 2000 || delay > 15000) {
+            delay = TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS;
+        }
+        gate.maxTimer = window.setTimeout(trafficGateOnMaxWait, delay);
     }
 
     function trafficGateRemoveMessageListener() {
@@ -246,7 +259,11 @@ const trafficGateRuntime = String.raw`
         installTrafficGateActivityRecovery();
         settleTrafficGateDecision();
         trafficGateClearTimer('initialTimer');
-        if (!keepGateRuntime) trafficGateCleanup({ preserveActivity: true });
+        // BALANCED technical failures may recover immediately from trusted
+        // activity, but must never strand monetization forever. Preserve the
+        // bounded max-wait timer even after the invisible gate iframe/runtime
+        // is cleaned up so a non-DENIED technical failure can soft-allow.
+        if (!keepGateRuntime) trafficGateCleanup({ preserveMaxTimer: true, preserveActivity: true });
         return true;
     }
 
@@ -265,13 +282,18 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (gate.settings.policy === 'BALANCED') {
+            trafficGateEnsureMaxTimer();
             if (enterBalancedRecovery(reason, false)) return;
-            trafficGateCleanup();
+            // Trusted-activity recovery is optional; the bounded availability
+            // fallback is not. With activity recovery disabled, clean the
+            // invisible gate runtime but keep the max-wait timer alive.
+            trafficGateCleanup({ preserveMaxTimer: true });
             settleTrafficGateDecision();
             return;
         }
         // PERMISSIVE technical failures remain blocked until the bounded max-wait
         // timer soft-allows. Keep the bounded decision pending until that fallback.
+        trafficGateEnsureMaxTimer();
         trafficGateCleanup({ preserveMaxTimer: true });
     }
 
@@ -292,8 +314,13 @@ const trafficGateRuntime = String.raw`
             trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
             return;
         }
-        if (gate.settings && gate.settings.policy === 'BALANCED' && gate.settings.activityRecoveryEnabled === true) {
-            enterBalancedRecovery('MAX_WAIT', false);
+        if (gate.settings && gate.settings.policy === 'BALANCED') {
+            // BALANCED is a soft traffic-quality filter, not a permanent
+            // availability dependency. If the invisible Turnstile path never
+            // yields PASS or DENIED, release monetization at the configured
+            // bounded deadline regardless of whether early trusted-activity
+            // recovery is enabled. Explicit DENIED remains fail-closed above.
+            trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
             return;
         }
         trafficGateSetState(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
@@ -364,6 +391,9 @@ const trafficGateRuntime = String.raw`
         gate.startedAt = Date.now();
         trafficGateSetState(TRAFFIC_GATE_STATES.booting, null);
         var decision = trafficGateDecisionPromise();
+        // Establish the bounded availability deadline before any operation
+        // that can fail (configuration validation, crypto, iframe creation).
+        trafficGateEnsureMaxTimer();
         if (!settings.valid) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'INVALID_CONFIGURATION');
             return decision;
@@ -421,7 +451,7 @@ const trafficGateRuntime = String.raw`
 
         trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
         gate.initialTimer = window.setTimeout(trafficGateOnInitialWait, settings.initialWaitMs);
-        gate.maxTimer = window.setTimeout(trafficGateOnMaxWait, settings.maxWaitMs);
+        trafficGateEnsureMaxTimer();
         try {
             var parent = document.body || document.documentElement;
             if (!parent || !parent.appendChild) throw new Error('No frame parent');
@@ -445,7 +475,7 @@ const trafficGateRuntime = String.raw`
 const bootReplacement = String.raw`    function startMonetization(config, script, diagnostic) {
         if (!config || state.config !== config || !trafficGateAllowsMonetization()) return Promise.resolve([]);
         if (state.monetizationStartPromise) return state.monetizationStartPromise;
-        state.monetizationStartPromise = reportPrivacyDiagnostic(config, diagnostic).then(function () {
+        var monetizationPromise = reportPrivacyDiagnostic(config, diagnostic).then(function () {
             if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
                 log(config, 'Advertising is disabled; no advertising calls were made');
                 return [];
@@ -459,17 +489,29 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 log(config, 'Advertising remains blocked by a local serving prerequisite');
                 return [];
             }
-            if (maybeDelegateRelease(config, script)) return [];
+            var delegation = maybeDelegateRelease(config, script);
+            if (delegation) {
+                // The delegated release uses the same public runtime state. Give
+                // it ownership of monetization startup before awaiting its boot;
+                // otherwise it would inherit this Promise and wait on itself.
+                if (state.monetizationStartPromise === monetizationPromise) state.monetizationStartPromise = null;
+                return delegation.then(function () { return []; });
+            }
             installSpaSupport();
             return scan(config);
         }).finally(function () {
-            state.monetizationStartPromise = null;
+            if (state.monetizationStartPromise === monetizationPromise) state.monetizationStartPromise = null;
         });
-        return state.monetizationStartPromise;
+        state.monetizationStartPromise = monetizationPromise;
+        return monetizationPromise;
     }
 
     function boot(options) {
         options = options || {};
+        if (window.__HM_RELEASE_HANDOFF_FAILED__ && !options.delegatedHandoff) return Promise.resolve([]);
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__ && !options.delegatedHandoff) {
+            return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        }
         var script = options.script || findScript();
         var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
@@ -480,7 +522,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         // Neither waits for Turnstile or CMP resolution.
         var globalPromise = fetchGlobalControl(script, Boolean(options.force));
         var configPromise = fetchConfig(script, siteKey, Boolean(options.force));
-        state.booting = Promise.all([globalPromise, configPromise]).then(function (prepared) {
+        var bootPromise = Promise.all([globalPromise, configPromise]).then(function (prepared) {
             var globalControls = prepared[0] || {};
             var config = prepared[1];
             config.controls = mergeControls(config.controls || {}, globalControls);
@@ -518,9 +560,12 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
         }).finally(function () {
-            state.booting = null;
+            // A delegated release can replace the shared boot slot while this
+            // Promise is still pending. Never clear the newer owner's Promise.
+            if (state.booting === bootPromise) state.booting = null;
         });
-        return state.booting;
+        state.booting = bootPromise;
+        return bootPromise;
     }
 
     window.HorusMediaLoader = {`;
@@ -566,8 +611,8 @@ export function applyTrafficGateTransform(input) {
 
     source = replaceOnce(
         source,
-        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
-        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (!trafficGateAllowsMonetization()) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
+        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
+        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;\n        if (!trafficGateAllowsMonetization()) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
         'central request gate',
     );
 

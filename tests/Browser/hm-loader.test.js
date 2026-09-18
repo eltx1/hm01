@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const loaderSource = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
+const builtLoaderSource = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 
 function activeConfig(overrides = {}) {
     return {
@@ -66,11 +67,15 @@ function createHarness(config, {
     gpc = false,
     diagnosticToken = null,
     deferredGpt = false,
+    delegatedLoader = false,
+    deferredDelegatedLoader = false,
+    manualDelegatedTimeout = false,
+    runtimeSource = loaderSource,
 } = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
         pageTargeting: {}, slotTargeting: {}, lazy: null, singleRequest: 0,
-        pageConfigs: [], privacySettings: [], tcfCallback: null, diagnosticPosts: [], cleanedUrls: [],
+        pageConfigs: [], privacySettings: [], tcfCallback: null, diagnosticPosts: [], cleanedUrls: [], delegatedLoads: 0,
     };
     const elements = placementCodes.map(element);
     const scriptAttributes = {
@@ -132,6 +137,19 @@ function createHarness(config, {
                     metrics.gptLoads += 1;
                     if (deferredGpt) metrics.releaseGpt = () => node.onload?.();
                     else queueMicrotask(() => node.onload?.());
+                    return;
+                }
+                if (delegatedLoader && /\/assets\/hm-loader\.min\.js(?:\?|$)/.test(String(node.src || ''))) {
+                    metrics.delegatedLoads += 1;
+                    const installDelegatedLoader = () => {
+                        const previousScript = document.currentScript;
+                        document.currentScript = node;
+                        vm.runInNewContext(runtimeSource, sandbox, { filename: 'hm-loader.delegated.js' });
+                        document.currentScript = previousScript;
+                        node.onload?.();
+                    };
+                    if (deferredDelegatedLoader) metrics.releaseDelegatedLoader = installDelegatedLoader;
+                    else queueMicrotask(installDelegatedLoader);
                 }
             },
         },
@@ -157,12 +175,24 @@ function createHarness(config, {
     class Event { constructor(type) { this.type = type; } }
     const listeners = {};
     const history = { state: null, pushState() {}, replaceState(state, title, url) { metrics.cleanedUrls.push(String(url)); } };
+    const sandboxSetTimeout = (callback, delay, ...args) => {
+        if (manualDelegatedTimeout && delay === 15000) {
+            const handle = { delegatedHandoffTimeout: true };
+            metrics.expireDelegatedHandoff = () => callback(...args);
+            return handle;
+        }
+        return setTimeout(callback, delay, ...args);
+    };
+    const sandboxClearTimeout = (handle) => {
+        if (handle && handle.delegatedHandoffTimeout) return;
+        clearTimeout(handle);
+    };
     const sandbox = {
         console,
         URL,
         Promise,
-        setTimeout,
-        clearTimeout,
+        setTimeout: sandboxSetTimeout,
+        clearTimeout: sandboxClearTimeout,
         setInterval,
         clearInterval,
         queueMicrotask,
@@ -215,7 +245,7 @@ function createHarness(config, {
         };
     }
     sandbox.window = sandbox;
-    vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
+    vm.runInNewContext(runtimeSource, sandbox, { filename: 'hm-loader.js' });
 
     return { sandbox, metrics, elements };
 }
@@ -236,6 +266,161 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.equal(metrics.fetches.length, 3);
     assert.match(metrics.fetches[1], /\/manifest\.json$/);
     assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
+});
+
+test('built release mismatch hands boot to the delegated Loader without sharing runtime Promises', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    const concurrentBoot = sandbox.HorusMediaLoader.boot();
+    assert.equal(concurrentBoot, firstBoot);
+    await Promise.all([firstBoot, concurrentBoot]);
+
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.monetizationStartPromise, null);
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
+    assert.equal(sandbox.__HM_DISABLE_AUTOBOOT__, true);
+
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(metrics.gptLoads, 1);
+});
+
+test('built forced refresh joins an in-flight delegated release handoff', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        deferredDelegatedLoader: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && !metrics.releaseDelegatedLoader; attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(typeof metrics.releaseDelegatedLoader, 'function');
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, false);
+
+    const refreshDuringHandoff = sandbox.HorusMediaLoader.refresh();
+    assert.equal(refreshDuringHandoff, sandbox.__HM_RELEASE_HANDOFF_PROMISE__);
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(metrics.gptLoads, 0);
+
+    metrics.releaseDelegatedLoader();
+    await Promise.all([firstBoot, refreshDuringHandoff]);
+
+    assert.equal(metrics.delegatedLoads, 1);
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_PROMISE__, null);
+});
+
+test('built delegated script load completion disarms the handoff timeout before delegated boot settles', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        deferredDelegatedLoader: true,
+        manualDelegatedTimeout: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && (!metrics.expireDelegatedHandoff || !metrics.releaseDelegatedLoader); attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(typeof metrics.expireDelegatedHandoff, 'function');
+    assert.equal(typeof metrics.releaseDelegatedLoader, 'function');
+
+    metrics.releaseDelegatedLoader();
+
+    // Simulate the stale 15s callback firing after the replacement script loaded
+    // but while its delegated boot is still settling. The load timeout must be
+    // inert now so the delegated runtime can reach its own bounded gate decision.
+    metrics.expireDelegatedHandoff();
+    await firstBoot;
+
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_FAILED__, undefined);
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_PROMISE__, null);
+});
+
+test('built failed handoff stays closed across late arrival and forced refresh', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        deferredDelegatedLoader: true,
+        manualDelegatedTimeout: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && !metrics.expireDelegatedHandoff; attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(typeof metrics.expireDelegatedHandoff, 'function');
+    assert.equal(typeof metrics.releaseDelegatedLoader, 'function');
+
+    metrics.expireDelegatedHandoff();
+    await firstBoot;
+
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_FAILED__, true);
+    assert.equal(sandbox.__HM_DISABLE_AUTOBOOT__, true);
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, false);
+
+    await sandbox.HorusMediaLoader.refresh();
+    assert.equal(metrics.gptLoads, 0);
+
+    metrics.releaseDelegatedLoader();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, false);
+
+    await sandbox.HorusMediaLoader.refresh();
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(metrics.defined.length, 0);
+    assert.equal(metrics.displayed.length, 0);
 });
 
 test('concurrent scans while GPT loads reserve one GAM slot owner', async () => {
