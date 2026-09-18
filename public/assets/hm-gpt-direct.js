@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V3__';
+    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V4__';
     if (window[STATE_KEY]) {
         if (typeof window[STATE_KEY].scan === 'function') window[STATE_KEY].scan();
         return;
@@ -10,7 +10,7 @@
     var state = window[STATE_KEY] = { observer: null, scan: scan, libraryInjected: false };
     var SELECTOR = '[data-hm-gpt-direct="1"]';
     var GPT_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-    var RUNTIME_VERSION = '3';
+    var RUNTIME_VERSION = '4';
     var MIN_RENDER_RATIO = 0.4;
     var MAX_RENDER_RATIO = 2;
 
@@ -26,11 +26,17 @@
         return [width, height];
     }
 
+    function normalizedSlotSize(size) {
+        if (typeof size === 'string' && size.toLowerCase() === 'fluid') return 'fluid';
+        if (Array.isArray(size) && size.length === 1 && String(size[0] || '').toLowerCase() === 'fluid') return 'fluid';
+        return normalizedSize(size);
+    }
+
     function sizes(value) {
         try {
             var decoded = JSON.parse(String(value || ''));
             if (!Array.isArray(decoded) || !decoded.length || decoded.length > 20) return null;
-            var normalized = decoded.map(normalizedSize);
+            var normalized = decoded.map(normalizedSlotSize);
             return normalized.every(Boolean) ? normalized : null;
         } catch (error) {
             return null;
@@ -38,7 +44,7 @@
     }
 
     function sizeKey(size) {
-        return size[0] + 'x' + size[1];
+        return size === 'fluid' ? 'fluid' : size[0] + 'x' + size[1];
     }
 
     function sizeMappings(value) {
@@ -50,7 +56,7 @@
                 mapping = mapping || {};
                 var viewport = Array.isArray(mapping.viewport) ? mapping.viewport : [0, 0];
                 var maximum = Array.isArray(mapping.maxViewport) ? mapping.maxViewport : [0, 0];
-                var mappedSizes = Array.isArray(mapping.sizes) ? mapping.sizes.map(normalizedSize).filter(Boolean) : [];
+                var mappedSizes = Array.isArray(mapping.sizes) ? mapping.sizes.map(normalizedSlotSize).filter(Boolean) : [];
                 return {
                     minWidth: Math.max(0, Number(viewport[0] || 0)),
                     minHeight: Math.max(0, Number(viewport[1] || 0)),
@@ -113,18 +119,20 @@
         if (!normalized) return null;
 
         for (var exactIndex = 0; exactIndex < allowedSizes.length; exactIndex += 1) {
-            if (allowedSizes[exactIndex][0] === normalized[0] && allowedSizes[exactIndex][1] === normalized[1]) return normalized;
+            var exact = allowedSizes[exactIndex];
+            if (exact === 'fluid') continue;
+            if (exact[0] === normalized[0] && exact[1] === normalized[1]) return normalized;
         }
 
         // Google Ad Manager can legitimately return a rendered creative whose
         // pixel dimensions differ from the requested slot because of ad-slot
         // expansion/contraction or creatives configured to differ from the ad
         // unit size. Treat that trusted GPT result as valid only when it remains
-        // reasonably close to at least one reviewed/requested size. This keeps
-        // the original placement boundary while avoiding false rejection of
-        // normal GAM responses such as a 980x100 creative for a 980x90 request.
+        // reasonably close to at least one reviewed/requested fixed size.
+        // Fluid is intentionally unbounded in height and is handled separately.
         for (var index = 0; index < allowedSizes.length; index += 1) {
             var requested = allowedSizes[index];
+            if (requested === 'fluid') continue;
             var widthRatio = normalized[0] / requested[0];
             var heightRatio = normalized[1] / requested[1];
             if (widthRatio >= MIN_RENDER_RATIO && widthRatio <= MAX_RENDER_RATIO
@@ -204,12 +212,15 @@
                 return;
             }
             var renderedSize = normalizedRenderedSize(event.size, allowedSizes);
-            if (!renderedSize) {
+            var fluidAllowed = allowedSizes.indexOf('fluid') !== -1;
+            if (!renderedSize && !fluidAllowed) {
                 report(container, 'failed');
                 destroySlot(slot);
                 return;
             }
-            report(container, 'rendered', renderedSize);
+            // A non-empty trusted GPT response is sufficient for a fluid slot:
+            // fluid/native creatives intentionally determine their own height.
+            report(container, 'rendered', renderedSize || null);
         };
 
         try {
@@ -308,11 +319,19 @@
         }
         container.setAttribute('data-hm-gpt-eligible-sizes', JSON.stringify(allowedSizes));
 
-        var initialSize = allowedSizes[0];
+        var initialSize = allowedSizes.filter(function (size) { return size !== 'fluid'; })[0] || null;
         if (container.style) {
-            container.style.width = String(initialSize[0]) + 'px';
-            container.style.height = String(initialSize[1]) + 'px';
-            container.style.maxWidth = '100%';
+            if (initialSize) {
+                container.style.width = String(initialSize[0]) + 'px';
+                container.style.height = String(initialSize[1]) + 'px';
+                container.style.maxWidth = '100%';
+            } else {
+                // Native fluid slots must have a parent/container with non-zero
+                // width; GPT will grow the height to the delivered creative.
+                container.style.width = '100%';
+                container.style.height = '';
+                container.style.maxWidth = '100%';
+            }
         }
         container.setAttribute('data-hm-gpt-runtime-state', 'queued');
 

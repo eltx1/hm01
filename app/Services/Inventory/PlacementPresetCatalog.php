@@ -99,6 +99,15 @@ final class PlacementPresetCatalog
     private function inArticleDisplay(): array
     {
         $data = $this->responsiveDisplay();
+        // Google Ad Manager uses the official "fluid" GPT size for native
+        // creatives. Keep the ordinary display sizes too so the same in-article
+        // surface can serve fixed display and native-fluid demand safely.
+        $data['sizes'][] = [
+            'size_type' => 'FLUID',
+            'width' => null,
+            'height' => null,
+            'device' => 'ALL',
+        ];
         $data['format_settings'] = ['reserveSpace' => true, 'autoMount' => false, 'contentPosition' => 'article_mid'];
         return $data;
     }

@@ -15,7 +15,7 @@ final class GoogleGptManualTagParser
      * Return null when the tag is not Google GPT. A GPT-looking tag that cannot
      * be normalized safely fails closed instead of falling back to raw execution.
      *
-     * @return array{scriptUrl:string,adUnitPath:string,containerId:string,sizes:array<int,array{0:int,1:int}>}|null
+     * @return array{scriptUrl:string,adUnitPath:string,containerId:string,sizes:array<int,array{0:int,1:int}|string>}|null
      */
     public function parse(string $tag): ?array
     {
@@ -74,10 +74,9 @@ final class GoogleGptManualTagParser
             throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.display(...) call for the same container.');
         }
 
-        $decoded = json_decode($program['sizesJson'], true);
-        $sizes = $this->normalizeSizes($decoded);
+        $sizes = $this->normalizeSizeExpression($program['sizesExpression']);
         if ($sizes === []) {
-            throw new RuntimeException('The Google GPT slot has no supported fixed display size.');
+            throw new RuntimeException('The Google GPT slot has no supported fixed or fluid display size.');
         }
 
         return [
@@ -100,7 +99,7 @@ final class GoogleGptManualTagParser
      * and display in separate callbacks. The operation order is preserved across
      * those callbacks and must be defineSlot -> enableServices -> display.
      *
-     * @return array{adUnitPath:string,containerId:string,sizesJson:string,displayContainerId:string}
+     * @return array{adUnitPath:string,containerId:string,sizesExpression:string,displayContainerId:string}
      */
     private function parseCanonicalProgram(string $inline): array
     {
@@ -140,13 +139,13 @@ final class GoogleGptManualTagParser
         return [
             'adUnitPath' => $define['adUnitPath'],
             'containerId' => $define['containerId'],
-            'sizesJson' => $define['sizesJson'],
+            'sizesExpression' => $define['sizesExpression'],
             'displayContainerId' => $display,
         ];
     }
 
     /**
-     * @param array{adUnitPath:string,containerId:string,sizesJson:string}|null $define
+     * @param array{adUnitPath:string,containerId:string,sizesExpression:string}|null $define
      * @param array<int, string> $operations
      */
     private function consumeCanonicalBody(string $body, ?array &$define, ?string &$display, int &$enableServicesCount, array &$operations): void
@@ -161,14 +160,21 @@ final class GoogleGptManualTagParser
                 }
             }
 
-            $definePattern = '/\G\s*googletag\s*\.\s*defineSlot\s*\(\s*([\'\"])(\/[^\'\"]+)\1\s*,\s*(\[[0-9,\s\[\]]+\])\s*,\s*([\'\"])([^\'\"]+)\4\s*\)\s*\.\s*addService\s*\(\s*googletag\s*\.\s*pubads\s*\(\s*\)\s*\)\s*;?/s';
+            // Keep the accepted size grammar deliberately static: numeric
+            // [w,h] values plus Google's official named "fluid" size only.
+            // Any expression, variable, function call, or unsupported named size
+            // still fails closed instead of being executed or guessed.
+            $sizeExpression = "(?:\"fluid\"|'fluid'|\\[(?:[0-9,\\s\\[\\]\"'fluidFLUID]+)\\])";
+            $definePattern = '/\G\s*googletag\s*\.\s*defineSlot\s*\(\s*([\'\"])(\/[^\'\"]+)\1\s*,\s*('
+                .$sizeExpression
+                .')\s*,\s*([\'\"])([^\'\"]+)\4\s*\)\s*\.\s*addService\s*\(\s*googletag\s*\.\s*pubads\s*\(\s*\)\s*\)\s*;?/s';
             if (preg_match($definePattern, $body, $match, 0, $offset) === 1) {
                 if ($define !== null) {
                     throw new RuntimeException('Google GPT Quick Monetize requires exactly one static googletag.defineSlot(...) call.');
                 }
                 $define = [
                     'adUnitPath' => trim((string) $match[2]),
-                    'sizesJson' => (string) $match[3],
+                    'sizesExpression' => (string) $match[3],
                     'containerId' => trim((string) $match[5]),
                 ];
                 $operations[] = 'define';
@@ -201,7 +207,26 @@ final class GoogleGptManualTagParser
         }
     }
 
-    /** @return array<int, array{0:int,1:int}> */
+    /** @return array<int, array{0:int,1:int}|string> */
+    private function normalizeSizeExpression(string $expression): array
+    {
+        $expression = trim($expression);
+        if (preg_match('/^([\'\"])fluid\1$/i', $expression) === 1) {
+            return ['fluid'];
+        }
+
+        // JavaScript tags commonly use single quotes while json_decode requires
+        // double quotes. Only the already-whitelisted literal "fluid" is
+        // rewritten; no arbitrary JavaScript syntax is accepted here.
+        $json = preg_replace("/'fluid'/i", '"fluid"', $expression);
+        if (! is_string($json)) {
+            return [];
+        }
+
+        return $this->normalizeSizes(json_decode($json, true));
+    }
+
+    /** @return array<int, array{0:int,1:int}|string> */
     private function normalizeSizes(mixed $value): array
     {
         if (! is_array($value) || $value === []) {
@@ -214,24 +239,34 @@ final class GoogleGptManualTagParser
 
         $sizes = [];
         foreach ($value as $size) {
-            if (! is_array($size) || count($size) !== 2 || ! is_numeric($size[0] ?? null) || ! is_numeric($size[1] ?? null)) {
+            if (is_string($size) && strtolower($size) === 'fluid') {
+                $sizes[] = 'fluid';
+            } elseif (is_array($size)
+                && count($size) === 1
+                && is_string($size[0] ?? null)
+                && strtolower((string) $size[0]) === 'fluid') {
+                $sizes[] = 'fluid';
+            } elseif (is_array($size)
+                && count($size) === 2
+                && is_numeric($size[0] ?? null)
+                && is_numeric($size[1] ?? null)) {
+                $width = (int) $size[0];
+                $height = (int) $size[1];
+                if ($width < 1 || $width > 10000 || $height < 1 || $height > 10000) {
+                    return [];
+                }
+                $sizes[] = [$width, $height];
+            } else {
                 return [];
             }
 
-            $width = (int) $size[0];
-            $height = (int) $size[1];
-            if ($width < 1 || $width > 10000 || $height < 1 || $height > 10000) {
-                return [];
-            }
-
-            $sizes[] = [$width, $height];
             if (count($sizes) > 20) {
                 return [];
             }
         }
 
         return collect($sizes)
-            ->unique(fn (array $size): string => $size[0].'x'.$size[1])
+            ->unique(fn ($size): string => $size === 'fluid' ? 'fluid' : $size[0].'x'.$size[1])
             ->values()
             ->all();
     }

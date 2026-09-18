@@ -59,7 +59,7 @@ final class PlacementPresetBuilder
             Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
             $existing = $this->existingQuickPreset($site, $preset);
             if ($existing) {
-                return $existing;
+                return $this->reconcileQuickPreset($existing, $preset, $actor, is_array($choice) ? $choice : []);
             }
         }
 
@@ -131,13 +131,84 @@ final class PlacementPresetBuilder
             return $existing;
         }
 
+        // An explicit Quick Monetize activation is also an explicit request to
+        // bring a previously-disabled generated surface back into service.
+        // Prefer the stable canonical code when repair history left multiple
+        // disabled audit records behind, otherwise only auto-restore when the
+        // choice is unambiguous. Soft-deleted inventory is never resurrected.
+        $restorable = $matches
+            ->filter(fn (Placement $placement): bool => ! $placement->trashed()
+                && $placement->status === PlacementStatus::Disabled)
+            ->values();
+
+        $canonical = $restorable
+            ->filter(fn (Placement $placement): bool => $placement->code === 'quick_'.$preset)
+            ->values();
+
+        if ($canonical->count() === 1) {
+            return $canonical->first();
+        }
+        if ($canonical->count() > 1 || $restorable->count() > 1) {
+            throw ValidationException::withMessages([
+                'placement_preset' => "Multiple disabled Quick Monetize surfaces exist for [{$preset}]. Refusing to choose a surface automatically; reconcile the duplicates first.",
+            ]);
+        }
+        if ($restorable->count() === 1) {
+            return $restorable->first();
+        }
+
         if ($matches->isNotEmpty()) {
             throw ValidationException::withMessages([
-                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but no active canonical surface is available. Repair or explicitly reuse that inventory instead of creating a duplicate.",
+                'placement_preset' => "A Quick Monetize surface for [{$preset}] already exists but no safe canonical surface is available for activation. Repair or explicitly reuse that inventory instead of creating a duplicate.",
             ]);
         }
 
         return null;
+    }
+
+    /**
+     * Reapply the maintained preset before reusing a generated Quick surface.
+     * This both reactivates repair-disabled inventory and upgrades older
+     * generated surfaces to the current size/responsive policy atomically.
+     *
+     * @param array<string, mixed> $choice
+     */
+    private function reconcileQuickPreset(Placement $placement, string $preset, User $actor, array $choice): Placement
+    {
+        $placement->loadMissing(['targeting', 'sizes']);
+        $targeting = $placement->targeting
+            ->mapWithKeys(fn ($record): array => [$record->targeting_key => (array) ($record->targeting_values ?? [])])
+            ->all();
+
+        $data = $this->presets->apply($preset, [
+            'ad_unit_id' => $placement->ad_unit_id,
+            'name' => $placement->name,
+            'code' => $placement->code,
+            'targeting' => $targeting,
+            'lazy_fetch_margin_percent' => $placement->lazy_fetch_margin_percent,
+            'lazy_render_margin_percent' => $placement->lazy_render_margin_percent,
+            'lazy_mobile_scaling' => $placement->lazy_mobile_scaling,
+            'refresh_interval_seconds' => $placement->refresh_interval_seconds,
+            'refresh_limit' => $placement->refresh_limit,
+            'sort_order' => $placement->sort_order,
+            'metadata' => (array) ($placement->metadata ?? []),
+        ]);
+
+        $settings = (array) ($data['format_settings'] ?? []);
+        $settings['autoMount'] = true;
+        $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
+        $data['format_settings'] = $settings;
+
+        $metadata = (array) ($data['metadata'] ?? []);
+        $metadata['quick_monetize_generated'] = true;
+        $metadata['placement_preset'] = $preset;
+        $data['metadata'] = $metadata;
+        $data['status'] = PlacementStatus::Active->value;
+
+        // QuickMonetizeService owns the enclosing transaction and performs one
+        // final production publish after Demand mappings/widgets are restored.
+        // Avoid publishing a half-reconciled placement before that wiring exists.
+        return $this->inventory->updatePlacement($placement, $data, $actor, false);
     }
 
     private function defaultQuickMountTarget(string $preset): string
