@@ -341,6 +341,44 @@ test('built forced refresh joins an in-flight delegated release handoff', async 
     assert.equal(sandbox.__HM_RELEASE_HANDOFF_PROMISE__, null);
 });
 
+test('built delegated script load completion disarms the handoff timeout before delegated boot settles', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        deferredDelegatedLoader: true,
+        manualDelegatedTimeout: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && (!metrics.expireDelegatedHandoff || !metrics.releaseDelegatedLoader); attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(typeof metrics.expireDelegatedHandoff, 'function');
+    assert.equal(typeof metrics.releaseDelegatedLoader, 'function');
+
+    metrics.releaseDelegatedLoader();
+
+    // Simulate the stale 15s callback firing after the replacement script loaded
+    // but while its delegated boot is still settling. The load timeout must be
+    // inert now so the delegated runtime can reach its own bounded gate decision.
+    metrics.expireDelegatedHandoff();
+    await firstBoot;
+
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_FAILED__, undefined);
+    assert.equal(metrics.gptLoads, 1);
+    assert.equal(metrics.defined.length, 1);
+    assert.equal(metrics.displayed.length, 1);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_PROMISE__, null);
+});
+
 test('built failed handoff stays closed across late arrival and forced refresh', async () => {
     const selected = activeConfig({
         loader: {
