@@ -1891,7 +1891,10 @@ function nativeDefinition(config, code) {
 
     function maybeDelegateRelease(config, script) {
         var selected = config.loader || {};
-        if (!selected.assetUrl || !selected.version || selected.version === VERSION || window.__HM_RELEASE_DELEGATED__) return null;
+        if (!selected.assetUrl || !selected.version || selected.version === VERSION) return null;
+        if (String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__) return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        if (window.__HM_RELEASE_DELEGATED__) return null;
         try {
             if (new URL(selected.assetUrl, window.location.href).hostname === 'app.horusmedia.net') return null;
         } catch (error) {
@@ -1905,6 +1908,7 @@ function nativeDefinition(config, code) {
         replacement.setAttribute('data-site-key', config.siteKey);
         replacement.setAttribute('data-config-base', configBase(script));
         replacement.setAttribute('data-environment', String(scriptData(script, 'environment') || 'production'));
+        replacement.setAttribute('data-delegated-handoff', '1');
 
         // The delegated release shares the public Loader state key for backwards
         // compatibility. Suppress its implicit autoboot and hand control over
@@ -1915,7 +1919,7 @@ function nativeDefinition(config, code) {
         var previousAutobootFlag = window.__HM_DISABLE_AUTOBOOT__;
         window.__HM_DISABLE_AUTOBOOT__ = true;
 
-        return new Promise(function (resolve) {
+        var handoffPromise = new Promise(function (resolve) {
             var settled = false;
             var timeout = window.setTimeout(function () {
                 finish(new Error('Delegated Loader release timed out'));
@@ -1945,7 +1949,7 @@ function nativeDefinition(config, code) {
                     finish(new Error('Delegated Loader release did not install a boot API'));
                     return;
                 }
-                Promise.resolve(delegatedLoader.boot({ force: true, script: replacement })).then(function () {
+                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement })).then(function () {
                     finish(null);
                 }).catch(finish);
             };
@@ -1959,10 +1963,17 @@ function nativeDefinition(config, code) {
                 finish(error);
             }
         });
+        window.__HM_RELEASE_HANDOFF_PROMISE__ = handoffPromise;
+        return handoffPromise.finally(function () {
+            if (window.__HM_RELEASE_HANDOFF_PROMISE__ === handoffPromise) window.__HM_RELEASE_HANDOFF_PROMISE__ = null;
+        });
     }
 
     function boot(options) {
         options = options || {};
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__ && !options.delegatedHandoff) {
+            return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        }
         var script = options.script || findScript();
         var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');

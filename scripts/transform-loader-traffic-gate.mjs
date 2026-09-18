@@ -508,6 +508,9 @@ const bootReplacement = String.raw`    function startMonetization(config, script
 
     function boot(options) {
         options = options || {};
+        if (window.__HM_RELEASE_HANDOFF_PROMISE__ && !options.delegatedHandoff) {
+            return window.__HM_RELEASE_HANDOFF_PROMISE__;
+        }
         var script = options.script || findScript();
         var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
