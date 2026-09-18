@@ -624,6 +624,16 @@
         return false;
     }
 
+    function activeClickGuardElement() {
+        var active = document.activeElement || null;
+        var depth = 0;
+        while (active && active.shadowRoot && active.shadowRoot.activeElement && depth < 8) {
+            active = active.shadowRoot.activeElement;
+            depth += 1;
+        }
+        return active;
+    }
+
     function installClickGuardListeners(config) {
         if (state.clickGuard.listenersInstalled || !window.addEventListener) return;
         state.clickGuard.blurListener = function () {
@@ -638,8 +648,13 @@
                 disarmClickGuardIframe(iframe);
                 return;
             }
-            var activeElement = document.activeElement;
-            if (activeElement && isIframe(activeElement) && activeElement !== iframe) {
+            // Pointer entry alone is not evidence of an ad click. Requiring
+            // focus to land on the same managed iframe prevents ordinary window
+            // blur (DevTools, app switching, another browser tab/window) from
+            // being counted as a probable ad click and accidentally tripping
+            // Click Guard.
+            var activeElement = activeClickGuardElement();
+            if (activeElement !== iframe) {
                 disarmClickGuardIframe(iframe);
                 return;
             }
