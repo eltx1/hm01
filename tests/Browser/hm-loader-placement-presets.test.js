@@ -41,8 +41,17 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /\.entry-content/);
     assert.match(transformed, /\.post-content/);
     assert.match(transformed, /\.article-content/);
+    assert.match(transformed, /data-hm-content-root/);
+    assert.match(transformed, /\[role="main"\]/);
+    assert.match(transformed, /\.site-main/);
+    assert.match(transformed, /\.main-content/);
+    assert.match(transformed, /#primary/);
+    assert.match(transformed, /content_mid/);
+    assert.match(transformed, /content_end/);
     assert.match(transformed, /article_mid/);
     assert.match(transformed, /article_end/);
+    assert.match(transformed, /function contentMountChildren\(content\)/);
+    assert.match(transformed, /Do not guess a "middle"/);
     assert.match(transformed, /bottom_right/);
     assert.match(transformed, /function setImportantStyle\(style, name, value\)/);
     assert.match(transformed, /style\.setProperty\(name, value, 'important'\)/);
