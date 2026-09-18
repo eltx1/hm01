@@ -1922,7 +1922,9 @@ function nativeDefinition(config, code) {
 
         var handoffPromise = new Promise(function (resolve) {
             var settled = false;
+            var loadCompleted = false;
             var timeout = window.setTimeout(function () {
+                if (loadCompleted) return;
                 finish(new Error('Delegated Loader release timed out'));
             }, 15000);
 
@@ -1959,6 +1961,8 @@ function nativeDefinition(config, code) {
 
             replacement.onload = function () {
                 if (settled) return;
+                loadCompleted = true;
+                window.clearTimeout(timeout);
                 restoreAutobootFlag();
                 var delegatedLoader = window.HorusMediaLoader;
                 if (!delegatedLoader || typeof delegatedLoader.boot !== 'function') {
