@@ -208,8 +208,10 @@ final class DemandConfigurationBuilder
             ->filter(fn ($value) => in_array($value, ['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM'], true))
             ->unique()->values()->all();
         $allowedSizes = collect((array) ($render['allowedSizes'] ?? $tag['allowedSizes'] ?? []))
-            ->filter(fn ($size) => is_array($size) && count($size) === 2 && (int) $size[0] > 0 && (int) $size[1] > 0)
-            ->map(fn ($size) => [(int) $size[0], (int) $size[1]])
+            ->filter(fn ($size) => $size === 'fluid'
+                || (is_array($size) && count($size) === 2 && (int) $size[0] > 0 && (int) $size[1] > 0))
+            ->map(fn ($size) => $size === 'fluid' ? 'fluid' : [(int) $size[0], (int) $size[1]])
+            ->unique(fn ($size) => $size === 'fluid' ? 'fluid' : $size[0].'x'.$size[1])
             ->values()->all();
 
         $isolation = null;
