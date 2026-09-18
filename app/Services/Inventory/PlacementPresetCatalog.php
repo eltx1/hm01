@@ -100,17 +100,17 @@ final class PlacementPresetCatalog
     {
         $data = $this->responsiveDisplay();
 
-        // 250x250 remains a legitimate in-content square size and is emitted by
-        // some GAM ad units alongside 300x250/336x280 and native fluid. Keep it
-        // scoped to the In-Article preset instead of broadening every responsive
-        // display surface, and include it in each responsive mapping so GAM and
-        // Direct Demand resolve the same maintained size policy on every device.
+        // Keep the complete reviewed LordAI in-article compatibility set in
+        // one place. 250x250 and 300x100 are both emitted by the site's GAM ad
+        // unit alongside the ordinary responsive sizes and native fluid. Scope
+        // them to In-Article only instead of broadening every display preset.
+        $compatibilitySizes = [[250, 250], [300, 100]];
         $data['sizes'] = array_merge(
             $data['sizes'],
-            $this->fixed([[250, 250]]),
-            $this->responsive('MOBILE', 0, 0, 767, 65535, [[250, 250]]),
-            $this->responsive('TABLET', 768, 0, 1023, 65535, [[250, 250]]),
-            $this->responsive('DESKTOP', 1024, 0, null, null, [[250, 250]]),
+            $this->fixed($compatibilitySizes),
+            $this->responsive('MOBILE', 0, 0, 767, 65535, $compatibilitySizes),
+            $this->responsive('TABLET', 768, 0, 1023, 65535, $compatibilitySizes),
+            $this->responsive('DESKTOP', 1024, 0, null, null, $compatibilitySizes),
         );
 
         // Google Ad Manager uses the official "fluid" GPT size for native
