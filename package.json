@@ -6,6 +6,7 @@
         "build": "npm run build:prebid && npm run build:loader && vite build",
         "build:prebid": "node scripts/build-prebid.mjs",
         "build:loader": "node scripts/build-loader.mjs",
+        "pretest:browser": "npm run build:loader",
         "test:browser": "node --test tests/Browser/*.test.js",
         "test:main-website": "node scripts/validate-main-website.mjs && node scripts/test-main-website-worker.mjs",
         "test:static-delivery": "php scripts/validate-static-delivery.php cloudflare-pages-dist",

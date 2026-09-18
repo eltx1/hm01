@@ -475,7 +475,7 @@ const trafficGateRuntime = String.raw`
 const bootReplacement = String.raw`    function startMonetization(config, script, diagnostic) {
         if (!config || state.config !== config || !trafficGateAllowsMonetization()) return Promise.resolve([]);
         if (state.monetizationStartPromise) return state.monetizationStartPromise;
-        state.monetizationStartPromise = reportPrivacyDiagnostic(config, diagnostic).then(function () {
+        var monetizationPromise = reportPrivacyDiagnostic(config, diagnostic).then(function () {
             if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
                 log(config, 'Advertising is disabled; no advertising calls were made');
                 return [];
@@ -489,13 +489,21 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 log(config, 'Advertising remains blocked by a local serving prerequisite');
                 return [];
             }
-            if (maybeDelegateRelease(config, script)) return [];
+            var delegation = maybeDelegateRelease(config, script);
+            if (delegation) {
+                // The delegated release uses the same public runtime state. Give
+                // it ownership of monetization startup before awaiting its boot;
+                // otherwise it would inherit this Promise and wait on itself.
+                if (state.monetizationStartPromise === monetizationPromise) state.monetizationStartPromise = null;
+                return delegation.then(function () { return []; });
+            }
             installSpaSupport();
             return scan(config);
         }).finally(function () {
-            state.monetizationStartPromise = null;
+            if (state.monetizationStartPromise === monetizationPromise) state.monetizationStartPromise = null;
         });
-        return state.monetizationStartPromise;
+        state.monetizationStartPromise = monetizationPromise;
+        return monetizationPromise;
     }
 
     function boot(options) {
@@ -510,7 +518,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         // Neither waits for Turnstile or CMP resolution.
         var globalPromise = fetchGlobalControl(script, Boolean(options.force));
         var configPromise = fetchConfig(script, siteKey, Boolean(options.force));
-        state.booting = Promise.all([globalPromise, configPromise]).then(function (prepared) {
+        var bootPromise = Promise.all([globalPromise, configPromise]).then(function (prepared) {
             var globalControls = prepared[0] || {};
             var config = prepared[1];
             config.controls = mergeControls(config.controls || {}, globalControls);
@@ -548,9 +556,12 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
         }).finally(function () {
-            state.booting = null;
+            // A delegated release can replace the shared boot slot while this
+            // Promise is still pending. Never clear the newer owner's Promise.
+            if (state.booting === bootPromise) state.booting = null;
         });
-        return state.booting;
+        state.booting = bootPromise;
+        return bootPromise;
     }
 
     window.HorusMediaLoader = {`;

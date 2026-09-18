@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const loaderSource = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
+const builtLoaderSource = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 
 function activeConfig(overrides = {}) {
     return {
@@ -67,6 +68,7 @@ function createHarness(config, {
     diagnosticToken = null,
     deferredGpt = false,
     delegatedLoader = false,
+    runtimeSource = loaderSource,
 } = {}) {
     const metrics = {
         fetches: [], gptLoads: 0, defined: [], displayed: [], services: 0,
@@ -140,7 +142,7 @@ function createHarness(config, {
                     queueMicrotask(() => {
                         const previousScript = document.currentScript;
                         document.currentScript = node;
-                        vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.delegated.js' });
+                        vm.runInNewContext(runtimeSource, sandbox, { filename: 'hm-loader.delegated.js' });
                         document.currentScript = previousScript;
                         node.onload?.();
                     });
@@ -227,7 +229,7 @@ function createHarness(config, {
         };
     }
     sandbox.window = sandbox;
-    vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
+    vm.runInNewContext(runtimeSource, sandbox, { filename: 'hm-loader.js' });
 
     return { sandbox, metrics, elements };
 }
@@ -250,7 +252,7 @@ test('loads GPT once, defines the slot, applies mappings and targeting', async (
     assert.match(metrics.fetches[2], /production\.v5\.[a-f0-9]+\.json$/);
 });
 
-test('release mismatch hands boot to the delegated Loader without sharing a deadlocked boot Promise', async () => {
+test('built release mismatch hands boot to the delegated Loader without sharing runtime Promises', async () => {
     const selected = activeConfig({
         loader: {
             version: '1.3.0',
@@ -258,13 +260,20 @@ test('release mismatch hands boot to the delegated Loader without sharing a dead
             cacheBust: 5,
         },
     });
-    const { sandbox, metrics } = createHarness(selected, { delegatedLoader: true });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        runtimeSource: builtLoaderSource,
+    });
 
-    await sandbox.HorusMediaLoader.boot();
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    const concurrentBoot = sandbox.HorusMediaLoader.boot();
+    assert.equal(concurrentBoot, firstBoot);
+    await Promise.all([firstBoot, concurrentBoot]);
 
     assert.equal(metrics.delegatedLoads, 1);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.monetizationStartPromise, null);
     assert.equal(metrics.gptLoads, 1);
     assert.equal(metrics.defined.length, 1);
     assert.equal(metrics.displayed.length, 1);
