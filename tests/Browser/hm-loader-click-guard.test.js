@@ -178,7 +178,10 @@ function createHarness(config, { storage = memoryStorage(), containers = null, s
         mutate(record) { observerCallback?.([record]); },
         enter(iframe) { iframe.dispatchEvent(new PointerEvent('pointerenter')); },
         leave(iframe) { iframe.dispatchEvent(new PointerEvent('pointerleave')); },
-        blur() { sandbox.dispatchEvent(new Event('blur')); },
+        blur(activeElement = undefined) {
+            if (activeElement !== undefined) document.activeElement = activeElement;
+            sandbox.dispatchEvent(new Event('blur'));
+        },
         state() { const raw = storage.raw(`hm:click-guard:v1:${config.siteKey}`); return raw ? JSON.parse(raw) : null; },
     };
 }
@@ -206,7 +209,7 @@ test('below threshold records clicks without blocking', async () => {
     const now = Date.now();
     const storage = memoryStorage({ 'hm:click-guard:v1:HM_TEST': JSON.stringify({ v: 1, clicks: [now - HOUR], blockedUntil: 0 }) });
     const { sandbox, iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
-    enter(iframe); blur();
+    enter(iframe); blur(iframe);
     assert.equal(state().clicks.length, 2);
     assert.equal(state().blockedUntil, 0);
     assert.equal((await sandbox.HorusMediaLoader.scan()).length, 0);
@@ -216,7 +219,7 @@ test('exact threshold creates a future block and clears the click window', async
     const now = Date.now();
     const storage = memoryStorage({ 'hm:click-guard:v1:HM_TEST': JSON.stringify({ v: 1, clicks: [now - 2 * HOUR, now - HOUR], blockedUntil: 0 }) });
     const { iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
-    enter(iframe); blur();
+    enter(iframe); blur(iframe);
     assert.deepEqual(state().clicks, []);
     assert.ok(state().blockedUntil > Date.now() + 11 * HOUR);
 });
@@ -225,7 +228,7 @@ test('rolling window prunes expired clicks before counting', async () => {
     const now = Date.now();
     const storage = memoryStorage({ 'hm:click-guard:v1:HM_TEST': JSON.stringify({ v: 1, clicks: [now - 7 * HOUR, now - HOUR], blockedUntil: 0 }) });
     const { iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
-    enter(iframe); blur();
+    enter(iframe); blur(iframe);
     assert.equal(state().clicks.length, 2);
     assert.equal(state().blockedUntil, 0);
     assert.ok(state().clicks.every((value) => value >= now - 6 * HOUR));
@@ -291,8 +294,15 @@ test('dynamic eligible iframe is tracked and unrelated iframe is ignored', async
     const eligible = frame();
     harness.containers[0].appendChild(eligible);
     harness.mutate({ addedNodes: [eligible], removedNodes: [] });
-    harness.enter(eligible); harness.blur();
+    harness.enter(eligible); harness.blur(eligible);
     assert.equal(harness.state().clicks.length, 1);
+});
+
+test('pointer hover followed by ordinary window blur does not count as an ad click', async () => {
+    const { iframe, enter, blur, state } = await bootWithFrame(activeConfig());
+    enter(iframe);
+    blur(null);
+    assert.equal(state(), null);
 });
 
 test('window blur without an armed Horus iframe does not count', async () => {
@@ -304,7 +314,7 @@ test('window blur without an armed Horus iframe does not count', async () => {
 
 test('eligible iframe blur counts once and duplicate blur is deduplicated', async () => {
     const { iframe, enter, blur, state } = await bootWithFrame(activeConfig());
-    enter(iframe); blur(); blur();
+    enter(iframe); blur(iframe); blur();
     assert.equal(state().clicks.length, 1);
 });
 
@@ -316,7 +326,7 @@ test('mid-page threshold clears refresh timers and future scans cannot request n
     const harness = await bootWithFrame(config);
     assert.equal(harness.metrics.intervals.size, 1);
     const beforeDefined = harness.metrics.defined;
-    harness.enter(harness.iframe); harness.blur();
+    harness.enter(harness.iframe); harness.blur(harness.iframe);
     assert.equal(harness.metrics.intervals.size, 0);
     assert.ok(harness.metrics.clearedIntervals.length >= 1);
 
