@@ -491,6 +491,7 @@
 
     function canRequestAds(config) {
         if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;
+        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;
         if (state.privacyDecision && state.privacyDecision.blocked) return false;
         return !clickGuardBlocked(config);
     }
@@ -1937,12 +1938,27 @@ function nativeDefinition(config, code) {
                 if (settled) return;
                 settled = true;
                 window.clearTimeout(timeout);
-                restoreAutobootFlag();
-                if (error) log(config, 'Delegated Loader release stopped safely', error);
+                if (error) {
+                    // A timed-out or failed replacement must stay fail-closed even
+                    // if the browser completes its download later or publisher
+                    // code requests a forced refresh against the old runtime.
+                    window.__HM_RELEASE_HANDOFF_FAILED__ = true;
+                    window.__HM_DISABLE_AUTOBOOT__ = true;
+                    replacement.onload = null;
+                    replacement.onerror = null;
+                    try {
+                        if (replacement.parentNode) replacement.parentNode.removeChild(replacement);
+                        else if (typeof replacement.remove === 'function') replacement.remove();
+                    } catch (removalError) {}
+                    log(config, 'Delegated Loader release stopped safely', error);
+                } else {
+                    restoreAutobootFlag();
+                }
                 resolve(true);
             }
 
             replacement.onload = function () {
+                if (settled) return;
                 restoreAutobootFlag();
                 var delegatedLoader = window.HorusMediaLoader;
                 if (!delegatedLoader || typeof delegatedLoader.boot !== 'function') {
@@ -1954,6 +1970,7 @@ function nativeDefinition(config, code) {
                 }).catch(finish);
             };
             replacement.onerror = function () {
+                if (settled) return;
                 finish(new Error('Delegated Loader release failed to load'));
             };
 
@@ -1971,6 +1988,7 @@ function nativeDefinition(config, code) {
 
     function boot(options) {
         options = options || {};
+        if (window.__HM_RELEASE_HANDOFF_FAILED__ && !options.delegatedHandoff) return Promise.resolve([]);
         if (window.__HM_RELEASE_HANDOFF_PROMISE__ && !options.delegatedHandoff) {
             return window.__HM_RELEASE_HANDOFF_PROMISE__;
         }

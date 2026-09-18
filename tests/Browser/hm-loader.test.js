@@ -69,6 +69,7 @@ function createHarness(config, {
     deferredGpt = false,
     delegatedLoader = false,
     deferredDelegatedLoader = false,
+    manualDelegatedTimeout = false,
     runtimeSource = loaderSource,
 } = {}) {
     const metrics = {
@@ -174,12 +175,24 @@ function createHarness(config, {
     class Event { constructor(type) { this.type = type; } }
     const listeners = {};
     const history = { state: null, pushState() {}, replaceState(state, title, url) { metrics.cleanedUrls.push(String(url)); } };
+    const sandboxSetTimeout = (callback, delay, ...args) => {
+        if (manualDelegatedTimeout && delay === 15000) {
+            const handle = { delegatedHandoffTimeout: true };
+            metrics.expireDelegatedHandoff = () => callback(...args);
+            return handle;
+        }
+        return setTimeout(callback, delay, ...args);
+    };
+    const sandboxClearTimeout = (handle) => {
+        if (handle && handle.delegatedHandoffTimeout) return;
+        clearTimeout(handle);
+    };
     const sandbox = {
         console,
         URL,
         Promise,
-        setTimeout,
-        clearTimeout,
+        setTimeout: sandboxSetTimeout,
+        clearTimeout: sandboxClearTimeout,
         setInterval,
         clearInterval,
         queueMicrotask,
@@ -326,6 +339,50 @@ test('built forced refresh joins an in-flight delegated release handoff', async 
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
     assert.equal(sandbox.__HM_RELEASE_HANDOFF_PROMISE__, null);
+});
+
+test('built failed handoff stays closed across late arrival and forced refresh', async () => {
+    const selected = activeConfig({
+        loader: {
+            version: '1.3.0',
+            assetUrl: 'https://cdn.horusmedia.net/assets/hm-loader.min.js',
+            cacheBust: 5,
+        },
+    });
+    const { sandbox, metrics } = createHarness(selected, {
+        delegatedLoader: true,
+        deferredDelegatedLoader: true,
+        manualDelegatedTimeout: true,
+        runtimeSource: builtLoaderSource,
+    });
+
+    const firstBoot = sandbox.HorusMediaLoader.boot();
+    for (let attempt = 0; attempt < 10 && !metrics.expireDelegatedHandoff; attempt += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(typeof metrics.expireDelegatedHandoff, 'function');
+    assert.equal(typeof metrics.releaseDelegatedLoader, 'function');
+
+    metrics.expireDelegatedHandoff();
+    await firstBoot;
+
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_FAILED__, true);
+    assert.equal(sandbox.__HM_DISABLE_AUTOBOOT__, true);
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, false);
+
+    await sandbox.HorusMediaLoader.refresh();
+    assert.equal(metrics.gptLoads, 0);
+
+    metrics.releaseDelegatedLoader();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, false);
+
+    await sandbox.HorusMediaLoader.refresh();
+    assert.equal(metrics.gptLoads, 0);
+    assert.equal(metrics.defined.length, 0);
+    assert.equal(metrics.displayed.length, 0);
 });
 
 test('concurrent scans while GPT loads reserve one GAM slot owner', async () => {
