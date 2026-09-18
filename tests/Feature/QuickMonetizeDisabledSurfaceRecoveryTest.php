@@ -77,16 +77,17 @@ final class QuickMonetizeDisabledSurfaceRecoveryTest extends TestCase
 
         // Reproduce the production repair state: the generated inventory remains
         // for audit/rollback, but the surface, mapping and widget are disabled.
-        // Also strip FLUID and 250x250 to reproduce the older production preset
-        // and prove reactivation reapplies the current maintained size policy
-        // rather than merely flipping the old status bit.
+        // Also strip FLUID plus both LordAI compatibility sizes to reproduce the
+        // older production preset and prove reactivation reapplies the complete
+        // current size policy rather than merely flipping the old status bit.
         $placement->sizes()
             ->where(fn ($query) => $query
                 ->where('size_type', 'FLUID')
                 ->orWhere(fn ($fixed) => $fixed
                     ->where('size_type', 'FIXED')
-                    ->where('width', 250)
-                    ->where('height', 250)))
+                    ->where(fn ($dimensions) => $dimensions
+                        ->where(fn ($square) => $square->where('width', 250)->where('height', 250))
+                        ->orWhere(fn ($banner) => $banner->where('width', 300)->where('height', 100)))))
             ->delete();
         $placement->update(['status' => PlacementStatus::Disabled, 'updated_by' => $admin->id]);
         $mapping->update(['is_enabled' => false, 'updated_by' => $admin->id]);
@@ -98,7 +99,8 @@ final class QuickMonetizeDisabledSurfaceRecoveryTest extends TestCase
             $site->fresh(),
             $network,
             $admin,
-            $this->tag('[[250, 250], [300, 250], "fluid"]'),
+            // Exact size array from the LordAI GAM tag used in production.
+            $this->tag('["fluid", [320, 100], [250, 250], [336, 280], [300, 250], [300, 100]]'),
             null,
             'in_article_display',
             'Quick · In-Article Display',
@@ -117,6 +119,9 @@ final class QuickMonetizeDisabledSurfaceRecoveryTest extends TestCase
         $this->assertTrue($restored->sizes->contains(fn ($size): bool => $size->size_type === 'FIXED'
             && (int) $size->width === 250
             && (int) $size->height === 250));
+        $this->assertTrue($restored->sizes->contains(fn ($size): bool => $size->size_type === 'FIXED'
+            && (int) $size->width === 300
+            && (int) $size->height === 100));
         $this->assertTrue((bool) data_get($restored->format_settings, 'autoMount'));
         $this->assertSame('article_mid', data_get($restored->format_settings, 'autoMountTarget'));
 
@@ -132,7 +137,11 @@ final class QuickMonetizeDisabledSurfaceRecoveryTest extends TestCase
         $candidate = data_get($direct, 'placements.'.$restored->code.'.candidates.0');
         $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
         $allowedSizes = (array) data_get($candidate, 'tag.render.allowedSizes', []);
+        $this->assertContains([320, 100], $allowedSizes);
         $this->assertContains([250, 250], $allowedSizes);
+        $this->assertContains([336, 280], $allowedSizes);
+        $this->assertContains([300, 250], $allowedSizes);
+        $this->assertContains([300, 100], $allowedSizes);
         $this->assertContains('fluid', $allowedSizes);
         $this->assertContains('NATIVE', (array) data_get($candidate, 'tag.render.allowedFormats', []));
         $this->assertStringContainsString(
