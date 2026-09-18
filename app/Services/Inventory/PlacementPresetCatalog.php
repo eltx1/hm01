@@ -99,6 +99,20 @@ final class PlacementPresetCatalog
     private function inArticleDisplay(): array
     {
         $data = $this->responsiveDisplay();
+
+        // 250x250 remains a legitimate in-content square size and is emitted by
+        // some GAM ad units alongside 300x250/336x280 and native fluid. Keep it
+        // scoped to the In-Article preset instead of broadening every responsive
+        // display surface, and include it in each responsive mapping so GAM and
+        // Direct Demand resolve the same maintained size policy on every device.
+        $data['sizes'] = array_merge(
+            $data['sizes'],
+            $this->fixed([[250, 250]]),
+            $this->responsive('MOBILE', 0, 0, 767, 65535, [[250, 250]]),
+            $this->responsive('TABLET', 768, 0, 1023, 65535, [[250, 250]]),
+            $this->responsive('DESKTOP', 1024, 0, null, null, [[250, 250]]),
+        );
+
         // Google Ad Manager uses the official "fluid" GPT size for native
         // creatives. Keep the ordinary display sizes too so the same in-article
         // surface can serve fixed display and native-fluid demand safely.
