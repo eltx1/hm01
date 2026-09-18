@@ -64,10 +64,10 @@ final class InventoryManager
         });
     }
 
-    public function updatePlacement(Placement $placement, array $data, User $actor): Placement
+    public function updatePlacement(Placement $placement, array $data, User $actor, bool $publish = true): Placement
     {
         $placement->loadMissing('site');
-        return DB::transaction(function () use ($placement, $data, $actor): Placement {
+        return DB::transaction(function () use ($placement, $data, $actor, $publish): Placement {
             $site = $placement->site;
             $this->assertAdUnitBelongsToSite($site, $data['ad_unit_id'] ?? $placement->ad_unit_id);
             $before = $placement->toArray();
@@ -80,7 +80,9 @@ final class InventoryManager
             }
             $this->touchConfiguration($site);
             $this->audit->record('inventory.placement.updated', $site->organization_id, $actor, $placement, $before, $placement->fresh()->toArray());
-            $this->publisher->publishActiveProduction($site, $actor);
+            if ($publish) {
+                $this->publisher->publishActiveProduction($site, $actor);
+            }
 
             return $placement->refresh()->load(['adUnit', 'sizes', 'targeting']);
         });
