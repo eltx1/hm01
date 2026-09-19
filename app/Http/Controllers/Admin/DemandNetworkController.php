@@ -122,7 +122,7 @@ class DemandNetworkController extends Controller
         $data = $request->validate([
             'supports_direct_js' => ['required', 'boolean'],
             'supported_formats' => ['nullable', 'array'],
-            'supported_formats.*' => ['string', Rule::in(['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM'])],
+            'supported_formats.*' => ['string', Rule::in(['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM', 'REWARDED'])],
             'integration_modes' => ['nullable', 'array'],
             'integration_modes.*' => [Rule::enum(DemandIntegrationMode::class)],
             'script_origins' => ['nullable', 'array', 'max:20'],

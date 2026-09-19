@@ -55,7 +55,7 @@ final class QuickMonetizeService
             // A URL-only Quick activation is unambiguously the VAST path. When
             // Horus is creating the surface, select the floating player even if
             // the form/API client left the ordinary display default in place.
-            if ($existingPlacement === null && ! in_array($preset, ['video_floating', 'video_outstream'], true)) {
+            if ($existingPlacement === null && ! in_array($preset, ['video_floating', 'video_outstream', 'rewarded'], true)) {
                 $preset = 'video_floating';
             }
             $scriptOrigins = ['https://imasdk.googleapis.com'];

@@ -216,6 +216,7 @@ final class PlacementPresetBuilder
         return match ($preset) {
             'in_article_display', 'video_outstream' => 'content_mid',
             'video_floating', 'sticky_bottom', 'sticky_top', 'side_rail_right', 'side_rail_left' => 'body_end',
+            'rewarded' => 'article_end',
             default => 'article_end',
         };
     }

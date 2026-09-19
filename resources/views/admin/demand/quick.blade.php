@@ -138,7 +138,7 @@
 
             <label class="full">VAST URL or provider-issued ad tag
                 <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="For Horus Video, paste the HTTPS VAST/VMAP URL only. Or paste a complete Google GPT, script-only tag, iframe, or reviewed third-party provider tag.">{{ old('tag') }}</textarea>
-                <span class="muted">A plain VAST/VMAP URL runs in the Horus video player. Google GPT is normalized by its dedicated adapter. Complete provider code runs inside Horus isolation with reviewed HTTPS origins, Traffic Gate and Click Guard protection.</span>
+                <span class="muted">A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow; Horus will not request the ad before the visitor starts it. Google GPT is normalized by its dedicated adapter. Complete provider code runs inside Horus isolation with reviewed HTTPS origins, Traffic Gate and Click Guard protection.</span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
 

@@ -88,6 +88,58 @@
         if (detail) container.setAttribute('data-hm-video-detail', String(detail).slice(0, 160));
     }
 
+    function rewardedMode(container) {
+        return container && container.getAttribute('data-hm-video-rewarded') === '1';
+    }
+
+    function rewardEvent(container, name, detail) {
+        if (!window.dispatchEvent || typeof window.CustomEvent !== 'function') return;
+        var payload = Object.assign({
+            placementId: String(container && container.id || ''),
+            provider: 'HORUS_VAST',
+        }, detail || {});
+        window.dispatchEvent(new window.CustomEvent(name, { detail: payload }));
+    }
+
+    function rewardCooldownSeconds(container) {
+        var seconds = Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 0);
+        return Number.isFinite(seconds) ? Math.max(0, Math.min(86400, Math.floor(seconds))) : 0;
+    }
+
+    function rewardStorageKey(container) {
+        return 'hm:rewarded:v1:' + String(container && container.id || 'placement');
+    }
+
+    function rewardCooldownRemaining(container) {
+        var seconds = rewardCooldownSeconds(container);
+        if (!seconds || !window.localStorage) return 0;
+        try {
+            var grantedAt = Number(window.localStorage.getItem(rewardStorageKey(container)) || 0);
+            if (!Number.isFinite(grantedAt) || grantedAt <= 0) return 0;
+            return Math.max(0, seconds - Math.floor((Date.now() - grantedAt) / 1000));
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    function rememberRewardGrant(container) {
+        if (!window.localStorage || rewardCooldownSeconds(container) <= 0) return;
+        try { window.localStorage.setItem(rewardStorageKey(container), String(Date.now())); } catch (error) {}
+    }
+
+    function clearContainer(container) {
+        if (!container) return;
+        if (container.removeChild && container.firstChild) {
+            while (container.firstChild) container.removeChild(container.firstChild);
+            return;
+        }
+        if (container.childNodes && container.childNodes.length && container.removeChild) {
+            while (container.childNodes.length) container.removeChild(container.childNodes[0]);
+            return;
+        }
+        if (typeof container.innerHTML === 'string') container.innerHTML = '';
+    }
+
     function loadSdk() {
         if (window.google && window.google.ima) return Promise.resolve(window.google.ima);
         if (state.sdkPromise) return state.sdkPromise;
@@ -144,8 +196,11 @@
     function createPlayer(container) {
         if (container.__hmVideoPlayer) return container.__hmVideoPlayer;
         var size = selectedSize(container);
+        var rewarded = rewardedMode(container);
+        clearContainer(container);
         var video = document.createElement('video');
         var adLayer = document.createElement('div');
+        var closeButton = rewarded ? document.createElement('button') : null;
         video.muted = container.getAttribute('data-hm-video-muted') !== '0';
         video.autoplay = container.getAttribute('data-hm-video-autoplay') !== '0';
         video.playsInline = true;
@@ -155,21 +210,35 @@
         video.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;background:#000;';
         adLayer.setAttribute('data-hm-video-ad-layer', '1');
         adLayer.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:hidden;';
-        container.style.position = 'relative';
+        container.style.position = rewarded ? 'fixed' : 'relative';
         container.style.display = 'block';
-        container.style.width = '100%';
-        container.style.maxWidth = String(size[0]) + 'px';
-        container.style.aspectRatio = String(size[0]) + ' / ' + String(size[1]);
+        container.style.width = rewarded ? '100vw' : '100%';
+        container.style.height = rewarded ? '100vh' : 'auto';
+        container.style.maxWidth = rewarded ? 'none' : String(size[0]) + 'px';
+        container.style.aspectRatio = rewarded ? 'auto' : String(size[0]) + ' / ' + String(size[1]);
         container.style.background = '#000';
         container.style.overflow = 'hidden';
+        if (rewarded) {
+            container.style.inset = '0';
+            container.style.zIndex = '2147483646';
+        }
         container.appendChild(video);
         container.appendChild(adLayer);
+        if (closeButton) {
+            closeButton.type = 'button';
+            closeButton.textContent = '×';
+            closeButton.setAttribute('aria-label', 'Close rewarded video');
+            closeButton.setAttribute('data-hm-reward-close', '1');
+            closeButton.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:2147483647;width:38px;height:38px;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:26px/38px system-ui,sans-serif;cursor:pointer;';
+            container.appendChild(closeButton);
+        }
 
         var player = container.__hmVideoPlayer = {
             container: container,
             size: size,
             video: video,
             adLayer: adLayer,
+            closeButton: closeButton,
             adsLoader: null,
             adsManager: null,
             displayContainer: null,
@@ -177,7 +246,15 @@
             resizeHandler: null,
             started: false,
             destroyed: false,
+            rewarded: rewarded,
+            completedAds: 0,
+            disqualified: false,
+            granted: false,
+            closedDispatched: false,
         };
+        if (closeButton && closeButton.addEventListener) closeButton.addEventListener('click', function () {
+            destroyPlayer(player, 'dismissed');
+        });
         container.__hmDestroy = function (reason) { destroyPlayer(player, reason || 'dismissed'); };
         return player;
     }
@@ -190,7 +267,26 @@
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
         if (reason) setStatus(player.container, reason);
+        if (player.rewarded && !player.closedDispatched) {
+            player.closedDispatched = true;
+            rewardEvent(player.container, 'horus:rewarded-closed', {
+                granted: player.granted === true,
+                reason: reason || 'closed',
+            });
+            if (player.container.style) player.container.style.display = 'none';
+        }
         if (state.active === player) state.active = null;
+    }
+
+    function grantReward(player) {
+        if (!player || !player.rewarded || player.granted || player.disqualified || player.completedAds < 1) return false;
+        player.granted = true;
+        rememberRewardGrant(player.container);
+        player.container.setAttribute('data-hm-reward-granted', '1');
+        rewardEvent(player.container, 'horus:rewarded-granted', {
+            reward: { type: 'horus_video_completion', amount: 1 },
+        });
+        return true;
     }
 
     function hideCompletedFloatingSurface(player) {
@@ -232,17 +328,29 @@
                 });
                 player.adsManager.addEventListener(adTypes.LOADED, function () { setStatus(player.container, 'loaded'); });
                 player.adsManager.addEventListener(adTypes.STARTED, function () { setStatus(player.container, 'started'); });
+                if (player.rewarded && adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, function () {
+                    player.completedAds += 1;
+                });
+                if (player.rewarded && adTypes.SKIPPED) player.adsManager.addEventListener(adTypes.SKIPPED, function () {
+                    player.disqualified = true;
+                    player.container.setAttribute('data-hm-reward-outcome', 'skipped');
+                });
                 // COMPLETE/SKIPPED are per-ad events. Keep the IMA manager alive
                 // for VAST pods and later VMAP breaks; only the terminal pod
                 // event owns teardown of the Horus surface.
                 if (adTypes.ALL_ADS_COMPLETED) player.adsManager.addEventListener(adTypes.ALL_ADS_COMPLETED, function () {
                     if (player.destroyed) return;
-                    destroyPlayer(player, 'completed');
-                    hideCompletedFloatingSurface(player);
+                    if (player.rewarded) {
+                        grantReward(player);
+                        destroyPlayer(player, player.granted ? 'completed' : 'closed');
+                    } else {
+                        destroyPlayer(player, 'completed');
+                        hideCompletedFloatingSurface(player);
+                    }
                 });
                 var dimensions = playerDimensions(player.container, player.size);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
-                if (player.adsManager.setVolume) player.adsManager.setVolume(0);
+                if (player.adsManager.setVolume) player.adsManager.setVolume(player.rewarded ? 1 : 0);
                 player.adsManager.start();
                 player.resizeHandler = function () {
                     if (!player.adsManager || player.destroyed) return;
@@ -264,9 +372,10 @@
             request.linearAdSlotHeight = dimensions[1];
             request.nonLinearAdSlotWidth = dimensions[0];
             request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
-            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(true);
-            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(true);
+            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.video.autoplay === true);
+            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.video.muted === true);
             player.adsLoader.requestAds(request);
+            if (player.rewarded) rewardEvent(player.container, 'horus:rewarded-opened', {});
         } catch (error) {
             destroyPlayer(player, 'error');
             player.container.setAttribute('data-hm-video-error', String(error && error.message || error).slice(0, 160));
@@ -289,6 +398,88 @@
         player.intersectionObserver.observe(player.container);
     }
 
+    function rewardText(container, attribute, fallback) {
+        var value = String(container.getAttribute(attribute) || '').trim();
+        return value ? value.slice(0, 160) : fallback;
+    }
+
+    function prepareRewarded(container, ima, vastUrl) {
+        var remaining = rewardCooldownRemaining(container);
+        var activated = false;
+        var prompt = document.createElement('div');
+        var title = document.createElement('strong');
+        var copy = document.createElement('span');
+        var button = document.createElement('button');
+
+        container.style.position = 'relative';
+        container.style.display = 'block';
+        container.style.width = '100%';
+        container.style.maxWidth = '640px';
+        container.style.minHeight = '180px';
+        container.style.margin = '16px auto';
+        container.style.background = '#071a36';
+        container.style.color = '#fff';
+        container.style.overflow = 'hidden';
+        container.style.borderRadius = '14px';
+        container.style.boxSizing = 'border-box';
+
+        prompt.setAttribute('data-hm-reward-prompt', '1');
+        prompt.style.cssText = 'display:flex;min-height:180px;padding:24px;box-sizing:border-box;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;background:linear-gradient(135deg,#071a36,#0f3970);';
+        title.textContent = remaining ? 'Reward already completed' : rewardText(container, 'data-hm-reward-title', 'Watch to continue');
+        title.style.cssText = 'display:block;font:700 22px/1.25 system-ui,sans-serif;color:#fff;';
+        copy.textContent = remaining
+            ? 'You can watch another rewarded video in about ' + Math.max(1, Math.ceil(remaining / 60)) + ' minute(s).'
+            : rewardText(container, 'data-hm-reward-copy', 'Watch this short sponsored video to unlock the reward.');
+        copy.style.cssText = 'display:block;max-width:480px;font:400 15px/1.5 system-ui,sans-serif;color:#dbe8ff;';
+        button.type = 'button';
+        button.textContent = remaining ? 'Available later' : rewardText(container, 'data-hm-reward-button', 'Watch video');
+        button.disabled = remaining > 0;
+        button.setAttribute('aria-label', button.textContent);
+        button.style.cssText = 'min-height:44px;padding:10px 22px;border:0;border-radius:999px;background:#d6a73a;color:#071a36;font:700 15px/1 system-ui,sans-serif;cursor:pointer;';
+        if (remaining) button.style.opacity = '0.65';
+        prompt.appendChild(title);
+        prompt.appendChild(copy);
+        prompt.appendChild(button);
+        container.appendChild(prompt);
+
+        function activate(event) {
+            if (remaining || activated || container.getAttribute('data-hm-video-runtime-state') === 'dismissed') return false;
+            var userActivation = window.navigator && window.navigator.userActivation;
+            var trustedEvent = event && event.isTrusted === true;
+            if (userActivation && userActivation.isActive !== true && !trustedEvent) {
+                setStatus(container, 'activation-required');
+                return false;
+            }
+            if (state.active && !state.active.destroyed) {
+                setStatus(container, 'duplicate', 'another-video-is-active');
+                return false;
+            }
+            activated = true;
+            var player = createPlayer(container);
+            startAds(player, ima, vastUrl);
+            return true;
+        }
+
+        if (button.addEventListener) button.addEventListener('click', activate);
+        container.__hmDestroy = function (reason) {
+            if (container.__hmVideoPlayer) {
+                destroyPlayer(container.__hmVideoPlayer, reason || 'dismissed');
+                return;
+            }
+            setStatus(container, reason || 'dismissed');
+            clearContainer(container);
+            if (container.style) container.style.display = 'none';
+            rewardEvent(container, 'horus:rewarded-closed', { granted: false, reason: reason || 'dismissed' });
+        };
+
+        setStatus(container, remaining ? 'reward-capped' : 'reward-ready');
+        rewardEvent(container, 'horus:rewarded-ready', {
+            capped: remaining > 0,
+            cooldownRemainingSeconds: remaining,
+            makeRewardedVisible: activate,
+        });
+    }
+
     function render(container) {
         if (!container || container.getAttribute('data-hm-video-runtime-state')) return;
         var vastUrl = decodeBase64(container.getAttribute('data-hm-vast-url'));
@@ -296,10 +487,15 @@
             setStatus(container, 'invalid');
             return;
         }
-        var player = createPlayer(container);
+        var rewarded = rewardedMode(container);
+        var player = rewarded ? null : createPlayer(container);
         setStatus(container, 'loading-sdk');
         loadSdk().then(function (ima) {
-            if (!player.destroyed) waitUntilViewable(player, ima, vastUrl);
+            if (rewarded) {
+                if (container.getAttribute('data-hm-video-runtime-state') !== 'dismissed') prepareRewarded(container, ima, vastUrl);
+            } else if (!player.destroyed) {
+                waitUntilViewable(player, ima, vastUrl);
+            }
         }).catch(function (error) {
             setStatus(container, 'error', error && error.message || 'sdk-error');
         });

@@ -33,7 +33,7 @@ final class PlacementPresetCatalog
             'native_infeed' => ['label' => 'Native In-feed / Fluid', 'summary' => 'Fluid native surface for an article or feed position. Use a provider adapter or Advanced setup.', 'badge' => 'Fluid', 'group' => 'Native', 'format' => 'native_infeed', 'type' => PlacementType::Native->value, 'mount' => 'in-page', 'quick' => false],
             'native_recommendation' => ['label' => 'Native Recommendation Widget', 'summary' => 'Fluid recommendation/content-discovery surface, usually near article end.', 'badge' => 'Provider managed', 'group' => 'Native', 'format' => 'native_recommendation', 'type' => PlacementType::Native->value, 'mount' => 'in-page', 'quick' => false],
             'interstitial' => ['label' => 'Interstitial / Full-screen', 'summary' => 'Viewport-level interstitial surface. Provider support and lifecycle controls are required.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'web_interstitial', 'type' => PlacementType::Interstitial->value, 'mount' => 'provider-managed', 'quick' => false],
-            'rewarded' => ['label' => 'Rewarded / Opt-in', 'summary' => 'User-initiated rewarded surface. Requires explicit provider and user-activation support.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'rewarded', 'type' => PlacementType::Rewarded->value, 'mount' => 'provider-managed', 'quick' => false],
+            'rewarded' => ['label' => 'Rewarded Video / Opt-in', 'summary' => 'User-initiated Horus video surface for a reviewed VAST/VMAP URL or compatible provider tag.', 'badge' => 'User initiated', 'group' => 'Video', 'format' => 'rewarded', 'type' => PlacementType::Rewarded->value, 'mount' => 'automatic', 'quickMount' => 'article_end', 'quick' => true],
             'contextual_in_image' => ['label' => 'In-image / Contextual Overlay', 'summary' => 'Contextual overlay surface attached to editorial imagery.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'contextual_in_image', 'type' => PlacementType::Custom->value, 'mount' => 'provider-managed', 'quick' => false],
             'edge_in_screen' => ['label' => 'In-screen / Edge Overlay', 'summary' => 'Provider-managed overlay attached to a viewport edge.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'edge_in_screen', 'type' => PlacementType::Sticky->value, 'mount' => 'provider-managed', 'quick' => false],
             'page_skin' => ['label' => 'Page Skin / Takeover', 'summary' => 'Desktop page skin or takeover surface controlled by a compatible provider adapter.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'page_skin', 'type' => PlacementType::Custom->value, 'mount' => 'provider-managed', 'quick' => false],
@@ -77,7 +77,7 @@ final class PlacementPresetCatalog
             'native_infeed' => $this->nativeSurface('article_mid'),
             'native_recommendation' => $this->nativeSurface('article_end'),
             'interstitial' => $this->providerManaged('viewport'),
-            'rewarded' => $this->providerManaged('viewport'),
+            'rewarded' => $this->rewardedVideo(),
             'contextual_in_image' => $this->providerManaged('in_image'),
             'edge_in_screen' => $this->providerManaged('screen_edge'),
             'page_skin' => $this->providerManaged('background'),
@@ -201,6 +201,35 @@ final class PlacementPresetCatalog
                 'minimumVisibleRatio' => 0.5,
                 'mutedAutoplay' => true,
             ], 'lazy_load_enabled' => ! $floating, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
+        ];
+    }
+
+    private function rewardedVideo(): array
+    {
+        $fixed = [[640, 360], [320, 180]];
+
+        return [
+            'sizes' => array_merge(
+                $this->fixed($fixed),
+                $this->responsive('MOBILE', 0, 0, 767, 65535, [[320, 180]]),
+                $this->responsive('DESKTOP', 768, 0, null, null, $fixed),
+            ),
+            'format_settings' => [
+                'autoMount' => true,
+                'autoMountTarget' => 'article_end',
+                'reserveSpace' => false,
+                'responsive' => true,
+                'position' => 'viewport',
+                'providerManaged' => false,
+                'rewarded' => true,
+                'requireUserActivation' => true,
+                'singleActiveVideo' => true,
+                'rewardCooldownSeconds' => 900,
+            ],
+            'lazy_load_enabled' => false,
+            'collapse_empty_div' => false,
+            'safeframe_enabled' => false,
+            'refresh_enabled' => false,
         ];
     }
 

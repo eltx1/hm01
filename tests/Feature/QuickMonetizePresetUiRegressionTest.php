@@ -57,6 +57,7 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString('value="sticky_bottom"', $html);
         $this->assertStringContainsString('value="sticky_top"', $html);
         $this->assertStringContainsString('value="video_floating"', $html);
+        $this->assertStringContainsString('value="rewarded"', $html);
 
         $this->assertStringNotContainsString('<option value="0"', $html);
         $this->assertStringNotContainsString('<option value="1"', $html);
@@ -78,6 +79,7 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString('VAST URL or provider-issued ad tag', $html);
         $this->assertStringContainsString('Horus video player', $html);
         $this->assertStringContainsString('Complete provider code runs inside Horus isolation', $html);
+        $this->assertStringContainsString('Choose Rewarded Video for an explicit opt-in flow', $html);
         $this->assertStringContainsString("preset.value = 'video_floating';", $html);
     }
 

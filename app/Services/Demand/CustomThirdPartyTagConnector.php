@@ -161,16 +161,19 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     /** @param array{url:string,origin:string} $vast */
     private function vastRecipe(array $vast, array $configuration, DemandPlacement $placement): array
     {
-        if ($placement->placement->type->value !== 'VIDEO') {
-            throw new RuntimeException('A VAST URL requires a Horus Video placement such as Floating Video or Outstream / In-read Video.');
+        $placementType = $placement->placement->type->value;
+        $rewarded = $placementType === 'REWARDED';
+        if (! in_array($placementType, ['VIDEO', 'REWARDED'], true)) {
+            throw new RuntimeException('A VAST URL requires a Horus Video placement such as Floating Video, Outstream / In-read Video, or Rewarded Video.');
         }
 
         $policy = $this->quickPlacementSizePolicy($placement);
         $frameSize = $policy['fallback'];
         $sizes = $policy['sizes'];
         $runtimeUrl = $this->trustedRuntimeUrl('hm-video-direct.js');
-        $containerId = 'hm-video-'.$placement->id;
+        $containerId = ($rewarded ? 'hm-rewarded-' : 'hm-video-').$placement->id;
         $timeout = max(15_000, min(30_000, (int) ($configuration['render_timeout_ms'] ?? 20_000)));
+        $formatSettings = (array) ($placement->placement->format_settings ?? []);
         $attributes = [
             'data-hm-video-direct' => '1',
             'data-hm-vast-url' => base64_encode($vast['url']),
@@ -178,15 +181,26 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'data-hm-video-height' => (string) $frameSize[1],
             'data-hm-video-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             'data-hm-video-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
-            'data-hm-video-muted' => '1',
-            'data-hm-video-autoplay' => '1',
+            'data-hm-video-muted' => $rewarded ? '0' : '1',
+            'data-hm-video-autoplay' => $rewarded ? '0' : '1',
         ];
-        $successSelector = '#'.$containerId.'[data-hm-video-status="started"]';
+        if ($rewarded) {
+            $attributes += [
+                'data-hm-video-rewarded' => '1',
+                'data-hm-reward-title' => 'Watch to continue',
+                'data-hm-reward-copy' => 'Watch this short sponsored video to unlock the reward.',
+                'data-hm-reward-button' => 'Watch video',
+                'data-hm-reward-cooldown-seconds' => (string) max(0, min(86_400, (int) ($formatSettings['rewardCooldownSeconds'] ?? 900))),
+            ];
+        }
+        $successSelector = $rewarded
+            ? '#'.$containerId.'[data-hm-video-status="reward-ready"], #'.$containerId.'[data-hm-video-status="reward-capped"]'
+            : '#'.$containerId.'[data-hm-video-status="started"]';
 
         return [
             'recipeVersion' => 1,
             'executionMode' => 'STRUCTURED',
-            'format' => 'VIDEO',
+            'format' => $rewarded ? 'REWARDED' : 'VIDEO',
             'scripts' => [[
                 'url' => $runtimeUrl,
                 'async' => true,
@@ -194,14 +208,14 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
                 'dedupeKey' => 'horus-video-direct-runtime-v1',
                 'attributes' => [],
             ]],
-            'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-video', 'attributes' => $attributes],
+            'container' => ['element' => 'div', 'id' => $containerId, 'class' => $rewarded ? 'hm-direct-rewarded' : 'hm-direct-video', 'attributes' => $attributes],
             'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id),
             'initialization' => ['type' => 'NONE', 'parameters' => []],
-            'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => ['VIDEO', 'OUTSTREAM'], 'allowedSizes' => $sizes],
+            'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => $rewarded ? ['REWARDED'] : ['VIDEO', 'OUTSTREAM'], 'allowedSizes' => $sizes],
             'isolation' => null,
             'scriptUrl' => $runtimeUrl,
             'containerId' => $containerId,
-            'containerClass' => 'hm-direct-video',
+            'containerClass' => $rewarded ? 'hm-direct-rewarded' : 'hm-direct-video',
             'attributes' => $attributes,
             'renderTimeoutMs' => $timeout,
             'successSelector' => $successSelector,
