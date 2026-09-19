@@ -41,7 +41,7 @@ jobs:
         run: |
           bash scripts/install-composer-ci.sh
           npm ci
-          npm audit --audit-level=moderate
+          npm audit --package-lock-only --audit-level=moderate
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           npx playwright install --with-deps chromium webkit
       - name: Validate deployment foundation
