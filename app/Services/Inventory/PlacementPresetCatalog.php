@@ -190,7 +190,17 @@ final class PlacementPresetCatalog
         $fixed = $floating ? [[400, 225], [320, 180]] : [[640, 360], [480, 270], [320, 180]];
         return [
             'sizes' => array_merge($this->fixed($fixed), $this->responsive('MOBILE', 0, 0, 767, 65535, [[320, 180]]), $this->responsive('DESKTOP', 768, 0, null, null, $fixed)),
-            'format_settings' => ['autoMount' => $floating, 'reserveSpace' => ! $floating, 'responsive' => true, 'position' => $floating ? 'bottom_right' : 'inline'], 'lazy_load_enabled' => ! $floating, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
+            'format_settings' => [
+                'autoMount' => $floating,
+                'reserveSpace' => ! $floating,
+                'responsive' => true,
+                'position' => $floating ? 'bottom_right' : 'inline',
+                'closeable' => $floating,
+                'closeOutside' => $floating,
+                'singleActiveVideo' => true,
+                'minimumVisibleRatio' => 0.5,
+                'mutedAutoplay' => true,
+            ], 'lazy_load_enabled' => ! $floating, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
         ];
     }
 

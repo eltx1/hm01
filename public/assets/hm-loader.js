@@ -1356,12 +1356,18 @@ function nativeDefinition(config, code) {
         return String(attributes && attributes['data-hm-gpt-direct'] || '') === '1';
     }
 
+    function directVideoRecipe(tag) {
+        var container = tag && tag.container || {};
+        var attributes = container.attributes || tag && tag.attributes || {};
+        return String(attributes && attributes['data-hm-video-direct'] || '') === '1';
+    }
+
     function directRenderPolicy(tag) {
         var render = tag && tag.render || {};
-        var gptDirect = directGptRecipe(tag);
-        var fallback = gptDirect ? 15000 : 2500;
-        var maximum = gptDirect ? 30000 : 10000;
-        var minimum = gptDirect ? 15000 : 0;
+        var longRunning = directGptRecipe(tag) || directVideoRecipe(tag);
+        var fallback = longRunning ? 15000 : 2500;
+        var maximum = longRunning ? 30000 : 10000;
+        var minimum = longRunning ? 15000 : 0;
         var configured = Number(render.timeoutMs || tag.renderTimeoutMs || fallback);
         return {
             timeoutMs: Math.max(minimum, Math.min(maximum, configured)),
@@ -1393,6 +1399,20 @@ function nativeDefinition(config, code) {
             if (runtimeState === 'rendered') return { done: true, rendered: true, reason: 'rendered' };
             if (['empty', 'failed', 'invalid', 'ineligible'].indexOf(runtimeState) !== -1) {
                 return { done: true, rendered: false, reason: 'gpt-' + runtimeState };
+            }
+        }
+        if (directVideoRecipe(tag) && container && container.getAttribute) {
+            var videoState = String(container.getAttribute('data-hm-video-status') || container.getAttribute('data-hm-video-runtime-state') || '');
+            if (['started', 'completed'].indexOf(videoState) !== -1) return { done: true, rendered: true, reason: videoState };
+            if (['error', 'invalid', 'ineligible', 'duplicate', 'dismissed'].indexOf(videoState) !== -1) {
+                return { done: true, rendered: false, reason: 'video-' + videoState };
+            }
+        }
+        if (container && container.getAttribute && String(container.getAttribute('data-hm-isolated-direct') || '') === '1') {
+            var isolatedState = String(container.getAttribute('data-hm-isolated-status') || container.getAttribute('data-hm-isolated-runtime-state') || '');
+            if (isolatedState === 'rendered') return { done: true, rendered: true, reason: 'rendered' };
+            if (['failed', 'invalid', 'empty', 'dismissed'].indexOf(isolatedState) !== -1) {
+                return { done: true, rendered: false, reason: 'isolated-' + isolatedState };
             }
         }
         return { done: false, rendered: false, reason: null };
@@ -1599,6 +1619,9 @@ function nativeDefinition(config, code) {
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
+                    if (container && typeof container.__hmDestroy === 'function') {
+                        try { container.__hmDestroy('failed'); } catch (error) {}
+                    }
                     if (container && container.parentNode && container.parentNode.removeChild) {
                         container.parentNode.removeChild(container);
                     }

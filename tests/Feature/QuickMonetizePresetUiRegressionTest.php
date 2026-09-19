@@ -75,6 +75,10 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString("existingWrap.style.display = existing ? '' : 'none';", $html);
         $this->assertStringContainsString('placement.disabled = blocked || !existing;', $html);
         $this->assertStringContainsString('preset.disabled = blocked || existing;', $html);
+        $this->assertStringContainsString('VAST URL or provider-issued ad tag', $html);
+        $this->assertStringContainsString('Horus video player', $html);
+        $this->assertStringContainsString('Complete provider code runs inside Horus isolation', $html);
+        $this->assertStringContainsString("preset.value = 'video_floating';", $html);
     }
 
     private function adminSession(): static

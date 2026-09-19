@@ -53,6 +53,8 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /function contentMountChildren\(content\)/);
     assert.match(transformed, /Do not guess a "middle"/);
     assert.match(transformed, /bottom_right/);
+    assert.match(transformed, /data-hm-floating-video-active/);
+    assert.match(transformed, /settings\.singleActiveVideo !== false/);
     assert.match(transformed, /function setImportantStyle\(style, name, value\)/);
     assert.match(transformed, /style\.setProperty\(name, value, 'important'\)/);
     assert.match(transformed, /function resetPositionStyle\(style, name\)/);
@@ -84,7 +86,7 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /display:none;position:absolute/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'display', 'none'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'position', 'absolute'\)/);
-    assert.match(transformed, /setImportantStyle\(button\.style, 'top', '4px'\)/);
+    assert.match(transformed, /settings\.closeOutside === true \? '-32px' : '4px'/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'right', '4px'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'left', 'auto'\)/);
     assert.match(transformed, /setImportantStyle\(button\.style, 'bottom', 'auto'\)/);
@@ -103,6 +105,13 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /function placementRendered\(element\)/);
     assert.match(transformed, /attributeFilter: \['data-hm-status'\]/);
     assert.match(transformed, /data-hm-placement-dismissed/);
+    assert.match(transformed, /function destroyPlacementMedia\(element\)/);
+    assert.match(transformed, /node\.__hmDestroy\('dismissed'\)/);
+    assert.match(transformed, /node\.pause\(\)/);
+    assert.match(transformed, /node\.src = 'about:blank'/);
+    assert.match(transformed, /calc\(16px \+ env\(safe-area-inset-bottom, 0px\)\)/);
+    assert.match(transformed, /min\(400px, calc\(100vw - 32px\)\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'aspect-ratio', '16 \/ 9'\)/);
     assert.match(transformed, /function attachDirectResponsiveMapping\(container, entry\)/);
     assert.match(transformed, /data-hm-gpt-size-map/);
     assert.match(transformed, /JSON\.stringify\(mappings\)/);
@@ -119,6 +128,7 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.equal((twice.match(/function applyContentAlignment\(element, placement, settings\)/g) || []).length, 1);
     assert.equal((twice.match(/function alignDirectContentContainer\(container, entry\)/g) || []).length, 1);
     assert.equal((twice.match(/function ensurePlacementCloseControl\(element, settings\)/g) || []).length, 1);
+    assert.equal((twice.match(/function destroyPlacementMedia\(element\)/g) || []).length, 1);
     assert.equal((twice.match(/function attachDirectResponsiveMapping\(container, entry\)/g) || []).length, 1);
     assert.equal((twice.match(/applyPlacementPresetPresentation\(item\.element, item\.placement, placementFormatSettings\(item\.placement\)\);/g) || []).length, 1);
     assert.equal((twice.match(/attachDirectResponsiveMapping\(container, entry\);/g) || []).length, 1);
