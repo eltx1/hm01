@@ -163,12 +163,22 @@ const HELPERS = `    function placementFormatSettings(placement) {
         }
     }
 
-    function applyContentAlignment(element, settings) {
-        if (!element || !element.style || !settings) return;
+    function placementIsInContent(placement, settings) {
+        settings = settings || placementFormatSettings(placement);
         var target = String(settings.autoMountTarget || '').toLowerCase();
-        var inContent = target === 'content_mid' || target === 'article_mid'
-            || target === 'content_end' || target === 'article_end';
-        if (!inContent) return;
+        var contentPosition = String(settings.contentPosition || '').toLowerCase();
+        var surfaceMount = String(settings.surface && settings.surface.mount || '').toLowerCase();
+        var formatCode = String(placement && placement.format && placement.format.code || '').toLowerCase();
+        var contentTargets = ['content_mid', 'article_mid', 'content_end', 'article_end'];
+
+        return formatCode === 'display_in_article'
+            || contentTargets.indexOf(target) !== -1
+            || contentTargets.indexOf(contentPosition) !== -1
+            || contentTargets.indexOf(surfaceMount) !== -1;
+    }
+
+    function applyContentAlignment(element, placement, settings) {
+        if (!element || !element.style || !placementIsInContent(placement, settings)) return;
 
         // The placement owns the available content width while the provider
         // creative can keep its declared fixed width (or 100% for fluid/native).
@@ -184,6 +194,19 @@ const HELPERS = `    function placementFormatSettings(placement) {
         setImportantStyle(style, 'margin-left', 'auto');
         setImportantStyle(style, 'margin-right', 'auto');
         setImportantStyle(style, 'text-align', 'center');
+    }
+
+    function alignDirectContentContainer(container, entry) {
+        if (!container || !container.style || !entry || !placementIsInContent(entry.placement, placementFormatSettings(entry.placement))) return;
+        var style = container.style;
+
+        // GPT chooses the final fixed/fluid width asynchronously. Keep the
+        // provider-owned child centered even after that late width mutation.
+        setImportantStyle(style, 'align-self', 'center');
+        setImportantStyle(style, 'margin-left', 'auto');
+        setImportantStyle(style, 'margin-right', 'auto');
+        setImportantStyle(style, 'max-width', '100%');
+        setImportantStyle(style, 'box-sizing', 'border-box');
     }
 
     function placementRendered(element) {
@@ -255,7 +278,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
     function applyPlacementPresetPresentation(element, placement, settings) {
         settings = settings || placementFormatSettings(placement);
-        applyContentAlignment(element, settings);
+        applyContentAlignment(element, placement, settings);
         applyStickyPosition(element, placement, settings);
         ensurePlacementCloseControl(element, settings);
     }
@@ -290,7 +313,7 @@ export function applyPlacementPresetTransform(input) {
         if (!source.includes(DIRECT_CONTAINER_ANCHOR)) {
             throw new Error('Unable to locate Direct Demand container anchor for responsive GPT mapping');
         }
-        source = source.replace(DIRECT_CONTAINER_ANCHOR, `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        attachDirectResponsiveMapping(container, entry);\n        if (entry.element.appendChild) entry.element.appendChild(container);`);
+        source = source.replace(DIRECT_CONTAINER_ANCHOR, `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        attachDirectResponsiveMapping(container, entry);\n        alignDirectContentContainer(container, entry);\n        if (entry.element.appendChild) entry.element.appendChild(container);`);
     }
 
     return source;
