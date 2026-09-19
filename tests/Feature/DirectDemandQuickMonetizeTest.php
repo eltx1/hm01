@@ -308,6 +308,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame('REWARDED', data_get($candidate, 'tag.format'));
         $this->assertSame(['REWARDED'], data_get($candidate, 'tag.render.allowedFormats'));
         $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-rewarded'));
+        $this->assertSame('continue-reading', data_get($candidate, 'tag.container.attributes.data-hm-reward-experience'));
         $this->assertSame('0', data_get($candidate, 'tag.container.attributes.data-hm-video-autoplay'));
         $this->assertSame('0', data_get($candidate, 'tag.container.attributes.data-hm-video-muted'));
         $this->assertSame('900', data_get($candidate, 'tag.container.attributes.data-hm-reward-cooldown-seconds'));

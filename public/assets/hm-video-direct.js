@@ -219,6 +219,8 @@
         container.style.background = '#000';
         container.style.overflow = 'hidden';
         if (rewarded) {
+            container.style.padding = '0';
+            container.style.margin = '0';
             container.style.inset = '0';
             container.style.zIndex = '2147483646';
         }
@@ -231,6 +233,7 @@
             closeButton.setAttribute('data-hm-reward-close', '1');
             closeButton.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:2147483647;width:38px;height:38px;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:26px/38px system-ui,sans-serif;cursor:pointer;';
             container.appendChild(closeButton);
+            if (closeButton.focus) closeButton.focus({ preventScroll: true });
         }
 
         var player = container.__hmVideoPlayer = {
@@ -274,6 +277,7 @@
                 reason: reason || 'closed',
             });
             if (player.container.style) player.container.style.display = 'none';
+            finishReading(player.container);
         }
         if (!player.rewarded && reason) hideFloatingSurface(player);
         if (state.active === player) state.active = null;
@@ -404,6 +408,14 @@
         return value ? value.slice(0, 160) : fallback;
     }
 
+    function finishReading(container) {
+        if (container.__hmReadingCleanup) {
+            container.__hmReadingCleanup();
+            container.__hmReadingCleanup = null;
+        }
+        if (state.readingPrompt === container) state.readingPrompt = null;
+    }
+
     function prepareRewarded(container, ima, vastUrl) {
         var remaining = rewardCooldownRemaining(container);
         var activated = false;
@@ -411,6 +423,15 @@
         var title = document.createElement('strong');
         var copy = document.createElement('span');
         var button = document.createElement('button');
+        var decline = document.createElement('button');
+        var reading = container.getAttribute('data-hm-reward-experience') === 'continue-reading';
+        var arabic = /^ar\b/i.test(String(document.documentElement.lang || ''));
+        var dismissed = false;
+        if (reading && state.readingPrompt) {
+            setStatus(container, 'duplicate');
+            container.style.display = 'none';
+            return;
+        }
 
         container.style.position = 'relative';
         container.style.display = 'block';
@@ -423,9 +444,19 @@
         container.style.overflow = 'hidden';
         container.style.borderRadius = '14px';
         container.style.boxSizing = 'border-box';
+        if (reading && !remaining) {
+            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;width:100%;height:100%;max-width:none;margin:0;padding:20px;box-sizing:border-box;background:rgba(5,8,22,.78);overflow:auto;';
+        }
 
         prompt.setAttribute('data-hm-reward-prompt', '1');
         prompt.style.cssText = 'display:flex;min-height:180px;padding:24px;box-sizing:border-box;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;background:linear-gradient(135deg,#071a36,#0f3970);';
+        if (reading) {
+            prompt.style.cssText += 'width:100%;max-width:480px;border:1px solid rgba(241,183,51,.22);border-radius:26px;box-shadow:0 28px 90px rgba(0,0,0,.38);background:linear-gradient(135deg,#050b1e,#0a2153);';
+            prompt.setAttribute('dir', arabic ? 'rtl' : 'ltr');
+            prompt.setAttribute('role', 'dialog');
+            prompt.setAttribute('aria-modal', 'true');
+            prompt.setAttribute('aria-label', arabic ? 'استكمال القراءة' : 'Continue reading');
+        }
         title.textContent = remaining ? 'Reward already completed' : rewardText(container, 'data-hm-reward-title', 'Watch to continue');
         title.style.cssText = 'display:block;font:700 22px/1.25 system-ui,sans-serif;color:#fff;';
         copy.textContent = remaining
@@ -435,12 +466,29 @@
         button.type = 'button';
         button.textContent = remaining ? 'Available later' : rewardText(container, 'data-hm-reward-button', 'Watch video');
         button.disabled = remaining > 0;
+        if (reading) {
+            title.textContent = arabic ? 'أكمل قراءتك' : 'Continue your reading';
+            copy.textContent = remaining
+                ? (arabic ? 'يمكنك متابعة قراءة المحتوى الآن.' : 'You can continue reading now.')
+                : (arabic ? 'شاهد الإعلان حتى نهايته، ثم تابع قراءة المحتوى من حيث توقفت. يمكنك الإغلاق في أي وقت.' : 'Watch the ad to completion, then continue reading where you left off. You can close at any time.');
+            button.textContent = arabic ? 'شاهد الإعلان واستكمل القراءة' : 'Watch ad and continue reading';
+            if (remaining) button.style.display = 'none';
+        }
         button.setAttribute('aria-label', button.textContent);
-        button.style.cssText = 'min-height:44px;padding:10px 22px;border:0;border-radius:999px;background:#d6a73a;color:#071a36;font:700 15px/1 system-ui,sans-serif;cursor:pointer;';
+        button.style.cssText = 'min-height:44px;max-width:100%;white-space:normal;padding:10px 22px;border:0;border-radius:999px;background:linear-gradient(115deg,#ffe495,#f1b733 56%,#cf8b13);color:#071127;font:700 15px/1.5 system-ui,sans-serif;cursor:pointer;';
+        if (reading && remaining) button.style.display = 'none';
         if (remaining) button.style.opacity = '0.65';
         prompt.appendChild(title);
         prompt.appendChild(copy);
         prompt.appendChild(button);
+        if (reading) {
+            decline.type = 'button';
+            decline.textContent = arabic ? 'متابعة القراءة الآن' : 'Continue reading now';
+            decline.setAttribute('data-hm-reward-decline', '1');
+            decline.style.cssText = 'min-height:44px;padding:10px 20px;border:1px solid #9da9c2;border-radius:999px;background:transparent;color:#f6f8ff;font:500 15px/1.5 system-ui,sans-serif;cursor:pointer;';
+            decline.addEventListener('click', function () { container.__hmDestroy('dismissed'); });
+            prompt.appendChild(decline);
+        }
         container.appendChild(prompt);
 
         function activate(event) {
@@ -463,6 +511,8 @@
 
         if (button.addEventListener) button.addEventListener('click', activate);
         container.__hmDestroy = function (reason) {
+            if (dismissed) return;
+            dismissed = true;
             if (container.__hmVideoPlayer) {
                 destroyPlayer(container.__hmVideoPlayer, reason || 'dismissed');
                 return;
@@ -470,8 +520,31 @@
             setStatus(container, reason || 'dismissed');
             clearContainer(container);
             if (container.style) container.style.display = 'none';
+            finishReading(container);
             rewardEvent(container, 'horus:rewarded-closed', { granted: false, reason: reason || 'dismissed' });
         };
+
+        if (reading && !remaining) {
+            state.readingPrompt = container;
+            var previousFocus = document.activeElement;
+            var keyHandler = function (event) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    container.__hmDestroy('dismissed');
+                } else if (event.key === 'Tab' && !container.__hmVideoPlayer) {
+                    event.preventDefault();
+                    var next = document.activeElement === button ? decline : button;
+                    if (next.focus) next.focus();
+                }
+            };
+            window.addEventListener('keydown', keyHandler);
+            container.__hmReadingCleanup = function () {
+                window.removeEventListener('keydown', keyHandler);
+                if (previousFocus && previousFocus.isConnected && previousFocus.focus) previousFocus.focus({ preventScroll: true });
+            };
+            if (button.focus) button.focus({ preventScroll: true });
+        }
+        if (reading && remaining) container.style.display = 'none';
 
         setStatus(container, remaining ? 'reward-capped' : 'reward-ready');
         rewardEvent(container, 'horus:rewarded-ready', {
