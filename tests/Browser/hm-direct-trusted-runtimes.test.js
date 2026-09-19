@@ -436,6 +436,9 @@ test('Horus video runtime plays a VAST URL only after viewability and exposes de
     };
     target.parentNode = floatingSurface;
     runtime.managers[0].emit('complete');
+    assert.equal(runtime.managers[0].destroyed, false);
+    assert.notEqual(floatingSurface.style.display, 'none');
+    runtime.managers[0].emit('all-ads-completed');
     assert.equal(runtime.managers[0].destroyed, true);
     assert.equal(video.paused, true);
     assert.equal(attributes['data-hm-video-status'], 'completed');

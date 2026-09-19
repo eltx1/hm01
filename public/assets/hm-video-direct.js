@@ -232,12 +232,13 @@
                 });
                 player.adsManager.addEventListener(adTypes.LOADED, function () { setStatus(player.container, 'loaded'); });
                 player.adsManager.addEventListener(adTypes.STARTED, function () { setStatus(player.container, 'started'); });
-                [adTypes.COMPLETE, adTypes.SKIPPED, adTypes.ALL_ADS_COMPLETED].filter(Boolean).forEach(function (type) {
-                    player.adsManager.addEventListener(type, function () {
-                        if (player.destroyed) return;
-                        destroyPlayer(player, 'completed');
-                        hideCompletedFloatingSurface(player);
-                    });
+                // COMPLETE/SKIPPED are per-ad events. Keep the IMA manager alive
+                // for VAST pods and later VMAP breaks; only the terminal pod
+                // event owns teardown of the Horus surface.
+                if (adTypes.ALL_ADS_COMPLETED) player.adsManager.addEventListener(adTypes.ALL_ADS_COMPLETED, function () {
+                    if (player.destroyed) return;
+                    destroyPlayer(player, 'completed');
+                    hideCompletedFloatingSurface(player);
                 });
                 var dimensions = playerDimensions(player.container, player.size);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);

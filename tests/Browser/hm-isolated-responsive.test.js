@@ -114,4 +114,6 @@ test('iframe-only provider markup is preserved inside the reviewed isolated docu
     assert.ok(frame.srcdoc.includes(csp));
     assert.equal(target.attributes['data-hm-isolated-status'], 'loaded');
     assert.match(frame.srcdoc, /hm-isolated-rendered/);
+    assert.match(frame.srcdoc, /backgroundImage/);
+    assert.match(frame.srcdoc, /SVG:1/);
 });

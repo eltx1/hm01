@@ -1308,6 +1308,31 @@ function nativeDefinition(config, code) {
         return config.directDemand || config.nativeDemand || {};
     }
 
+    function runDirectEntry(config, entry) {
+        if (!directJsServingAllowed(config)) return Promise.resolve(false);
+        var key = ensureElementId(entry.element, config, entry.placement);
+        if (entry.element.getAttribute('data-hm-direct-started') === '1') return Promise.resolve(Boolean(state.nativeRendered[key]));
+        entry.element.setAttribute('data-hm-direct-started', '1');
+        var lazy = entry.placement.lazyLoad || {};
+        if (lazy.enabled && typeof window.IntersectionObserver === 'function') {
+            var margin = Math.max(0, Number(lazy.fetchMarginPercent || 0));
+            var observer = new window.IntersectionObserver(function (records) {
+                var nearViewport = (records || []).some(function (record) { return record && (record.isIntersecting || Number(record.intersectionRatio) > 0); });
+                if (!nearViewport) return;
+                observer.disconnect();
+                if (state.directObservers) delete state.directObservers[key];
+                runNativeFallback(config, entry);
+            }, { rootMargin: margin + '% 0px ' + margin + '% 0px' });
+            state.directObservers = state.directObservers || {};
+            state.directObservers[key] = observer;
+            observer.observe(entry.element);
+            // Registering a below-fold Direct placement must not hold Loader
+            // boot open or start its candidate timeout before it is nearby.
+            return Promise.resolve(false);
+        }
+        return runNativeFallback(config, entry);
+    }
+
     function candidateRank(config, candidate) {
         var fallback = directDemandConfig(config).fallbackOrder || [];
         var index = fallback.indexOf(candidate.network);
@@ -1722,7 +1747,7 @@ function nativeDefinition(config, code) {
             item.element.setAttribute('data-hm-defined', '1');
             item.element.setAttribute('data-hm-status', 'direct-demand');
         });
-        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }));
+        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runDirectEntry(config, item); }));
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
 
         return loadGpt(config).then(function (googletag) {
