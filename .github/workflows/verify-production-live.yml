@@ -237,6 +237,28 @@ jobs:
           echo "manifest_hash=$local_hash" >> "$GITHUB_OUTPUT"
           echo "Confirmed production manifest: $local_hash"
 
+      - name: Verify LordAI In-Article live snapshot contract
+        id: lordai
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(php scripts/verify-lordai-in-article-live.php "$RUNNER_TEMP/production-static-snapshot")"
+          echo "$result" | jq -e '.config_path and .config_sha256 and .loader_sha256 and .placement_code == "quick_in_article_display"' >/dev/null
+
+          config_path="$(jq -r '.config_path' <<< "$result")"
+          config_sha256="$(jq -r '.config_sha256' <<< "$result")"
+          loader_sha256="$(jq -r '.loader_sha256' <<< "$result")"
+          [[ "$config_path" == configs/*/production.json ]]
+          [[ "$config_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$loader_sha256" =~ ^[0-9a-f]{64}$ ]]
+
+          {
+            echo "config_path=$config_path"
+            echo "config_sha256=$config_sha256"
+            echo "loader_sha256=$loader_sha256"
+          } >> "$GITHUB_OUTPUT"
+          echo "LordAI live In-Article contract verified: $result"
+
       - name: Validate live TASK 68 sellers.json disclosure contract
         shell: bash
         run: |
@@ -308,6 +330,29 @@ jobs:
           echo "deployment_url=$matched_url" >> "$GITHUB_OUTPUT"
           echo "Cloudflare Pages exact deployment: $matched_url"
 
+      - name: Verify LordAI config and centering Loader on exact Pages deployment
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.pages.outputs.deployment_url }}
+          LORDAI_CONFIG_PATH: ${{ steps.lordai.outputs.config_path }}
+        run: |
+          set -euo pipefail
+          local_dir="$RUNNER_TEMP/production-static-snapshot"
+          test -f "$local_dir/$LORDAI_CONFIG_PATH"
+          test -f "$local_dir/hm-loader.js"
+
+          curl -fsSL --max-time 20 \
+            "$DEPLOYMENT_URL/$LORDAI_CONFIG_PATH?liveverify=$GITHUB_RUN_ID" \
+            -o "$RUNNER_TEMP/pages-lordai-production.json"
+          cmp -s "$local_dir/$LORDAI_CONFIG_PATH" "$RUNNER_TEMP/pages-lordai-production.json"
+
+          curl -fsSL --max-time 20 \
+            "$DEPLOYMENT_URL/hm-loader.js?liveverify=$GITHUB_RUN_ID" \
+            -o "$RUNNER_TEMP/pages-hm-loader.js"
+          cmp -s "$local_dir/hm-loader.js" "$RUNNER_TEMP/pages-hm-loader.js"
+
+          echo "LordAI production config and centering Loader are byte-for-byte live on exact Pages deployment."
+
       - name: Verify representative ads.txt artifacts on exact Pages deployment
         shell: bash
         env:
@@ -360,6 +405,9 @@ jobs:
           RELEASE_SHA: ${{ steps.proof.outputs.release_sha }}
           MANIFEST_HASH: ${{ steps.snapshot.outputs.manifest_hash }}
           PAGES_DEPLOYMENT_URL: ${{ steps.pages.outputs.deployment_url }}
+          LORDAI_CONFIG_PATH: ${{ steps.lordai.outputs.config_path }}
+          LORDAI_CONFIG_SHA256: ${{ steps.lordai.outputs.config_sha256 }}
+          LORDAI_LOADER_SHA256: ${{ steps.lordai.outputs.loader_sha256 }}
         run: |
           set -euo pipefail
           proof_dir="$RUNNER_TEMP/production-live-proof"
@@ -370,6 +418,9 @@ jobs:
             echo "deploy_run_id=$DEPLOY_RUN_ID"
             echo "manifest_hash=$MANIFEST_HASH"
             echo "pages_deployment_url=$PAGES_DEPLOYMENT_URL"
+            echo "lordai_config_path=$LORDAI_CONFIG_PATH"
+            echo "lordai_config_sha256=$LORDAI_CONFIG_SHA256"
+            echo "lordai_loader_sha256=$LORDAI_LOADER_SHA256"
             echo "verify_run_id=$GITHUB_RUN_ID"
             echo "verify_run_attempt=$GITHUB_RUN_ATTEMPT"
           } > "$proof_dir/live-proof.env"
