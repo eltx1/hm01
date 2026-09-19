@@ -492,6 +492,37 @@ test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', as
     assert.equal(attributes['data-hm-video-status'], 'invalid');
 });
 
+test('Horus floating video removes its surface immediately after a terminal IMA error', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=floating-error', 'utf8').toString('base64'),
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+        'data-hm-video-sizes': '[[400,225],[320,180]]',
+        'data-hm-video-muted': '1',
+        'data-hm-video-autoplay': '1',
+    };
+    const target = container(attributes, 'hm-video-error');
+    const floatingSurfaceAttributes = { 'data-hm-floating-video-active': '1' };
+    const floatingSurface = {
+        style: {},
+        parentNode: null,
+        getAttribute(name) { return floatingSurfaceAttributes[name] ?? null; },
+        setAttribute(name, value) { floatingSurfaceAttributes[name] = String(value); },
+    };
+    target.parentNode = floatingSurface;
+
+    const runtime = runVideo(target);
+    await tick();
+    runtime.managers[0].emit('ad-error', { getError() { return new Error('vast-no-fill'); } });
+
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(attributes['data-hm-video-status'], 'error');
+    assert.match(attributes['data-hm-video-error'], /vast-no-fill/);
+    assert.equal(floatingSurface.style.display, 'none');
+    assert.equal(floatingSurfaceAttributes['data-hm-placement-dismissed'], '1');
+});
+
 test('Horus rewarded VAST waits for explicit opt-in and grants only after an unskipped completion', async () => {
     const vastUrl = 'https://video.example.com/vast?slot=rewarded';
     const attributes = {
@@ -559,6 +590,29 @@ test('Horus rewarded VAST never grants after skip', async () => {
     assert.equal(closed.length, 1);
     assert.equal(closed[0].detail.granted, false);
     assert.equal(attributes['data-hm-video-status'], 'closed');
+});
+
+test('Horus rewarded VAST closes without granting after an IMA error', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=rewarded-error', 'utf8').toString('base64'),
+        'data-hm-video-muted': '0',
+        'data-hm-video-autoplay': '0',
+    };
+    const target = container(attributes, 'hm-rewarded-error');
+    const runtime = runVideo(target);
+    await tick();
+    runtime.created.find((node) => node.tagName === 'BUTTON').click();
+    runtime.managers[0].emit('ad-error', { getError() { return new Error('rewarded-no-fill'); } });
+
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-granted').length, 0);
+    const closed = runtime.dispatched.filter((event) => event.type === 'horus:rewarded-closed');
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0].detail.granted, false);
+    assert.equal(closed[0].detail.reason, 'error');
+    assert.equal(attributes['data-hm-video-status'], 'error');
+    assert.equal(target.style.display, 'none');
 });
 
 test('Horus rewarded VAST rejects programmatic activation outside a user gesture', async () => {
