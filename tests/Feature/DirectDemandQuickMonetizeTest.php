@@ -277,6 +277,55 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertStringContainsString('data-hm-video-status="started"', (string) data_get($candidate, 'tag.render.successSelector'));
     }
 
+    public function test_gam_unit_path_creates_official_gpt_rewarded_recipe(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'rewarded',
+            'tag' => '/23055873217/rewarded',
+        ]))->assertSessionHasNoErrors()->assertRedirect();
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $tag = data_get($configuration, 'placements.quick_rewarded.candidates.0.tag');
+        $this->assertSame('REWARDED', $tag['format']);
+        $this->assertSame('1', data_get($tag, 'container.attributes.data-hm-gpt-rewarded'));
+        $this->assertSame('/23055873217/rewarded', data_get($tag, 'container.attributes.data-hm-gpt-ad-unit-path'));
+        $this->assertNull(data_get($tag, 'container.attributes.data-hm-vast-url'));
+        $this->assertStringContainsString('/runtime/gpt/', $tag['scriptUrl']);
+        $this->assertSame(30000, data_get($tag, 'render.timeoutMs'));
+    }
+
+    public function test_gam_rewarded_path_cannot_be_saved_as_floating_video(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'video_floating',
+            'tag' => '/23055873217/rewarded',
+        ]))->assertSessionHasErrors('placement_preset');
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_floating']);
+    }
+
+    public function test_runtime_refresh_is_dry_run_by_default_and_idempotent_when_applied(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'rewarded',
+            'tag' => '/23055873217/rewarded',
+        ]))->assertSessionHasNoErrors();
+        $version = $this->site->configVersions()->orderByDesc('version')->firstOrFail();
+        $payload = $version->payload;
+        data_set($payload, 'directDemand.placements.quick_rewarded.candidates.0.tag.scripts.0.url', 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.0000000000000000.js');
+        $version->update(['payload' => $payload, 'checksum' => hash('sha256', app(\App\Services\StaticDelivery\CanonicalJson::class)->encode($payload))]);
+        $count = $this->site->configVersions()->count();
+        $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
     public function test_plain_vast_url_can_create_a_user_initiated_rewarded_surface(): void
     {
         $this->seed(AdFormatSeeder::class);

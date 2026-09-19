@@ -26,9 +26,13 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     public function parseDirectTag(string $tag): array
     {
         try {
+            $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($tag);
             $vast = app(VastTagUrlParser::class)->parse($tag);
         } catch (RuntimeException $exception) {
             return ['safe' => false, 'recipe' => null, 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => [$exception->getMessage()]];
+        }
+        if ($rewardedPath !== null) {
+            return ['safe' => true, 'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT_REWARDED'], 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => []];
         }
         if ($vast !== null) {
             return [
@@ -68,6 +72,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (! $widget?->direct_tag_template) return parent::generateDirectTag($placement);
 
         $html = trim((string) $widget->direct_tag_template);
+        $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($html);
+        if ($rewardedPath !== null) return $this->googleRewardedRecipe($rewardedPath, $placement);
         $vast = app(VastTagUrlParser::class)->parse($html);
         if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement);
 
@@ -105,6 +111,27 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
         $size = $placement->placement->sizes->where('is_active', true)->first(fn ($candidate) => $candidate->size_type === 'FIXED' && $candidate->width && $candidate->height);
         return ['name' => $this->code().' - '.$placement->placement->name, 'creativeType' => 'THIRD_PARTY', 'size' => $size ? ['width' => (int) $size->width, 'height' => (int) $size->height] : ['width' => 1, 'height' => 1], 'snippet' => $snippet, 'safeFrameCompatible' => true];
+    }
+
+    private function googleRewardedRecipe(string $path, DemandPlacement $placement): array
+    {
+        if ($placement->placement->type->value !== 'REWARDED') {
+            throw new RuntimeException('A GAM rewarded ad unit path requires a Rewarded placement.');
+        }
+        $id = 'hm-gpt-rewarded-'.$placement->id;
+        $url = $this->trustedRuntimeUrl('hm-gpt-direct.js');
+        $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-rewarded' => '1', 'data-hm-gpt-ad-unit-path' => $path,
+            'data-hm-reward-cooldown-seconds' => (string) max(0, min(86400, (int) data_get($placement->placement->format_settings, 'rewardCooldownSeconds', 900)))];
+        $selector = '#'.$id.'[data-hm-gpt-status="rendered"]';
+        return [
+            'recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'REWARDED',
+            'scripts' => [['url' => $url, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-google-gpt-direct-runtime-v1', 'attributes' => []]],
+            'container' => ['element' => 'div', 'id' => $id, 'class' => 'hm-direct-google-rewarded', 'attributes' => $attributes],
+            'publicPlacementId' => $path, 'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => ['timeoutMs' => 30000, 'successSelector' => $selector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => ['REWARDED'], 'allowedSizes' => []],
+            'isolation' => null, 'scriptUrl' => $url, 'containerId' => $id, 'containerClass' => 'hm-direct-google-rewarded',
+            'attributes' => $attributes, 'renderTimeoutMs' => 30000, 'successSelector' => $selector, 'assumeLoadedIsSuccess' => false,
+        ];
     }
 
     private function googleGptRecipe(array $gpt, array $configuration, DemandPlacement $placement): array

@@ -1,7 +1,7 @@
 (function (window, document) {
     'use strict';
 
-    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V4__';
+    var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V5__';
     if (window[STATE_KEY]) {
         if (typeof window[STATE_KEY].scan === 'function') window[STATE_KEY].scan();
         return;
@@ -10,7 +10,7 @@
     var state = window[STATE_KEY] = { observer: null, scan: scan, libraryInjected: false };
     var SELECTOR = '[data-hm-gpt-direct="1"]';
     var GPT_URL = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
-    var RUNTIME_VERSION = '4';
+    var RUNTIME_VERSION = '5';
     var MIN_RENDER_RATIO = 0.4;
     var MAX_RENDER_RATIO = 2;
 
@@ -300,6 +300,11 @@
     function render(container) {
         if (!container || container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION) return;
 
+        if (container.getAttribute('data-hm-gpt-rewarded') === '1') {
+            renderRewarded(container);
+            return;
+        }
+
         var adUnitPath = container.getAttribute('data-hm-gpt-ad-unit-path');
         var declaredSizes = sizes(container.getAttribute('data-hm-gpt-sizes'));
         var containerId = String(container.id || '');
@@ -344,6 +349,138 @@
 
         window.googletag.cmd.push(function () { startSlot(container, adUnitPath, allowedSizes); });
         if (!ensureGptLibrary()) report(container, 'failed');
+    }
+
+    function renderRewarded(container) {
+        var path = String(container.getAttribute('data-hm-gpt-ad-unit-path') || '');
+        container.setAttribute('data-hm-gpt-runtime-version', RUNTIME_VERSION);
+        container.setAttribute('data-hm-gpt-document-context', 'publisher');
+        container.style.display = 'none';
+        if (!/^\/[0-9]{1,20}(?:,[0-9]{1,20})?\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(path) || path.length > 280) {
+            report(container, 'invalid');
+            return;
+        }
+        if (state.rewarded) { report(container, 'ineligible'); return; }
+        var seconds = Math.max(0, Math.min(86400, Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 900)));
+        var key = 'hm:gpt:rewarded:v1:' + path;
+        try {
+            var grantedAt = Number(window.localStorage.getItem(key) || 0);
+            if (grantedAt > 0 && grantedAt <= Date.now() && Date.now() - grantedAt < seconds * 1000) {
+                container.setAttribute('data-hm-reward-phase', 'capped');
+                report(container, 'rendered');
+                return;
+            }
+        } catch (error) { /* Storage is optional; ads remain usable in private mode. */ }
+        state.rewarded = container;
+        var slot = null, pubads = null, closed = false, granted = false, showing = false;
+        var listeners = [], previousFocus = null, prompt = null, watch = null, decline = null;
+        var timer = window.setTimeout(function () { close('failed'); }, 25000);
+        function emit(name, detail) {
+            if (typeof window.CustomEvent === 'function') window.dispatchEvent(new window.CustomEvent(name, {
+                detail: Object.assign({ placementId: container.id, provider: 'GOOGLE_GPT_REWARDED' }, detail || {}),
+            }));
+        }
+        function close(reason) {
+            if (closed) return;
+            closed = true;
+            window.clearTimeout(timer);
+            listeners.forEach(function (entry) { if (pubads.removeEventListener) pubads.removeEventListener(entry[0], entry[1]); });
+            window.removeEventListener('keydown', keyboard);
+            if (slot) destroySlot(slot);
+            container.style.display = 'none';
+            if (state.rewarded === container) state.rewarded = null;
+            container.setAttribute('data-hm-reward-phase', reason);
+            if (reason === 'failed' || reason === 'empty' || reason === 'ineligible') report(container, reason);
+            if (previousFocus && previousFocus.isConnected && previousFocus.focus) previousFocus.focus({ preventScroll: true });
+            emit('horus:rewarded-closed', { granted: granted, reason: reason });
+        }
+        container.__hmDestroy = function () { close('closed'); };
+        function keyboard(event) {
+            if (showing || closed) return;
+            if (event.key === 'Escape') { event.preventDefault(); close('dismissed'); }
+            if (event.key === 'Tab') {
+                event.preventDefault();
+                (document.activeElement === watch ? decline : watch).focus();
+            }
+        }
+        function listen(name, handler) {
+            var callback = function (event) { if (!closed && event && event.slot === slot) handler(event); };
+            pubads.addEventListener(name, callback);
+            listeners.push([name, callback]);
+        }
+        function ready(event) {
+            if (prompt || showing) return;
+            window.clearTimeout(timer);
+            var ar = /^ar\b/i.test(String(document.documentElement.lang || ''));
+            previousFocus = document.activeElement;
+            prompt = document.createElement('div');
+            var title = document.createElement('strong');
+            var copy = document.createElement('p');
+            watch = document.createElement('button');
+            decline = document.createElement('button');
+            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:20px;background:rgba(5,8,22,.78);overflow:auto;';
+            prompt.style.cssText = 'box-sizing:border-box;width:100%;max-width:480px;padding:28px;border:1px solid rgba(241,183,51,.22);border-radius:26px;background:linear-gradient(135deg,#050b1e,#0a2153);color:#f6f8ff;text-align:center;font:16px/1.6 system-ui,sans-serif;box-shadow:0 28px 90px rgba(0,0,0,.38);';
+            prompt.setAttribute('role', 'dialog');
+            prompt.setAttribute('aria-modal', 'true');
+            prompt.setAttribute('dir', ar ? 'rtl' : 'ltr');
+            prompt.setAttribute('aria-label', ar ? 'استكمال القراءة' : 'Continue reading');
+            title.textContent = ar ? 'أكمل قراءتك' : 'Continue your reading';
+            title.style.cssText = 'font:700 24px/1.4 system-ui,sans-serif;color:#f6f8ff;';
+            copy.textContent = ar ? 'شاهد الإعلان للحصول على إمكانية استكمال قراءة المحتوى. يمكنك الإغلاق في أي وقت.' : 'View an ad to continue reading the content. You can close at any time.';
+            copy.style.cssText = 'margin:16px 0;color:#c7d1e5;font:400 16px/1.6 system-ui,sans-serif;';
+            watch.type = decline.type = 'button';
+            watch.textContent = ar ? 'شاهد الإعلان واستكمل القراءة' : 'View ad and continue reading';
+            decline.textContent = ar ? 'متابعة القراءة الآن' : 'Continue reading now';
+            var buttonCss = 'display:block;width:100%;min-height:44px;margin-top:12px;white-space:normal;padding:12px;border-radius:999px;font:600 15px/1.5 system-ui,sans-serif;cursor:pointer;';
+            watch.style.cssText = buttonCss + 'border:0;color:#071127;background:linear-gradient(115deg,#ffe495,#f1b733 56%,#cf8b13);';
+            decline.style.cssText = buttonCss + 'border:1px solid #9da9c2;color:#f6f8ff;background:transparent;';
+            watch.addEventListener('click', function (click) {
+                if (closed || showing || !click.isTrusted) return;
+                showing = true;
+                container.style.display = 'none';
+                try {
+                    if (!event.makeRewardedVisible()) { close('failed'); return; }
+                    container.setAttribute('data-hm-reward-phase', 'showing');
+                    emit('horus:rewarded-opened');
+                } catch (error) { close('failed'); }
+            });
+            decline.addEventListener('click', function () { close('dismissed'); });
+            [title, copy, watch, decline].forEach(function (node) { prompt.appendChild(node); });
+            container.appendChild(prompt);
+            window.addEventListener('keydown', keyboard);
+            watch.focus({ preventScroll: true });
+            container.setAttribute('data-hm-reward-phase', 'ready');
+            report(container, 'rendered');
+            emit('horus:rewarded-ready');
+        }
+        report(container, 'queued');
+        window.googletag = window.googletag || { cmd: [] };
+        window.googletag.cmd = window.googletag.cmd || [];
+        window.googletag.cmd.push(function () {
+            if (closed) return;
+            try {
+                var gpt = window.googletag;
+                slot = gpt.defineOutOfPageSlot(path, gpt.enums.OutOfPageFormat.REWARDED);
+                if (!slot) { close('ineligible'); return; }
+                pubads = gpt.pubads();
+                slot.addService(pubads);
+                listen('rewardedSlotReady', ready);
+                listen('rewardedSlotGranted', function (event) {
+                    if (!showing || granted) return;
+                    granted = true;
+                    container.setAttribute('data-hm-reward-granted', '1');
+                    try { window.localStorage.setItem(key, String(Date.now())); } catch (error) {}
+                    emit('horus:rewarded-granted', { reward: { type: 'continue_reading', amount: 1 }, googleReward: event.payload || null });
+                });
+                listen('rewardedSlotClosed', function () { close(granted ? 'completed' : 'dismissed'); });
+                listen('slotRenderEnded', function (event) { if (event.isEmpty) close('empty'); });
+                gpt.enableServices();
+                gpt.display(slot);
+                var disabled = gpt.getConfig ? gpt.getConfig('disableInitialLoad').disableInitialLoad : (pubads.isInitialLoadDisabled && pubads.isInitialLoadDisabled());
+                if (disabled && pubads.refresh) pubads.refresh([slot]);
+            } catch (error) { close('failed'); }
+        });
+        if (!ensureGptLibrary()) close('failed');
     }
 
     function scan(root) {
