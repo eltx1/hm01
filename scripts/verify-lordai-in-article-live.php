@@ -90,13 +90,41 @@ if (! is_file($loaderPath)) {
 }
 
 $loader = (string) file_get_contents($loaderPath);
+
+// Production serves the minified Loader. Function identifiers are not a stable
+// contract because esbuild shortens them, so validate semantic literals that
+// must survive minification and jointly prove both wrapper and Direct/GPT-child
+// centering behavior is present.
+$loaderContract = [
+    'display_in_article',
+    'contentPosition',
+    'content_mid',
+    'article_mid',
+    'align-items',
+    'align-self',
+    'margin-left',
+    'margin-right',
+    'text-align',
+    'data-hm-auto-mount-target',
+];
+foreach ($loaderContract as $needle) {
+    if (! str_contains($loader, $needle)) {
+        fwrite(STDERR, 'Production loader is missing a minification-safe LordAI centering marker: '.$needle."\n");
+        exit(1);
+    }
+}
+
+// These value pairings are the behavioral core of the fix. They remain literal
+// strings after minification even though surrounding function names change.
 foreach ([
-    'function placementIsInContent(placement, settings)',
-    'function alignDirectContentContainer(container, entry)',
-    'alignDirectContentContainer(container, entry);',
+    '"align-items","center"',
+    '"align-self","center"',
+    '"margin-left","auto"',
+    '"margin-right","auto"',
+    '"text-align","center"',
 ] as $needle) {
     if (! str_contains($loader, $needle)) {
-        fwrite(STDERR, 'Production loader is missing the LordAI centering runtime contract: '.$needle."\n");
+        fwrite(STDERR, 'Production loader is missing a minification-safe LordAI centering behavior: '.$needle."\n");
         exit(1);
     }
 }
