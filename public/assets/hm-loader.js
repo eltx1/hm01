@@ -34,8 +34,8 @@
         clickGuard: null
     };
 
-    var CLICK_GUARD_STATE_VERSION = 1;
-    var CLICK_GUARD_STORAGE_PREFIX = 'hm:click-guard:v1:';
+    var CLICK_GUARD_STATE_VERSION = 2;
+    var CLICK_GUARD_STORAGE_PREFIX = 'hm:click-guard:v2:';
     var CLICK_GUARD_HOUR_MS = 60 * 60 * 1000;
     var CLICK_GUARD_DEBOUNCE_MS = 400;
     var CLICK_GUARD_MAX_TIMEOUT_MS = 2147483647;
