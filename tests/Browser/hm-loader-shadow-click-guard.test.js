@@ -200,7 +200,7 @@ function createHarness() {
     sandbox.window = sandbox;
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader-shadow-click-guard.js' });
 
-    const key = `hm:click-guard:v1:${siteConfig.siteKey}`;
+    const key = `hm:click-guard:v2:${siteConfig.siteKey}`;
     return {
         sandbox,
         container,
