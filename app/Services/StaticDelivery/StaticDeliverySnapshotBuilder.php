@@ -132,6 +132,8 @@ final class StaticDeliverySnapshotBuilder
         $gptDirectHash = hash('sha256', $gptDirect);
         $isolatedDirect = $this->readRequired(public_path('assets/hm-isolated-direct.js'));
         $isolatedDirectHash = hash('sha256', $isolatedDirect);
+        $videoDirect = $this->readRequired(public_path('assets/hm-video-direct.js'));
+        $videoDirectHash = hash('sha256', $videoDirect);
         $prebid = $this->readRequired(public_path('assets/prebid/horus-prebid.min.js'));
         $prebidHash = hash('sha256', $prebid);
         $trafficGateHtml = $this->readRequired(public_path('traffic-gate/index.html'));
@@ -145,6 +147,8 @@ final class StaticDeliverySnapshotBuilder
             'assets/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
             'assets/hm-isolated-direct.js' => $isolatedDirect,
             'assets/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
+            'assets/hm-video-direct.js' => $videoDirect,
+            'assets/video/hm-video-direct.'.substr($videoDirectHash, 0, 16).'.js' => $videoDirect,
 
             // These content-addressed copies intentionally live outside every
             // prefix managed by pre-Quick static-delivery releases. If the app
@@ -152,6 +156,7 @@ final class StaticDeliverySnapshotBuilder
             // still referenced by persisted Quick Monetize configurations.
             'runtime/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
             'runtime/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
+            'runtime/video/hm-video-direct.'.substr($videoDirectHash, 0, 16).'.js' => $videoDirect,
 
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
@@ -251,6 +256,14 @@ final class StaticDeliverySnapshotBuilder
 
 /assets/hm-isolated-direct.js
   Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/hm-video-direct.js
+  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Content-Type: application/javascript; charset=utf-8
+
+/assets/video/*
+  Cache-Control: public, max-age=31536000, immutable
   Content-Type: application/javascript; charset=utf-8
 
 /assets/direct/*

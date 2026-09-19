@@ -87,7 +87,7 @@ function element(code) {
 }
 
 function harness(selectedConfig, options = {}) {
-    const metrics = { directLoads: [], gptLoads: 0, frames: [], mutationObservers: [] };
+    const metrics = { directLoads: [], gptLoads: 0, frames: [], mutationObservers: [], intersectionObservers: [] };
     const elements = options.elements || selectedConfig.placements.map((p) => element(p.code));
     const headChildren = [];
     let mutationCallback = null;
@@ -175,6 +175,16 @@ function harness(selectedConfig, options = {}) {
         constructor(callback) { mutationCallback = callback; metrics.mutationObservers.push(this); }
         observe() {} disconnect() {}
     }
+    class IntersectionObserver {
+        constructor(callback, observerOptions) {
+            this.callback = callback;
+            this.options = observerOptions;
+            this.disconnected = false;
+            metrics.intersectionObservers.push(this);
+        }
+        observe(target) { this.target = target; }
+        disconnect() { this.disconnected = true; }
+    }
     class Event { constructor(type) { this.type = type; } }
     const localStore = new Map();
     const sandbox = {
@@ -191,11 +201,19 @@ function harness(selectedConfig, options = {}) {
         },
         addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, __HM_DISABLE_AUTOBOOT__: true,
     };
+    if (options.intersectionObserver) sandbox.IntersectionObserver = IntersectionObserver;
     sandbox.window = sandbox;
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
 
     return {
         sandbox, metrics, elements,
+        triggerIntersection(isIntersecting = true) {
+            metrics.intersectionObservers.forEach((observer) => observer.callback([{
+                target: observer.target,
+                isIntersecting,
+                intersectionRatio: isIntersecting ? 0.1 : 0,
+            }]));
+        },
         triggerMutation(addedNodes = []) { mutationCallback?.([{ addedNodes, removedNodes: [] }]); },
         evaluateAgain() { vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader-duplicate.js' }); },
     };
@@ -216,6 +234,25 @@ test('structured Direct Demand loads multiple approved scripts and renders witho
     assert.equal(metrics.gptLoads, 0);
     assert.equal(elements[0].getAttribute('data-hm-direct'), 'ONE');
     assert.equal(elements[0].getAttribute('data-hm-status'), 'rendered');
+});
+
+test('lazy Direct Demand waits until the placement is near the viewport without holding Loader boot open', async () => {
+    const selected = config({ article_video: { enabled: true, candidates: [candidate('ONE', recipe())], house: null } });
+    selected.placements[0] = placement('article_video', {
+        type: 'VIDEO',
+        lazyLoad: { enabled: true, fetchMarginPercent: 500, renderMarginPercent: 200, mobileScaling: 1 },
+    });
+    const runtime = harness(selected, { intersectionObserver: true });
+
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.metrics.directLoads.length, 0);
+    assert.equal(runtime.metrics.intersectionObservers.length, 1);
+    assert.equal(runtime.metrics.intersectionObservers[0].options.rootMargin, '500% 0px 500% 0px');
+
+    runtime.triggerIntersection(true);
+    await settle();
+    assert.equal(runtime.metrics.directLoads.length, 1);
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct'), 'ONE');
 });
 
 test('trusted GPT Direct waits for a late terminal render instead of declaring no-render at script load', async () => {

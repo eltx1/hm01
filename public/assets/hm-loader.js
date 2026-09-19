@@ -1308,6 +1308,31 @@ function nativeDefinition(config, code) {
         return config.directDemand || config.nativeDemand || {};
     }
 
+    function runDirectEntry(config, entry) {
+        if (!directJsServingAllowed(config)) return Promise.resolve(false);
+        var key = ensureElementId(entry.element, config, entry.placement);
+        if (entry.element.getAttribute('data-hm-direct-started') === '1') return Promise.resolve(Boolean(state.nativeRendered[key]));
+        entry.element.setAttribute('data-hm-direct-started', '1');
+        var lazy = entry.placement.lazyLoad || {};
+        if (lazy.enabled && typeof window.IntersectionObserver === 'function') {
+            var margin = Math.max(0, Number(lazy.fetchMarginPercent || 0));
+            var observer = new window.IntersectionObserver(function (records) {
+                var nearViewport = (records || []).some(function (record) { return record && (record.isIntersecting || Number(record.intersectionRatio) > 0); });
+                if (!nearViewport) return;
+                observer.disconnect();
+                if (state.directObservers) delete state.directObservers[key];
+                runNativeFallback(config, entry);
+            }, { rootMargin: margin + '% 0px ' + margin + '% 0px' });
+            state.directObservers = state.directObservers || {};
+            state.directObservers[key] = observer;
+            observer.observe(entry.element);
+            // Registering a below-fold Direct placement must not hold Loader
+            // boot open or start its candidate timeout before it is nearby.
+            return Promise.resolve(false);
+        }
+        return runNativeFallback(config, entry);
+    }
+
     function candidateRank(config, candidate) {
         var fallback = directDemandConfig(config).fallbackOrder || [];
         var index = fallback.indexOf(candidate.network);
@@ -1356,12 +1381,18 @@ function nativeDefinition(config, code) {
         return String(attributes && attributes['data-hm-gpt-direct'] || '') === '1';
     }
 
+    function directVideoRecipe(tag) {
+        var container = tag && tag.container || {};
+        var attributes = container.attributes || tag && tag.attributes || {};
+        return String(attributes && attributes['data-hm-video-direct'] || '') === '1';
+    }
+
     function directRenderPolicy(tag) {
         var render = tag && tag.render || {};
-        var gptDirect = directGptRecipe(tag);
-        var fallback = gptDirect ? 15000 : 2500;
-        var maximum = gptDirect ? 30000 : 10000;
-        var minimum = gptDirect ? 15000 : 0;
+        var longRunning = directGptRecipe(tag) || directVideoRecipe(tag);
+        var fallback = longRunning ? 15000 : 2500;
+        var maximum = longRunning ? 30000 : 10000;
+        var minimum = longRunning ? 15000 : 0;
         var configured = Number(render.timeoutMs || tag.renderTimeoutMs || fallback);
         return {
             timeoutMs: Math.max(minimum, Math.min(maximum, configured)),
@@ -1393,6 +1424,20 @@ function nativeDefinition(config, code) {
             if (runtimeState === 'rendered') return { done: true, rendered: true, reason: 'rendered' };
             if (['empty', 'failed', 'invalid', 'ineligible'].indexOf(runtimeState) !== -1) {
                 return { done: true, rendered: false, reason: 'gpt-' + runtimeState };
+            }
+        }
+        if (directVideoRecipe(tag) && container && container.getAttribute) {
+            var videoState = String(container.getAttribute('data-hm-video-status') || container.getAttribute('data-hm-video-runtime-state') || '');
+            if (['started', 'completed'].indexOf(videoState) !== -1) return { done: true, rendered: true, reason: videoState };
+            if (['error', 'invalid', 'ineligible', 'duplicate', 'dismissed'].indexOf(videoState) !== -1) {
+                return { done: true, rendered: false, reason: 'video-' + videoState };
+            }
+        }
+        if (container && container.getAttribute && String(container.getAttribute('data-hm-isolated-direct') || '') === '1') {
+            var isolatedState = String(container.getAttribute('data-hm-isolated-status') || container.getAttribute('data-hm-isolated-runtime-state') || '');
+            if (isolatedState === 'rendered') return { done: true, rendered: true, reason: 'rendered' };
+            if (['failed', 'invalid', 'empty', 'dismissed'].indexOf(isolatedState) !== -1) {
+                return { done: true, rendered: false, reason: 'isolated-' + isolatedState };
             }
         }
         return { done: false, rendered: false, reason: null };
@@ -1599,6 +1644,9 @@ function nativeDefinition(config, code) {
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
+                    if (container && typeof container.__hmDestroy === 'function') {
+                        try { container.__hmDestroy('failed'); } catch (error) {}
+                    }
                     if (container && container.parentNode && container.parentNode.removeChild) {
                         container.parentNode.removeChild(container);
                     }
@@ -1699,7 +1747,7 @@ function nativeDefinition(config, code) {
             item.element.setAttribute('data-hm-defined', '1');
             item.element.setAttribute('data-hm-status', 'direct-demand');
         });
-        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runNativeFallback(config, item); }));
+        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runDirectEntry(config, item); }));
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
 
         return loadGpt(config).then(function (googletag) {

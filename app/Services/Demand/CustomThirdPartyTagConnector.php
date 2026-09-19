@@ -25,6 +25,24 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     public function parseDirectTag(string $tag): array
     {
+        try {
+            $vast = app(VastTagUrlParser::class)->parse($tag);
+        } catch (RuntimeException $exception) {
+            return ['safe' => false, 'recipe' => null, 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => [$exception->getMessage()]];
+        }
+        if ($vast !== null) {
+            return [
+                'safe' => true,
+                'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'HORUS_VAST', 'vastOrigin' => $vast['origin']],
+                'detectedScripts' => [],
+                'detectedContainers' => [],
+                'detectedPublicIdentifiers' => [],
+                'detectedAttributes' => [],
+                'unsupportedInlineCode' => [],
+                'securityWarnings' => [],
+            ];
+        }
+
         $parsed = (new DirectTagRecipeParser())->parse($tag);
         $warnings = array_values(array_unique((array) ($parsed['securityWarnings'] ?? [])));
         $gpt = null;
@@ -50,6 +68,9 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (! $widget?->direct_tag_template) return parent::generateDirectTag($placement);
 
         $html = trim((string) $widget->direct_tag_template);
+        $vast = app(VastTagUrlParser::class)->parse($html);
+        if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement);
+
         $this->assertSafeCustomHtml($html);
         if ($quickManaged) $this->assertNoQuickSelfNavigation($html);
         if ($quickManaged) {
@@ -133,7 +154,59 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $attributes = ['data-hm-isolated-direct' => '1', 'data-hm-isolated-width' => (string) $frameSize[0], 'data-hm-isolated-height' => (string) $frameSize[1], 'data-hm-isolated-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-isolated-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-html', $html);
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-csp', $csp);
-        return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => $format, 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-isolated-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-demand-isolated', 'attributes' => $attributes], 'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id), 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => '#'.$containerId.'[data-hm-isolated-status="requested"]', 'assumeLoadedIsSuccess' => false, 'allowedFormats' => [$format], 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-demand-isolated', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => '#'.$containerId.'[data-hm-isolated-status="requested"]', 'assumeLoadedIsSuccess' => false];
+        $successSelector = '#'.$containerId.'[data-hm-isolated-status="rendered"]';
+        return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => $format, 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-isolated-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-demand-isolated', 'attributes' => $attributes], 'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id), 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => [$format], 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-demand-isolated', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false];
+    }
+
+    /** @param array{url:string,origin:string} $vast */
+    private function vastRecipe(array $vast, array $configuration, DemandPlacement $placement): array
+    {
+        if ($placement->placement->type->value !== 'VIDEO') {
+            throw new RuntimeException('A VAST URL requires a Horus Video placement such as Floating Video or Outstream / In-read Video.');
+        }
+
+        $policy = $this->quickPlacementSizePolicy($placement);
+        $frameSize = $policy['fallback'];
+        $sizes = $policy['sizes'];
+        $runtimeUrl = $this->trustedRuntimeUrl('hm-video-direct.js');
+        $containerId = 'hm-video-'.$placement->id;
+        $timeout = max(15_000, min(30_000, (int) ($configuration['render_timeout_ms'] ?? 20_000)));
+        $attributes = [
+            'data-hm-video-direct' => '1',
+            'data-hm-vast-url' => base64_encode($vast['url']),
+            'data-hm-video-width' => (string) $frameSize[0],
+            'data-hm-video-height' => (string) $frameSize[1],
+            'data-hm-video-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            'data-hm-video-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            'data-hm-video-muted' => '1',
+            'data-hm-video-autoplay' => '1',
+        ];
+        $successSelector = '#'.$containerId.'[data-hm-video-status="started"]';
+
+        return [
+            'recipeVersion' => 1,
+            'executionMode' => 'STRUCTURED',
+            'format' => 'VIDEO',
+            'scripts' => [[
+                'url' => $runtimeUrl,
+                'async' => true,
+                'defer' => false,
+                'dedupeKey' => 'horus-video-direct-runtime-v1',
+                'attributes' => [],
+            ]],
+            'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-video', 'attributes' => $attributes],
+            'publicPlacementId' => (string) ($placement->remote_placement_id ?? $placement->placement_code ?? $placement->id),
+            'initialization' => ['type' => 'NONE', 'parameters' => []],
+            'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => ['VIDEO', 'OUTSTREAM'], 'allowedSizes' => $sizes],
+            'isolation' => null,
+            'scriptUrl' => $runtimeUrl,
+            'containerId' => $containerId,
+            'containerClass' => 'hm-direct-video',
+            'attributes' => $attributes,
+            'renderTimeoutMs' => $timeout,
+            'successSelector' => $successSelector,
+            'assumeLoadedIsSuccess' => false,
+        ];
     }
 
     private function legacyIsolatedRecipe(string $html, array $origins, array $configuration, DemandPlacement $placement): array
@@ -186,7 +259,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $assetPath = public_path('assets/'.$asset); $contents = is_file($assetPath) ? file_get_contents($assetPath) : false;
         if ($contents === false || $contents === '') throw new RuntimeException('Horus Direct Demand runtime asset is missing.');
         $hash = substr(hash('sha256', $contents), 0, 16);
-        $runtimePath = match ($asset) { 'hm-gpt-direct.js' => 'runtime/gpt/hm-gpt-direct.'.$hash.'.js', 'hm-isolated-direct.js' => 'runtime/direct/hm-isolated-direct.'.$hash.'.js', default => throw new RuntimeException('Unknown Horus Direct Demand runtime asset.') };
+        $runtimePath = match ($asset) {
+            'hm-gpt-direct.js' => 'runtime/gpt/hm-gpt-direct.'.$hash.'.js',
+            'hm-isolated-direct.js' => 'runtime/direct/hm-isolated-direct.'.$hash.'.js',
+            'hm-video-direct.js' => 'runtime/video/hm-video-direct.'.$hash.'.js',
+            default => throw new RuntimeException('Unknown Horus Direct Demand runtime asset.'),
+        };
         $url = $base.'/'.$runtimePath;
         if (! filter_var($url, FILTER_VALIDATE_URL) || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https' || (string) parse_url($url, PHP_URL_HOST) === '') throw new RuntimeException('Horus Direct Demand runtime requires a trusted HTTPS CDN URL.');
         return $url;

@@ -136,9 +136,9 @@
                 @error('placement_id')<span class="error">{{ $message }}</span>@enderror
             </label>
 
-            <label class="full">Provider-issued ad tag
-                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="Paste the complete provider tag: Google GPT, script-only tag, iframe tag, or another reviewed third-party tag. Nothing executes in Admin.">{{ old('tag') }}</textarea>
-                <span class="muted">Google GPT is normalized by its dedicated adapter. Other provider code runs inside Horus isolation with reviewed HTTPS origins, Traffic Gate and Click Guard protection.</span>
+            <label class="full">VAST URL or provider-issued ad tag
+                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="For Horus Video, paste the HTTPS VAST/VMAP URL only. Or paste a complete Google GPT, script-only tag, iframe, or reviewed third-party provider tag.">{{ old('tag') }}</textarea>
+                <span class="muted">A plain VAST/VMAP URL runs in the Horus video player. Google GPT is normalized by its dedicated adapter. Complete provider code runs inside Horus isolation with reviewed HTTPS origins, Traffic Gate and Click Guard protection.</span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
 
@@ -164,6 +164,7 @@
     const mode = document.getElementById('quick-placement-mode');
     const existingWrap = document.getElementById('quick-existing-wrap');
     const placement = document.getElementById('quick-placement');
+    const tag = document.getElementById('quick-tag');
     const submit = document.getElementById('quick-submit');
     const help = document.getElementById('quick-placement-help');
     if (!site || !preset || !useExisting || !mode || !existingWrap || !placement || !submit) return;
@@ -212,6 +213,13 @@
     placement.addEventListener('change', refreshMode);
     preset.addEventListener('change', refreshMode);
     useExisting.addEventListener('change', refreshMode);
+    if (tag) tag.addEventListener('input', () => {
+        const value = tag.value.trim();
+        if (!useExisting.checked && /^https:\/\/\S+$/i.test(value) && preset.value === 'responsive_display') {
+            preset.value = 'video_floating';
+            refreshMode();
+        }
+    });
     refreshMode();
 })();
 </script>

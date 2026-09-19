@@ -98,11 +98,14 @@ const HELPERS = `    function placementFormatSettings(placement) {
             var settings = placementFormatSettings(placement);
             if (!placement || !placement.enabled || placement.status !== 'active' || settings.autoMount !== true) return;
             if (!placementViewportAllowed(settings) || placementElementExists(placement.code)) return;
+            var floatingVideo = placement.type === 'VIDEO' && String(settings.position || '').toLowerCase() === 'bottom_right';
+            if (floatingVideo && settings.singleActiveVideo !== false && document.querySelector && document.querySelector('[data-hm-floating-video-active="1"]')) return;
             var element = document.createElement('div');
             element.className = placement.type === 'NATIVE' ? 'hm-native hm-auto-placement' : 'hm-ad hm-auto-placement';
             element.setAttribute('data-placement', placement.code);
             element.setAttribute('data-hm-auto-mounted', '1');
             element.setAttribute('data-hm-auto-mount-target', String(settings.autoMountTarget || 'body_end'));
+            if (floatingVideo) element.setAttribute('data-hm-floating-video-active', '1');
             mountAutoPlacementElement(element, settings);
             applyPlacementPresetPresentation(element, placement, settings);
         });
@@ -128,12 +131,17 @@ const HELPERS = `    function placementFormatSettings(placement) {
             setImportantStyle(style, 'position', 'fixed');
             setImportantStyle(style, 'z-index', '2147483000');
             setImportantStyle(style, 'right', '16px');
-            setImportantStyle(style, 'bottom', '16px');
+            setImportantStyle(style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
             resetPositionStyle(style, 'left');
             resetPositionStyle(style, 'top');
             resetPositionStyle(style, 'transform');
             setImportantStyle(style, 'margin', '0');
+            setImportantStyle(style, 'width', 'min(400px, calc(100vw - 32px))');
             setImportantStyle(style, 'max-width', 'calc(100vw - 32px)');
+            setImportantStyle(style, 'aspect-ratio', '16 / 9');
+            setImportantStyle(style, 'box-sizing', 'border-box');
+            setImportantStyle(style, 'background', '#000');
+            setImportantStyle(style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
             return;
         }
 
@@ -214,6 +222,26 @@ const HELPERS = `    function placementFormatSettings(placement) {
         return String(element.getAttribute('data-hm-status') || '').toLowerCase() === 'rendered';
     }
 
+    function destroyPlacementMedia(element) {
+        if (!element) return;
+        var nodes = [element];
+        if (element.querySelectorAll) {
+            Array.prototype.forEach.call(element.querySelectorAll('[data-hm-video-direct="1"], [data-hm-isolated-direct="1"], video, iframe'), function (node) {
+                if (nodes.indexOf(node) === -1) nodes.push(node);
+            });
+        }
+        nodes.forEach(function (node) {
+            try { if (typeof node.__hmDestroy === 'function') node.__hmDestroy('dismissed'); } catch (error) {}
+            try { if (node.pause) node.pause(); } catch (error) {}
+            if (String(node.tagName || '').toLowerCase() === 'iframe') {
+                try { node.src = 'about:blank'; } catch (error) {}
+            }
+        });
+        nodes.slice(1).forEach(function (node) {
+            try { if (node.parentNode && node.parentNode.removeChild) node.parentNode.removeChild(node); } catch (error) {}
+        });
+    }
+
     function syncPlacementCloseControl(element, button) {
         if (!button || !button.style) return;
         var visible = placementRendered(element);
@@ -234,7 +262,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
         button.style.cssText = 'display:none;position:absolute;top:4px;right:4px;z-index:2147483001;width:28px;height:28px;min-width:28px;min-height:28px;max-width:28px;max-height:28px;box-sizing:border-box;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:20px/28px sans-serif;overflow:hidden;cursor:pointer;';
         setImportantStyle(button.style, 'display', 'none');
         setImportantStyle(button.style, 'position', 'absolute');
-        setImportantStyle(button.style, 'top', '4px');
+        setImportantStyle(button.style, 'top', settings.closeOutside === true ? '-32px' : '4px');
         setImportantStyle(button.style, 'right', '4px');
         setImportantStyle(button.style, 'z-index', '2147483001');
         setImportantStyle(button.style, 'left', 'auto');
@@ -256,6 +284,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
             if (event && event.stopPropagation) event.stopPropagation();
             if (button.__hmPlacementObserver && button.__hmPlacementObserver.disconnect) button.__hmPlacementObserver.disconnect();
             if (element.setAttribute) element.setAttribute('data-hm-placement-dismissed', '1');
+            destroyPlacementMedia(element);
             if (element.style) setImportantStyle(element.style, 'display', 'none');
         });
         element.appendChild(button);

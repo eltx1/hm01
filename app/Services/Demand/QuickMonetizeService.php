@@ -37,26 +37,52 @@ final class QuickMonetizeService
         private readonly AuditRecorder $audit,
         private readonly PlacementPresetBuilder $placements,
         private readonly PublicProviderOriginValidator $originValidator,
+        private readonly VastTagUrlParser $vastTags,
     ) {}
 
     /** @return array{account:DemandAccount,placement:Placement} */
     public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null): array
     {
         $tag = trim($tag);
-        $review = $this->parser->parse($tag);
-        $warnings = array_values((array) ($review['securityWarnings'] ?? []));
-        if ((bool) ($review['containsSensitiveMaterial'] ?? false) || $warnings !== []) {
-            throw ValidationException::withMessages(['tag' => $warnings !== [] ? implode(' ', $warnings) : 'The supplied public tag contains material that cannot be published safely.']);
+        try {
+            $vast = $this->vastTags->parse($tag);
+        } catch (Throwable $exception) {
+            throw ValidationException::withMessages(['tag' => $exception->getMessage()]);
         }
 
-        $scriptOrigins = $this->scriptOrigins((array) ($review['detectedScripts'] ?? []));
-        $resourceOrigins = $this->resourceOrigins($tag);
+        if ($vast !== null) {
+            $tag = $vast['url'];
+            // A URL-only Quick activation is unambiguously the VAST path. When
+            // Horus is creating the surface, select the floating player even if
+            // the form/API client left the ordinary display default in place.
+            if ($existingPlacement === null && ! in_array($preset, ['video_floating', 'video_outstream'], true)) {
+                $preset = 'video_floating';
+            }
+            $scriptOrigins = ['https://imasdk.googleapis.com'];
+            $resourceOrigins = [
+                'all' => [$vast['origin'], 'https://imasdk.googleapis.com'],
+                'frame' => [],
+                'image' => [],
+                'style' => [],
+                'media' => [$vast['origin']],
+                'font' => [],
+            ];
+        } else {
+            $review = $this->parser->parse($tag);
+            $warnings = array_values((array) ($review['securityWarnings'] ?? []));
+            if ((bool) ($review['containsSensitiveMaterial'] ?? false) || $warnings !== []) {
+                throw ValidationException::withMessages(['tag' => $warnings !== [] ? implode(' ', $warnings) : 'The supplied public tag contains material that cannot be published safely.']);
+            }
+
+            $scriptOrigins = $this->scriptOrigins((array) ($review['detectedScripts'] ?? []));
+            $resourceOrigins = $this->resourceOrigins($tag);
+        }
         $isolationOrigins = collect($scriptOrigins)->merge($resourceOrigins['all'])->unique()->values()->all();
         if ($isolationOrigins === []) throw ValidationException::withMessages(['tag' => 'Quick Monetize requires at least one reviewed HTTPS provider script or resource URL.']);
         if (count($isolationOrigins) > 20) throw ValidationException::withMessages(['tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.']);
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
-        return DB::transaction(function () use ($site, $network, $actor, $tag, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
+        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
             $placement = $existingPlacement;
             if (! $placement) {
                 if (! $preset) throw ValidationException::withMessages(['placement_preset' => 'Choose an ad format / surface.']);
@@ -99,7 +125,17 @@ final class QuickMonetizeService
             $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
             $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
             $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
-            $widgetConfiguration['render_timeout_ms'] ??= 2500;
+            $widgetConfiguration['input_kind'] = $vast !== null ? 'VAST_URL' : 'PROVIDER_TAG';
+            if ($vast !== null) {
+                $widgetConfiguration['vast_origin'] = $vast['origin'];
+                $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
+            } else {
+                unset($widgetConfiguration['vast_origin']);
+                // Provider tags commonly render after an asynchronous auction or
+                // consent callback. Give the isolated runtime a practical window
+                // while still keeping the loader's failover strictly bounded.
+                $widgetConfiguration['render_timeout_ms'] = max(10_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
+            }
             $this->accounts->upsertWidget($demandPlacement, ['name' => $existingQuickWidget?->name ?? 'Quick Manual · '.$placement->code, 'widget_code' => 'quick-'.$placement->code, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'direct_tag_template' => $tag, 'approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'configuration' => $widgetConfiguration], $actor);
 
             if (! (bool) $site->native_demand_enabled) {

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const isolatedSource = await readFile(new URL('../../public/assets/hm-isolated-direct.js', import.meta.url), 'utf8');
 const gptSource = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
+const videoSource = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 
 function container(attributes, id = '') {
     const frames = [];
@@ -37,6 +38,8 @@ function iframe() {
         srcdoc: '',
         onload: null,
         onerror: null,
+        contentWindow: {},
+        parentNode: null,
         sandbox: { add(value) { sandboxValues.push(String(value)); } },
         sandboxValues,
         setAttribute(name, value) { attributes[name] = String(value); },
@@ -47,6 +50,7 @@ function iframe() {
 function runIsolated(selectedContainer) {
     const createdFrames = [];
     const selectedContainers = Array.isArray(selectedContainer) ? selectedContainer : [selectedContainer];
+    const windowListeners = {};
     const document = {
         documentElement: {},
         querySelectorAll(query) { return query === '[data-hm-isolated-direct="1"]' ? selectedContainers : []; },
@@ -69,10 +73,17 @@ function runIsolated(selectedContainer) {
         clearTimeout,
         console,
         atob(value) { return Buffer.from(String(value), 'base64').toString('binary'); },
+        addEventListener(name, callback) { (windowListeners[name] ||= []).push(callback); },
     };
     sandbox.window = sandbox;
     vm.runInNewContext(isolatedSource, sandbox, { filename: 'hm-isolated-direct.js' });
-    return { sandbox, createdFrames };
+    return {
+        sandbox,
+        createdFrames,
+        emitMessage(source, data) {
+            (windowListeners.message || []).forEach((callback) => callback({ source, data }));
+        },
+    };
 }
 
 function scriptElement() {
@@ -185,6 +196,126 @@ function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+function runVideo(selectedContainer) {
+    const requested = [];
+    const managers = [];
+    const created = [];
+    const windowListeners = {};
+
+    function mediaElement(tag) {
+        const attributes = {};
+        return {
+            tagName: tag.toUpperCase(),
+            attributes,
+            style: {},
+            muted: false,
+            autoplay: false,
+            playsInline: false,
+            paused: false,
+            setAttribute(name, value) { attributes[name] = String(value); },
+            getAttribute(name) { return attributes[name] ?? null; },
+            pause() { this.paused = true; },
+        };
+    }
+
+    const adEventTypes = {
+        LOADED: 'loaded',
+        STARTED: 'started',
+        COMPLETE: 'complete',
+        SKIPPED: 'skipped',
+        ALL_ADS_COMPLETED: 'all-ads-completed',
+    };
+    class AdsManager {
+        constructor() {
+            this.listeners = {};
+            this.destroyed = false;
+            this.started = false;
+            managers.push(this);
+        }
+        addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
+        emit(name, event = {}) { (this.listeners[name] || []).forEach((callback) => callback(event)); }
+        init(width, height, mode) { this.initialized = [width, height, mode]; }
+        setVolume(volume) { this.volume = volume; }
+        start() {
+            this.started = true;
+            this.emit(adEventTypes.LOADED);
+            this.emit(adEventTypes.STARTED);
+        }
+        resize(width, height, mode) { this.resized = [width, height, mode]; }
+        destroy() { this.destroyed = true; }
+    }
+    class AdsLoader {
+        constructor() { this.listeners = {}; }
+        addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
+        requestAds(request) {
+            requested.push(request);
+            const manager = new AdsManager();
+            (this.listeners['ads-manager-loaded'] || []).forEach((callback) => callback({
+                getAdsManager() { return manager; },
+            }));
+        }
+    }
+    class AdsRequest {
+        setAdWillAutoPlay(value) { this.willAutoPlay = value; }
+        setAdWillPlayMuted(value) { this.willPlayMuted = value; }
+    }
+    class IntersectionObserver {
+        constructor(callback, options) { this.callback = callback; this.options = options; this.disconnected = false; }
+        observe(target) { this.target = target; this.callback([{ isIntersecting: true, intersectionRatio: 0.6 }]); }
+        disconnect() { this.disconnected = true; }
+    }
+    class MutationObserver {
+        observe() {}
+    }
+
+    const document = {
+        documentElement: { clientWidth: 1280, clientHeight: 720 },
+        head: { appendChild(node) { created.push(node); return node; } },
+        querySelector() { return null; },
+        querySelectorAll(query) { return query === '[data-hm-video-direct="1"]' ? [selectedContainer] : []; },
+        createElement(tag) {
+            const element = mediaElement(tag);
+            created.push(element);
+            return element;
+        },
+    };
+    const ima = {
+        AdDisplayContainer: class {
+            constructor(layer, video) { this.layer = layer; this.video = video; }
+            initialize() { this.initialized = true; }
+        },
+        AdsLoader,
+        AdsRequest,
+        AdsRenderingSettings: class {},
+        AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: 'ads-manager-loaded' } },
+        AdErrorEvent: { Type: { AD_ERROR: 'ad-error' } },
+        AdEvent: { Type: adEventTypes },
+        ViewMode: { NORMAL: 'normal' },
+    };
+    const sandbox = {
+        document,
+        google: { ima },
+        MutationObserver,
+        IntersectionObserver,
+        Promise,
+        console,
+        innerWidth: 1280,
+        innerHeight: 720,
+        atob(value) { return Buffer.from(String(value), 'base64').toString('binary'); },
+        setTimeout,
+        clearTimeout,
+        addEventListener(name, callback) { (windowListeners[name] ||= []).push(callback); },
+        removeEventListener(name, callback) {
+            const listeners = windowListeners[name] || [];
+            const index = listeners.indexOf(callback);
+            if (index >= 0) listeners.splice(index, 1);
+        },
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(videoSource, sandbox, { filename: 'hm-video-direct.js' });
+    return { sandbox, requested, managers, created };
+}
+
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
     const html = '<script src="https://ads.example.com/ad.js"></script><div id="ad"></div>';
     const csp = "default-src 'none'; script-src https://ads.example.com; connect-src https://ads.example.com; object-src 'none';";
@@ -196,9 +327,10 @@ test('isolated Direct Demand runtime preserves placement dimensions and sandboxi
         'data-hm-isolated-height': '90',
     };
     const target = container(attributes, 'isolated-zone');
-    const { createdFrames } = runIsolated(target);
+    const runtime = runIsolated(target);
     await tick();
 
+    const { createdFrames } = runtime;
     assert.equal(createdFrames.length, 1);
     const frame = createdFrames[0];
     assert.equal(frame.getAttribute('width'), '728');
@@ -208,7 +340,19 @@ test('isolated Direct Demand runtime preserves placement dimensions and sandboxi
     assert.ok(frame.srcdoc.includes(csp));
     assert.ok(frame.srcdoc.includes(html));
     assert.equal(attributes['data-hm-isolated-runtime-state'], 'loaded');
-    assert.equal(attributes['data-hm-isolated-status'], 'requested');
+    assert.equal(attributes['data-hm-isolated-status'], 'loaded');
+    assert.equal(frame.getAttribute('allow'), 'autoplay; fullscreen');
+    assert.match(frame.srcdoc, /hm-isolated-rendered/);
+
+    const token = Object.keys(runtime.sandbox.__HORUS_ISOLATED_DIRECT_RUNTIME_V1__.frames)[0];
+    runtime.emitMessage(frame.contentWindow, { type: 'hm-isolated-rendered', token });
+    assert.equal(attributes['data-hm-isolated-runtime-state'], 'rendered');
+    assert.equal(attributes['data-hm-isolated-status'], 'rendered');
+
+    target.__hmDestroy('dismissed');
+    assert.equal(frame.src, 'about:blank');
+    assert.equal(attributes['data-hm-isolated-runtime-state'], 'dismissed');
+    assert.equal(runtime.sandbox.__HORUS_ISOLATED_DIRECT_RUNTIME_V1__.frames[token], undefined);
 });
 
 test('isolated Direct Demand runtime reassembles payloads larger than public attribute limits', async () => {
@@ -247,6 +391,71 @@ test('isolated Direct Demand runtime rejects incomplete chunked payloads', () =>
 
     assert.equal(createdFrames.length, 0);
     assert.equal(attributes['data-hm-isolated-runtime-state'], 'invalid');
+});
+
+test('Horus video runtime plays a VAST URL only after viewability and exposes deterministic lifecycle state', async () => {
+    const vastUrl = 'https://video.example.com/vast?slot=floating';
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from(vastUrl, 'utf8').toString('base64'),
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+        'data-hm-video-sizes': '[[400,225],[320,180]]',
+        'data-hm-video-size-map': '[{"minWidth":0,"maxWidth":767,"width":320,"height":180},{"minWidth":768,"width":400,"height":225}]',
+        'data-hm-video-muted': '1',
+        'data-hm-video-autoplay': '1',
+    };
+    const target = container(attributes, 'hm-video-placement-1');
+    target.clientWidth = 400;
+    const runtime = runVideo(target);
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.requested[0].adTagUrl, vastUrl);
+    assert.equal(runtime.requested[0].willAutoPlay, true);
+    assert.equal(runtime.requested[0].willPlayMuted, true);
+    assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
+    assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
+    assert.equal(attributes['data-hm-video-status'], 'started');
+    assert.equal(attributes['data-hm-video-runtime-state'], 'started');
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    assert.ok(video);
+    assert.equal(video.muted, true);
+    assert.equal(video.autoplay, true);
+    assert.equal(video.playsInline, true);
+    assert.equal(runtime.managers[0].volume, 0);
+    assert.equal(runtime.managers[0].started, true);
+
+    const floatingSurfaceAttributes = { 'data-hm-floating-video-active': '1' };
+    const floatingSurface = {
+        style: {},
+        parentNode: null,
+        getAttribute(name) { return floatingSurfaceAttributes[name] ?? null; },
+        setAttribute(name, value) { floatingSurfaceAttributes[name] = String(value); },
+    };
+    target.parentNode = floatingSurface;
+    runtime.managers[0].emit('complete');
+    assert.equal(runtime.managers[0].destroyed, false);
+    assert.notEqual(floatingSurface.style.display, 'none');
+    runtime.managers[0].emit('all-ads-completed');
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(video.paused, true);
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(floatingSurface.style.display, 'none');
+    assert.equal(floatingSurfaceAttributes['data-hm-placement-dismissed'], '1');
+});
+
+test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('http://video.example.com/vast', 'utf8').toString('base64'),
+    };
+    const runtime = runVideo(container(attributes, 'hm-video-invalid'));
+    await tick();
+
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(attributes['data-hm-video-status'], 'invalid');
 });
 
 test('Google GPT direct runtime executes the slot in the publisher document and waits for slotRenderEnded', () => {

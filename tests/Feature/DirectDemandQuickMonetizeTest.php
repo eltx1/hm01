@@ -19,6 +19,8 @@ use App\Services\Demand\CustomThirdPartyTagConnector;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Operations\PlatformControlService;
+use App\Services\Security\PublicProviderOriginValidator;
+use Database\Seeders\AdFormatSeeder;
 use Database\Seeders\DemandNetworkSeeder;
 use Database\Seeders\InventoryDeliverySeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -92,7 +94,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             ->assertSee('Paste the tag. Horus handles the wiring.')
             ->assertSee('Website')
             ->assertSee('Placement')
-            ->assertSee('Provider-issued ad tag')
+            ->assertSee('VAST URL or provider-issued ad tag')
             ->assertSee('Activate Ad')
             ->assertDontSee('Revenue share %')
             ->assertDontSee('Provider account identifier')
@@ -227,6 +229,80 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $isolatedHtml = base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-html'), true);
         $this->assertIsString($isolatedHtml);
         $this->assertStringContainsString('//cdn.taboola.com/libtrc/horus-test/loader.js', $isolatedHtml);
+    }
+
+    public function test_plain_vast_url_creates_a_floating_video_surface_and_horus_player_recipe(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $vastUrl = 'https://vast.vendor.net/tag?placement=floating&v=4';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_mode' => 'new',
+                'placement_id' => null,
+                'placement_preset' => 'responsive_display',
+                'tag' => $vastUrl,
+            ]))
+            ->assertRedirect();
+
+        $placement = \App\Models\Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_video_floating')
+            ->firstOrFail();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
+
+        $this->assertSame('VIDEO', $placement->type->value);
+        $this->assertSame('bottom_right', data_get($placement->format_settings, 'position'));
+        $this->assertTrue((bool) data_get($placement->format_settings, 'closeable'));
+        $this->assertTrue((bool) data_get($placement->format_settings, 'singleActiveVideo'));
+        $this->assertSame($vastUrl, $widget->direct_tag_template);
+        $this->assertSame('VAST_URL', data_get($widget->configuration, 'input_kind'));
+        $this->assertSame('https://vast.vendor.net', data_get($widget->configuration, 'vast_origin'));
+        $this->assertContains('https://imasdk.googleapis.com', (array) data_get($account->configuration, 'allowed_script_origins'));
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.quick_video_floating.candidates.0');
+        $runtimeHash = substr((string) hash_file('sha256', public_path('assets/hm-video-direct.js')), 0, 16);
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('VIDEO', data_get($candidate, 'tag.format'));
+        $this->assertSame(
+            'https://cdn.horusmedia.net/runtime/video/hm-video-direct.'.$runtimeHash.'.js',
+            data_get($candidate, 'tag.scripts.0.url'),
+        );
+        $this->assertSame($vastUrl, base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-vast-url'), true));
+        $this->assertSame(['VIDEO', 'OUTSTREAM'], data_get($candidate, 'tag.render.allowedFormats'));
+        $this->assertGreaterThanOrEqual(15_000, (int) data_get($candidate, 'tag.render.timeoutMs'));
+        $this->assertStringContainsString('data-hm-video-status="started"', (string) data_get($candidate, 'tag.render.successSelector'));
+    }
+
+    public function test_vast_url_is_rejected_for_a_non_video_placement_without_partial_demand_writes(): void
+    {
+        $this->bindPublicProviderDns();
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload([
+                'tag' => 'https://vast.vendor.net/tag?placement=wrong-surface',
+            ]))
+            ->assertSessionHasErrors('tag');
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_non_https_or_private_vast_url_is_rejected_before_configuration_is_created(): void
+    {
+        foreach (['http://vast.vendor.net/tag', 'https://127.0.0.1/vast'] as $vastUrl) {
+            $this->adminSession()
+                ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $vastUrl]))
+                ->assertSessionHasErrors('tag');
+        }
+
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
     }
 
     public function test_repeating_quick_activation_reuses_account_and_mappings_instead_of_duplicating_them(): void
@@ -393,6 +469,17 @@ googletag.cmd.push(function() {
 });
 </script>
 HTML;
+    }
+
+    private function bindPublicProviderDns(): void
+    {
+        $this->app->instance(PublicProviderOriginValidator::class, new class extends PublicProviderOriginValidator
+        {
+            protected function resolveAddresses(string $host): array
+            {
+                return ['93.184.216.34'];
+            }
+        });
     }
 
     private function adminSession(): static

@@ -8,7 +8,25 @@
     }
 
     var SELECTOR = '[data-hm-isolated-direct="1"]';
-    var state = window[STATE_KEY] = { observer: null, scan: scan };
+    var state = window[STATE_KEY] = { observer: null, frames: {}, listenerInstalled: false, scan: scan };
+
+    function installMessageListener() {
+        if (state.listenerInstalled || !window.addEventListener) return;
+        state.listenerInstalled = true;
+        window.addEventListener('message', function (event) {
+            var data = event && event.data || {};
+            if (data.type !== 'hm-isolated-rendered' || !data.token) return;
+            var entry = state.frames[String(data.token)];
+            if (!entry || event.source !== entry.frame.contentWindow) return;
+            entry.container.setAttribute('data-hm-isolated-runtime-state', 'rendered');
+            entry.container.setAttribute('data-hm-isolated-status', 'rendered');
+        });
+    }
+
+    function renderBridge(token) {
+        var encoded = JSON.stringify(String(token));
+        return '<script>(function(){var sent=false,token='+encoded+',media={VIDEO:1,IFRAME:1,OBJECT:1,EMBED:1,CANVAS:1,IMG:1,PICTURE:1,SVG:1};function visible(){if(sent)return;var nodes=document.body?document.body.querySelectorAll("*"):[];for(var i=0;i<nodes.length;i++){var n=nodes[i],tag=String(n.tagName||"").toUpperCase();if(/^(SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE)$/.test(tag))continue;var r=n.getBoundingClientRect?n.getBoundingClientRect():null;if(r&&r.width<=1&&r.height<=1)continue;var marked=n.hasAttribute&&(n.hasAttribute("data-ad-status")||n.hasAttribute("data-ad-rendered")),text=String(n.textContent||"").replace(/\\s/g,""),background="";try{background=getComputedStyle(n).backgroundImage||"";}catch(e){}if(media[tag]||marked||text||background&&background!=="none"){sent=true;parent.postMessage({type:"hm-isolated-rendered",token:token},"*");return;}}}new MutationObserver(visible).observe(document.documentElement,{childList:true,subtree:true,attributes:true,characterData:true});setTimeout(visible,0);setTimeout(visible,250);})();<\/script>';
+    }
 
     function positiveInteger(value, fallback) {
         var number = Number(value);
@@ -152,19 +170,31 @@
         frame.setAttribute('height', String(height));
         frame.setAttribute('scrolling', 'no');
         frame.setAttribute('frameborder', '0');
+        frame.setAttribute('allow', 'autoplay; fullscreen');
         frame.style.border = '0';
         frame.style.display = 'block';
         frame.style.maxWidth = '100%';
         if (frame.sandbox && frame.sandbox.add) frame.sandbox.add('allow-scripts');
         else frame.setAttribute('sandbox', 'allow-scripts');
+        var token = String(container.id || 'hm-isolated') + ':' + String(Math.random()).slice(2);
+        installMessageListener();
+        state.frames[token] = { container: container, frame: frame };
         frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'
-            + csp + '"></head><body style="margin:0;padding:0">' + html + '</body></html>';
+            + csp + '"></head><body style="margin:0;padding:0">' + html + renderBridge(token) + '</body></html>';
         frame.onload = function () {
             container.setAttribute('data-hm-isolated-runtime-state', 'loaded');
-            container.setAttribute('data-hm-isolated-status', 'requested');
+            container.setAttribute('data-hm-isolated-status', 'loaded');
         };
         frame.onerror = function () {
             container.setAttribute('data-hm-isolated-runtime-state', 'failed');
+            container.setAttribute('data-hm-isolated-status', 'failed');
+        };
+        container.__hmDestroy = function (reason) {
+            delete state.frames[token];
+            try { frame.src = 'about:blank'; } catch (error) {}
+            try { if (frame.parentNode && frame.parentNode.removeChild) frame.parentNode.removeChild(frame); } catch (error) {}
+            container.setAttribute('data-hm-isolated-runtime-state', reason || 'dismissed');
+            container.setAttribute('data-hm-isolated-status', reason || 'dismissed');
         };
         container.appendChild(frame);
     }
