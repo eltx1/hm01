@@ -236,7 +236,10 @@ final class DemandConfigurationBuilder
             throw new \RuntimeException('Structured Direct Demand requires at least one approved script.');
         }
 
-        $timeout = max(500, min(10000, (int) ($render['timeoutMs'] ?? $tag['renderTimeoutMs'] ?? config('demand.direct_render_timeout_ms', 2500))));
+        $trustedLongRunningRuntime = ($containerAttributes['data-hm-gpt-direct'] ?? null) === '1'
+            || ($containerAttributes['data-hm-video-direct'] ?? null) === '1';
+        $timeoutMaximum = $trustedLongRunningRuntime ? 30_000 : 10_000;
+        $timeout = max(500, min($timeoutMaximum, (int) ($render['timeoutMs'] ?? $tag['renderTimeoutMs'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $publicPlacementId = mb_substr((string) ($tag['publicPlacementId'] ?? data_get($containerAttributes, 'data-widget-id') ?? $containerId), 0, 255);
         if ($this->containsSensitive([$publicPlacementId, $parameters, $containerAttributes])) {
             throw new \RuntimeException('Direct Demand public recipe contains sensitive material.');
