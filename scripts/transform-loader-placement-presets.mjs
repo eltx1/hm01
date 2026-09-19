@@ -109,6 +109,66 @@ const HELPERS = `    function placementFormatSettings(placement) {
             mountAutoPlacementElement(element, settings);
             applyPlacementPresetPresentation(element, placement, settings);
         });
+        installFloatingVideoClearance(config);
+    }
+
+    function installFloatingVideoClearance(config) {
+        var bottomCodes = (config.placements || []).filter(function (placement) {
+            var settings = placementFormatSettings(placement);
+            return placement.type === 'STICKY' && placement.enabled && placement.status === 'active'
+                && String(settings.position || 'bottom').toLowerCase() === 'bottom';
+        }).map(function (placement) { return placement.code; });
+        Array.prototype.forEach.call(nodeList('[data-hm-floating-video-active="1"]'), function (floating) {
+            if (!floating.getBoundingClientRect) return;
+            var tracker = floating.__hmClearance;
+            if (!tracker) {
+                tracker = floating.__hmClearance = { anchors: [], frame: null, stopped: false };
+                tracker.update = function () {
+                    tracker.frame = null;
+                    if (floating.isConnected === false || floating.getAttribute('data-hm-placement-dismissed') === '1') {
+                        tracker.stopped = true;
+                        if (tracker.resize) tracker.resize.disconnect();
+                        if (tracker.mutations) tracker.mutations.disconnect();
+                        if (window.removeEventListener) window.removeEventListener('resize', tracker.schedule);
+                        return;
+                    }
+                    var bounds = floating.getBoundingClientRect();
+                    var viewportHeight = Number(window.innerHeight || document.documentElement.clientHeight || 0);
+                    var occupied = 0;
+                    tracker.anchors.forEach(function (anchor) {
+                        if (anchor.isConnected === false || anchor.getAttribute('data-hm-placement-dismissed') === '1' || !placementRendered(anchor)) return;
+                        var rect = anchor.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= viewportHeight) return;
+                        if (rect.right <= bounds.left || rect.left >= bounds.right) return;
+                        occupied = Math.max(occupied, viewportHeight - rect.top);
+                    });
+                    var bottom = occupied > 0 ? String(Math.ceil(occupied) + 16) + 'px' : 'calc(16px + env(safe-area-inset-bottom, 0px))';
+                    if (!floating.style.getPropertyValue || floating.style.getPropertyValue('bottom') !== bottom) {
+                        setImportantStyle(floating.style, 'bottom', bottom);
+                    }
+                };
+                tracker.schedule = function () {
+                    if (tracker.stopped || tracker.frame !== null) return;
+                    tracker.frame = window.requestAnimationFrame ? window.requestAnimationFrame(tracker.update) : window.setTimeout(tracker.update, 16);
+                };
+                if (typeof window.ResizeObserver === 'function') tracker.resize = new window.ResizeObserver(tracker.schedule);
+                if (typeof window.MutationObserver === 'function') {
+                    tracker.mutations = new window.MutationObserver(tracker.schedule);
+                    tracker.mutations.observe(floating, { attributes: true, attributeFilter: ['data-hm-placement-dismissed'] });
+                }
+                if (window.addEventListener) window.addEventListener('resize', tracker.schedule);
+            }
+            if (tracker.stopped) return;
+            Array.prototype.forEach.call(nodeList('.hm-ad[data-placement], .hm-native[data-placement]'), function (anchor) {
+                if (bottomCodes.indexOf(anchor.getAttribute('data-placement')) === -1 || tracker.anchors.indexOf(anchor) !== -1) return;
+                tracker.anchors.push(anchor);
+                if (tracker.resize) tracker.resize.observe(anchor);
+                if (tracker.mutations) tracker.mutations.observe(anchor, {
+                    attributes: true, attributeFilter: ['data-hm-status', 'data-hm-placement-dismissed', 'style', 'class'], childList: true, subtree: true
+                });
+            });
+            tracker.update();
+        });
     }
 
     function setImportantStyle(style, name, value) {

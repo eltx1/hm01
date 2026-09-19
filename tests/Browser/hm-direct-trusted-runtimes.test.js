@@ -209,6 +209,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 function runVideo(selectedContainer, options = {}) {
     const requested = [];
     const managers = [];
+    const loaders = [];
+    const displays = [];
     const created = [];
     const windowListeners = {};
     const dispatched = [];
@@ -258,6 +260,7 @@ function runVideo(selectedContainer, options = {}) {
         init(width, height, mode) { this.initialized = [width, height, mode]; }
         setVolume(volume) { this.volume = volume; }
         start() {
+            if (options.managerStartThrows) throw new Error('manager-start-failed');
             this.started = true;
             this.emit(adEventTypes.LOADED);
             this.emit(adEventTypes.STARTED);
@@ -266,7 +269,8 @@ function runVideo(selectedContainer, options = {}) {
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
-        constructor() { this.listeners = {}; }
+        constructor() { this.listeners = {}; loaders.push(this); }
+        destroy() { this.destroyed = true; }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
         requestAds(request) {
             requested.push(request);
@@ -302,8 +306,9 @@ function runVideo(selectedContainer, options = {}) {
     };
     const ima = {
         AdDisplayContainer: class {
-            constructor(layer, video) { this.layer = layer; this.video = video; }
+            constructor(layer, video) { this.layer = layer; this.video = video; displays.push(this); }
             initialize() { this.initialized = true; }
+            destroy() { this.destroyed = true; }
         },
         AdsLoader,
         AdsRequest,
@@ -349,7 +354,7 @@ function runVideo(selectedContainer, options = {}) {
     };
     sandbox.window = sandbox;
     vm.runInNewContext(videoSource, sandbox, { filename: 'hm-video-direct.js' });
-    return { sandbox, requested, managers, created, dispatched, storage };
+    return { sandbox, requested, managers, loaders, displays, created, dispatched, storage };
 }
 
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
@@ -497,7 +502,9 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
     assert.equal(url.searchParams.get('plcmt'), '4');
-    assert.equal(url.searchParams.get('sz'), runtime.requested[0].linearAdSlotWidth + 'x' + runtime.requested[0].linearAdSlotHeight);
+    assert.equal(url.searchParams.get('sz'), '400x300');
+    assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
+    assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
 });
 
 test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', async () => {
@@ -534,13 +541,37 @@ test('Horus floating video removes its surface immediately after a terminal IMA 
 
     const runtime = runVideo(target);
     await tick();
-    runtime.managers[0].emit('ad-error', { getError() { return new Error('vast-no-fill'); } });
+    runtime.managers[0].emit('ad-error', { getError() { return Object.assign(new Error('vast-no-fill'), {
+        getErrorCode: () => 1009, getVastErrorCode: () => 303,
+    }); } });
 
     assert.equal(runtime.managers[0].destroyed, true);
     assert.equal(attributes['data-hm-video-status'], 'error');
     assert.match(attributes['data-hm-video-error'], /vast-no-fill/);
     assert.equal(floatingSurface.style.display, 'none');
     assert.equal(floatingSurfaceAttributes['data-hm-placement-dismissed'], '1');
+    assert.equal(floatingSurfaceAttributes['data-hm-video-error-code'], '1009');
+    assert.equal(floatingSurfaceAttributes['data-hm-video-vast-error-code'], '303');
+    assert.equal(floatingSurfaceAttributes['data-hm-video-error-stage'], 'playback');
+    assert.match(floatingSurfaceAttributes['data-hm-video-error'], /vast-no-fill/);
+    assert.equal(runtime.loaders[0].destroyed, true);
+    assert.equal(runtime.displays[0].destroyed, true);
+});
+
+test('asynchronous IMA manager initialization failure is retained and fully cleaned up', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example/vast').toString('base64'),
+    };
+    const runtime = runVideo(container(attributes, 'manager-failure'), { managerStartThrows: true });
+    await tick();
+    assert.equal(attributes['data-hm-video-status'], 'error');
+    assert.equal(attributes['data-hm-video-error-stage'], 'manager');
+    assert.match(attributes['data-hm-video-error'], /manager-start-failed/);
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(runtime.loaders[0].destroyed, true);
+    assert.equal(runtime.displays[0].destroyed, true);
+    assert.equal(runtime.requested.length, 1);
 });
 
 test('Horus rewarded VAST waits for explicit opt-in and grants only after an unskipped completion', async () => {

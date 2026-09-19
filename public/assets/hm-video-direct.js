@@ -268,6 +268,8 @@
         if (player.intersectionObserver && player.intersectionObserver.disconnect) player.intersectionObserver.disconnect();
         if (player.resizeHandler && window.removeEventListener) window.removeEventListener('resize', player.resizeHandler);
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
+        try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
+        try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
         if (reason) setStatus(player.container, reason);
         if (player.rewarded && !player.closedDispatched) {
@@ -323,14 +325,14 @@
             player.adsLoader = new ima.AdsLoader(player.displayContainer);
             player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
                 if (player.destroyed) return;
+                try {
                 var settings = new ima.AdsRenderingSettings();
                 settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
                 player.adsManager = event.getAdsManager(player.video, settings);
                 var adTypes = ima.AdEvent.Type;
                 player.adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
                     var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
-                    destroyPlayer(player, 'error');
-                    if (error && player.container.setAttribute) player.container.setAttribute('data-hm-video-error', String(error).slice(0, 160));
+                    failVideo(player, error, 'playback');
                 });
                 player.adsManager.addEventListener(adTypes.LOADED, function () { setStatus(player.container, 'loaded'); });
                 player.adsManager.addEventListener(adTypes.STARTED, function () { setStatus(player.container, 'started'); });
@@ -363,11 +365,11 @@
                     player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
                 };
                 if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);
+                } catch (error) { failVideo(player, error, 'manager'); }
             }, false);
             player.adsLoader.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
                 var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
-                destroyPlayer(player, 'error');
-                if (error && player.container.setAttribute) player.container.setAttribute('data-hm-video-error', String(error).slice(0, 160));
+                failVideo(player, error, 'request');
             }, false);
 
             var request = new ima.AdsRequest();
@@ -382,9 +384,27 @@
             player.adsLoader.requestAds(request);
             if (player.rewarded) rewardEvent(player.container, 'horus:rewarded-opened', {});
         } catch (error) {
-            destroyPlayer(player, 'error');
-            player.container.setAttribute('data-hm-video-error', String(error && error.message || error).slice(0, 160));
+            failVideo(player, error, 'initialization');
         }
+    }
+
+    function failVideo(player, error, stage) {
+        if (!player || player.destroyed) return;
+        var message = String(error && error.message || error || 'Unknown IMA error').slice(0, 240);
+        var code = error && typeof error.getErrorCode === 'function' ? error.getErrorCode() : '';
+        var vastCode = error && typeof error.getVastErrorCode === 'function' ? error.getVastErrorCode() : '';
+        // Keep the diagnosis on the permanent placement before Loader removes
+        // the failed candidate. No ad requests or telemetry are sent here.
+        var surface = player.container;
+        while (surface && surface.getAttribute) {
+            surface.setAttribute('data-hm-video-error', message);
+            surface.setAttribute('data-hm-video-error-code', String(code));
+            surface.setAttribute('data-hm-video-vast-error-code', String(vastCode));
+            surface.setAttribute('data-hm-video-error-stage', stage);
+            if (surface.getAttribute('data-placement')) break;
+            surface = surface.parentNode;
+        }
+        destroyPlayer(player, 'error');
     }
 
     function resolvedVastUrl(value, player, dimensions) {
@@ -402,7 +422,9 @@
         if (!correlator || /^\[timestamp\]$/i.test(correlator)) tag.searchParams.set('correlator', String(Date.now()));
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
         tag.searchParams.set('vpa', player.video.autoplay ? 'auto' : 'click');
-        tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
+        // sz identifies eligible inventory; it is not the CSS player size.
+        // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
+        if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
         if (!player.rewarded) tag.searchParams.set('plcmt', '4');
         return tag.href;
     }
@@ -594,8 +616,7 @@
         }).catch(function (error) {
             var detail = error && error.message || 'sdk-error';
             if (player) {
-                destroyPlayer(player, 'error');
-                container.setAttribute('data-hm-video-error', String(detail).slice(0, 160));
+                failVideo(player, error, 'sdk');
             } else {
                 setStatus(container, 'error', detail);
             }

@@ -1,8 +1,59 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { applyPlacementPresetTransform } from '../../scripts/transform-loader-placement-presets.mjs';
 
 const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const gptRuntime = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
+const placementLoader = applyPlacementPresetTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'));
+
+test('floating video clears rendered bottom anchors, follows resize and stops after dismissal', async ({ page }) => {
+    await page.route('https://reader.example/**', route => route.fulfill(route.request().url().endsWith('/ad.js')
+        ? { contentType: 'application/javascript', body: 'window.providerLoads = (window.providerLoads || 0) + 1;' }
+        : { contentType: 'text/html', body: '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body><article>Content</article><script id="loader" data-site-key="GEOMETRY" data-config-version="1"></script></body>' }));
+    await page.goto('https://reader.example/geometry');
+    await page.evaluate(() => {
+        window.__HM_DISABLE_AUTOBOOT__ = true;
+        const placements = [
+            { code: 'bottom', type: 'STICKY', format: { settings: { autoMount: true, position: 'bottom', closeable: true } } },
+            { code: 'floating', type: 'VIDEO', format: { settings: { autoMount: true, position: 'bottom_right', closeable: true } } },
+        ].map(p => ({ ...p, enabled: true, status: 'active', renderer: 'DIRECT_JS', sizes: [[320, 90]] }));
+        const config = {
+            siteKey: 'GEOMETRY', configVersion: 1, status: 'active', allowedHostnames: ['reader.example'],
+            controls: { gamDisabled: true, prebidDisabled: true }, placements,
+            directDemand: { enabled: true, placements: Object.fromEntries(placements.map(p => [p.code, {
+                enabled: true, candidates: [{ network: 'TEST', tag: { scripts: [{ url: 'https://reader.example/ad.js' }], initialization: { type: 'NONE' }, assumeLoadedIsSuccess: true } }],
+            }])) },
+        };
+        window.fetch = async () => ({ ok: true, json: async () => config });
+    });
+    await page.addScriptTag({ content: placementLoader });
+    await page.evaluate(() => window.HorusMediaLoader.boot({ script: document.getElementById('loader') }));
+    const bottom = page.locator('[data-placement="bottom"]');
+    const floating = page.locator('[data-placement="floating"]');
+    await expect(bottom).toHaveAttribute('data-hm-status', 'rendered');
+    await bottom.evaluate(el => { el.style.width = '100vw'; el.style.height = '90px'; });
+    await expect.poll(async () => {
+        const a = await bottom.boundingBox(), b = await floating.boundingBox();
+        return a.y - b.y - b.height;
+    }).toBeGreaterThanOrEqual(15);
+    await bottom.evaluate(el => { el.style.height = '130px'; });
+    await expect.poll(async () => {
+        const a = await bottom.boundingBox(), b = await floating.boundingBox();
+        return a.y - b.y - b.height;
+    }).toBeGreaterThanOrEqual(15);
+    await bottom.locator('[data-hm-placement-close]').click();
+    await expect.poll(() => floating.evaluate(el => parseFloat(getComputedStyle(el).bottom))).toBe(16);
+    // Count writes after layout settles: observers must not trigger themselves.
+    await floating.evaluate(el => {
+        window.geometryWrites = 0;
+        new MutationObserver(records => { window.geometryWrites += records.length; }).observe(el, { attributes: true, attributeFilter: ['style'] });
+    });
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 250)));
+    expect(await page.evaluate(() => window.geometryWrites)).toBe(0);
+    expect(await page.evaluate(() => window.providerLoads)).toBe(1);
+    await floating.locator('[data-hm-placement-close]').click();
+    await expect.poll(() => floating.evaluate(el => el.__hmClearance.stopped)).toBe(true);
+});
 
 // No paid inventory or external requests: exercise the real DOM/runtime using
 // a deterministic IMA boundary. Real demand/no-fill remains a publisher smoke test.
