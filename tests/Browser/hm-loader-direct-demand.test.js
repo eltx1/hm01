@@ -218,6 +218,99 @@ test('structured Direct Demand loads multiple approved scripts and renders witho
     assert.equal(elements[0].getAttribute('data-hm-status'), 'rendered');
 });
 
+test('trusted GPT Direct waits for a late terminal render instead of declaring no-render at script load', async () => {
+    const tag = recipe({
+        url: 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.js',
+        dedupeKey: 'horus-google-gpt-direct-runtime-v1',
+    });
+    tag.container = {
+        element: 'div',
+        id: 'hm-gpt-late-render',
+        class: 'hm-direct-google-gpt',
+        attributes: {
+            'data-hm-gpt-direct': '1',
+            'data-hm-gpt-ad-unit-path': '/23055873217/lordai.net',
+            'data-hm-gpt-sizes': '[[728,90],[970,90]]',
+            'data-hm-gpt-inner-id': 'gpt-passback',
+        },
+    };
+    tag.containerId = 'hm-gpt-late-render';
+    tag.render = {
+        timeoutMs: 15000,
+        successSelector: '#hm-gpt-late-render[data-hm-gpt-status="rendered"]',
+        assumeLoadedIsSuccess: false,
+        allowedFormats: ['DISPLAY'],
+        allowedSizes: [[728, 90], [970, 90]],
+    };
+    tag.renderTimeoutMs = 15000;
+    tag.successSelector = tag.render.successSelector;
+    tag.assumeLoadedIsSuccess = false;
+
+    const selected = config({ header: { enabled: true, candidates: [candidate('ONE', tag)], house: null } });
+    const runtime = harness(selected);
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+
+    setTimeout(() => {
+        const container = runtime.elements[0].children.find((child) => child.id === 'hm-gpt-late-render');
+        assert.ok(container, 'GPT Direct candidate container should exist while waiting');
+        container.setAttribute('data-hm-gpt-runtime-state', 'rendered');
+        container.setAttribute('data-hm-gpt-status', 'rendered');
+    }, 20);
+
+    await boot;
+
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct'), 'ONE');
+    assert.equal(runtime.elements[0].getAttribute('data-hm-status'), 'rendered');
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), null);
+});
+
+test('trusted GPT Direct terminal empty state fails immediately and cleans the candidate container', async () => {
+    const tag = recipe({
+        url: 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.js',
+        dedupeKey: 'horus-google-gpt-direct-runtime-empty',
+    });
+    tag.container = {
+        element: 'div',
+        id: 'hm-gpt-empty-render',
+        class: 'hm-direct-google-gpt',
+        attributes: {
+            'data-hm-gpt-direct': '1',
+            'data-hm-gpt-ad-unit-path': '/23055873217/lordai.net',
+            'data-hm-gpt-sizes': '[[728,90],[970,90]]',
+            'data-hm-gpt-inner-id': 'gpt-passback',
+        },
+    };
+    tag.containerId = 'hm-gpt-empty-render';
+    tag.render = {
+        timeoutMs: 15000,
+        successSelector: '#hm-gpt-empty-render[data-hm-gpt-status="rendered"]',
+        assumeLoadedIsSuccess: false,
+        allowedFormats: ['DISPLAY'],
+        allowedSizes: [[728, 90], [970, 90]],
+    };
+    tag.renderTimeoutMs = 15000;
+    tag.successSelector = tag.render.successSelector;
+    tag.assumeLoadedIsSuccess = false;
+
+    const selected = config({ header: { enabled: true, candidates: [candidate('ONE', tag)], house: null } });
+    const runtime = harness(selected);
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+
+    setTimeout(() => {
+        const container = runtime.elements[0].children.find((child) => child.id === 'hm-gpt-empty-render');
+        assert.ok(container, 'GPT Direct candidate container should exist while waiting');
+        container.setAttribute('data-hm-gpt-runtime-state', 'empty');
+        container.setAttribute('data-hm-gpt-status', 'empty');
+    }, 20);
+
+    await boot;
+
+    assert.equal(runtime.elements[0].getAttribute('data-hm-status'), 'empty');
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct'), 'exhausted');
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), 'gpt-empty');
+    assert.equal(runtime.elements[0].children.some((child) => child.id === 'hm-gpt-empty-render'), false);
+});
+
 test('multiple zones share one provider loader but initialize independently', async () => {
     const tagA = recipe({ dedupeKey: 'provider-loader' });
     const tagB = { ...recipe({ dedupeKey: 'provider-loader' }), container: { element: 'div', id: 'zone-b', class: 'provider-zone', attributes: { 'data-zone-id': '200' } }, containerId: 'zone-b' };
