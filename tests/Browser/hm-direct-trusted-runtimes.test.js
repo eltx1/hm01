@@ -17,12 +17,22 @@ function container(attributes, id = '') {
         innerHTML: '',
         shadowRoot: null,
         style: {},
+        get firstChild() { return childNodes[0] || null; },
         getAttribute(name) { return attributes[name] ?? null; },
         setAttribute(name, value) { attributes[name] = String(value); },
         appendChild(frame) {
+            frame.parentNode = this;
             childNodes.push(frame);
             frames.push(frame);
             queueMicrotask(() => frame.onload?.());
+            return frame;
+        },
+        removeChild(frame) {
+            const index = childNodes.indexOf(frame);
+            if (index >= 0) childNodes.splice(index, 1);
+            const frameIndex = frames.indexOf(frame);
+            if (frameIndex >= 0) frames.splice(frameIndex, 1);
+            frame.parentNode = null;
             return frame;
         },
     };
@@ -196,24 +206,35 @@ function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function runVideo(selectedContainer) {
+function runVideo(selectedContainer, options = {}) {
     const requested = [];
     const managers = [];
     const created = [];
     const windowListeners = {};
+    const dispatched = [];
+    const storage = new Map(Object.entries(options.storage || {}));
 
     function mediaElement(tag) {
         const attributes = {};
+        const listeners = {};
+        const childNodes = [];
         return {
             tagName: tag.toUpperCase(),
             attributes,
+            childNodes,
             style: {},
+            textContent: '',
+            type: '',
+            disabled: false,
             muted: false,
             autoplay: false,
             playsInline: false,
             paused: false,
             setAttribute(name, value) { attributes[name] = String(value); },
             getAttribute(name) { return attributes[name] ?? null; },
+            appendChild(child) { child.parentNode = this; childNodes.push(child); return child; },
+            addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
+            click() { (listeners.click || []).forEach((callback) => callback({ isTrusted: options.trustedClick !== false, preventDefault() {}, stopPropagation() {} })); },
             pause() { this.paused = true; },
         };
     }
@@ -304,6 +325,19 @@ function runVideo(selectedContainer) {
         atob(value) { return Buffer.from(String(value), 'base64').toString('binary'); },
         setTimeout,
         clearTimeout,
+        localStorage: {
+            getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+            setItem(key, value) { storage.set(key, String(value)); },
+        },
+        CustomEvent: class {
+            constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
+        },
+        navigator: { userActivation: { isActive: options.userActivation !== false } },
+        dispatchEvent(event) {
+            dispatched.push(event);
+            (windowListeners[event.type] || []).forEach((callback) => callback(event));
+            return true;
+        },
         addEventListener(name, callback) { (windowListeners[name] ||= []).push(callback); },
         removeEventListener(name, callback) {
             const listeners = windowListeners[name] || [];
@@ -313,7 +347,7 @@ function runVideo(selectedContainer) {
     };
     sandbox.window = sandbox;
     vm.runInNewContext(videoSource, sandbox, { filename: 'hm-video-direct.js' });
-    return { sandbox, requested, managers, created };
+    return { sandbox, requested, managers, created, dispatched, storage };
 }
 
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
@@ -456,6 +490,114 @@ test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', as
 
     assert.equal(runtime.requested.length, 0);
     assert.equal(attributes['data-hm-video-status'], 'invalid');
+});
+
+test('Horus rewarded VAST waits for explicit opt-in and grants only after an unskipped completion', async () => {
+    const vastUrl = 'https://video.example.com/vast?slot=rewarded';
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-vast-url': Buffer.from(vastUrl, 'utf8').toString('base64'),
+        'data-hm-video-width': '640',
+        'data-hm-video-height': '360',
+        'data-hm-video-sizes': '[[640,360],[320,180]]',
+        'data-hm-video-muted': '0',
+        'data-hm-video-autoplay': '0',
+        'data-hm-reward-cooldown-seconds': '900',
+    };
+    const target = container(attributes, 'hm-rewarded-placement-1');
+    const runtime = runVideo(target);
+    await tick();
+
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(attributes['data-hm-video-status'], 'reward-ready');
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-ready').length, 1);
+
+    const button = runtime.created.find((node) => node.tagName === 'BUTTON');
+    assert.ok(button);
+    assert.equal(button.disabled, false);
+    button.click();
+
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.requested[0].adTagUrl, vastUrl);
+    assert.equal(runtime.requested[0].willAutoPlay, false);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    assert.equal(runtime.managers[0].volume, 1);
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-opened').length, 1);
+
+    runtime.managers[0].emit('complete');
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-granted').length, 0);
+    runtime.managers[0].emit('all-ads-completed');
+
+    const granted = runtime.dispatched.filter((event) => event.type === 'horus:rewarded-granted');
+    const closed = runtime.dispatched.filter((event) => event.type === 'horus:rewarded-closed');
+    assert.equal(granted.length, 1);
+    assert.equal(granted[0].detail.reward.type, 'horus_video_completion');
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0].detail.granted, true);
+    assert.equal(attributes['data-hm-reward-granted'], '1');
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.ok(runtime.storage.has('hm:rewarded:v1:hm-rewarded-placement-1'));
+});
+
+test('Horus rewarded VAST never grants after skip', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=rewarded-skip', 'utf8').toString('base64'),
+        'data-hm-video-muted': '0',
+        'data-hm-video-autoplay': '0',
+    };
+    const runtime = runVideo(container(attributes, 'hm-rewarded-skip'));
+    await tick();
+    runtime.created.find((node) => node.tagName === 'BUTTON').click();
+    runtime.managers[0].emit('skipped');
+    runtime.managers[0].emit('all-ads-completed');
+
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-granted').length, 0);
+    const closed = runtime.dispatched.filter((event) => event.type === 'horus:rewarded-closed');
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0].detail.granted, false);
+    assert.equal(attributes['data-hm-video-status'], 'closed');
+});
+
+test('Horus rewarded VAST rejects programmatic activation outside a user gesture', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=rewarded-activation', 'utf8').toString('base64'),
+    };
+    const runtime = runVideo(container(attributes, 'hm-rewarded-activation'), { userActivation: false });
+    await tick();
+
+    const ready = runtime.dispatched.find((event) => event.type === 'horus:rewarded-ready');
+    assert.ok(ready);
+    assert.equal(ready.detail.makeRewardedVisible(), false);
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(attributes['data-hm-video-status'], 'activation-required');
+});
+
+test('Horus rewarded VAST applies its per-placement completion cooldown', async () => {
+    const id = 'hm-rewarded-capped';
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=rewarded-capped', 'utf8').toString('base64'),
+        'data-hm-reward-cooldown-seconds': '900',
+    };
+    const runtime = runVideo(container(attributes, id), {
+        storage: { [`hm:rewarded:v1:${id}`]: String(Date.now()) },
+    });
+    await tick();
+
+    assert.equal(attributes['data-hm-video-status'], 'reward-capped');
+    assert.equal(runtime.requested.length, 0);
+    const button = runtime.created.find((node) => node.tagName === 'BUTTON');
+    assert.ok(button);
+    assert.equal(button.disabled, true);
+    const ready = runtime.dispatched.find((event) => event.type === 'horus:rewarded-ready');
+    assert.equal(ready.detail.capped, true);
+    assert.ok(ready.detail.cooldownRemainingSeconds > 0);
 });
 
 test('Google GPT direct runtime executes the slot in the publisher document and waits for slotRenderEnded', () => {

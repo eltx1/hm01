@@ -131,7 +131,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $network = $this->account->network;
         $this->put(route('admin.demand.networks.settings', $network), [
             'supports_direct_js' => 1,
-            'supported_formats' => ['DISPLAY', 'NATIVE'],
+            'supported_formats' => ['DISPLAY', 'NATIVE', 'REWARDED'],
             'integration_modes' => ['DIRECT_JS'],
             'script_origins' => ['https://jsc.mgid.com'],
             'operational_health' => 'HEALTHY',
@@ -139,7 +139,7 @@ final class DirectDemandAdminControlCenterTest extends TestCase
 
         $network = $network->fresh();
         $this->assertTrue($network->supports_direct_js);
-        $this->assertSame(['DISPLAY', 'NATIVE'], data_get($network->capabilities, 'supported_formats'));
+        $this->assertSame(['DISPLAY', 'NATIVE', 'REWARDED'], data_get($network->capabilities, 'supported_formats'));
         $this->assertSame(['https://jsc.mgid.com'], $network->script_origins);
         $this->assertSame('HEALTHY', data_get($network->metadata, 'operational_health'));
         $this->assertDatabaseHas('audit_logs', ['event' => 'demand.network.updated']);

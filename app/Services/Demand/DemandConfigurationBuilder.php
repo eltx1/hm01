@@ -205,7 +205,7 @@ final class DemandConfigurationBuilder
             : null;
         $allowedFormats = collect((array) ($render['allowedFormats'] ?? $tag['allowedFormats'] ?? []))
             ->map(fn ($value) => strtoupper((string) $value))
-            ->filter(fn ($value) => in_array($value, ['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM'], true))
+            ->filter(fn ($value) => in_array($value, ['DISPLAY', 'NATIVE', 'VIDEO', 'OUTSTREAM', 'REWARDED'], true))
             ->unique()->values()->all();
         $allowedSizes = collect((array) ($render['allowedSizes'] ?? $tag['allowedSizes'] ?? []))
             ->filter(fn ($size) => $size === 'fluid'

@@ -277,6 +277,78 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertStringContainsString('data-hm-video-status="started"', (string) data_get($candidate, 'tag.render.successSelector'));
     }
 
+    public function test_plain_vast_url_can_create_a_user_initiated_rewarded_surface(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $vastUrl = 'https://vast.vendor.net/tag?placement=rewarded&v=4';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_mode' => 'new',
+                'placement_id' => null,
+                'placement_preset' => 'rewarded',
+                'tag' => $vastUrl,
+            ]))
+            ->assertRedirect();
+
+        $placement = \App\Models\Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_rewarded')
+            ->firstOrFail();
+
+        $this->assertSame('REWARDED', $placement->type->value);
+        $this->assertTrue((bool) data_get($placement->format_settings, 'rewarded'));
+        $this->assertTrue((bool) data_get($placement->format_settings, 'requireUserActivation'));
+        $this->assertSame(900, data_get($placement->format_settings, 'rewardCooldownSeconds'));
+
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.quick_rewarded.candidates.0');
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('REWARDED', data_get($candidate, 'tag.format'));
+        $this->assertSame(['REWARDED'], data_get($candidate, 'tag.render.allowedFormats'));
+        $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-rewarded'));
+        $this->assertSame('0', data_get($candidate, 'tag.container.attributes.data-hm-video-autoplay'));
+        $this->assertSame('0', data_get($candidate, 'tag.container.attributes.data-hm-video-muted'));
+        $this->assertSame('900', data_get($candidate, 'tag.container.attributes.data-hm-reward-cooldown-seconds'));
+        $this->assertStringContainsString('data-hm-video-status="reward-ready"', (string) data_get($candidate, 'tag.render.successSelector'));
+        $this->assertStringContainsString('data-hm-video-status="reward-capped"', (string) data_get($candidate, 'tag.render.successSelector'));
+    }
+
+    public function test_complete_provider_tag_on_rewarded_surface_runs_through_trusted_isolation_instead_of_the_horus_vast_player(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $tag = '<script async src="//cdn.taboola.com/libtrc/horus-rewarded/loader.js"></script><div id="rewarded-zone"></div>';
+
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_mode' => 'new',
+                'placement_id' => null,
+                'placement_preset' => 'rewarded',
+                'tag' => $tag,
+            ]))
+            ->assertRedirect();
+
+        $placement = \App\Models\Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_rewarded')
+            ->firstOrFail();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
+        $candidate = data_get($configuration, 'placements.quick_rewarded.candidates.0');
+        $isolatedHtml = base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-html'), true);
+
+        $this->assertSame('REWARDED', $placement->type->value);
+        $this->assertSame('PROVIDER_TAG', data_get($widget->configuration, 'input_kind'));
+        $this->assertSame($tag, $widget->direct_tag_template);
+        $this->assertSame('STRUCTURED', data_get($candidate, 'tag.executionMode'));
+        $this->assertSame('REWARDED', data_get($candidate, 'tag.format'));
+        $this->assertSame(['REWARDED'], data_get($candidate, 'tag.render.allowedFormats'));
+        $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-isolated-direct'));
+        $this->assertNull(data_get($candidate, 'tag.container.attributes.data-hm-video-direct'));
+        $this->assertSame($tag, $isolatedHtml);
+    }
+
     public function test_vast_url_is_rejected_for_a_non_video_placement_without_partial_demand_writes(): void
     {
         $this->bindPublicProviderDns();
