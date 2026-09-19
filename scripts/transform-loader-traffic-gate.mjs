@@ -86,6 +86,7 @@ const trafficGateRuntime = String.raw`
         var siteKey = String(config && config.siteKey || '');
         var publicSiteKey = String(selected.siteKey || '');
         var valid = selected.provider === TRAFFIC_GATE_PROVIDER
+            && String(selected.widgetMode || '').toUpperCase() === 'INVISIBLE'
             && ['STRICT', 'BALANCED', 'PERMISSIVE'].indexOf(policy) !== -1
             && origin !== null
             && /^[A-Za-z0-9_-]{3,64}$/.test(siteKey)
@@ -100,6 +101,7 @@ const trafficGateRuntime = String.raw`
             origin: origin,
             siteKey: siteKey,
             turnstileSiteKey: publicSiteKey,
+            widgetMode: 'INVISIBLE',
             policy: policy || 'BALANCED',
             initialWaitMs: initialWaitMs,
             maxWaitMs: maxWaitMs,
@@ -415,13 +417,19 @@ const trafficGateRuntime = String.raw`
             iframe.setAttribute('data-hm-traffic-gate', '1');
             if (iframe.style && iframe.style.setProperty) {
                 iframe.style.setProperty('position', 'fixed');
-                iframe.style.setProperty('width', '1px');
-                iframe.style.setProperty('height', '1px');
+                iframe.style.setProperty('width', '320px');
+                iframe.style.setProperty('max-width', 'calc(100vw - 24px)');
+                iframe.style.setProperty('height', '90px');
                 iframe.style.setProperty('left', '-10000px');
+                iframe.style.setProperty('right', 'auto');
                 iframe.style.setProperty('top', '-10000px');
+                iframe.style.setProperty('bottom', 'auto');
+                iframe.style.setProperty('transform', 'none');
                 iframe.style.setProperty('border', '0');
                 iframe.style.setProperty('opacity', '0');
                 iframe.style.setProperty('pointer-events', 'none');
+                iframe.style.setProperty('z-index', '2147483646');
+                iframe.style.setProperty('background', 'transparent');
             }
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED');

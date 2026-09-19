@@ -284,6 +284,7 @@
                 execution: 'render',
                 retry: 'never',
                 'response-field': false,
+                'before-interactive-callback': () => fail('INTERACTIVE_WIDGET_NOT_ALLOWED'),
                 callback: () => finish(TYPES.pass, STATES.passed, { provider: PROVIDER }),
                 'error-callback': (errorCode) => handleTurnstileError(errorCode, timings),
                 'timeout-callback': () => timeout('TURNSTILE_TIMEOUT'),
@@ -317,6 +318,7 @@
         const timings = validTimings(gate?.timings);
         if (!gate || gate.enabled !== true || gate.readiness !== 'READY'
             || gate.provider !== PROVIDER || gate.gateOrigin !== GATE_ORIGIN
+            || String(gate.widgetMode || '').toUpperCase() !== 'INVISIBLE'
             || !validTurnstileSiteKey(gate.siteKey) || !timings) {
             fail('GATE_NOT_READY');
             return;
