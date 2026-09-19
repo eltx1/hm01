@@ -207,7 +207,7 @@ test('disabled Click Guard preserves existing ad behavior and does not touch sto
 
 test('below threshold records clicks without blocking', async () => {
     const now = Date.now();
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 1, clicks: [now - HOUR], blockedUntil: 0 }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 2, clicks: [now - HOUR], blockedUntil: 0 }) });
     const { sandbox, iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
     enter(iframe); blur(iframe);
     assert.equal(state().clicks.length, 2);
@@ -217,7 +217,7 @@ test('below threshold records clicks without blocking', async () => {
 
 test('exact threshold creates a future block and clears the click window', async () => {
     const now = Date.now();
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 1, clicks: [now - 2 * HOUR, now - HOUR], blockedUntil: 0 }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 2, clicks: [now - 2 * HOUR, now - HOUR], blockedUntil: 0 }) });
     const { iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
     enter(iframe); blur(iframe);
     assert.deepEqual(state().clicks, []);
@@ -226,7 +226,7 @@ test('exact threshold creates a future block and clears the click window', async
 
 test('rolling window prunes expired clicks before counting', async () => {
     const now = Date.now();
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 1, clicks: [now - 7 * HOUR, now - HOUR], blockedUntil: 0 }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 2, clicks: [now - 7 * HOUR, now - HOUR], blockedUntil: 0 }) });
     const { iframe, enter, blur, state } = await bootWithFrame(activeConfig(), { storage });
     enter(iframe); blur(iframe);
     assert.equal(state().clicks.length, 2);
@@ -236,7 +236,7 @@ test('rolling window prunes expired clicks before counting', async () => {
 
 test('existing future block stops before GPT, Prebid, native, slot, display, and refresh initialization', async () => {
     const now = Date.now();
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 1, clicks: [], blockedUntil: now + HOUR }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 2, clicks: [], blockedUntil: now + HOUR }) });
     const config = activeConfig({
         prebid: { enabled: true, build: { url: 'https://cdn.horusmedia.net/prebid.js' }, delivery: { gamFallback: true } },
         nativeDemand: { enabled: true, placements: { article_top: { enabled: true, candidates: [{ network: 'TEST', tag: { scriptUrl: 'https://native.example/tag.js' } }] } } },
@@ -254,11 +254,11 @@ test('existing future block stops before GPT, Prebid, native, slot, display, and
 
 test('expired block resets stale clicks and resumes normal advertising', async () => {
     const now = Date.now();
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 1, clicks: [now - HOUR], blockedUntil: now - 1000 }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_TEST': JSON.stringify({ v: 2, clicks: [now - HOUR], blockedUntil: now - 1000 }) });
     const harness = createHarness(activeConfig(), { storage });
     await harness.sandbox.HorusMediaLoader.boot();
     assert.equal(harness.metrics.gptLoads, 1);
-    assert.deepEqual(harness.state(), { v: 1, clicks: [], blockedUntil: 0 });
+    assert.deepEqual(harness.state(), { v: 2, clicks: [], blockedUntil: 0 });
 });
 
 test('corrupt localStorage fails open and is normalized without breaking the loader', async () => {
@@ -266,7 +266,7 @@ test('corrupt localStorage fails open and is normalized without breaking the loa
     const harness = createHarness(activeConfig(), { storage });
     await harness.sandbox.HorusMediaLoader.boot();
     assert.equal(harness.metrics.gptLoads, 1);
-    assert.deepEqual(harness.state(), { v: 1, clicks: [], blockedUntil: 0 });
+    assert.deepEqual(harness.state(), { v: 2, clicks: [], blockedUntil: 0 });
 });
 
 test('localStorage SecurityError fails open and ads continue', async () => {
@@ -341,7 +341,7 @@ test('storage event from another tab activates block and cancels future activity
     const harness = createHarness(config);
     await harness.sandbox.HorusMediaLoader.boot();
     assert.equal(harness.metrics.intervals.size, 1);
-    const blocked = JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + HOUR });
+    const blocked = JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + HOUR });
     harness.sandbox.dispatchEvent({ type: 'storage', key: 'hm:click-guard:v2:HM_TEST', newValue: blocked });
     assert.equal(harness.metrics.intervals.size, 0);
     const before = harness.metrics.defined;
@@ -350,7 +350,7 @@ test('storage event from another tab activates block and cancels future activity
 });
 
 test('site-key namespacing prevents another Horus site block from leaking into this site', async () => {
-    const storage = memoryStorage({ 'hm:click-guard:v2:HM_OTHER': JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + HOUR }) });
+    const storage = memoryStorage({ 'hm:click-guard:v2:HM_OTHER': JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + HOUR }) });
     const harness = createHarness(activeConfig(), { storage });
     await harness.sandbox.HorusMediaLoader.boot();
     assert.equal(harness.metrics.gptLoads, 1);
