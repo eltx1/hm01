@@ -105,7 +105,26 @@ jobs:
             "chmod 700 '$remote_dir/verify-static-edge-public.sh' '$remote_dir/verify-traffic-gate-public.sh'"
 
       - name: Validate sanitized production snapshot
-        run: php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
+        run: |
+          php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
+          # Public configuration only: expose exactly which surfaces reached the
+          # snapshot, so a successful upload cannot hide a missing rewarded unit.
+          php -r '
+          foreach (glob($argv[1]."/configs/*/production.json") ?: [] as $file) {
+              $config = json_decode(file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
+              $surfaces = array_map(static fn ($p) => [
+                  "code" => $p["code"] ?? null,
+                  "type" => $p["type"] ?? null,
+                  "enabled" => $p["enabled"] ?? false,
+                  "renderer" => $p["renderer"] ?? null,
+                  "autoMount" => $p["format"]["settings"]["autoMount"] ?? null,
+              ], $config["placements"] ?? []);
+              echo "Public surfaces: ".json_encode([
+                  "siteKey" => $config["siteKey"] ?? null,
+                  "configVersion" => $config["configVersion"] ?? null,
+                  "placements" => $surfaces,
+              ], JSON_THROW_ON_ERROR).PHP_EOL;
+          }' "$RUNNER_TEMP/static-edge"
 
       - name: Compare complete public snapshot
         id: compare
