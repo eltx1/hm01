@@ -214,7 +214,7 @@ final class PlacementPresetBuilder
     private function defaultQuickMountTarget(string $preset): string
     {
         return match ($preset) {
-            'in_article_display', 'video_outstream' => 'article_mid',
+            'in_article_display', 'video_outstream' => 'content_mid',
             'video_floating', 'sticky_bottom', 'sticky_top', 'side_rail_right', 'side_rail_left' => 'body_end',
             default => 'article_end',
         };

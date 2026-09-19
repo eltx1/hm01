@@ -123,7 +123,7 @@ final class QuickMonetizeDisabledSurfaceRecoveryTest extends TestCase
             && (int) $size->width === 300
             && (int) $size->height === 100));
         $this->assertTrue((bool) data_get($restored->format_settings, 'autoMount'));
-        $this->assertSame('article_mid', data_get($restored->format_settings, 'autoMountTarget'));
+        $this->assertSame('content_mid', data_get($restored->format_settings, 'autoMountTarget'));
 
         $restoredMapping = DemandPlacement::withoutGlobalScopes()->where('placement_id', $placement->id)->firstOrFail();
         $this->assertTrue($restoredMapping->is_enabled);

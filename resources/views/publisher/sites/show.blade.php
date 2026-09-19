@@ -55,7 +55,7 @@
 <section id="serving" class="detail-grid workspace-section">
     <article>
         <p class="eyebrow">Publisher installation</p><h2>One permanent loader</h2>
-        <p class="muted">Serving mode and demand configuration can change without asking the publisher to replace this code.</p>
+        <p class="muted">Serving mode and demand configuration can change without asking the publisher to replace this code. Install it once in the global/site-wide page template so it loads on every page you want Horus to monetize; a homepage-only or page-builder-only insertion will not cover other URLs.</p>
         <code class="installation-code">{{ $site->installationCode() }}</code>
         <dl><dt>Serving mode</dt><dd>{{ $site->serving_mode->value }}</dd><dt>Revenue share</dt><dd>{{ $site->default_revenue_share_percent }}%</dd><dt>Immediate pause</dt><dd>{{ $site->siteConfig?->immediate_pause ? 'Enabled' : 'Disabled' }}</dd></dl>
     </article>
@@ -172,7 +172,7 @@
 @endif
 <section class="detail-grid">
     <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd></dl></article>
-    <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>
+    <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes. Install it once in the global/site-wide page template so it loads on every page you want Horus to monetize; a homepage-only or page-builder-only insertion will not cover other URLs.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>
 </section>
 <article><div class="section-heading"><div><p class="eyebrow">Authorized domains</p><h2>Ownership verification</h2></div></div>
     @foreach($site->domains as $domain)<div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div><p class="muted">Ownership is verified from the two Horus DIRECT records in this domain's live ads.txt file.</p>@if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $domain]) }}" class="inline-form">@csrf<input type="hidden" name="method" value="ADS_TXT"><button class="hm-button-secondary">Verify ads.txt</button></form>@endif</div>@endforeach

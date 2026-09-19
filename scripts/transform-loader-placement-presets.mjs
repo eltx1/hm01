@@ -26,21 +26,53 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
     function contentMountRoot() {
         if (!document.querySelector) return null;
-        return document.querySelector('[itemprop="articleBody"]')
+
+        // Publisher-controlled hook wins when a site/app wants to identify its
+        // primary content region explicitly without adding an ad container.
+        return document.querySelector('[data-hm-content-root]')
+            // Editorial/CMS conventions.
+            || document.querySelector('[itemprop="articleBody"]')
             || document.querySelector('.entry-content')
             || document.querySelector('.post-content')
             || document.querySelector('.article-content')
+            || document.querySelector('.page-content')
+            || document.querySelector('.content-area')
+            // Framework- and app-style primary-content conventions. These make
+            // automatic in-content placements work on video, tools, galleries,
+            // feeds and SPA pages too; WordPress is not required.
+            || document.querySelector('[role="main"]')
+            || document.querySelector('.site-main')
+            || document.querySelector('.main-content')
+            || document.querySelector('#primary')
+            || document.querySelector('#main')
+            || document.querySelector('#content')
             || document.querySelector('article')
             || document.querySelector('main');
+    }
+
+    function contentMountChildren(content) {
+        if (!content || !content.children) return [];
+        return Array.prototype.filter.call(content.children, function (child) {
+            var tag = String(child && child.tagName || '').toUpperCase();
+            if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META'].indexOf(tag) !== -1) return false;
+            if (child.getAttribute && child.getAttribute('data-hm-auto-mounted') === '1') return false;
+            return true;
+        });
     }
 
     function mountAutoPlacementElement(element, settings) {
         var target = String(settings.autoMountTarget || 'body_end').toLowerCase();
         var content = contentMountRoot();
-        if (target === 'article_mid' && content) {
-            var children = content.children || [];
-            var midpoint = Math.floor(children.length / 2);
-            if (children.length && content.insertBefore) {
+        var middleTarget = target === 'content_mid' || target === 'article_mid';
+        var endTarget = target === 'content_end' || target === 'article_end';
+
+        if (middleTarget && content) {
+            var children = contentMountChildren(content);
+            // With one primary block (for example a video player), "middle"
+            // has no safe split point; append after it instead of placing the ad
+            // before the only piece of content.
+            if (children.length > 1 && content.insertBefore) {
+                var midpoint = Math.floor(children.length / 2);
                 content.insertBefore(element, children[midpoint] || null);
                 return;
             }
@@ -49,10 +81,14 @@ const HELPERS = `    function placementFormatSettings(placement) {
                 return;
             }
         }
-        if (target === 'article_end' && content && content.appendChild) {
+        if (endTarget && content && content.appendChild) {
             content.appendChild(element);
             return;
         }
+
+        // Do not guess a "middle" by splitting the raw body: that can place ads
+        // inside headers, navigation or application chrome. If no primary content
+        // root is discoverable, fall back safely to the document end.
         document.body.appendChild(element);
     }
 
