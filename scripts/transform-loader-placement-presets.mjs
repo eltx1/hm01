@@ -163,6 +163,29 @@ const HELPERS = `    function placementFormatSettings(placement) {
         }
     }
 
+    function applyContentAlignment(element, settings) {
+        if (!element || !element.style || !settings) return;
+        var target = String(settings.autoMountTarget || '').toLowerCase();
+        var inContent = target === 'content_mid' || target === 'article_mid'
+            || target === 'content_end' || target === 'article_end';
+        if (!inContent) return;
+
+        // The placement owns the available content width while the provider
+        // creative can keep its declared fixed width (or 100% for fluid/native).
+        // Centering at the Horus wrapper avoids relying on publisher theme CSS.
+        var style = element.style;
+        setImportantStyle(style, 'display', 'flex');
+        setImportantStyle(style, 'flex-direction', 'column');
+        setImportantStyle(style, 'align-items', 'center');
+        setImportantStyle(style, 'justify-content', 'flex-start');
+        setImportantStyle(style, 'width', '100%');
+        setImportantStyle(style, 'max-width', '100%');
+        setImportantStyle(style, 'box-sizing', 'border-box');
+        setImportantStyle(style, 'margin-left', 'auto');
+        setImportantStyle(style, 'margin-right', 'auto');
+        setImportantStyle(style, 'text-align', 'center');
+    }
+
     function placementRendered(element) {
         if (!element || !element.getAttribute) return false;
         return String(element.getAttribute('data-hm-status') || '').toLowerCase() === 'rendered';
@@ -232,6 +255,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
     function applyPlacementPresetPresentation(element, placement, settings) {
         settings = settings || placementFormatSettings(placement);
+        applyContentAlignment(element, settings);
         applyStickyPosition(element, placement, settings);
         ensurePlacementCloseControl(element, settings);
     }
