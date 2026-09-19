@@ -393,8 +393,8 @@ test('repeated scans and duplicate boot calls never duplicate a standalone place
 
 test('Click Guard block prevents the initial standalone auction', async () => {
     const selected = standaloneConfig({ clickGuard: { enabled: true, maxClicks: 3, windowHours: 6, blockHours: 12 } });
-    const key = 'hm:click-guard:v1:' + selected.siteKey;
-    const blocked = JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + 60_000 });
+    const key = 'hm:click-guard:v2:' + selected.siteKey;
+    const blocked = JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + 60_000 });
     const { sandbox, metrics } = harness(selected, { localStorage: { [key]: blocked } });
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.requests.length, 0);
@@ -410,7 +410,7 @@ test('Click Guard block prevents a standalone refresh auction', async () => {
     const { sandbox, metrics, intervalCallbacks } = harness(selected);
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.requests.length, 1);
-    sandbox.localStorage.setItem('hm:click-guard:v1:' + selected.siteKey, JSON.stringify({ v: 1, clicks: [], blockedUntil: Date.now() + 60_000 }));
+    sandbox.localStorage.setItem('hm:click-guard:v2:' + selected.siteKey, JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + 60_000 }));
     [...intervalCallbacks.values()][0]();
     await settle();
     assert.equal(metrics.requests.length, 1);
