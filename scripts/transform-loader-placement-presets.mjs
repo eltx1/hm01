@@ -313,7 +313,7 @@ export function applyPlacementPresetTransform(input) {
         if (!source.includes(DIRECT_CONTAINER_ANCHOR)) {
             throw new Error('Unable to locate Direct Demand container anchor for responsive GPT mapping');
         }
-        source = source.replace(DIRECT_CONTAINER_ANCHOR, `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        attachDirectResponsiveMapping(container, entry);\n        if (entry.element.appendChild) entry.element.appendChild(container);`);
+        source = source.replace(DIRECT_CONTAINER_ANCHOR, `        setCandidateAttributes(container, recipe.attributes || tag.attributes || {});\n        attachDirectResponsiveMapping(container, entry);\n        alignDirectContentContainer(container, entry);\n        if (entry.element.appendChild) entry.element.appendChild(container);`);
     }
 
     return source;
