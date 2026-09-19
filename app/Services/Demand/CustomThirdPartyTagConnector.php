@@ -103,7 +103,11 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             }
         }
         $allowedFormats = in_array('fluid', $sizes, true) ? ['DISPLAY', 'NATIVE'] : ['DISPLAY'];
-        $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
+        // GPT can be delayed by publisher-page work, consent/gating and an
+        // already-loaded page GPT instance. Terminal GPT events now end the wait
+        // immediately, so a longer ceiling protects legitimate late renders
+        // without making true no-fill slow.
+        $timeout = max(15000, min(30000, (int) ($configuration['render_timeout_ms'] ?? 15000)));
         $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
         $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'], 'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-gpt-inner-id' => $providerContainerId];
         return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'DISPLAY', 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-google-gpt-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-google-gpt', 'attributes' => $attributes], 'publicPlacementId' => $gpt['adUnitPath'], 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => $allowedFormats, 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-google-gpt', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false];
