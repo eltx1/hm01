@@ -1335,10 +1335,21 @@ function nativeDefinition(config, code) {
 
     function nativeContainer(entry, candidate) { return directContainer(entry, candidate); }
 
+    function directGptRecipe(tag) {
+        var container = tag && tag.container || {};
+        var attributes = container.attributes || tag && tag.attributes || {};
+        return String(attributes && attributes['data-hm-gpt-direct'] || '') === '1';
+    }
+
     function directRenderPolicy(tag) {
         var render = tag && tag.render || {};
+        var gptDirect = directGptRecipe(tag);
+        var fallback = gptDirect ? 15000 : 2500;
+        var maximum = gptDirect ? 30000 : 10000;
+        var minimum = gptDirect ? 15000 : 0;
+        var configured = Number(render.timeoutMs || tag.renderTimeoutMs || fallback);
         return {
-            timeoutMs: Math.max(0, Math.min(10000, Number(render.timeoutMs || tag.renderTimeoutMs || 2500))),
+            timeoutMs: Math.max(minimum, Math.min(maximum, configured)),
             successSelector: render.successSelector || tag.successSelector || null,
             assumeLoadedIsSuccess: Boolean(render.assumeLoadedIsSuccess || tag.assumeLoadedIsSuccess)
         };
@@ -1357,6 +1368,57 @@ function nativeDefinition(config, code) {
         if (policy.assumeLoadedIsSuccess) return true;
         if (container && container.childNodes && container.childNodes.length) return true;
         return Boolean(container && typeof container.innerHTML === 'string' && container.innerHTML.replace(/\s/g, '') !== '');
+    }
+
+    function directRenderState(config, container, tag) {
+        if (!directJsServingAllowed(config)) return { done: true, rendered: false, reason: 'blocked' };
+        if (nativeRendered(container, tag)) return { done: true, rendered: true, reason: 'rendered' };
+        if (directGptRecipe(tag) && container && container.getAttribute) {
+            var runtimeState = String(container.getAttribute('data-hm-gpt-runtime-state') || container.getAttribute('data-hm-gpt-status') || '');
+            if (runtimeState === 'rendered') return { done: true, rendered: true, reason: 'rendered' };
+            if (['empty', 'failed', 'invalid', 'ineligible'].indexOf(runtimeState) !== -1) {
+                return { done: true, rendered: false, reason: 'gpt-' + runtimeState };
+            }
+        }
+        return { done: false, rendered: false, reason: null };
+    }
+
+    function waitForDirectRender(config, container, tag) {
+        var policy = directRenderPolicy(tag || {});
+        return new Promise(function (resolve) {
+            var settled = false;
+            var interval = null;
+            var timer = null;
+
+            function finish(result) {
+                if (settled) return;
+                settled = true;
+                if (interval) window.clearInterval(interval);
+                if (timer) window.clearTimeout(timer);
+                resolve(result);
+            }
+
+            function inspect() {
+                var result = directRenderState(config, container, tag);
+                if (result.done) finish(result);
+                return result.done;
+            }
+
+            if (inspect()) return;
+
+            // Structured providers can complete asynchronously after their
+            // loader script itself has loaded. Poll terminal provider state
+            // instead of checking only once at the timeout boundary.
+            interval = window.setInterval(inspect, 50);
+            timer = window.setTimeout(function () {
+                var result = directRenderState(config, container, tag);
+                if (result.done) { finish(result); return; }
+                var runtimeState = directGptRecipe(tag) && container && container.getAttribute
+                    ? String(container.getAttribute('data-hm-gpt-runtime-state') || '')
+                    : '';
+                finish({ done: true, rendered: false, reason: runtimeState ? 'gpt-timeout-' + runtimeState : 'no-render' });
+            }, policy.timeoutMs);
+        });
     }
 
     function directScriptSpecs(tag) {
@@ -1552,12 +1614,11 @@ function nativeDefinition(config, code) {
                 loadDirectScripts(config, candidate).then(function () {
                     if (!directJsServingAllowed(config)) { failed('blocked'); return; }
                     if (!runDirectInitialization(config, candidate, container)) { failed('initialization-failed'); return; }
-                    var timeout = directRenderPolicy(tag).timeoutMs;
-                    window.setTimeout(function () {
+                    waitForDirectRender(config, container, tag).then(function (result) {
                         if (settled) return;
-                        if (!nativeRendered(container, tag)) { failed('no-render'); return; }
+                        if (!result.rendered) { failed(result.reason || 'no-render'); return; }
                         rendered();
-                    }, timeout);
+                    });
                 }).catch(function (error) {
                     failed(error && error.message || 'script-error');
                 });
