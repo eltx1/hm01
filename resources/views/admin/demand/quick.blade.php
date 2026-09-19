@@ -140,7 +140,7 @@
 
             <label class="full">GAM rewarded unit path, VAST URL or provider-issued ad tag
                 <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="GAM Rewarded: /1234567/rewarded_unit. Floating Video: HTTPS VAST/VMAP URL. Or paste a complete supported provider tag.">{{ old('tag') }}</textarea>
-                <span class="muted">For Google Ad Manager / AdX Rewarded, paste /NetworkCode/AdUnitCode: Horus uses official GPT Rewarded and Google's grant event. Google may preload the ad; it is shown only after opt-in. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit. Complete provider code keeps its provider-managed lifecycle.</span>
+                <span class="muted">For Google Ad Manager / AdX Rewarded, paste /NetworkCode/AdUnitCode: Horus uses official GPT Rewarded and Google's grant event. Google may preload the ad; it is shown only after opt-in. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit. You can also paste a supported script-only tag. Complete provider code keeps its provider-managed lifecycle.</span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
 
