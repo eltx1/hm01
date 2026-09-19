@@ -275,6 +275,7 @@
             });
             if (player.container.style) player.container.style.display = 'none';
         }
+        if (!player.rewarded && reason) hideFloatingSurface(player);
         if (state.active === player) state.active = null;
     }
 
@@ -289,8 +290,8 @@
         return true;
     }
 
-    function hideCompletedFloatingSurface(player) {
-        var surface = player && player.container;
+    function hideFloatingSurface(source) {
+        var surface = source && source.container ? source.container : source;
         while (surface && surface.getAttribute) {
             if (surface.getAttribute('data-hm-floating-video-active') === '1') {
                 surface.setAttribute('data-hm-placement-dismissed', '1');
@@ -305,6 +306,7 @@
         if (player.destroyed || player.started) return;
         if (state.active && state.active !== player && !state.active.destroyed) {
             setStatus(player.container, 'duplicate');
+            hideFloatingSurface(player);
             return;
         }
         state.active = player;
@@ -345,7 +347,6 @@
                         destroyPlayer(player, player.granted ? 'completed' : 'closed');
                     } else {
                         destroyPlayer(player, 'completed');
-                        hideCompletedFloatingSurface(player);
                     }
                 });
                 var dimensions = playerDimensions(player.container, player.size);
@@ -485,6 +486,7 @@
         var vastUrl = decodeBase64(container.getAttribute('data-hm-vast-url'));
         if (!vastUrl || !/^https:\/\//i.test(vastUrl)) {
             setStatus(container, 'invalid');
+            if (!rewardedMode(container)) hideFloatingSurface(container);
             return;
         }
         var rewarded = rewardedMode(container);
@@ -497,7 +499,13 @@
                 waitUntilViewable(player, ima, vastUrl);
             }
         }).catch(function (error) {
-            setStatus(container, 'error', error && error.message || 'sdk-error');
+            var detail = error && error.message || 'sdk-error';
+            if (player) {
+                destroyPlayer(player, 'error');
+                container.setAttribute('data-hm-video-error', String(detail).slice(0, 160));
+            } else {
+                setStatus(container, 'error', detail);
+            }
         });
     }
 
