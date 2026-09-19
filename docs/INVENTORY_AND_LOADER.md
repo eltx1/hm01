@@ -327,7 +327,7 @@ It is disabled by default. Delivery Settings publishes only these public values:
 ```
 
 When enabled, the loader stores a minimal versioned record under
-`hm:click-guard:v1:{SITE_KEY}` in the publisher origin's `localStorage`. The
+`hm:click-guard:v2:{SITE_KEY}` in the publisher origin's `localStorage`. The
 record contains only click timestamps in Unix epoch milliseconds and a
 `blockedUntil` timestamp. It contains no URL, creative data, user identifier,
 IP address, fingerprint, page history, or Horus account/database identifier,
