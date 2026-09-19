@@ -290,7 +290,7 @@ function runVideo(selectedContainer, options = {}) {
     }
 
     const document = {
-        documentElement: { clientWidth: 1280, clientHeight: 720 },
+        documentElement: { clientWidth: 1280, clientHeight: 720, lang: options.lang || 'en' },
         head: { appendChild(node) { created.push(node); return node; } },
         querySelector() { return null; },
         querySelectorAll(query) { return query === '[data-hm-video-direct="1"]' ? [selectedContainer] : []; },
@@ -537,6 +537,7 @@ test('Horus rewarded VAST waits for explicit opt-in and grants only after an uns
         'data-hm-reward-cooldown-seconds': '900',
     };
     const target = container(attributes, 'hm-rewarded-placement-1');
+    attributes['data-hm-reward-experience'] = 'continue-reading';
     const runtime = runVideo(target);
     await tick();
 
@@ -568,7 +569,64 @@ test('Horus rewarded VAST waits for explicit opt-in and grants only after an uns
     assert.equal(closed[0].detail.granted, true);
     assert.equal(attributes['data-hm-reward-granted'], '1');
     assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(target.style.display, 'none');
     assert.ok(runtime.storage.has('hm:rewarded:v1:hm-rewarded-placement-1'));
+});
+
+test('Continue reading prompt is optional and dismissal requests no ad or reward', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast', 'utf8').toString('base64'),
+    };
+    const target = container(attributes, 'reading');
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(runtime.requested.length, 0);
+    const buttons = runtime.created.filter((node) => node.tagName === 'BUTTON');
+    assert.equal(buttons[0].textContent, 'Watch ad and continue reading');
+    assert.equal(buttons[1].textContent, 'Continue reading now');
+    buttons[1].click();
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:rewarded-granted').length, 0);
+    buttons[0].click();
+    assert.equal(runtime.requested.length, 0);
+});
+
+test('Continue reading localizes Arabic and Escape closes without granting', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast').toString('base64'),
+    };
+    const target = container(attributes, 'arabic-reading');
+    const runtime = runVideo(target, { lang: 'ar-EG' });
+    await tick();
+    const prompt = runtime.created.find(node => node.attributes['data-hm-reward-prompt'] === '1');
+    assert.equal(prompt.attributes.dir, 'rtl');
+    assert.equal(prompt.attributes.role, 'dialog');
+    assert.equal(runtime.created.find(node => node.tagName === 'BUTTON').textContent, 'شاهد الإعلان واستكمل القراءة');
+    runtime.sandbox.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
+    assert.equal(target.style.display, 'none');
+    target.__hmDestroy('dismissed');
+    assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-closed').length, 1);
+    assert.equal(runtime.requested.length, 0);
+});
+
+test('Continue reading completion cooldown does not interrupt reading again', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading', 'data-hm-reward-cooldown-seconds': '900',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast').toString('base64'),
+    };
+    const target = container(attributes, 'reading-capped');
+    const runtime = runVideo(target, { storage: { 'hm:rewarded:v1:reading-capped': String(Date.now()) } });
+    await tick();
+    assert.equal(attributes['data-hm-video-status'], 'reward-capped');
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 0);
 });
 
 test('Horus rewarded VAST never grants after skip', async () => {

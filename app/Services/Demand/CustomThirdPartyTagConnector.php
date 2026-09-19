@@ -187,9 +187,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if ($rewarded) {
             $attributes += [
                 'data-hm-video-rewarded' => '1',
-                'data-hm-reward-title' => 'Watch to continue',
-                'data-hm-reward-copy' => 'Watch this short sponsored video to unlock the reward.',
-                'data-hm-reward-button' => 'Watch video',
+                'data-hm-reward-experience' => 'continue-reading',
                 'data-hm-reward-cooldown-seconds' => (string) max(0, min(86_400, (int) ($formatSettings['rewardCooldownSeconds'] ?? 900))),
             ];
         }
