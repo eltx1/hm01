@@ -78,7 +78,8 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString('preset.disabled = blocked || existing;', $html);
         $this->assertStringContainsString('VAST URL or provider-issued ad tag', $html);
         $this->assertStringContainsString('Horus video player', $html);
-        $this->assertStringContainsString('Complete provider code runs inside Horus isolation', $html);
+        $this->assertStringContainsString('Complete provider code keeps its provider-managed lifecycle', $html);
+        $this->assertStringContainsString('/NetworkCode/AdUnitCode', $html);
         $this->assertStringContainsString('Choose Rewarded Video for an explicit opt-in flow', $html);
         $this->assertStringContainsString("preset.value = 'video_floating';", $html);
     }

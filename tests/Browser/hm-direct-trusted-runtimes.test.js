@@ -315,6 +315,8 @@ function runVideo(selectedContainer, options = {}) {
     };
     const sandbox = {
         document,
+        URL,
+        location: { href: 'https://publisher.example/article#section' },
         google: { ima },
         MutationObserver,
         IntersectionObserver,
@@ -478,6 +480,24 @@ test('Horus video runtime plays a VAST URL only after viewability and exposes de
     assert.equal(attributes['data-hm-video-status'], 'completed');
     assert.equal(floatingSurface.style.display, 'none');
     assert.equal(floatingSurfaceAttributes['data-hm-placement-dismissed'], '1');
+});
+
+test('GAM VAST templates resolve page macros and declare actual floating playback', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&url=[referrer_url]&description_url=[description_url]&correlator=[timestamp]&sz=400x300').toString('base64'),
+    };
+    const runtime = runVideo(container(attributes, 'floating-gam'));
+    await tick();
+    const url = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(url.searchParams.get('url'), 'https://publisher.example/article');
+    assert.equal(url.searchParams.get('description_url'), 'https://publisher.example/article');
+    assert.match(url.searchParams.get('correlator'), /^\d+$/);
+    assert.equal(url.searchParams.get('iu'), '/123/video');
+    assert.equal(url.searchParams.get('vpmute'), '1');
+    assert.equal(url.searchParams.get('vpa'), 'auto');
+    assert.equal(url.searchParams.get('plcmt'), '4');
+    assert.equal(url.searchParams.get('sz'), runtime.requested[0].linearAdSlotWidth + 'x' + runtime.requested[0].linearAdSlotHeight);
 });
 
 test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', async () => {

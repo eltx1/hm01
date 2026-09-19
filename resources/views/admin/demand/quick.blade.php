@@ -42,12 +42,14 @@
 
 @if(session('quick_account_id'))
     <article class="workspace-section">
-        <p class="eyebrow">Activation complete</p>
+        <p class="eyebrow">Configuration saved · delivery pending</p>
         <h2>Production configuration queued</h2>
         <p class="muted">The placement, provider isolation policy, publisher demand account and Direct Demand mappings were created or updated atomically.</p>
+        <p class="muted">Saved does not mean live. The placement becomes available to visitors after the queued configuration reaches the CDN. Check delivery status before testing an ad.</p>
         <div class="status-row">
             <a class="hm-button-secondary button-link" href="{{ route('admin.demand.accounts.show', session('quick_account_id')) }}">Open generated demand account →</a>
             <a class="section-anchor" href="{{ route('admin.sites.inventory.index', ['site' => $selectedSiteId]) }}">Open Inventory →</a>
+            @can('operations.view')<a class="section-anchor" href="{{ route('admin.operations.index') }}">Check CDN delivery →</a>@endcan
         </div>
     </article>
 @endif
@@ -136,9 +138,9 @@
                 @error('placement_id')<span class="error">{{ $message }}</span>@enderror
             </label>
 
-            <label class="full">VAST URL or provider-issued ad tag
-                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="For Horus Video, paste the HTTPS VAST/VMAP URL only. Or paste a complete Google GPT, script-only tag, iframe, or reviewed third-party provider tag.">{{ old('tag') }}</textarea>
-                <span class="muted">A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow; Horus will not request the ad before the visitor starts it. Google GPT is normalized by its dedicated adapter. Complete provider code runs inside Horus isolation with reviewed HTTPS origins, Traffic Gate and Click Guard protection.</span>
+            <label class="full">GAM rewarded unit path, VAST URL or provider-issued ad tag
+                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="GAM Rewarded: /1234567/rewarded_unit. Floating Video: HTTPS VAST/VMAP URL. Or paste a complete supported provider tag.">{{ old('tag') }}</textarea>
+                <span class="muted">For Google Ad Manager / AdX Rewarded, paste /NetworkCode/AdUnitCode: Horus uses official GPT Rewarded and Google's grant event. Google may preload the ad; it is shown only after opt-in. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit. Complete provider code keeps its provider-managed lifecycle.</span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
 
@@ -215,6 +217,10 @@
     useExisting.addEventListener('change', refreshMode);
     if (tag) tag.addEventListener('input', () => {
         const value = tag.value.trim();
+        if (!useExisting.checked && /^\/[0-9]+(?:,[0-9]+)?\/[A-Za-z0-9_.\/-]+$/.test(value) && preset.value === 'responsive_display') {
+            preset.value = 'rewarded';
+            refreshMode();
+        }
         if (!useExisting.checked && /^https:\/\/\S+$/i.test(value) && preset.value === 'responsive_display') {
             preset.value = 'video_floating';
             refreshMode();

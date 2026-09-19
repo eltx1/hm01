@@ -372,7 +372,7 @@
 
             var request = new ima.AdsRequest();
             var dimensions = playerDimensions(player.container, player.size);
-            request.adTagUrl = vastUrl;
+            request.adTagUrl = resolvedVastUrl(vastUrl, player, dimensions);
             request.linearAdSlotWidth = dimensions[0];
             request.linearAdSlotHeight = dimensions[1];
             request.nonLinearAdSlotWidth = dimensions[0];
@@ -385,6 +385,26 @@
             destroyPlayer(player, 'error');
             player.container.setAttribute('data-hm-video-error', String(error && error.message || error).slice(0, 160));
         }
+    }
+
+    function resolvedVastUrl(value, player, dimensions) {
+        // GAM's tag generator emits placeholders, not a ready-to-request URL.
+        // Expand known placeholders at request time without changing third-party tags.
+        var tag = new URL(value);
+        if (!/^(?:pubads|securepubads)\.g\.doubleclick\.net$/i.test(tag.hostname) || tag.pathname !== '/gampad/ads') return value;
+        var page = new URL(window.location.href);
+        page.hash = '';
+        ['url', 'description_url'].forEach(function (name) {
+            var current = tag.searchParams.get(name);
+            if (!current || /^\[(?:referrer_url|description_url)\]$/i.test(current)) tag.searchParams.set(name, page.href);
+        });
+        var correlator = tag.searchParams.get('correlator');
+        if (!correlator || /^\[timestamp\]$/i.test(correlator)) tag.searchParams.set('correlator', String(Date.now()));
+        tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
+        tag.searchParams.set('vpa', player.video.autoplay ? 'auto' : 'click');
+        tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
+        if (!player.rewarded) tag.searchParams.set('plcmt', '4');
+        return tag.href;
     }
 
     function waitUntilViewable(player, ima, vastUrl) {

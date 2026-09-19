@@ -145,7 +145,7 @@ final class DirectDemandQuickMonetizeController extends Controller
 
         return redirect()
             ->route('admin.demand.quick.create', ['site' => $site->id])
-            ->with('status', "{$placement->name} is monetized on {$site->primary_domain}. Horus reviewed the provider tag, mapped the Direct Demand surface, and queued production automatically.")
+            ->with('status', "{$placement->name} was saved for {$site->primary_domain}. Production configuration is queued; the ad is not confirmed live until CDN delivery completes.")
             ->with('quick_account_id', $account->id)
             ->with('quick_placement_id', $placement->id);
     }

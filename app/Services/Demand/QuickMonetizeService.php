@@ -45,12 +45,20 @@ final class QuickMonetizeService
     {
         $tag = trim($tag);
         try {
+            $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($tag);
             $vast = $this->vastTags->parse($tag);
         } catch (Throwable $exception) {
             throw ValidationException::withMessages(['tag' => $exception->getMessage()]);
         }
 
-        if ($vast !== null) {
+        if ($rewardedPath !== null) {
+            if ($existingPlacement === null && $preset !== 'rewarded') {
+                throw ValidationException::withMessages(['placement_preset' => 'A GAM ad unit path requires Rewarded Video / Opt-in.']);
+            }
+            $tag = $rewardedPath;
+            $scriptOrigins = ['https://securepubads.g.doubleclick.net'];
+            $resourceOrigins = ['all' => $scriptOrigins, 'frame' => [], 'image' => [], 'style' => [], 'media' => [], 'font' => []];
+        } elseif ($vast !== null) {
             $tag = $vast['url'];
             // A URL-only Quick activation is unambiguously the VAST path. When
             // Horus is creating the surface, select the floating player even if
@@ -82,7 +90,7 @@ final class QuickMonetizeService
         if (count($isolationOrigins) > 20) throw ValidationException::withMessages(['tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.']);
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
-        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
+        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $rewardedPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
             $placement = $existingPlacement;
             if (! $placement) {
                 if (! $preset) throw ValidationException::withMessages(['placement_preset' => 'Choose an ad format / surface.']);
@@ -125,7 +133,7 @@ final class QuickMonetizeService
             $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
             $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
             $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
-            $widgetConfiguration['input_kind'] = $vast !== null ? 'VAST_URL' : 'PROVIDER_TAG';
+            $widgetConfiguration['input_kind'] = $rewardedPath !== null ? 'GAM_REWARDED_PATH' : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
             if ($vast !== null) {
                 $widgetConfiguration['vast_origin'] = $vast['origin'];
                 $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
