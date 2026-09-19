@@ -206,7 +206,10 @@ function createHarness() {
         container,
         mutate(node) { mutationCallback?.([{ addedNodes: [node], removedNodes: [] }]); },
         enter(iframe) { iframe.dispatchEvent(new PointerEvent('pointerenter')); },
-        blur() { sandbox.dispatchEvent(new Event('blur')); },
+        blur(activeElement = undefined) {
+            if (activeElement !== undefined) document.activeElement = activeElement;
+            sandbox.dispatchEvent(new Event('blur'));
+        },
         state() { return storage.has(key) ? JSON.parse(storage.get(key)) : null; },
     };
 }
@@ -229,7 +232,8 @@ test('Quick GPT iframe inside an open ShadowRoot is tracked as a managed ad clic
     runtime.mutate(host);
 
     runtime.enter(iframe);
-    runtime.blur();
+    root.activeElement = iframe;
+    runtime.blur(host);
 
     assert.equal(runtime.state()?.clicks.length, 1);
     assert.equal(runtime.state()?.blockedUntil, 0);
@@ -243,7 +247,7 @@ test('ordinary light-DOM managed iframe remains protected', async () => {
     runtime.container.appendChild(iframe);
     runtime.mutate(iframe);
     runtime.enter(iframe);
-    runtime.blur();
+    runtime.blur(iframe);
 
     assert.equal(runtime.state()?.clicks.length, 1);
 });
@@ -258,7 +262,8 @@ test('shadow iframe outside a managed placement is ignored', async () => {
     root.appendChild(iframe);
     runtime.mutate(host);
     runtime.enter(iframe);
-    runtime.blur();
+    root.activeElement = iframe;
+    runtime.blur(host);
 
     assert.equal(runtime.state(), null);
 });
