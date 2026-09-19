@@ -60,6 +60,16 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /setImportantStyle\(style, 'position', 'fixed'\)/);
     assert.match(transformed, /setImportantStyle\(style, 'z-index', '2147483000'\)/);
     assert.match(transformed, /setImportantStyle\(style, 'margin', '0'\)/);
+    assert.match(transformed, /function applyContentAlignment\(element, settings\)/);
+    assert.match(transformed, /target === 'content_mid'/);
+    assert.match(transformed, /target === 'article_mid'/);
+    assert.match(transformed, /setImportantStyle\(style, 'display', 'flex'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'flex-direction', 'column'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'align-items', 'center'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'width', '100%'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'margin-left', 'auto'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'margin-right', 'auto'\)/);
+    assert.match(transformed, /setImportantStyle\(style, 'text-align', 'center'\)/);
     assert.match(transformed, /function ensurePlacementCloseControl\(element, settings\)/);
     assert.match(transformed, /data-hm-placement-close/);
     assert.match(transformed, /Close advertisement/);
@@ -97,6 +107,7 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     const twice = applyPlacementPresetTransform(transformed);
     assert.equal(twice, transformed);
     assert.equal((twice.match(/function autoMountPlacementElements\(config\)/g) || []).length, 1);
+    assert.equal((twice.match(/function applyContentAlignment\(element, settings\)/g) || []).length, 1);
     assert.equal((twice.match(/function ensurePlacementCloseControl\(element, settings\)/g) || []).length, 1);
     assert.equal((twice.match(/function attachDirectResponsiveMapping\(container, entry\)/g) || []).length, 1);
     assert.equal((twice.match(/applyPlacementPresetPresentation\(item\.element, item\.placement, placementFormatSettings\(item\.placement\)\);/g) || []).length, 1);
