@@ -73,4 +73,5 @@ final class PlacementPresetResponsiveSizesTest extends TestCase
             fn (array $size): array => [$size['width'], $size['height']],
             array_filter($preset['sizes'], fn (array $size): bool => $size['device'] === $device && $size['size_type'] === 'FIXED'),
         ));
+    }
 }

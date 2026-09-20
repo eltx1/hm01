@@ -160,6 +160,14 @@ test('existing placements use their own surface and stay scoped to the selected 
     await page.locator('#quick-site').selectOption('site-two');
     await expect(page.locator('#quick-placement')).toHaveValue('second-display');
     await expect(page.locator('#quick-input-type')).toBeEnabled();
-    await expect(page.locator('#quick-placement option[value="existing-video"]')).toBeDisabled();
+    // Playwright's disabled-state check follows the enclosing label to its
+    // SELECT. Inspect OPTION properties directly, while keeping that SELECT usable.
+    const previousSiteOption = page.locator('#quick-placement option[value="existing-video"]');
+    await expect(previousSiteOption).toHaveJSProperty('disabled', true);
+    await expect(previousSiteOption).toHaveJSProperty('hidden', true);
+    expect(await page.locator('#quick-placement').evaluate(select => [...select.options]
+        .filter(option => option.dataset.siteId && !option.disabled && !option.hidden)
+        .map(option => ({ value: option.value, site: option.dataset.siteId }))
+    )).toEqual([{ value: 'second-display', site: 'site-two' }]);
     expect(await formData(page)).toMatchObject({ site_id: 'site-two', placement_id: 'second-display', tag_input_type: 'GAM_AD_UNIT_PATH' });
 });
