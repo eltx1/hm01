@@ -101,6 +101,45 @@ final class PlacementPresetBuilder
         return $this->inventory->createPlacement($site, $data, $actor, $publish);
     }
 
+    /** @return array<int, Placement> */
+    public function responsiveBundle(Site $site, User $actor, ?string $name = null): array
+    {
+        return DB::transaction(function () use ($site, $actor, $name): array {
+            Site::withoutGlobalScopes()->whereKey($site->id)->where('organization_id', $site->organization_id)->lockForUpdate()->firstOrFail();
+            $first = $this->create($site, 'responsive_display', $actor, ['name' => $name], false, true);
+            $members = [];
+            for ($index = 1; $index <= 4; $index++) {
+                $placement = $first;
+                if ($index > 1) {
+                    $matches = Placement::withoutGlobalScopes()
+                        ->where('site_id', $site->id)->where('organization_id', $site->organization_id)
+                        ->whereNull('deleted_at')->where('metadata->responsive_bundle', 'v1')
+                        ->where('metadata->responsive_bundle_index', $index)->get();
+                    if ($matches->count() > 1) throw ValidationException::withMessages(['placement_preset' => 'Duplicate responsive bundle members require inventory repair.']);
+                    $placement = $matches->first();
+                }
+                $data = $this->presets->apply('responsive_display', [
+                    'name' => trim((string) $name) !== ''
+                        ? Str::limit(trim($name), 251, '').' · '.$index
+                        : ($placement && data_get($placement->metadata, 'responsive_bundle') === 'v1'
+                            ? $placement->name : 'Quick · Responsive Display · '.$index),
+                    'code' => $placement?->code ?? $this->uniqueCode($site, null, 'quick_responsive_display_'.$index),
+                    'ad_unit_id' => $placement?->ad_unit_id,
+                    'metadata' => array_replace((array) ($placement?->metadata ?? []), [
+                        'quick_monetize_generated' => true, 'placement_preset' => 'responsive_display',
+                        'responsive_bundle' => 'v1', 'responsive_bundle_index' => $index,
+                    ]),
+                ]);
+                $data['format_settings']['autoMount'] = false;
+                $data['format_settings']['contentAlignment'] = 'center';
+                $members[] = $placement
+                    ? $this->inventory->updatePlacement($placement, $data, $actor, false)
+                    : $this->inventory->createPlacement($site, $data, $actor, false);
+            }
+            return $members;
+        });
+    }
+
     private function existingQuickPreset(Site $site, string $preset): ?Placement
     {
         $matches = Placement::withoutGlobalScopes()
@@ -108,7 +147,8 @@ final class PlacementPresetBuilder
             ->where('site_id', $site->id)
             ->get()
             ->filter(fn (Placement $placement): bool => (bool) data_get($placement->metadata, 'quick_monetize_generated', false)
-                && (string) data_get($placement->metadata, 'placement_preset', '') === $preset)
+                && (string) data_get($placement->metadata, 'placement_preset', '') === $preset
+                && (int) data_get($placement->metadata, 'responsive_bundle_index', 1) === 1)
             ->values();
 
         $active = $matches
@@ -195,7 +235,8 @@ final class PlacementPresetBuilder
         ]);
 
         $settings = (array) ($data['format_settings'] ?? []);
-        $settings['autoMount'] = true;
+        $settings['autoMount'] = data_get($placement->metadata, 'responsive_bundle') !== 'v1';
+        if (! $settings['autoMount']) $settings['contentAlignment'] = 'center';
         $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
         $data['format_settings'] = $settings;
 

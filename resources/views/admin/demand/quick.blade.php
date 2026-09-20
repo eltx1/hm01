@@ -54,6 +54,10 @@
     </article>
 @endif
 
+@if($codeSite = $sites->firstWhere('id', $selectedSiteId))
+    <x-responsive-bundle-codes :site="$codeSite" />
+@endif
+
 <article class="workspace-section">
     <div class="workspace-heading">
         <div>
@@ -104,13 +108,13 @@
                         </optgroup>
                     @endforeach
                 </select>
-                <span class="muted" id="quick-preset-help">Horus creates a provider-agnostic placement, responsive size policy and safe auto-mount target automatically.</span>
+                <span class="muted" id="quick-preset-help">Responsive Display creates four manual placements from one provider tag. Other formats keep their existing placement behavior.</span>
                 @error('placement_preset')<span class="error">{{ $message }}</span>@enderror
             </label>
 
             <label class="full" style="display:flex;gap:.65rem;align-items:center">
                 <input type="checkbox" id="quick-use-existing" value="1" @checked($oldMode === 'existing') @disabled($hasBlockingReason)>
-                <span>Use an existing placement instead <span class="muted">(Advanced)</span></span>
+                <span>Use an existing placement instead <span class="muted">(Advanced — selecting a responsive bundle member updates all four)</span></span>
             </label>
 
             <label class="full" id="quick-existing-wrap" style="{{ $oldMode === 'existing' ? '' : 'display:none;' }}">Existing placement

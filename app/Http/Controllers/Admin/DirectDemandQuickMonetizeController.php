@@ -142,10 +142,11 @@ final class DirectDemandQuickMonetizeController extends Controller
         );
         $placement = $result['placement'];
         $account = $result['account'];
+        $savedName = count($result['placements'] ?? []) === 4 ? 'Responsive Display · 4 manual placements' : $placement->name;
 
         return redirect()
             ->route('admin.demand.quick.create', ['site' => $site->id])
-            ->with('status', "{$placement->name} was saved for {$site->primary_domain}. Production configuration is queued; the ad is not confirmed live until CDN delivery completes.")
+            ->with('status', "{$savedName} was saved for {$site->primary_domain}. Production configuration is queued; the ad is not confirmed live until CDN delivery completes.")
             ->with('quick_account_id', $account->id)
             ->with('quick_placement_id', $placement->id);
     }

@@ -122,6 +122,12 @@ jobs:
               echo "Public surfaces: ".json_encode([
                   "siteKey" => $config["siteKey"] ?? null,
                   "configVersion" => $config["configVersion"] ?? null,
+                  "protection" => [
+                      "trafficGateEnabled" => $config["trafficGate"]["enabled"] ?? false,
+                      "trafficGateReadiness" => $config["trafficGate"]["readiness"] ?? null,
+                      "trafficGateDisabledByControl" => $config["controls"]["trafficGateDisabled"] ?? false,
+                      "clickGuardEnabled" => $config["clickGuard"]["enabled"] ?? false,
+                  ],
                   "placements" => $surfaces,
               ], JSON_THROW_ON_ERROR).PHP_EOL;
           }' "$RUNNER_TEMP/static-edge"

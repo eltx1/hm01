@@ -7,6 +7,8 @@
     <div class="status-row"><span class="pill">{{ $site->siteConfig?->status ?? 'ACTIVE' }}</span><span class="pill">{{ $site->placements->count() }} placements</span></div>
 </section>
 
+<x-responsive-bundle-codes :site="$site" />
+
 <section class="detail-grid" style="margin-top:1rem">
 <article>
     <p class="eyebrow">Permanent installation</p><h3>Horus Loader</h3>

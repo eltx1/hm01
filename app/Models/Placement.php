@@ -46,6 +46,6 @@ class Placement extends Model
 
     public function installationCode(): string
     {
-        return '<div class="hm-ad" data-placement="'.$this->code.'"></div>';
+        return '<div class="hm-ad" data-placement="'.e($this->code).'"></div>';
     }
 }

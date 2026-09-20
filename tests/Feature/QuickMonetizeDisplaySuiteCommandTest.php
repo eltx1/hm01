@@ -104,6 +104,9 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
         $expected = [
             'quick_sticky_bottom',
             'quick_responsive_display',
+            'quick_responsive_display_2',
+            'quick_responsive_display_3',
+            'quick_responsive_display_4',
             'quick_in_article_display',
             'quick_high_impact_display',
             'quick_mobile_display',
@@ -112,8 +115,8 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
 
         $placements = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->get();
         $this->assertEqualsCanonicalizing($expected, $placements->pluck('code')->all());
-        $this->assertSame(6, $placements->count());
-        $this->assertSame(6, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
+        $this->assertSame(9, $placements->count());
+        $this->assertSame(9, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_left']);
 
@@ -121,7 +124,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             $placement = $placements->firstWhere('code', $code);
             $this->assertNotNull($placement);
             $this->assertTrue((bool) data_get($placement->metadata, 'quick_monetize_generated'));
-            $this->assertTrue((bool) data_get($placement->format_settings, 'autoMount'));
+            $this->assertSame(! str_starts_with($code, 'quick_responsive_display'), (bool) data_get($placement->format_settings, 'autoMount'));
         }
 
         $public = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 0);
@@ -130,7 +133,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             $this->assertIsArray($placement);
             $this->assertTrue((bool) ($placement['enabled'] ?? false), $code.' must be public and enabled.');
             $this->assertSame('DIRECT_JS', $placement['renderer'] ?? null, $code.' must be owned by Direct JS.');
-            $this->assertTrue((bool) data_get($placement, 'format.settings.autoMount'), $code.' must auto-mount from the permanent loader.');
+            $this->assertSame(! str_starts_with($code, 'quick_responsive_display'), (bool) data_get($placement, 'format.settings.autoMount'));
             $this->assertNotEmpty(data_get($public, 'directDemand.placements.'.$code.'.candidates', []), $code.' must expose a public Direct Demand candidate.');
         }
 
@@ -142,7 +145,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             '--preset' => $presets,
         ]);
         $this->assertSame(0, $exit, Artisan::output());
-        $this->assertSame(6, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
+        $this->assertSame(9, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
         $this->assertSame($versionCount, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
