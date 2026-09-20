@@ -222,7 +222,8 @@ final class StaticDeliveryManager
                     remoteId: (string) $duplicate->remote_deployment_id,
                     remoteUrl: $duplicate->remote_url,
                     confirmedDeployed: true,
-                    metadata: ['deduplicated_from_batch' => $duplicate->id, 'manifest_hash' => $snapshot->manifestHash],
+                    metadata: ['deduplicated_from_batch' => $duplicate->id, 'manifest_hash' => $snapshot->manifestHash,
+                        'snapshot_health' => json_decode($snapshot->files['health/delivery.json'] ?? 'null', true)],
                 ));
                 return $batch->refresh();
             }
@@ -453,7 +454,7 @@ final class StaticDeliveryManager
     /** @param array<string, mixed> $metadata */
     private function sanitizeMetadata(array $metadata): array
     {
-        return collect($metadata)->only(['delivery_commit', 'workflow_run_id', 'manifest_hash', 'deduplicated_from_batch'])->all();
+        return collect($metadata)->only(['delivery_commit', 'workflow_run_id', 'manifest_hash', 'deduplicated_from_batch', 'snapshot_health'])->all();
     }
 
     private function auditManualDeployment(

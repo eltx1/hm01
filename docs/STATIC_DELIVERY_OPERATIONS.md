@@ -45,6 +45,22 @@ maximum. Unconfirmed batches expire after 30 minutes by default
 (`HORUS_STATIC_DELIVERY_CONFIRMATION_TIMEOUT_SECONDS`). Upload execution has a
 100-second window; provider errors are redacted and enter bounded backoff.
 A Cloudflare success response with stale public files is not marked deployed.
+If a custom domain returns HTTP 403 to machine probes, confirmation uses the
+same guarded policy as the established production verification scripts: the
+exact immutable Pages deployment must match the trusted complete snapshot,
+remain the project's canonical production deployment, and each blocked hostname
+must be active on that project. The gate runtime and enforced CSP are checked on
+the verified origin. A stale HTTP 200, 404, 5xx, inactive domain, corrupt asset,
+or older deployment never qualifies. Full-file checks use bounded concurrency
+and cache proofs only for immutable deployment URLs.
+
+Direct batches preserve the health observation included in their snapshot.
+`static-delivery:build --confirmed` reconstructs the current serving files with
+that recorded observation and requires the exact confirmed hash. This prevents
+later synthetic probe timestamps from creating false release-verification
+failures; any change to loader, configuration, gate or supply artifacts still
+fails until the scheduler publishes it. Existing uploading batches recover the
+observation from their hash-checked immutable Pages file without a new upload.
 On migration, unconfirmed passive batches enter the existing bounded retry path
 immediately; they do not wait for the disabled passive uploader's 30-minute
 confirmation deadline. Already confirmed passive batches retain their proof.

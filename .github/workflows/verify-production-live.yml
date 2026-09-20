@@ -210,11 +210,20 @@ jobs:
           matched=false
           local_hash=""
 
-          for attempt in $(seq 1 36); do
+          for attempt in $(seq 1 60); do
             rm -rf "$local_dir"
             mkdir -p "$local_dir"
-            ssh -p "$SSH_PORT" "$USER@$HOST" \
-              "rm -rf '$remote_dir'; mkdir -p '$remote_dir'; cd '$app_root'; php artisan static-delivery:build '$remote_dir'"
+            if ! ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "rm -rf '$remote_dir'; mkdir -p '$remote_dir'; cd '$app_root'; \
+               if test -f app/Console/Commands/CheckStaticDeliveryAutomation.php && \
+                  test \"\$(php artisan static-delivery:automation-check --driver-only)\" = cloudflare-pages-direct; then \
+                 php artisan static-delivery:automation-check --require-scheduler --require-idle && \
+                 php artisan static-delivery:build '$remote_dir' --confirmed; \
+               else php artisan static-delivery:build '$remote_dir'; fi"; then
+              echo "Waiting for confirmed automatic snapshot: attempt $attempt/60"
+              sleep 10
+              continue
+            fi
             ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." | tar -xzf - -C "$local_dir"
             ssh -p "$SSH_PORT" "$USER@$HOST" "rm -rf '$remote_dir'"
 
@@ -229,7 +238,7 @@ jobs:
               break
             fi
 
-            echo "Waiting for Static Edge convergence: attempt $attempt/36; live=$local_hash confirmed=${confirmed_hash:-missing}"
+            echo "Waiting for Static Edge convergence: attempt $attempt/60; live=$local_hash confirmed=${confirmed_hash:-missing}"
             sleep 10
           done
 

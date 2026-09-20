@@ -48,26 +48,30 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
     }
 
     /** Called only after the caller has independently authenticated deployment success. */
-    public function verifyPublicArtifacts(StaticDeliveryBatch $batch): ?StaticDeliveryResult
+    public function verifyPublicArtifacts(StaticDeliveryBatch $batch, ?string $cdnOrigin = null, ?string $gateOrigin = null): ?StaticDeliveryResult
     {
         $expected = (string) $batch->manifest_hash;
         if (! preg_match('/^[a-f0-9]{64}$/', $expected)) {
             throw new StaticDeliveryException('MANIFEST_HASH_INVALID', 'Invalid expected manifest hash.');
         }
 
-        $canonicalManifest = $this->publicManifest($this->manifestUrl(), $expected);
+        // Overrides are used only after the direct driver independently proves
+        // exact immutable Pages parity and active custom-domain ownership.
+        $cdnOrigin ??= $this->manifestBaseUrl();
+        $gateOrigin ??= $this->gateOrigin();
+        $canonicalManifest = $this->publicManifest($cdnOrigin.'/delivery-manifest.json', $expected);
         if ($canonicalManifest === null
-            || ! $this->batchArtifactsArePublic($batch, $canonicalManifest, $this->manifestBaseUrl())) {
+            || ! $this->batchArtifactsArePublic($batch, $canonicalManifest, $cdnOrigin)) {
             return null;
         }
 
         // Traffic Gate executes on verify.horusmedia.net and performs its own
         // same-origin configuration read. Prove that custom domain independently
         // instead of assuming canonical CDN parity automatically propagates there.
-        $gateManifest = $this->publicManifest($this->gateManifestUrl(), $expected);
+        $gateManifest = $this->publicManifest($gateOrigin.'/delivery-manifest.json', $expected);
         if ($gateManifest === null
-            || ! $this->gateRuntimeIsPublic($gateManifest)
-            || ! $this->batchArtifactsArePublic($batch, $gateManifest, $this->gateOrigin())) {
+            || ! $this->gateRuntimeIsPublic($gateManifest, $gateOrigin)
+            || ! $this->batchArtifactsArePublic($batch, $gateManifest, $gateOrigin)) {
             return null;
         }
 
@@ -161,7 +165,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
         return true;
     }
 
-    private function gateRuntimeIsPublic(array $rootManifest): bool
+    private function gateRuntimeIsPublic(array $rootManifest, string $origin): bool
     {
         $rootFiles = $rootManifest['files'] ?? null;
         if (! is_array($rootFiles)) {
@@ -174,7 +178,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             return false;
         }
 
-        $javascript = $this->request($this->publicUrl($this->gateOrigin(), $javascriptPath));
+        $javascript = $this->request($this->publicUrl($origin, $javascriptPath));
         if (! $javascript->successful()
             || ! hash_equals($expectedJavascriptHash, hash('sha256', $javascript->body()))) {
             return false;
@@ -183,7 +187,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
         // Cloudflare Web Analytics may append a beacon to HTML at the edge, so
         // do not compare the gate document byte-for-byte. Verify the Horus gate
         // contract and the enforced CSP that actually protects Turnstile.
-        $page = $this->request($this->publicUrl($this->gateOrigin(), 'traffic-gate/'));
+        $page = $this->request($this->publicUrl($origin, 'traffic-gate/'));
         if (! $page->successful()
             || ! str_contains($page->body(), '<title>Horus Client Traffic Gate</title>')
             || ! str_contains($page->body(), '/assets/traffic-gate/horus-traffic-gate.js')) {

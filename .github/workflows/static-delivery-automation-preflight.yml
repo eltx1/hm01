@@ -28,6 +28,9 @@ jobs:
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
       - name: Read sanitized automation prerequisites without publishing
         run: |
           set -euo pipefail
@@ -62,3 +65,18 @@ jobs:
           echo 'scheduler_recent='.($heartbeat?->last_seen_at?->gt(now()->subMinutes(5)) ? 'true' : 'false').PHP_EOL;
           echo 'batch_interval_minutes='.(int) config('static-delivery.normal_batch_interval_minutes').PHP_EOL;
           PHP
+      - name: Read bounded deployment and public-edge evidence
+        run: |
+          set -euo pipefail
+          # This trusted main-only diagnostic is streamed over the existing
+          # pinned SSH connection. It performs SELECTs and GETs only.
+          {
+            cat app/Services/StaticDelivery/StaticDeliveryDiagnostics.php
+            cat <<'PHP'
+
+          require 'vendor/autoload.php';
+          $app = require 'bootstrap/app.php';
+          $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+          echo json_encode((new StaticDeliveryDiagnostics())->collect(), JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT).PHP_EOL;
+          PHP
+          } | ssh -p "$SSH_PORT" "$SSH_USER@$HOST" "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && php"

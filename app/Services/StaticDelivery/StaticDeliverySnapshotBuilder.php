@@ -31,7 +31,7 @@ final class StaticDeliverySnapshotBuilder
     }
 
     /** @param list<string>|null $selectedPendingVersionIds */
-    public function build(?array $selectedPendingVersionIds = null): StaticDeliverySnapshot
+    public function build(?array $selectedPendingVersionIds = null, ?array $confirmedHealth = null): StaticDeliverySnapshot
     {
         $files = array_merge($this->baseAssets(), $this->supplyChain->files());
         $generatedAt = $this->snapshotTimestamp();
@@ -100,7 +100,7 @@ final class StaticDeliverySnapshotBuilder
         }
 
         $files['configs/_global/control.json'] = $this->canonicalJson->encode($this->globalControl());
-        $files['health/delivery.json'] = $this->canonicalJson->encode($this->deliveryHealth());
+        $files['health/delivery.json'] = $this->canonicalJson->encode($confirmedHealth ?? $this->deliveryHealth());
         ksort($files);
         $manifestHash = $this->hashFiles($files);
         $files['delivery-manifest.json'] = $this->canonicalJson->encode([

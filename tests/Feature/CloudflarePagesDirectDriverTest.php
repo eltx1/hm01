@@ -7,6 +7,7 @@ use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Drivers\CloudflarePagesDirectDriver;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class CloudflarePagesDirectDriverTest extends TestCase
@@ -207,6 +208,97 @@ class CloudflarePagesDirectDriverTest extends TestCase
             $this->assertSame('DELIVERY_DRIVER_CHANGED', $exception->category);
         }
         Http::assertNothingSent();
+    }
+
+    #[DataProvider('wafEvidenceCases')]
+    public function test_waf_confirmation_requires_exact_current_pages_snapshot_and_active_domains(string $case, bool $confirmed): void
+    {
+        $id = '12345678-1234-1234-1234-123456789abc';
+        $origin = 'https://12345678.horus-media-cdn.pages.dev';
+        $js = 'immutable-gate-runtime';
+        $page = '<title>Horus Client Traffic Gate</title><script src="/assets/traffic-gate/horus-traffic-gate.js"></script>';
+        $files = ['hm-loader.js' => 'immutable-loader', 'health/delivery.json' => '{"schemaVersion":1,"status":"unknown","probeCount":0,"lastObservedAt":null}', 'assets/traffic-gate/horus-traffic-gate.js' => $js,
+            'traffic-gate/index.html' => $page];
+        ksort($files);
+        $hashes = array_map(fn ($body) => hash('sha256', $body), $files);
+        $input = '';
+        foreach ($hashes as $path => $hash) {
+            $input .= $path."\0".$hash."\n";
+        }
+        $hash = hash('sha256', $input);
+        $manifest = ['manifestHash' => $hash, 'files' => $hashes];
+        $batch = new StaticDeliveryBatch(['driver' => 'cloudflare-pages-direct', 'manifest_hash' => $hash,
+            'remote_deployment_id' => $id]);
+        $marker = tempnam(sys_get_temp_dir(), 'pages-proof-');
+        config(['traffic_gate.origin' => 'https://verify.example.test', 'static-delivery.external_sync.confirmation_path' => $marker]);
+        $deployment = ['id' => $id, 'environment' => 'production', 'url' => $origin,
+            'latest_stage' => ['name' => 'deploy', 'status' => 'success'],
+            'deployment_trigger' => ['metadata' => ['commit_message' => 'Horus static manifest '.$hash]]];
+        if ($case === 'untrusted_url') {
+            $deployment['url'] = 'https://untrusted.example.test';
+        }
+        Http::fake(function ($request) use ($case, $origin, $id, $deployment, $manifest, $files, $page) {
+            $url = $request->url();
+            $path = parse_url($url, PHP_URL_PATH);
+            if (str_starts_with($url, 'https://api.cloudflare.com/')) {
+                if (str_contains($path, '/domains/')) {
+                    return Http::response(['success' => true, 'result' => ['name' => basename($path),
+                        'status' => $case === 'inactive_domain' ? 'pending' : 'active']]);
+                }
+                $result = str_contains($path, '/deployments/') ? $deployment
+                    : ['canonical_deployment' => ['id' => $case === 'old_deployment' ? 'other' : $id]];
+
+                return Http::response(['success' => true, 'result' => $result]);
+            }
+            if (str_starts_with($url, $origin.'/')) {
+                if ($path === '/delivery-manifest.json') {
+                    $root = $manifest;
+                    if ($case === 'forged_file_map') {
+                        $root['files']['hm-loader.js'] = str_repeat('e', 64);
+                    }
+
+                    return Http::response($root);
+                }
+                if ($path === '/traffic-gate/') {
+                    return Http::response($page, 200, ['Content-Security-Policy' => $case === 'missing_csp' ? ''
+                        : "script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; frame-ancestors https:"]);
+                }
+
+                return Http::response($case === 'corrupt_loader' && $path === '/hm-loader.js'
+                    ? 'corrupted' : ($files[ltrim($path, '/')] ?? ''), 200);
+            }
+            $status = match ($case) { 'not_found' => 404, 'unavailable' => 503, 'stale_200' => 200, default => 403 };
+
+            return Http::response(['manifestHash' => str_repeat('f', 64)], $status);
+        });
+        try {
+            $result = app(CloudflarePagesDirectDriver::class)->probe($batch);
+            $this->assertSame($confirmed, $result?->confirmedDeployed ?? false);
+            $this->assertSame($confirmed ? $hash : '', trim(file_get_contents($marker)));
+            if ($confirmed) {
+                $this->assertSame(0, $result->metadata['snapshot_health']['probeCount']);
+            }
+            Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+            Http::assertNotSent(fn ($request) => str_starts_with($request->url(), 'https://untrusted.example.test'));
+        } finally {
+            unlink($marker);
+        }
+    }
+
+    public static function wafEvidenceCases(): array
+    {
+        return [
+            'exact deployment with active domains' => ['healthy', true],
+            'inactive custom domain' => ['inactive_domain', false],
+            'older successful deployment' => ['old_deployment', false],
+            'corrupt loader' => ['corrupt_loader', false],
+            'forged manifest file map' => ['forged_file_map', false],
+            'missing gate CSP' => ['missing_csp', false],
+            'untrusted provider URL' => ['untrusted_url', false],
+            '404 is not WAF evidence' => ['not_found', false],
+            '503 is not WAF evidence' => ['unavailable', false],
+            'stale 200 is not WAF evidence' => ['stale_200', false],
+        ];
     }
 
     private function snapshot(): StaticDeliverySnapshot

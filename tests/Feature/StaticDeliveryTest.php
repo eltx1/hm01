@@ -350,6 +350,32 @@ class StaticDeliveryTest extends TestCase
         $this->assertArrayHasKey('health/delivery.json', $files);
     }
 
+    public function test_confirmed_export_survives_new_health_observations_but_rejects_serving_changes(): void
+    {
+        [$site] = $this->siteWithPrimaryHorus();
+        $builder = app(StaticDeliverySnapshotBuilder::class);
+        $snapshot = $builder->build();
+        $batch = StaticDeliveryBatch::create([
+            'driver' => 'cloudflare-pages-direct', 'status' => 'DEPLOYED',
+            'priority' => 'NORMAL', 'trigger' => 'SCHEDULED', 'deployed_at' => now(),
+            'manifest_hash' => $snapshot->manifestHash,
+            'provider_metadata' => ['snapshot_health' => json_decode($snapshot->files['health/delivery.json'], true)],
+        ]);
+        \App\Models\SyntheticProbeResult::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id, 'site_id' => $site->id,
+            'probe' => 'STATIC_RUNTIME', 'environment' => 'PRODUCTION', 'status' => 'PASS',
+            'latency_ms' => 1, 'checks' => ['http' => true], 'observed_at' => now(),
+        ]);
+        $this->assertNotSame($snapshot->manifestHash, $builder->build()->manifestHash);
+        $this->artisan('static-delivery:build', ['path' => $this->dist, '--confirmed' => true])->assertSuccessful();
+        $this->assertSame($snapshot->files['delivery-manifest.json'], file_get_contents($this->dist.'/delivery-manifest.json'));
+
+        $site->publisher()->update(['business_domain' => 'changed.example']);
+        $this->artisan('static-delivery:build', ['path' => $this->dist, '--confirmed' => true])->assertFailed();
+        $this->assertSame($snapshot->files['delivery-manifest.json'], file_get_contents($this->dist.'/delivery-manifest.json'));
+        $this->assertSame('DEPLOYED', $batch->fresh()->status->value);
+    }
+
     public function test_normal_batch_boundary_is_deterministic_in_utc(): void
     {
         config(['static-delivery.normal_batch_interval_minutes' => 30]);
