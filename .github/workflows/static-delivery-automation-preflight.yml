@@ -1,7 +1,8 @@
 name: Static delivery automation preflight
 
 on:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - '.github/workflows/static-delivery-automation-preflight.yml'
       - '.github/workflows/cloudflare-pages-delivery.yml'
@@ -13,9 +14,8 @@ permissions:
 
 jobs:
   read-only-production-prerequisites:
-    # No PR checkout or PR-supplied commands execute with production credentials.
-    # Only same-repository owner-authored PRs may inspect these boolean facts.
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner
+    # Production permits main only. No PR code receives production credentials.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment: production
