@@ -56,7 +56,7 @@ final class PagesDeploymentEvidence
                 $responses = Http::pool(function (Pool $pool) use ($pending, $origin, $remaining): void {
                     foreach ($pending as $path => $file) {
                         $pool->as($path)->withoutRedirecting()->connectTimeout(min(3, $remaining))
-                            ->timeout(min(5, $remaining))->get($origin.'/'.$path);
+                            ->timeout(min(5, $remaining))->get($origin.'/'.$this->servedPath($path));
                     }
                 }, concurrency: 8);
                 foreach ($pending as $path => $file) {
@@ -75,5 +75,16 @@ final class PagesDeploymentEvidence
         } catch (Throwable) {
             return false;
         }
+    }
+
+    private function servedPath(string $path): string
+    {
+        // Pages serves HTML at canonical extension-less paths. Request that
+        // path directly, retaining strict hashes and refusing all redirects.
+        if ($path === 'index.html' || str_ends_with($path, '/index.html')) {
+            return substr($path, 0, -strlen('index.html'));
+        }
+
+        return str_ends_with($path, '.html') ? substr($path, 0, -strlen('.html')) : $path;
     }
 }

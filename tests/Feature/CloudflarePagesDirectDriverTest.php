@@ -218,7 +218,7 @@ class CloudflarePagesDirectDriverTest extends TestCase
         $js = 'immutable-gate-runtime';
         $page = '<title>Horus Client Traffic Gate</title><script src="/assets/traffic-gate/horus-traffic-gate.js"></script>';
         $files = ['hm-loader.js' => 'immutable-loader', 'health/delivery.json' => '{"schemaVersion":1,"status":"unknown","probeCount":0,"lastObservedAt":null}', 'assets/traffic-gate/horus-traffic-gate.js' => $js,
-            'traffic-gate/index.html' => $page];
+            'traffic-gate/index.html' => $page, '404.html' => 'not-found-page', 'index.html' => 'home-page'];
         ksort($files);
         $hashes = array_map(fn ($body) => hash('sha256', $body), $files);
         $input = '';
@@ -260,8 +260,18 @@ class CloudflarePagesDirectDriverTest extends TestCase
                     return Http::response($root);
                 }
                 if ($path === '/traffic-gate/') {
-                    return Http::response($page, 200, ['Content-Security-Policy' => $case === 'missing_csp' ? ''
+                    if ($case === 'canonical_redirect') {
+                        return Http::response('', 308, ['Location' => 'https://untrusted.example.test/gate']);
+                    }
+
+                    return Http::response($case === 'corrupt_html' ? $page.'changed' : $page, 200, ['Content-Security-Policy' => $case === 'missing_csp' ? ''
                         : "script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; frame-ancestors https:"]);
+                }
+                if ($path === '/404' || $path === '/') {
+                    return Http::response($path === '/404' ? $files['404.html'] : $files['index.html']);
+                }
+                if (str_ends_with($path, '.html')) {
+                    return Http::response('', 308, ['Location' => $path === '/traffic-gate/index.html' ? '/traffic-gate/' : '/404']);
                 }
 
                 return Http::response($case === 'corrupt_loader' && $path === '/hm-loader.js'
@@ -277,6 +287,9 @@ class CloudflarePagesDirectDriverTest extends TestCase
             $this->assertSame($confirmed ? $hash : '', trim(file_get_contents($marker)));
             if ($confirmed) {
                 $this->assertSame(0, $result->metadata['snapshot_health']['probeCount']);
+                Http::assertSent(fn ($request) => $request->url() === $origin.'/404');
+                Http::assertSent(fn ($request) => $request->url() === $origin.'/');
+                Http::assertNotSent(fn ($request) => str_ends_with(parse_url($request->url(), PHP_URL_PATH), '.html'));
             }
             Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
             Http::assertNotSent(fn ($request) => str_starts_with($request->url(), 'https://untrusted.example.test'));
@@ -292,6 +305,8 @@ class CloudflarePagesDirectDriverTest extends TestCase
             'inactive custom domain' => ['inactive_domain', false],
             'older successful deployment' => ['old_deployment', false],
             'corrupt loader' => ['corrupt_loader', false],
+            'corrupt canonical HTML' => ['corrupt_html', false],
+            'canonical HTML redirect refused' => ['canonical_redirect', false],
             'forged manifest file map' => ['forged_file_map', false],
             'missing gate CSP' => ['missing_csp', false],
             'untrusted provider URL' => ['untrusted_url', false],
