@@ -106,6 +106,12 @@ final class StaticDeliveryManager
 
     private function processPendingLocked(?User $batchActor = null, string $trigger = 'SCHEDULED'): ?StaticDeliveryBatch
     {
+        // One immutable snapshot may be in flight at a time. A later batch must
+        // never overtake an earlier deployment and then be rolled back by it.
+        if (StaticDeliveryBatch::query()->where('status', StaticDeliveryStatus::Uploading->value)->exists()) {
+            return null;
+        }
+
         $batch = DB::transaction(function () use ($batchActor, $trigger): ?StaticDeliveryBatch {
             $items = StaticDeliveryItem::withoutGlobalScopes()
                 ->with('configVersion:id,version')
@@ -226,7 +232,11 @@ final class StaticDeliveryManager
             $batch->globalChanges()->update(['status' => StaticDeliveryStatus::Uploading->value]);
             $batch->update([
                 'status' => StaticDeliveryStatus::Uploading,
-                'attempts' => $batch->attempts + 1,
+                'attempts' => max(
+                    (int) $batch->items()->max('attempts'),
+                    (int) $batch->globalChanges()->max('attempts'),
+                    1,
+                ),
                 'submitted_at' => now(),
             ]);
             $result = $this->driver->deliver($snapshot, $batch->refresh());
@@ -276,6 +286,8 @@ final class StaticDeliveryManager
                     if ($result?->confirmedDeployed) {
                         $this->confirm($batch, $result);
                         $count++;
+                    } elseif ($batch->submitted_at->addSeconds(max(60, (int) config('static-delivery.confirmation_timeout_seconds', 1800)))->isPast()) {
+                        throw new StaticDeliveryException('DELIVERY_CONFIRMATION_TIMEOUT', 'Static delivery was not confirmed before its deadline.');
                     }
                 } catch (Throwable $exception) {
                     $this->fail($batch, $exception);

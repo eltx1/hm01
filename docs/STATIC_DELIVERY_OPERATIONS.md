@@ -1,9 +1,74 @@
 # Static Delivery Batching and Operations
 
-Horus static delivery preserves one pipeline: database outbox →
-`StaticDeliveryManager` → deterministic snapshot → sanitized GitHub delivery
-branch → Cloudflare Pages workflow. HTTP controllers never write to GitHub or
-Cloudflare directly.
+## Active production automation
+
+Production uses `cloudflare-pages-direct`: the existing once-per-minute Laravel
+scheduler processes the durable outbox and submits static snapshots directly to
+Cloudflare Pages. GitHub Actions continues building and deploying application
+releases over the existing pinned SSH connection. Routine configuration delivery
+has no dependency on GitHub schedule timing or a persistent GitHub API token.
+
+The normal production release reuses the existing `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`, Pages project variable, and SSH secrets. After a healthy
+application release, it transfers the Cloudflare credential on stdin through SSH
+to `/home/horusapp/shared/secrets/edge-cloudflare-token` (0600), writes a `file:`
+reference in the shared environment, rebuilds the config cache, and reloads FPM
+using the deployment's existing command. No new secret needs to be created.
+The release also calls `static-delivery:queue-assets --apply`: a stable fingerprint
+of compiled assets, headers and gate files enqueues one normal outbox event when
+those assets change (including initial activation). Repeated checks of unchanged
+assets never create extra uploads or reset exhausted retries. Configuration and
+probe timestamps do not affect this fingerprint. This covers loader-only releases
+without requiring an ad configuration edit; the scheduler still performs the upload.
+The installer supports no-write dry run, preserves unrelated environment settings,
+and records a redacted audit entry. It configures five-minute batch boundaries;
+the portable application's default remains 30 minutes.
+
+`php artisan static-delivery:automation-check --require-scheduler` is read-only.
+It requires a real scheduler heartbeat in the preceding five minutes and a
+readable credential. It does not manufacture a heartbeat or prove API permissions.
+Acceptance still requires an actual scheduler-created batch, Cloudflare deployment
+success, and exact public CDN plus Traffic Gate verification.
+
+The driver follows Cloudflare Pages Direct Upload: scoped upload JWT, missing-asset
+check, content-addressed uploads, and a deployment manifest with `_headers`.
+BLAKE3 asset identifiers match Wrangler and are tested against official BLAKE3
+vectors. No Node runtime or additional PHP extension is installed on production.
+Headers, custom domains, Turnstile, Click Guard and publisher loader contracts are
+unchanged. This driver rejects Worker/functions snapshots; it only publishes the
+same static snapshot that the existing Wrangler workflow used.
+
+Only one outbox batch can be in flight. Matching latest production deployments
+are reused after a lost response; older deployments cannot suppress a required
+publish. Attempts persist across replacement batches and stop at the configured
+maximum. Unconfirmed batches expire after 30 minutes by default
+(`HORUS_STATIC_DELIVERY_CONFIRMATION_TIMEOUT_SECONDS`). Upload execution has a
+100-second window; provider errors are redacted and enter bounded backoff.
+A Cloudflare success response with stale public files is not marked deployed.
+On migration, unconfirmed passive batches enter the existing bounded retry path
+immediately; they do not wait for the disabled passive uploader's 30-minute
+confirmation deadline. Already confirmed passive batches retain their proof.
+
+In direct mode the legacy sync workflow refreshes queued runtime configuration
+and checks prerequisites, but does not invoke the processor or upload independent
+snapshots. The server scheduler performs the publication. A bounded read-only observer
+checks `--require-scheduler --require-idle` for up to 12 minutes and reports the
+confirmed batch/manifest or the actual pending/error state; it cannot publish.
+Passive mode is refused
+for automatic sync events; its explicit manual recovery path remains available.
+The optional GitHub pipeline driver is retained for existing installations and
+never silently falls back to passive sync when credentials are missing.
+
+Acceptance: save a configuration, observe the next eligible scheduler batch and
+matching deployment, then repeat with a second change. No manual dispatch or CDN
+refresh is part of this test. Five minutes describes batching eligibility, not a
+hard delivery SLA; scheduler execution, provider upload, propagation and public
+verification add time. HTTP controllers only enqueue changes, never publish them.
+
+Protocol references:
+- https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/
+- https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/upload.ts
+- https://github.com/cloudflare/workers-sdk/blob/main/packages/deploy-helpers/src/deploy/helpers/hash.ts
 
 ## Eligibility modes
 

@@ -9,7 +9,7 @@ use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use Illuminate\Support\Facades\DB;
 
-final class FakeStaticDeliveryDriver implements StaticDeliveryDriverInterface
+final class FakeStaticDeliveryDriver implements StaticDeliveryDriverInterface, \App\Services\StaticDelivery\Contracts\StaticDeliveryStatusProbeInterface
 {
     /** @var list<StaticDeliverySnapshot> */
     public array $snapshots = [];
@@ -17,6 +17,11 @@ final class FakeStaticDeliveryDriver implements StaticDeliveryDriverInterface
     public array $transactionLevels = [];
     public bool $fail = false;
     public bool $confirmed = true;
+
+    public function probe(StaticDeliveryBatch $batch): ?StaticDeliveryResult
+    {
+        return null;
+    }
 
     public function name(): string { return 'fake-cloudflare'; }
 

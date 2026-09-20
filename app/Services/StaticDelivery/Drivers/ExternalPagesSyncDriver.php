@@ -44,6 +44,17 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
             return null;
         }
 
+        return $this->verifyPublicArtifacts($batch);
+    }
+
+    /** Called only after the caller has independently authenticated deployment success. */
+    public function verifyPublicArtifacts(StaticDeliveryBatch $batch): ?StaticDeliveryResult
+    {
+        $expected = (string) $batch->manifest_hash;
+        if (! preg_match('/^[a-f0-9]{64}$/', $expected)) {
+            throw new StaticDeliveryException('MANIFEST_HASH_INVALID', 'Invalid expected manifest hash.');
+        }
+
         $canonicalManifest = $this->publicManifest($this->manifestUrl(), $expected);
         if ($canonicalManifest === null
             || ! $this->batchArtifactsArePublic($batch, $canonicalManifest, $this->manifestBaseUrl())) {
