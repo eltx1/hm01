@@ -1,0 +1,63 @@
+name: Static delivery automation preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/static-delivery-automation-preflight.yml'
+      - '.github/workflows/cloudflare-pages-delivery.yml'
+      - 'app/Services/StaticDelivery/**'
+      - 'scripts/configure-static-delivery-automation.php'
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-production-prerequisites:
+    # No PR checkout or PR-supplied commands execute with production credentials.
+    # Only same-repository owner-authored PRs may inspect these boolean facts.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+      SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+      SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+      KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+      EDGE_TOKEN: ${{ secrets.HORUS_EDGE_GITHUB_TOKEN }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - name: Read sanitized automation prerequisites without publishing
+        run: |
+          set -euo pipefail
+          if [[ -n "$EDGE_TOKEN" ]]; then
+            echo 'production_edge_secret_present=true'
+          else
+            echo 'production_edge_secret_present=false'
+          fi
+          test -n "$HOST" && test -n "$SSH_USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9_./-]+$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh -p "$SSH_PORT" "$SSH_USER@$HOST" "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && php" <<'PHP'
+          <?php
+          require 'vendor/autoload.php';
+          $app = require 'bootstrap/app.php';
+          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+          echo 'configured_driver='.config('static-delivery.driver').PHP_EOL;
+          echo 'effective_driver='.$app->make(App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface::class)->name().PHP_EOL;
+          try {
+              $app->make(App\Services\StaticDelivery\SecretReferenceResolver::class)->resolve((string) config('static-delivery.cloudflare.github_token_reference'));
+              echo 'server_edge_credential_present=true'.PHP_EOL;
+          } catch (Throwable) {
+              echo 'server_edge_credential_present=false'.PHP_EOL;
+          }
+          $heartbeat = App\Models\SystemHeartbeat::query()->where('key', 'scheduler')->first();
+          echo 'scheduler_recent='.($heartbeat?->last_seen_at?->gt(now()->subMinutes(5)) ? 'true' : 'false').PHP_EOL;
+          echo 'batch_interval_minutes='.(int) config('static-delivery.normal_batch_interval_minutes').PHP_EOL;
+          PHP
