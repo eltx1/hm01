@@ -3,6 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\SystemHeartbeat;
+use App\Models\StaticDeliveryBatch;
+use App\Models\StaticDeliveryItem;
+use App\Models\StaticGlobalArtifactChange;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\SecretReferenceResolver;
 use Illuminate\Console\Command;
@@ -10,7 +13,7 @@ use Throwable;
 
 class CheckStaticDeliveryAutomation extends Command
 {
-    protected $signature = 'static-delivery:automation-check {--driver-only} {--require-scheduler}';
+    protected $signature = 'static-delivery:automation-check {--driver-only} {--require-scheduler} {--require-idle}';
 
     protected $description = 'Check active static delivery prerequisites without publishing or exposing credentials';
 
@@ -51,6 +54,27 @@ class CheckStaticDeliveryAutomation extends Command
         }
         $this->info('Local prerequisites present. Scheduler execution, provider permissions, and public CDN delivery still require verification.');
         $this->line('Batch interval: '.config('static-delivery.normal_batch_interval_minutes').' minutes.');
+
+        if ($this->option('require-idle')) {
+            $active = ['PENDING', 'BATCHING', 'UPLOADING', 'RETRY_SCHEDULED'];
+            $pending = StaticDeliveryItem::withoutGlobalScopes()->whereIn('status', $active)->count()
+                + StaticGlobalArtifactChange::query()->whereIn('status', $active)->count();
+            $latest = StaticDeliveryBatch::query()->where('driver', $driver->name())->latest('created_at')->first();
+            $this->line(json_encode([
+                'pending_items' => $pending,
+                'latest_batch' => $latest?->id,
+                'latest_status' => $latest?->status?->value,
+                'manifest_hash' => $latest?->manifest_hash,
+                'error_code' => $latest?->error_code,
+                'deployed_at' => $latest?->deployed_at?->toIso8601String(),
+            ], JSON_THROW_ON_ERROR));
+            if ($pending > 0 || ($latest && $latest->status?->value !== 'DEPLOYED')) {
+                return self::FAILURE;
+            }
+            if (! $latest) {
+                $this->warn('No active-driver deployment yet; an empty outbox does not prove publication.');
+            }
+        }
 
         return self::SUCCESS;
     }

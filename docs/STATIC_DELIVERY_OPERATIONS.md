@@ -42,7 +42,10 @@ A Cloudflare success response with stale public files is not marked deployed.
 
 In direct mode the legacy sync workflow refreshes queued runtime configuration
 and checks prerequisites, but does not invoke the processor or upload independent
-snapshots. The server scheduler performs the publication. Passive mode is refused
+snapshots. The server scheduler performs the publication. A bounded read-only observer
+checks `--require-scheduler --require-idle` for up to 12 minutes and reports the
+confirmed batch/manifest or the actual pending/error state; it cannot publish.
+Passive mode is refused
 for automatic sync events; its explicit manual recovery path remains available.
 The optional GitHub pipeline driver is retained for existing installations and
 never silently falls back to passive sync when credentials are missing.

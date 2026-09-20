@@ -66,6 +66,9 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
                 && ! in_array(data_get($deployment, 'latest_stage.status'), ['failure', 'canceled'], true)) {
                 return $this->result($deployment, $snapshot->manifestHash);
             }
+            if (! in_array(data_get($deployment, 'latest_stage.status'), ['success', 'failure', 'canceled'], true)) {
+                throw new StaticDeliveryException('PAGES_DEPLOYMENT_BUSY', 'Another production deployment is in flight; publication will retry later.');
+            }
             break;
         }
 

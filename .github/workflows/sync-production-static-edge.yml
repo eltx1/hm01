@@ -90,6 +90,9 @@ jobs:
             echo 'active=true' >> "$GITHUB_OUTPUT"
             ssh -p "$SSH_PORT" "$USER@$HOST" \
               "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply"
+            if [[ "$mode" == 'cloudflare-pages-direct' ]]; then
+              echo 'direct=true' >> "$GITHUB_OUTPUT"
+            fi
             if [[ "$mode" == 'cloudflare-pages-pipeline' ]]; then
               ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan static-delivery:process"
             fi
@@ -100,6 +103,24 @@ jobs:
             fi
             echo 'active=false' >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Observe automatic server publication without triggering it
+        if: steps.mode.outputs.direct == 'true'
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          for attempt in $(seq 1 24); do
+            if ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$app_root' && php artisan static-delivery:automation-check --require-scheduler --require-idle"; then
+              exit 0
+            fi
+            sleep 30
+          done
+          echo 'Automatic outbox did not reach confirmed idle state within 12 minutes.' >&2
+          exit 1
 
       - name: Build snapshot from live production data
         if: steps.mode.outputs.active != 'true'

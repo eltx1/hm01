@@ -95,6 +95,53 @@ class CloudflarePagesDirectDriverTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'POST' && str_ends_with($request->url(), '/deployments'));
     }
 
+    public function test_an_unrelated_running_deployment_blocks_a_competing_upload(): void
+    {
+        $other = $this->deployment('active');
+        $other['deployment_trigger']['metadata']['commit_message'] = 'Another deployment';
+        $this->fakeProvider([$other]);
+        try {
+            app(CloudflarePagesDirectDriver::class)->deliver($this->snapshot(), $this->batch());
+            $this->fail('Expected an in-flight deployment guard');
+        } catch (StaticDeliveryException $exception) {
+            $this->assertSame('PAGES_DEPLOYMENT_BUSY', $exception->category);
+        }
+        Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+    }
+
+    public function test_confirmation_requires_provider_success_and_real_gate_contract(): void
+    {
+        $marker = tempnam(sys_get_temp_dir(), 'cf-confirm-');
+        config(['traffic_gate.origin' => 'https://verify.example.test', 'static-delivery.external_sync.confirmation_path' => $marker]);
+        $js = 'gate-runtime-test';
+        $gateHealthy = false;
+        Http::fake(function ($request) use ($js, &$gateHealthy) {
+            if (str_starts_with($request->url(), 'https://api.cloudflare.com/')) {
+                return Http::response(['success' => true, 'result' => $this->deployment('success')]);
+            }
+            if (str_contains($request->url(), '/delivery-manifest.json')) {
+                return Http::response(['manifestHash' => self::HASH, 'files' => ['assets/traffic-gate/horus-traffic-gate.js' => hash('sha256', $js)]]);
+            }
+            if (str_ends_with($request->url(), '/assets/traffic-gate/horus-traffic-gate.js')) {
+                return Http::response($js);
+            }
+
+            return Http::response('<title>Horus Client Traffic Gate</title><script src="/assets/traffic-gate/horus-traffic-gate.js"></script>', 200, [
+                'Content-Security-Policy' => $gateHealthy ? "script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; frame-ancestors https:" : '',
+            ]);
+        });
+        try {
+            $driver = app(CloudflarePagesDirectDriver::class);
+            $this->assertNull($driver->probe($this->batch()));
+            $this->assertSame('', file_get_contents($marker));
+            $gateHealthy = true;
+            $this->assertTrue($driver->probe($this->batch())?->confirmedDeployed);
+            $this->assertSame(self::HASH, trim(file_get_contents($marker)));
+        } finally {
+            @unlink($marker);
+        }
+    }
+
     public function test_dry_run_has_no_network_side_effects(): void
     {
         config(['static-delivery.cloudflare.dry_run' => true]);

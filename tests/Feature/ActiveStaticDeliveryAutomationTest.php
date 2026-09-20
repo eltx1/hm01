@@ -128,6 +128,27 @@ class ActiveStaticDeliveryAutomationTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_idle_check_observes_pending_work_without_processing_or_retrying_it(): void
+    {
+        $this->artisan('static-delivery:automation-check --require-idle')->assertSuccessful();
+        $batch = StaticDeliveryBatch::query()->create([
+            'driver' => 'cloudflare-pages-pipeline', 'status' => 'FAILED',
+            'priority' => 'NORMAL', 'trigger' => 'SCHEDULED',
+        ]);
+        $this->artisan('static-delivery:automation-check --require-idle')->assertFailed();
+        $this->assertSame('FAILED', $batch->fresh()->status->value);
+        $batch->update(['status' => 'DEPLOYED', 'deployed_at' => now()]);
+        $this->artisan('static-delivery:automation-check --require-idle')->assertSuccessful();
+        $pending = \App\Models\StaticGlobalArtifactChange::query()->create([
+            'artifact_type' => 'SUPPLY_CHAIN', 'status' => 'PENDING', 'priority' => 'NORMAL',
+            'available_at' => now()->addMinutes(5),
+        ]);
+        $this->artisan('static-delivery:automation-check --require-idle')->assertFailed();
+        $this->assertSame('PENDING', $pending->fresh()->status->value);
+        $this->assertSame(0, $pending->fresh()->attempts);
+        Http::assertNothingSent();
+    }
+
     private function snapshot(): StaticDeliverySnapshot
     {
         return new StaticDeliverySnapshot(['configs/test.json' => '{}'], str_repeat('a', 64), 2, false);
