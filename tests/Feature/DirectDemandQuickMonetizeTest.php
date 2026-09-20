@@ -626,6 +626,9 @@ HTML;
     public function test_responsive_retry_and_editing_a_member_update_the_same_four_without_changing_other_formats_or_protection(): void
     {
         $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload())->assertSessionHasNoErrors();
+        $existingWidget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $existingWidgetAttributes = $existingWidget->getAttributes();
         foreach (['sticky_bottom', 'sticky_top', 'video_floating', 'rewarded', 'in_article_display', 'high_impact_display'] as $preset) {
             app(PlacementPresetBuilder::class)->create($this->site, $preset, $this->admin, [], false, true);
         }
@@ -639,11 +642,13 @@ HTML;
             'placement_id' => $ids[2], 'tag' => $tag,
         ]))->assertSessionHasNoErrors();
         $this->assertSame($ids, $this->responsiveUnits()->pluck('id')->all());
-        $this->assertSame(4, DemandWidget::withoutGlobalScopes()->count());
-        $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
+        $this->assertSame(5, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->where('id', '!=', $existingWidget->id)->get()->pluck('direct_tag_template')->unique()->values()->all());
+        $this->assertSame($existingWidgetAttributes, $existingWidget->fresh()->getAttributes());
         foreach ($other as $id => $attributes) $this->assertSame($attributes, Placement::withoutGlobalScopes()->findOrFail($id)->getAttributes());
         $after = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
         foreach (['trafficGate', 'clickGuard', 'controls', 'privacy'] as $key) $this->assertSame($before[$key], $after[$key], $key);
+        $this->assertSame(data_get($before, 'directDemand.placements.header_banner'), data_get($after, 'directDemand.placements.header_banner'));
     }
 
     public function test_one_blocked_bundle_member_rolls_back_all_tag_updates_and_does_not_publish(): void

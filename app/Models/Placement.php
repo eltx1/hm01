@@ -37,11 +37,6 @@ class Placement extends Model
         ];
     }
 
-    public function installationCode(): string
-    {
-        return '<div class="hm-ad" data-placement="'.e($this->code).'"></div>';
-    }
-
     public function site(): BelongsTo { return $this->belongsTo(Site::class); }
     public function adUnit(): BelongsTo { return $this->belongsTo(AdUnit::class); }
     public function adFormat(): BelongsTo { return $this->belongsTo(AdFormat::class); }
@@ -51,6 +46,6 @@ class Placement extends Model
 
     public function installationCode(): string
     {
-        return '<div class="hm-ad" data-placement="'.$this->code.'"></div>';
+        return '<div class="hm-ad" data-placement="'.e($this->code).'"></div>';
     }
 }

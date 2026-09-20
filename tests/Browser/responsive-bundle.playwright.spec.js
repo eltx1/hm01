@@ -31,7 +31,7 @@ function config(gated) {
             return [code, { enabled: true, candidates: [{ network: 'CUSTOM_THIRD_PARTY_TAG', mode: 'MANUAL_TAG', tag: {
                 recipeVersion: 1, executionMode: 'STRUCTURED', format: 'DISPLAY',
                 scripts: [{ url: `${CDN}/runtime/gpt/test.js`, async: true, dedupeKey: 'gpt-runtime' }],
-                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': '[[300,250]]' } },
+                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': '[[300,250]]', 'data-hm-gpt-inner-id': 'same-provider-id' } },
                 initialization: { type: 'NONE' },
                 render: { timeoutMs: 15000, successSelector: `#${id}[data-hm-gpt-status="rendered"]`, assumeLoadedIsSuccess: false, allowedFormats: ['DISPLAY'], allowedSizes: [[300, 250]] },
             } }] }];
