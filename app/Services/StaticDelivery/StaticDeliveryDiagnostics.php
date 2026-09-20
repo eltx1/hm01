@@ -3,6 +3,8 @@
 namespace App\Services\StaticDelivery;
 
 use App\Models\StaticDeliveryBatch;
+use App\Models\StaticDeliveryItem;
+use App\Models\StaticGlobalArtifactChange;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -17,6 +19,20 @@ final class StaticDeliveryDiagnostics
             'id', 'driver', 'status', 'manifest_hash', 'remote_deployment_id',
             'attempts', 'submitted_at', 'deployed_at', 'error_code',
         ]))->all()];
+        $active = ['PENDING', 'BATCHING', 'UPLOADING', 'RETRY_SCHEDULED'];
+        foreach (['site_items' => StaticDeliveryItem::withoutGlobalScopes(),
+            'global_items' => StaticGlobalArtifactChange::query()] as $kind => $query) {
+            $query->whereIn('status', $active);
+            $report['outbox'][$kind] = [
+                'count' => (clone $query)->count(),
+                'next_available_at' => (clone $query)->min('available_at'),
+                'items' => (clone $query)->with('batch:id,status,error_code,next_retry_at,submitted_at,deployed_at')
+                    ->oldest('available_at')->limit(10)->get()->map(function ($item): array {
+                        return $item->only(['id', 'batch_id', 'artifact_type', 'config_version_id', 'status', 'priority', 'attempts', 'available_at', 'updated_at'])
+                            + ['batch' => $item->batch?->only(['id', 'status', 'error_code', 'next_retry_at', 'submitted_at', 'deployed_at'])];
+                    })->all(),
+            ];
+        }
         foreach (['cdn' => config('static-delivery.external_sync.manifest_url'),
             'gate' => rtrim((string) config('traffic_gate.origin'), '/').'/delivery-manifest.json'] as $surface => $url) {
             try {
