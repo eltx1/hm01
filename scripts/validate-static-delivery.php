@@ -108,7 +108,7 @@ foreach ($files as $path => $contents) {
 $gateHtml = $files['traffic-gate/index.html'];
 $gateJs = $files['assets/traffic-gate/horus-traffic-gate.js'];
 $gateCombined = strtolower($gateHtml."\n".$gateJs);
-foreach (['siteverify', 'turnstile/v0/siteverify', 'cloudflare_api_token', 'worker secret', 'turnstile secret'] as $forbiddenGateValue) {
+foreach (['turnstile/v0/siteverify', 'cloudflare_api_token', 'worker secret', 'turnstile secret'] as $forbiddenGateValue) {
     if (str_contains($gateCombined, $forbiddenGateValue)) {
         fwrite(STDERR, "Forbidden backend/secret concept in Traffic Gate static implementation: {$forbiddenGateValue}.\n");
         exit(1);
@@ -144,8 +144,6 @@ foreach ([
     'HORUS_TRAFFIC_GATE_HELLO',
     'HORUS_TRAFFIC_GATE_PASS',
     'HORUS_TRAFFIC_GATE_DENIED',
-    'WAITING_FOR_ACTIVITY',
-    'SOFT_ALLOWED',
     'trafficGateDisabled',
     'verify.horusmedia.net',
     'getRandomValues',

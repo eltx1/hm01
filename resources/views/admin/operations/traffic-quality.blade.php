@@ -11,7 +11,7 @@
     <div>
         <p class="eyebrow">Operations · Traffic Quality</p>
         <h2>CLIENT TRAFFIC GATE</h2>
-        <p>This client gate is a soft browser traffic filter. Horus does not perform server-side Turnstile token validation for ad serving.</p>
+        <p>Ads require successful server-side Turnstile verification. Connection failures leave content available without starting ads on this page.</p>
         <div class="status-row">
             <x-status-badge :status="$global['status']" />
             <x-status-badge :status="$global['readiness']" />
@@ -69,9 +69,9 @@
     <div class="workspace-heading"><div><p class="eyebrow">Policy presets</p><h2>Choose operating posture</h2><p class="muted">{{ $impact['global_policy'] }} effective active Site(s) currently inherit the global policy.</p></div></div>
     <div class="health-grid">
         @foreach([
-            'STRICT' => ['Only a client Turnstile PASS permits monetization.', 'Protection: highest', 'Revenue resilience: lowest'],
-            'BALANCED' => ['PASS starts ads immediately. Technical failure waits for trusted visitor activity before soft-allowing.', 'Protection: balanced', 'Revenue resilience: balanced'],
-            'PERMISSIVE' => ['PASS starts ads immediately. Technical failure may soft-allow after the configured timeout.', 'Protection: lower', 'Revenue resilience: highest'],
+            'STRICT' => ['Server verification is required. Failure suppresses ads for this page.', 'Server verified', 'Content stays available'],
+            'BALANCED' => ['Server verification is required, with one bounded retry for temporary verification failure.', 'Server verified', 'Content stays available'],
+            'PERMISSIVE' => ['Legacy preset: server verification is now required here too. There is no timeout bypass.', 'Server verified', 'Content stays available'],
         ] as $policy => $copy)
             <div>
                 <span class="muted">{{ $policy === 'BALANCED' ? 'Recommended' : 'Preset' }}</span>
@@ -82,7 +82,7 @@
                         @csrf<input type="hidden" name="policy" value="{{ $policy }}">
                         <label>Required reason<input class="hm-input" name="reason" minlength="8" required></label>
                         <label>Current password<input class="hm-input" type="password" name="current_password" autocomplete="current-password" required></label>
-                        @if($policy === 'STRICT')<p class="notice error">STRICT can suppress monetization during technical Turnstile failure because it never technically soft-allows.</p>@endif
+                        @if($policy === 'STRICT')<p class="notice error">All presets keep ads stopped when verification fails; no permanent visitor block is stored.</p>@endif
                         <label>Type <code>{{ $policy === 'STRICT' ? 'SET STRICT TRAFFIC GATE' : 'CHANGE TRAFFIC GATE POLICY' }}</code><input class="hm-input" name="impact_confirmation" required></label>
                         <button class="hm-button-secondary">Set {{ $policy }}</button>
                     </form>
@@ -93,14 +93,14 @@
 </article>
 
 <details class="workspace-section" id="advanced">
-    <summary><strong>Advanced settings</strong> · bounded timing and trusted activity recovery</summary>
+    <summary><strong>Advanced settings</strong> · bounded verification timing</summary>
     <form method="POST" action="{{ route('admin.operations.traffic-quality.advanced') }}" class="form-stack" style="margin-top:1rem">
         @csrf
         <div class="detail-grid">
             <label>Initial wait <small>500–5000 milliseconds ({{ number_format($global['initial_wait_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="500" max="5000" step="100" name="initial_wait_ms" value="{{ $global['initial_wait_ms'] }}" required></label>
             <label>Maximum wait <small>2000–15000 milliseconds ({{ number_format($global['max_wait_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="2000" max="15000" step="100" name="max_wait_ms" value="{{ $global['max_wait_ms'] }}" required></label>
             <label>Retry interval <small>500–10000 milliseconds ({{ number_format($global['retry_interval_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="500" max="10000" step="100" name="retry_interval_ms" value="{{ $global['retry_interval_ms'] }}" required></label>
-            <label>Trusted activity recovery<select class="hm-input" name="activity_recovery_enabled"><option value="1" @selected($global['activity_recovery_enabled'])>Enabled</option><option value="0" @selected(! $global['activity_recovery_enabled'])>Disabled</option></select></label>
+            <label>Legacy activity preference (does not authorize ads)<select class="hm-input" name="activity_recovery_enabled"><option value="1" @selected($global['activity_recovery_enabled'])>Enabled</option><option value="0" @selected(! $global['activity_recovery_enabled'])>Disabled</option></select></label>
         </div>
         <label>Required reason<input class="hm-input" name="reason" minlength="8" required></label>
         <label>Current password<input class="hm-input" type="password" name="current_password" autocomplete="current-password" required></label>
@@ -185,7 +185,7 @@
     const activate = document.getElementById('traffic-gate-activate');
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
     const resultUrl = @json(route('admin.operations.traffic-quality.sitekey.test-result'));
-    const protocolVersion = 1;
+    const protocolVersion = 2;
     let frame = null;
     let watchdog = null;
     let nonce = null;
@@ -216,17 +216,17 @@
         if (!frame || event.origin !== button.dataset.origin || event.source !== frame.contentWindow) return;
         const message = event.data;
         if (!message || typeof message !== 'object' || message.protocolVersion !== protocolVersion || message.pageNonce !== nonce) return;
-        if (message.type === 'HORUS_TRAFFIC_GATE_PASS') finish('CLIENT PASS');
+        if (message.type === 'HORUS_TRAFFIC_GATE_PASS' && message.serverVerified === true) finish('CLIENT PASS');
         else if (message.type === 'HORUS_TRAFFIC_GATE_TIMEOUT') finish('CLIENT TIMEOUT');
         else if (message.type === 'HORUS_TRAFFIC_GATE_ERROR' || message.type === 'HORUS_TRAFFIC_GATE_DENIED') finish('CLIENT ERROR');
     }
     button.addEventListener('click', () => {
         if (!window.crypto?.getRandomValues) { record('GATE UNREACHABLE'); return; }
         button.disabled = true;
-        status.textContent = 'Running client-only test…';
+        status.textContent = 'Running server verification test…';
         nonce = makeNonce();
         frame = document.createElement('iframe');
-        frame.src = button.dataset.origin + '/traffic-gate/';
+        frame.src = button.dataset.origin + '/traffic-gate/?protocol=2';
         frame.title = 'Horus Traffic Gate Client Test';
         frame.setAttribute('aria-hidden', 'true');
         frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;border:0;opacity:0;pointer-events:none';

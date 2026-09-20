@@ -47,7 +47,7 @@ function config() {
         pageTargeting: {},
         trafficGate: {
             enabled: true,
-            provider: 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY',
+            provider: 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED',
             gateOrigin: GATE,
             siteKey: PASS,
             policy: 'BALANCED',
@@ -184,12 +184,17 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
             if (url.pathname === '/assets/prebid/horus-prebid.min.js') return route.fulfill({ status: 200, contentType: 'application/javascript', body: prebidStub() });
             return route.fulfill({ status: 404, body: 'not found' });
         }
+        if (url.origin === 'https://siteverify.horusmedia.net') {
+            const headers = { 'Access-Control-Allow-Origin': GATE, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' };
+            if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+            return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify({ success: true, pageNonce: route.request().postDataJSON().pageNonce }) });
+        }
         if (url.origin === GATE) {
             if (url.pathname === '/traffic-gate/' || url.pathname === '/traffic-gate') {
                 return route.fulfill({
                     status: 200,
                     contentType: 'text/html; charset=utf-8',
-                    headers: { 'Content-Security-Policy': "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:" },
+                    headers: { 'Content-Security-Policy': "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:" },
                     body: gateHtml,
                 });
             }
@@ -228,7 +233,7 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
 });
 
 
-test('BALANCED invisible Turnstile technical failure releases monetization at bounded maxWait without user action', async ({ page }) => {
+test('BALANCED technical failure leaves content available and suppresses monetization beyond deadline', async ({ page }) => {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
 
@@ -244,12 +249,17 @@ test('BALANCED invisible Turnstile technical failure releases monetization at bo
             if (url.pathname === '/assets/prebid/horus-prebid.min.js') return route.fulfill({ status: 200, contentType: 'application/javascript', body: prebidStub() });
             return route.fulfill({ status: 404, body: 'not found' });
         }
+        if (url.origin === 'https://siteverify.horusmedia.net') {
+            const headers = { 'Access-Control-Allow-Origin': GATE, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' };
+            if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+            return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify({ success: true, pageNonce: route.request().postDataJSON().pageNonce }) });
+        }
         if (url.origin === GATE) {
             if (url.pathname === '/traffic-gate/' || url.pathname === '/traffic-gate') {
                 return route.fulfill({
                     status: 200,
                     contentType: 'text/html; charset=utf-8',
-                    headers: { 'Content-Security-Policy': "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:" },
+                    headers: { 'Content-Security-Policy': "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:" },
                     body: gateHtml,
                 });
             }
@@ -278,10 +288,12 @@ test('BALANCED invisible Turnstile technical failure releases monetization at bo
     await expect.poll(
         () => page.evaluate(() => window.HorusMediaLoader?.getTrafficGateState?.().state),
         { timeout: 3500 }
-    ).toBe('SOFT_ALLOWED');
+    ).toBe('TIMEOUT');
 
-    await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests || 0), { timeout: 3500 }).toBeGreaterThan(0);
+    await page.waitForTimeout(2200);
+    expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
+    expect(requests.some(url => url.includes('securepubads.g.doubleclick.net'))).toBe(false);
     const gate = await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState());
-    expect(gate.reason).toBe('MAX_WAIT_FALLBACK');
+    expect(['MAX_WAIT', 'TURNSTILE_TIMEOUT']).toContain(gate.reason);
     expect(await page.locator('iframe[data-hm-traffic-gate="1"]').count()).toBe(0);
 });

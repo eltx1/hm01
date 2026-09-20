@@ -53,8 +53,8 @@ final class TrafficGateConfigurationResolver
         }
 
         return new TrafficGateConfiguration(
-            enabled: $requestedEnabled && ! $emergencyDisabled && $readiness === TrafficGateReadiness::Ready,
-            provider: (string) config('traffic_gate.provider', 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY'),
+            enabled: $requestedEnabled && ! $emergencyDisabled,
+            provider: (string) config('traffic_gate.provider', 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED'),
             gateOrigin: $publicOrigin,
             siteKey: $siteKey,
             policy: $policy,

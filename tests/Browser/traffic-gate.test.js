@@ -17,7 +17,7 @@ function configFor(hostname, turnstileSiteKey = '0x4AAAAA_task49_public_key') {
         allowedHostnames: [hostname],
         trafficGate: {
             enabled: true,
-            provider: 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY',
+            provider: 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED',
             gateOrigin: GATE_ORIGIN,
             siteKey: turnstileSiteKey,
             policy: 'BALANCED',
@@ -36,9 +36,11 @@ function createHarness({
     parentOrigin = 'https://publisher.example',
     allowedHostname = 'publisher.example',
     behavior = 'pass',
+    verificationReplies = null,
     config = configFor(allowedHostname),
 } = {}) {
     const messages = [];
+    const verificationCalls = [];
     const timers = [];
     const elements = new Map();
     let messageHandler = null;
@@ -108,6 +110,7 @@ function createHarness({
 
     const context = vm.createContext({
         console,
+        AbortController,
         document,
         URL,
         encodeURIComponent,
@@ -117,12 +120,17 @@ function createHarness({
         queueMicrotask,
         setTimeout: fakeSetTimeout,
         clearTimeout: fakeClearTimeout,
-        fetch: async () => ({
-            ok: config !== null,
-            async json() { return config; },
-        }),
+        fetch: async (url, options) => {
+            if (url.startsWith('https://siteverify.')) {
+                verificationCalls.push(JSON.parse(options.body));
+                const next = verificationReplies?.shift() ?? { status: 200, body: { success: true, pageNonce: NONCE } };
+                return { ok: next.status === 200, status: next.status, json: async () => next.body };
+            }
+            return { ok: config !== null, json: async () => config };
+        },
     });
     context.window = {
+        crypto: { randomUUID: () => 'd4b420a9-217b-413b-bf1d-8bf0a1825a7d' },
         location: { origin: GATE_ORIGIN },
         parent,
         turnstile: undefined,
@@ -134,9 +142,7 @@ function createHarness({
     vm.runInContext(gateSource, context, { filename: 'horus-traffic-gate.js' });
 
     async function flush() {
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let index = 0; index < 12; index++) await Promise.resolve();
     }
 
     async function hello(overrides = {}) {
@@ -146,7 +152,7 @@ function createHarness({
             origin: parentOrigin,
             data: {
                 type: 'HORUS_TRAFFIC_GATE_HELLO',
-                protocolVersion: 1,
+                protocolVersion: 2,
                 pageNonce: NONCE,
                 sitePublicKey: SITE_KEY,
                 ...overrides,
@@ -165,6 +171,7 @@ function createHarness({
 
     return {
         messages,
+        verificationCalls,
         timers,
         hello,
         runTimer,
@@ -174,7 +181,7 @@ function createHarness({
     };
 }
 
-test('authorized Site origin receives READY then PASS with the exact nonce and no token transport', async () => {
+test('authorized Site origin receives READY then PASS with the exact nonce and no token exposed to parent', async () => {
     const harness = createHarness({ behavior: 'pass' });
     await harness.hello();
 
@@ -184,7 +191,7 @@ test('authorized Site origin receives READY then PASS with the exact nonce and n
         'HORUS_TRAFFIC_GATE_PASS',
     ]);
     for (const { payload, targetOrigin } of harness.messages) {
-        assert.equal(payload.protocolVersion, 1);
+        assert.equal(payload.protocolVersion, 2);
         assert.equal(payload.pageNonce, NONCE);
         assert.equal(targetOrigin, 'https://publisher.example');
         assert.equal(JSON.stringify(payload).includes('TOKEN_MUST_NOT_LEAVE_FRAME'), false);
@@ -261,4 +268,29 @@ test('invalid or mismatched Site configuration never authorizes a challenge', as
 
     assert.equal(harness.renderCount, 0);
     assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_DENIED');
+});
+
+ test('a rejected server verification never emits PASS even after a client callback', async () => {
+    const harness = createHarness({ verificationReplies: [{ status: 422, body: { success: false, retryable: false } }] });
+    await harness.hello();
+    assert.equal(harness.verificationCalls.length, 1);
+    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_ERROR');
+    assert.equal(harness.messages.some(item => item.payload.type === 'HORUS_TRAFFIC_GATE_PASS'), false);
+});
+test('transient verification is retried once with the same token and idempotency key', async () => {
+    const harness = createHarness({ verificationReplies: [{ status: 503, body: { success: false, retryable: true } }] });
+    await harness.hello();
+    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_READY');
+    await harness.runTimer(1500);
+    assert.equal(harness.verificationCalls.length, 2);
+    assert.deepEqual(harness.verificationCalls[0], harness.verificationCalls[1]);
+    assert.equal(harness.messages.at(-1).payload.serverVerified, true);
+});
+test('two transient failures terminate without an unbounded request loop', async () => {
+    const fail = { status: 503, body: { success: false, retryable: true } };
+    const harness = createHarness({ verificationReplies: [fail, fail] });
+    await harness.hello();
+    await harness.runTimer(1500);
+    assert.equal(harness.verificationCalls.length, 2);
+    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_ERROR');
 });

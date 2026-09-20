@@ -26,7 +26,7 @@ function config(gated, expanded = false) {
         controls: { adServingDisabled: false, gamDisabled: true, prebidDisabled: true, directJsDisabled: false, nativeDemandDisabled: false, trafficGateDisabled: false },
         privacy: { mode: 'AUTO', cmp: { timeoutMs: 100, actionOnTimeout: 'LIMITED_ADS' }, requireConsentBeforeAds: false },
         clickGuard: { enabled: true, maxClicks: 3, windowHours: 6, blockHours: 12 },
-        trafficGate: { enabled: gated, provider: 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY', gateOrigin: GATE,
+        trafficGate: { enabled: gated, provider: 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED', gateOrigin: GATE,
             siteKey: '1x00000000000000000000BB', policy: 'BALANCED', readiness: gated ? 'READY' : 'DISABLED',
             timings: { initialWaitMs: 2000, maxWaitMs: 10000, retryIntervalMs: 500 } },
         prebid: { enabled: false }, nativeDemand: { enabled: false, placements: {} },
@@ -86,7 +86,7 @@ async function open(page, { count = 4, gated = false, blocked = false, expanded 
             if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated, expanded).controls }) });
             return route.fulfill({ status: 404, body: '' });
         }
-        if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type}, event.origin); });</script>` });
+        if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin); });</script>` });
         if (url.href === 'https://securepubads.g.doubleclick.net/tag/js/gpt.js') return route.fulfill({ contentType: 'application/javascript', body: gpt });
         return route.abort('blockedbyclient');
     });

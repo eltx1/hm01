@@ -1,16 +1,16 @@
 (() => {
     'use strict';
 
-    const PROTOCOL_VERSION = 1;
+    const PROTOCOL_VERSION = 2;
     const GATE_ORIGIN = 'https://verify.horusmedia.net';
     const ADMIN_ORIGIN = 'https://app.horusmedia.net';
     const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-    const PROVIDER = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
+    const PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
     const MAX_RETRIES = 1;
     const HARD_BOOT_TIMEOUT_MS = 15000;
     const DEFAULT_TEST_TIMINGS = Object.freeze({
         initialWaitMs: 1500,
-        maxWaitMs: 6000,
+        maxWaitMs: 10000,
         retryIntervalMs: 1500,
     });
 
@@ -43,6 +43,8 @@
     let retryTimer = null;
     let retries = 0;
     let terminal = false;
+    let verificationPending = false;
+    let verificationController = null;
 
     const widgetContainer = document.getElementById('horus-turnstile');
 
@@ -148,6 +150,7 @@
             return;
         }
         terminal = true;
+        verificationController?.abort();
         clearTimers();
         setState(nextState);
         post(type, extra);
@@ -266,6 +269,41 @@
         fail('TURNSTILE_ERROR', errorCode);
     }
 
+    async function verifyToken(token, timings) {
+        if (terminal || verificationPending) return;
+        if (typeof token !== 'string' || !token || token.length > 2048 || !window.crypto?.randomUUID) {
+            fail('INVALID_VERIFICATION_TOKEN');
+            return;
+        }
+        verificationPending = true;
+        const requestId = window.crypto.randomUUID();
+        for (let attempt = 0; attempt < 2 && !terminal; attempt += 1) {
+            verificationController = new AbortController();
+            const requestTimer = setTimeout(() => verificationController?.abort(), 4000);
+            let retryable = true;
+            try {
+                const response = await fetch('https://siteverify.horusmedia.net/verify', {
+                    method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+                    signal: verificationController.signal,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, pageNonce: boundParent.pageNonce, requestId }),
+                });
+                const result = await response.json();
+                if (terminal) return;
+                if (response.ok && result.success === true && result.pageNonce === boundParent.pageNonce) {
+                    finish(TYPES.pass, STATES.passed, { provider: PROVIDER, serverVerified: true });
+                    return;
+                }
+                retryable = (response.status === 429 || response.status >= 500) && result.retryable === true;
+            } catch {
+                if (terminal) return;
+            } finally { clearTimeout(requestTimer); }
+            if (!retryable) { fail('VERIFICATION_REJECTED'); return; }
+            if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, timings.retryIntervalMs));
+        }
+        if (!terminal) fail('VERIFICATION_UNAVAILABLE');
+    }
+
     function renderTurnstile(siteKey, timings, testMode) {
         if (terminal) {
             return;
@@ -282,9 +320,11 @@
             const renderedWidgetId = window.turnstile.render(widgetContainer, {
                 sitekey: siteKey,
                 execution: 'render',
+                action: 'horus_ads',
+                cData: boundParent.pageNonce,
                 retry: 'never',
                 'response-field': false,
-                callback: () => finish(TYPES.pass, STATES.passed, { provider: PROVIDER }),
+                callback: (token) => verifyToken(token, timings),
                 'error-callback': (errorCode) => handleTurnstileError(errorCode, timings),
                 'timeout-callback': () => timeout('TURNSTILE_TIMEOUT'),
                 'unsupported-callback': () => fail('UNSUPPORTED_BROWSER'),

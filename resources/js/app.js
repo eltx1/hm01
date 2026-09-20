@@ -99,7 +99,7 @@ if (trafficGateTestButton) {
     const activate = document.getElementById('traffic-gate-activate');
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
     const resultUrl = '/admin/operations/traffic-quality/sitekey/test-result';
-    const protocolVersion = 1;
+    const protocolVersion = 2;
     let frame = null;
     let watchdog = null;
     let nonce = null;
@@ -162,7 +162,7 @@ if (trafficGateTestButton) {
         if (!frame || !origin || event.origin !== origin || event.source !== frame.contentWindow) return;
         const message = event.data;
         if (!message || typeof message !== 'object' || message.protocolVersion !== protocolVersion || message.pageNonce !== nonce) return;
-        if (message.type === 'HORUS_TRAFFIC_GATE_PASS') finish('CLIENT PASS');
+        if (message.type === 'HORUS_TRAFFIC_GATE_PASS' && message.serverVerified === true) finish('CLIENT PASS');
         else if (message.type === 'HORUS_TRAFFIC_GATE_TIMEOUT') finish('CLIENT TIMEOUT');
         else if (message.type === 'HORUS_TRAFFIC_GATE_ERROR' || message.type === 'HORUS_TRAFFIC_GATE_DENIED') finish('CLIENT ERROR');
     }
@@ -180,10 +180,10 @@ if (trafficGateTestButton) {
         running = true;
         trafficGateTestButton.disabled = true;
         if (activate) activate.disabled = true;
-        if (status) status.textContent = 'Running client-only test…';
+        if (status) status.textContent = 'Running server verification test…';
         nonce = makeNonce();
         frame = document.createElement('iframe');
-        frame.src = `${origin}/traffic-gate/`;
+        frame.src = `${origin}/traffic-gate/?protocol=2`;
         frame.title = 'Horus Traffic Gate Client Test';
         frame.setAttribute('aria-hidden', 'true');
         frame.setAttribute('tabindex', '-1');

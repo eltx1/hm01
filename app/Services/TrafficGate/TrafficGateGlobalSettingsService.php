@@ -62,7 +62,7 @@ final class TrafficGateGlobalSettingsService
                 null,
                 ['setting_key' => $key, 'value' => $before],
                 ['setting_key' => $key, 'value' => $after],
-                ['reason' => $reason ? mb_substr($reason, 0, 500) : null, 'client_only' => true],
+                ['reason' => $reason ? mb_substr($reason, 0, 500) : null, 'server_verified' => true],
             );
         }
 

@@ -34,7 +34,7 @@ class StaticTrafficGateOriginTest extends TestCase
         );
     }
 
-    public function test_production_gate_has_no_backend_verification_secret_token_transport_or_test_key(): void
+    public function test_production_gate_calls_dedicated_worker_without_exposing_secret_or_token_to_parent(): void
     {
         $this->fixture();
         $snapshot = app(StaticDeliverySnapshotBuilder::class)->build();
@@ -46,14 +46,15 @@ class StaticTrafficGateOriginTest extends TestCase
             'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
             $javascript,
         );
-        $this->assertStringNotContainsString('siteverify', $combined);
+        $this->assertStringContainsString('https://siteverify.horusmedia.net/verify', $combined);
+        $this->assertStringNotContainsString('turnstile/v0/siteverify', $combined);
         $this->assertStringNotContainsString('turnstile secret', $combined);
         $this->assertStringNotContainsString('cloudflare_api_token', $combined);
         $this->assertStringNotContainsString('TOKEN_MUST_NOT_LEAVE_FRAME', $javascript);
         $this->assertStringNotContainsString('1x00000000000000000000BB', $javascript);
         $this->assertStringNotContainsString('2x00000000000000000000BB', $javascript);
         $this->assertStringContainsString("'response-field': false", $javascript);
-        $this->assertStringContainsString('callback: () =>', $javascript);
+        $this->assertStringContainsString('callback: (token) => verifyToken', $javascript);
         $this->assertDoesNotMatchRegularExpression(
             '/postMessage\s*\([^,]+,\s*[\'\"]\*[\'\"]\s*\)/',
             $javascript,
