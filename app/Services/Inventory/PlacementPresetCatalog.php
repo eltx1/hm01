@@ -224,7 +224,7 @@ final class PlacementPresetCatalog
                 'rewarded' => true,
                 'requireUserActivation' => true,
                 'singleActiveVideo' => true,
-                'rewardCooldownSeconds' => 900,
+                'rewardCooldownSeconds' => 60,
             ],
             'lazy_load_enabled' => false,
             'collapse_empty_div' => false,

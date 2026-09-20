@@ -326,6 +326,31 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame($count + 1, $this->site->configVersions()->count());
     }
 
+    public function test_rewarded_cooldown_upgrade_preserves_custom_settings_and_is_idempotent(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'rewarded',
+            'tag' => '/23055873217/rewarded',
+        ]))->assertSessionHasNoErrors();
+        $placement = \App\Models\Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->where('code', 'quick_rewarded')->firstOrFail();
+        $settings = $placement->format_settings;
+        $settings['rewardCooldownSeconds'] = 900;
+        $placement->update(['format_settings' => $settings]);
+        $migration = require database_path('migrations/2026_09_20_010000_reduce_default_rewarded_cooldown.php');
+        $migration->up();
+        $migration->up();
+        $this->assertSame(60, $placement->fresh()->format_settings['rewardCooldownSeconds']);
+        $settings['rewardCooldownSeconds'] = 120;
+        $placement->update(['format_settings' => $settings]);
+        $migration->up();
+        $this->assertSame(120, $placement->fresh()->format_settings['rewardCooldownSeconds']);
+        $settings['rewardCooldownSeconds'] = 900;
+        $placement->update(['format_settings' => $settings, 'metadata' => []]);
+        $migration->up();
+        $this->assertSame(900, $placement->fresh()->format_settings['rewardCooldownSeconds']);
+    }
+
     public function test_plain_vast_url_can_create_a_user_initiated_rewarded_surface(): void
     {
         $this->seed(AdFormatSeeder::class);
@@ -349,7 +374,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame('REWARDED', $placement->type->value);
         $this->assertTrue((bool) data_get($placement->format_settings, 'rewarded'));
         $this->assertTrue((bool) data_get($placement->format_settings, 'requireUserActivation'));
-        $this->assertSame(900, data_get($placement->format_settings, 'rewardCooldownSeconds'));
+        $this->assertSame(60, data_get($placement->format_settings, 'rewardCooldownSeconds'));
 
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
         $candidate = data_get($configuration, 'placements.quick_rewarded.candidates.0');

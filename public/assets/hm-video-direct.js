@@ -102,7 +102,7 @@
     }
 
     function rewardCooldownSeconds(container) {
-        var seconds = Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 0);
+        var seconds = Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 60);
         return Number.isFinite(seconds) ? Math.max(0, Math.min(86400, Math.floor(seconds))) : 0;
     }
 

@@ -137,12 +137,18 @@ const HELPERS = `    function placementFormatSettings(placement) {
                     var occupied = 0;
                     tracker.anchors.forEach(function (anchor) {
                         if (anchor.isConnected === false || anchor.getAttribute('data-hm-placement-dismissed') === '1' || !placementRendered(anchor)) return;
-                        var rect = anchor.getBoundingClientRect();
-                        if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= viewportHeight) return;
-                        if (rect.right <= bounds.left || rect.left >= bounds.right) return;
-                        occupied = Math.max(occupied, viewportHeight - rect.top);
+                        // Provider frames can overflow a zero-height wrapper.
+                        // Measure their DOM rectangles without accessing frame content.
+                        var surfaces = [anchor].concat(Array.prototype.slice.call(anchor.querySelectorAll('iframe')));
+                        surfaces.forEach(function (surface) {
+                            var rect = surface.getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= viewportHeight) return;
+                            if (rect.right <= bounds.left || rect.left >= bounds.right) return;
+                            occupied = Math.max(occupied, viewportHeight - rect.top);
+                        });
                     });
                     var bottom = occupied > 0 ? String(Math.ceil(occupied) + 16) + 'px' : 'calc(16px + env(safe-area-inset-bottom, 0px))';
+                    tracker.bottom = bottom;
                     if (!floating.style.getPropertyValue || floating.style.getPropertyValue('bottom') !== bottom) {
                         setImportantStyle(floating.style, 'bottom', bottom);
                     }
@@ -154,7 +160,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
                 if (typeof window.ResizeObserver === 'function') tracker.resize = new window.ResizeObserver(tracker.schedule);
                 if (typeof window.MutationObserver === 'function') {
                     tracker.mutations = new window.MutationObserver(tracker.schedule);
-                    tracker.mutations.observe(floating, { attributes: true, attributeFilter: ['data-hm-placement-dismissed'] });
+                    tracker.mutations.observe(floating, { attributes: true, attributeFilter: ['data-hm-placement-dismissed', 'style', 'class'] });
                 }
                 if (window.addEventListener) window.addEventListener('resize', tracker.schedule);
             }
@@ -191,7 +197,7 @@ const HELPERS = `    function placementFormatSettings(placement) {
             setImportantStyle(style, 'position', 'fixed');
             setImportantStyle(style, 'z-index', '2147483000');
             setImportantStyle(style, 'right', '16px');
-            setImportantStyle(style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
+            setImportantStyle(style, 'bottom', element.__hmClearance && element.__hmClearance.bottom || 'calc(16px + env(safe-area-inset-bottom, 0px))');
             resetPositionStyle(style, 'left');
             resetPositionStyle(style, 'top');
             resetPositionStyle(style, 'transform');

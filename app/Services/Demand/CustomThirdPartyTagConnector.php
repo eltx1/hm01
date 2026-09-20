@@ -121,7 +121,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $id = 'hm-gpt-rewarded-'.$placement->id;
         $url = $this->trustedRuntimeUrl('hm-gpt-direct.js');
         $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-rewarded' => '1', 'data-hm-gpt-ad-unit-path' => $path,
-            'data-hm-reward-cooldown-seconds' => (string) max(0, min(86400, (int) data_get($placement->placement->format_settings, 'rewardCooldownSeconds', 900)))];
+            'data-hm-reward-cooldown-seconds' => (string) max(0, min(86400, (int) data_get($placement->placement->format_settings, 'rewardCooldownSeconds', 60)))];
         $selector = '#'.$id.'[data-hm-gpt-status="rendered"]';
         return [
             'recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'REWARDED',
@@ -215,7 +215,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             $attributes += [
                 'data-hm-video-rewarded' => '1',
                 'data-hm-reward-experience' => 'continue-reading',
-                'data-hm-reward-cooldown-seconds' => (string) max(0, min(86_400, (int) ($formatSettings['rewardCooldownSeconds'] ?? 900))),
+                'data-hm-reward-cooldown-seconds' => (string) max(0, min(86_400, (int) ($formatSettings['rewardCooldownSeconds'] ?? 60))),
             ];
         }
         $successSelector = $rewarded

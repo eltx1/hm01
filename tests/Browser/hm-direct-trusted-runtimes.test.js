@@ -740,6 +740,21 @@ test('Horus rewarded VAST rejects programmatic activation outside a user gesture
     assert.equal(attributes['data-hm-video-status'], 'activation-required');
 });
 
+test('floating VAST requests on each new page even with a recent reward grant', async () => {
+    const storage = { 'hm:rewarded:v1:floating': String(Date.now()) };
+    for (let visit = 0; visit < 2; visit++) {
+        const attributes = {
+            'data-hm-video-direct': '1',
+            'data-hm-vast-url': Buffer.from('https://video.example.com/vast').toString('base64'),
+            'data-hm-reward-cooldown-seconds': '900',
+        };
+        const runtime = runVideo(container(attributes, 'floating'), { storage });
+        await tick();
+        assert.equal(runtime.requested.length, 1);
+        assert.notEqual(attributes['data-hm-video-status'], 'reward-capped');
+    }
+});
+
 test('Horus rewarded VAST applies its per-placement completion cooldown', async () => {
     const id = 'hm-rewarded-capped';
     const attributes = {

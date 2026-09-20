@@ -361,7 +361,7 @@
             return;
         }
         if (state.rewarded) { report(container, 'ineligible'); return; }
-        var seconds = Math.max(0, Math.min(86400, Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 900)));
+        var seconds = Math.max(0, Math.min(86400, Number(container.getAttribute('data-hm-reward-cooldown-seconds') || 60)));
         var key = 'hm:gpt:rewarded:v1:' + path;
         try {
             var grantedAt = Number(window.localStorage.getItem(key) || 0);
