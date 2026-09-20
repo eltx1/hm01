@@ -112,6 +112,8 @@ final class StaticDeliveryManager
             return null;
         }
 
+        $this->supersedeAbandonedGlobalBatches();
+
         $batch = DB::transaction(function () use ($batchActor, $trigger): ?StaticDeliveryBatch {
             $items = StaticDeliveryItem::withoutGlobalScopes()
                 ->with('configVersion:id,version')
@@ -258,6 +260,50 @@ final class StaticDeliveryManager
         }
 
         return $batch->refresh();
+    }
+
+    /** Retire only unsent global work already covered by a newer confirmed batch. */
+    private function supersedeAbandonedGlobalBatches(): void
+    {
+        $cutoff = now()->subSeconds(max(600, 2 * (int) config('static-delivery.process_lock_seconds', 180)));
+        DB::transaction(function () use ($cutoff): void {
+            $batches = StaticDeliveryBatch::query()->where('status', StaticDeliveryStatus::Batching->value)
+                ->whereNull('submitted_at')->whereNull('remote_deployment_id')->whereNull('remote_url')
+                ->where('updated_at', '<=', $cutoff)
+                ->whereDoesntHave('items', fn ($query) => $query->withoutGlobalScopes())
+                ->where(function ($query) use ($cutoff): void {
+                    $query->where('started_at', '<=', $cutoff)
+                        ->orWhere(fn ($query) => $query->whereNull('started_at')->where('created_at', '<=', $cutoff));
+                })->oldest('created_at')->limit(25)->lockForUpdate()->get();
+            foreach ($batches as $batch) {
+                $changes = $batch->globalChanges()->lockForUpdate()->get();
+                if ($changes->isEmpty() || $changes->contains(fn ($change) => $change->status !== StaticDeliveryStatus::Batching)) {
+                    continue;
+                }
+                $proofs = [];
+                foreach ($changes as $change) {
+                    $replacement = StaticGlobalArtifactChange::query()
+                        ->where('artifact_type', $change->artifact_type)
+                        ->where('status', StaticDeliveryStatus::Deployed->value)
+                        ->where('delivered_at', '>', $change->updated_at)->with('batch')
+                        ->whereHas('batch', fn ($query) => $query
+                            ->where('status', StaticDeliveryStatus::Deployed->value)
+                            ->where('driver', $this->driver->name())
+                            ->where('started_at', '>', $change->updated_at))
+                        ->latest('delivered_at')->first();
+                    if (! $replacement || ! preg_match('/^[a-f0-9]{64}$/', (string) $replacement->batch?->manifest_hash)) {
+                        continue 2;
+                    }
+                    $proofs[] = $replacement->batch_id;
+                }
+                $batch->globalChanges()->update(['status' => StaticDeliveryStatus::Superseded->value]);
+                $batch->update(['status' => StaticDeliveryStatus::Superseded,
+                    'error_code' => 'ABANDONED_BATCH_SUPERSEDED', 'next_retry_at' => null]);
+                $this->audit->record('static.delivery.abandoned_batch.superseded', null, $batch->creator, $batch,
+                    newValues: ['batch_id' => $batch->id, 'item_count' => $changes->count(),
+                        'confirmed_batch_ids' => array_values(array_unique($proofs))]);
+            }
+        });
     }
 
     public function reconcileUploading(): int
