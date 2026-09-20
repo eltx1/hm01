@@ -633,7 +633,7 @@ HTML;
             app(PlacementPresetBuilder::class)->create($this->site, $preset, $this->admin, [], false, true);
         }
         $other = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->get()->mapWithKeys(fn ($p) => [$p->id => $p->getAttributes()])->all();
-        $before = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
+        $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->where('environment', ConfigEnvironment::Production->value)->orderByDesc('version')->firstOrFail()->payload;
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
         $ids = $this->responsiveUnits()->pluck('id')->all();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
@@ -646,7 +646,7 @@ HTML;
         $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->where('id', '!=', $existingWidget->id)->get()->pluck('direct_tag_template')->unique()->values()->all());
         $this->assertSame($existingWidgetAttributes, $existingWidget->fresh()->getAttributes());
         foreach ($other as $id => $attributes) $this->assertSame($attributes, Placement::withoutGlobalScopes()->findOrFail($id)->getAttributes());
-        $after = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
+        $after = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->where('environment', ConfigEnvironment::Production->value)->orderByDesc('version')->firstOrFail()->payload;
         foreach (['trafficGate', 'clickGuard', 'controls', 'privacy'] as $key) $this->assertSame($before[$key], $after[$key], $key);
         $this->assertSame(data_get($before, 'directDemand.placements.header_banner'), data_get($after, 'directDemand.placements.header_banner'));
     }
