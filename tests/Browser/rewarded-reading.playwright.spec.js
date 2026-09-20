@@ -59,6 +59,10 @@ test('floating video clears rendered bottom anchors, follows resize and stops af
         const a = await bottom.locator('[data-test-anchor]').boundingBox(), b = await floating.boundingBox();
         return a.y - b.y - b.height;
     }).toBeGreaterThanOrEqual(15);
+    await bottom.evaluate(el => {
+        el.querySelector('[data-test-anchor]').remove();
+        el.style.height = '110px';
+    });
     await bottom.locator('[data-hm-placement-close]').click();
     await expect.poll(() => floating.evaluate(el => parseFloat(getComputedStyle(el).bottom))).toBe(16);
     // Count writes after layout settles: observers must not trigger themselves.
