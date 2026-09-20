@@ -39,6 +39,9 @@ maximum. Unconfirmed batches expire after 30 minutes by default
 (`HORUS_STATIC_DELIVERY_CONFIRMATION_TIMEOUT_SECONDS`). Upload execution has a
 100-second window; provider errors are redacted and enter bounded backoff.
 A Cloudflare success response with stale public files is not marked deployed.
+On migration, unconfirmed passive batches enter the existing bounded retry path
+immediately; they do not wait for the disabled passive uploader's 30-minute
+confirmation deadline. Already confirmed passive batches retain their proof.
 
 In direct mode the legacy sync workflow refreshes queued runtime configuration
 and checks prerequisites, but does not invoke the processor or upload independent

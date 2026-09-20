@@ -97,7 +97,9 @@ class CloudflarePagesDirectDriverTest extends TestCase
 
     public function test_an_unrelated_running_deployment_blocks_a_competing_upload(): void
     {
-        $other = $this->deployment('active');
+        // A completed initialization stage is not a completed deployment.
+        $other = $this->deployment('success');
+        $other['latest_stage']['name'] = 'initialize';
         $other['deployment_trigger']['metadata']['commit_message'] = 'Another deployment';
         $this->fakeProvider([$other]);
         try {
@@ -191,6 +193,20 @@ class CloudflarePagesDirectDriverTest extends TestCase
         Http::fake(['*' => Http::response(['success' => true, 'result' => $deployment])]);
         $this->expectExceptionMessage('does not match the expected production snapshot');
         app(CloudflarePagesDirectDriver::class)->probe($this->batch());
+    }
+
+    public function test_unconfirmed_passive_batch_enters_normal_retry_after_driver_migration(): void
+    {
+        config(['static-delivery.external_sync.confirmation_path' => '/nonexistent/horus-test-marker']);
+        $batch = $this->batch();
+        $batch->driver = 'external-pages-sync';
+        try {
+            app(CloudflarePagesDirectDriver::class)->probe($batch);
+            $this->fail('Expected migration to the active publisher');
+        } catch (StaticDeliveryException $exception) {
+            $this->assertSame('DELIVERY_DRIVER_CHANGED', $exception->category);
+        }
+        Http::assertNothingSent();
     }
 
     private function snapshot(): StaticDeliverySnapshot

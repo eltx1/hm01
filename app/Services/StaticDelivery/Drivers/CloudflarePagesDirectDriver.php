@@ -66,7 +66,9 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
                 && ! in_array(data_get($deployment, 'latest_stage.status'), ['failure', 'canceled'], true)) {
                 return $this->result($deployment, $snapshot->manifestHash);
             }
-            if (! in_array(data_get($deployment, 'latest_stage.status'), ['success', 'failure', 'canceled'], true)) {
+            $terminal = in_array(data_get($deployment, 'latest_stage.status'), ['failure', 'canceled'], true)
+                || (data_get($deployment, 'latest_stage.name') === 'deploy' && data_get($deployment, 'latest_stage.status') === 'success');
+            if (! $terminal) {
                 throw new StaticDeliveryException('PAGES_DEPLOYMENT_BUSY', 'Another production deployment is in flight; publication will retry later.');
             }
             break;
@@ -132,9 +134,15 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
     public function probe(StaticDeliveryBatch $batch): ?StaticDeliveryResult
     {
         if ($batch->driver && $batch->driver !== $this->name()) {
-            // During migration, legacy in-flight batches retain their original
-            // confirmation contract; the manager's deadline bounds stale ones.
-            return $this->publicVerifier->probe($batch);
+            $confirmed = $this->publicVerifier->probe($batch);
+            if ($confirmed === null && $batch->driver === 'external-pages-sync') {
+                // Passive batches have not submitted an upload themselves.
+                // Requeue them through normal bounded backoff after switching
+                // drivers instead of waiting 30 minutes for a disabled uploader.
+                throw new StaticDeliveryException('DELIVERY_DRIVER_CHANGED', 'Unconfirmed passive batch will retry through active server delivery.');
+            }
+
+            return $confirmed;
         }
         $id = (string) $batch->remote_deployment_id;
         if (! preg_match('/^[a-zA-Z0-9-]+$/', $id)) {
