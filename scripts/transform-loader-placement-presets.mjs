@@ -245,7 +245,8 @@ const HELPERS = `    function placementFormatSettings(placement) {
         var formatCode = String(placement && placement.format && placement.format.code || '').toLowerCase();
         var contentTargets = ['content_mid', 'article_mid', 'content_end', 'article_end'];
 
-        return formatCode === 'display_in_article'
+        return settings.contentAlignment === 'center'
+            || formatCode === 'display_in_article'
             || contentTargets.indexOf(target) !== -1
             || contentTargets.indexOf(contentPosition) !== -1
             || contentTargets.indexOf(surfaceMount) !== -1;

@@ -180,4 +180,5 @@
 </article>
 <article><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Waiting for successful ads.txt verification; submission is automatic.</p>@endforelse</article>
 @endif
+<x-responsive-bundle-codes :site="$site" />
 @endsection

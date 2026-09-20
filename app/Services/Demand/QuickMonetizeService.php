@@ -40,7 +40,7 @@ final class QuickMonetizeService
         private readonly VastTagUrlParser $vastTags,
     ) {}
 
-    /** @return array{account:DemandAccount,placement:Placement} */
+    /** @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>} */
     public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null): array
     {
         $tag = trim($tag);
@@ -91,12 +91,17 @@ final class QuickMonetizeService
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
         return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $rewardedPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
+            $bundle = ($existingPlacement === null && $preset === 'responsive_display')
+                || data_get($existingPlacement?->metadata, 'responsive_bundle') === 'v1';
             $placement = $existingPlacement;
-            if (! $placement) {
+            if ($bundle) {
+                $placements = $this->placements->responsiveBundle($site, $actor, $placementName);
+            } elseif (! $placement) {
                 if (! $preset) throw ValidationException::withMessages(['placement_preset' => 'Choose an ad format / surface.']);
                 $placement = $this->placements->create($site, $preset, $actor, ['name' => $placementName], false, true);
-                $this->assertPlacementReady($site, $placement);
             }
+            $placements ??= [$placement];
+            foreach ($placements as $placement) $this->assertPlacementReady($site, $placement);
 
             $siteRevenueShare = $this->publisherRevenueShare($site);
             $publisher = Publisher::withoutGlobalScopes()->whereKey($site->publisher_id)->lockForUpdate()->firstOrFail();
@@ -118,62 +123,65 @@ final class QuickMonetizeService
             $siteMappingConfiguration['quick_monetize_managed'] = true;
             $demandSite = $this->accounts->assignSite($account, $site, ['approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'is_default' => true, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'revenue_share_percent' => $siteRevenueShare, 'fallback_priority' => 100, 'remote_site_id' => $existingDemandSite?->remote_site_id, 'configuration' => $siteMappingConfiguration], $actor);
 
-            $existingDemandPlacement = DemandPlacement::withoutGlobalScopes()->where('demand_site_id', $demandSite->id)->where('placement_id', $placement->id)->first();
-            $placementMappingConfiguration = (array) ($existingDemandPlacement?->configuration ?? []);
-            $placementMappingConfiguration['quick_monetize_managed'] = true;
-            $demandPlacement = $this->accounts->assignPlacement($demandSite, $placement, ['approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'fallback_priority' => 100, 'remote_placement_id' => $existingDemandPlacement?->remote_placement_id, 'placement_code' => $existingDemandPlacement?->placement_code ?? $placement->code, 'configuration' => $placementMappingConfiguration], $actor);
+            foreach ($placements as $placement) {
+                $existingDemandPlacement = DemandPlacement::withoutGlobalScopes()->where('demand_site_id', $demandSite->id)->where('placement_id', $placement->id)->first();
+                $placementMappingConfiguration = (array) ($existingDemandPlacement?->configuration ?? []);
+                $placementMappingConfiguration['quick_monetize_managed'] = true;
+                $demandPlacement = $this->accounts->assignPlacement($demandSite, $placement, ['approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'fallback_priority' => 100, 'remote_placement_id' => $existingDemandPlacement?->remote_placement_id, 'placement_code' => $existingDemandPlacement?->placement_code ?? $placement->code, 'configuration' => $placementMappingConfiguration], $actor);
 
-            $existingQuickWidget = DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $demandPlacement->id)->get()->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))->sortByDesc('id')->first();
-            $widgetConfiguration = (array) ($existingQuickWidget?->configuration ?? []);
-            $widgetConfiguration['quick_monetize_managed'] = true;
-            $widgetConfiguration['isolation_allowed_origins'] = $isolationOrigins;
-            $widgetConfiguration['isolation_script_origins'] = $scriptOrigins;
-            $widgetConfiguration['isolation_frame_origins'] = $resourceOrigins['frame'];
-            $widgetConfiguration['isolation_image_origins'] = $resourceOrigins['image'];
-            $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
-            $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
-            $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
-            $widgetConfiguration['input_kind'] = $rewardedPath !== null ? 'GAM_REWARDED_PATH' : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
-            if ($vast !== null) {
-                $widgetConfiguration['vast_origin'] = $vast['origin'];
-                $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
-            } else {
-                unset($widgetConfiguration['vast_origin']);
-                // Provider tags commonly render after an asynchronous auction or
-                // consent callback. Give the isolated runtime a practical window
-                // while still keeping the loader's failover strictly bounded.
-                $widgetConfiguration['render_timeout_ms'] = max(10_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
+                $existingQuickWidget = DemandWidget::withoutGlobalScopes()->where('demand_placement_id', $demandPlacement->id)->get()->filter(fn (DemandWidget $widget) => (bool) data_get($widget->configuration, 'quick_monetize_managed', false))->sortByDesc('id')->first();
+                $widgetConfiguration = (array) ($existingQuickWidget?->configuration ?? []);
+                $widgetConfiguration['quick_monetize_managed'] = true;
+                $widgetConfiguration['isolation_allowed_origins'] = $isolationOrigins;
+                $widgetConfiguration['isolation_script_origins'] = $scriptOrigins;
+                $widgetConfiguration['isolation_frame_origins'] = $resourceOrigins['frame'];
+                $widgetConfiguration['isolation_image_origins'] = $resourceOrigins['image'];
+                $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
+                $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
+                $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
+                $widgetConfiguration['input_kind'] = $rewardedPath !== null ? 'GAM_REWARDED_PATH' : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
+                if ($vast !== null) {
+                    $widgetConfiguration['vast_origin'] = $vast['origin'];
+                    $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
+                } else {
+                    unset($widgetConfiguration['vast_origin']);
+                    // Provider tags commonly render after an asynchronous auction or
+                    // consent callback. Give the isolated runtime a practical window
+                    // while still keeping the loader's failover strictly bounded.
+                    $widgetConfiguration['render_timeout_ms'] = max(10_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));
+                }
+                $this->accounts->upsertWidget($demandPlacement, ['name' => $existingQuickWidget?->name ?? 'Quick Manual · '.$placement->code, 'widget_code' => 'quick-'.$placement->code, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'direct_tag_template' => $tag, 'approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'configuration' => $widgetConfiguration], $actor);
+
+                if (! (bool) $site->native_demand_enabled) {
+                    $site->update(['native_demand_enabled' => true]);
+                    $this->audit->record('demand.site.direct_demand_enabled_changed', $site->organization_id, $actor, $site, ['native_demand_enabled' => false], ['native_demand_enabled' => true]);
+                }
+
+                $demandPlacement = DemandPlacement::withoutGlobalScopes()->with(['demandSite.account.network', 'placement.sizes', 'widgets'])->findOrFail($demandPlacement->id);
+                $connector = $this->connectors->for($account->refresh()->load('network'));
+                $connectorReview = $connector->parseDirectTag($tag);
+                if (! (bool) ($connectorReview['safe'] ?? false)) {
+                    $connectorWarnings = array_values((array) ($connectorReview['securityWarnings'] ?? []));
+                    throw ValidationException::withMessages(['tag' => $connectorWarnings !== [] ? implode(' ', $connectorWarnings) : 'The supplied third-party tag did not pass the connector security review.']);
+                }
+                try { $recipe = $connector->generateDirectTag($demandPlacement); }
+                catch (ValidationException $exception) { throw $exception; }
+                catch (Throwable $exception) { throw ValidationException::withMessages(['tag' => $exception->getMessage() !== '' ? $exception->getMessage() : 'Quick Monetize could not create a trusted runtime recipe. No changes were published.']); }
+
+                $reviewMode = strtoupper((string) data_get($connectorReview, 'recipe.executionMode', ''));
+                $actualMode = strtoupper((string) ($recipe['executionMode'] ?? ''));
+                if (! in_array($actualMode, ['STRUCTURED', 'ISOLATED_IFRAME'], true) || $actualMode !== $reviewMode || (data_get($connectorReview, 'recipe.provider') === 'GOOGLE_GPT' && $actualMode !== 'STRUCTURED')) throw ValidationException::withMessages(['tag' => 'Quick Monetize could not create the reviewed trusted runtime recipe. No changes were published.']);
             }
-            $this->accounts->upsertWidget($demandPlacement, ['name' => $existingQuickWidget?->name ?? 'Quick Manual · '.$placement->code, 'widget_code' => 'quick-'.$placement->code, 'integration_mode' => DemandIntegrationMode::ManualTag->value, 'direct_tag_template' => $tag, 'approval_status' => DemandApprovalStatus::Approved->value, 'is_enabled' => true, 'configuration' => $widgetConfiguration], $actor);
-
-            if (! (bool) $site->native_demand_enabled) {
-                $site->update(['native_demand_enabled' => true]);
-                $this->audit->record('demand.site.direct_demand_enabled_changed', $site->organization_id, $actor, $site, ['native_demand_enabled' => false], ['native_demand_enabled' => true]);
-            }
-
-            $demandPlacement = DemandPlacement::withoutGlobalScopes()->with(['demandSite.account.network', 'placement.sizes', 'widgets'])->findOrFail($demandPlacement->id);
-            $connector = $this->connectors->for($account->refresh()->load('network'));
-            $connectorReview = $connector->parseDirectTag($tag);
-            if (! (bool) ($connectorReview['safe'] ?? false)) {
-                $connectorWarnings = array_values((array) ($connectorReview['securityWarnings'] ?? []));
-                throw ValidationException::withMessages(['tag' => $connectorWarnings !== [] ? implode(' ', $connectorWarnings) : 'The supplied third-party tag did not pass the connector security review.']);
-            }
-            try { $recipe = $connector->generateDirectTag($demandPlacement); }
-            catch (ValidationException $exception) { throw $exception; }
-            catch (Throwable $exception) { throw ValidationException::withMessages(['tag' => $exception->getMessage() !== '' ? $exception->getMessage() : 'Quick Monetize could not create a trusted runtime recipe. No changes were published.']); }
-
-            $reviewMode = strtoupper((string) data_get($connectorReview, 'recipe.executionMode', ''));
-            $actualMode = strtoupper((string) ($recipe['executionMode'] ?? ''));
-            if (! in_array($actualMode, ['STRUCTURED', 'ISOLATED_IFRAME'], true) || $actualMode !== $reviewMode || (data_get($connectorReview, 'recipe.provider') === 'GOOGLE_GPT' && $actualMode !== 'STRUCTURED')) throw ValidationException::withMessages(['tag' => 'Quick Monetize could not create the reviewed trusted runtime recipe. No changes were published.']);
 
             $finalConfig = $this->siteConfigurationBuilder->build($site->fresh(), ConfigEnvironment::Production, 0);
-            $finalPlacement = collect((array) ($finalConfig['placements'] ?? []))->first(fn (array $candidate) => ($candidate['code'] ?? null) === $placement->code);
-            $directCandidates = (array) ($finalConfig['directDemand']['placements'][$placement->code]['candidates'] ?? []);
-            if ($directCandidates === [] || ! is_array($finalPlacement)) throw ValidationException::withMessages(['tag' => 'The tag passed parsing but could not produce a deliverable Direct Demand candidate. No changes were published.']);
-            if ((bool) ($finalPlacement['rendererConflict'] ?? false) || ($finalPlacement['renderer'] ?? null) !== 'DIRECT_JS' || ! (bool) ($finalPlacement['enabled'] ?? false)) throw ValidationException::withMessages([$existingPlacement ? 'placement_id' : 'placement_preset' => 'This placement is already owned by another renderer or is not eligible for Direct Demand. Quick Monetize will not replace or double-render it.']);
-
+            foreach ($placements as $placement) {
+                $finalPlacement = collect((array) ($finalConfig['placements'] ?? []))->first(fn (array $candidate) => ($candidate['code'] ?? null) === $placement->code);
+                $directCandidates = (array) ($finalConfig['directDemand']['placements'][$placement->code]['candidates'] ?? []);
+                if ($directCandidates === [] || ! is_array($finalPlacement)) throw ValidationException::withMessages(['tag' => 'The tag passed parsing but could not produce a deliverable Direct Demand candidate. No changes were published.']);
+                if ((bool) ($finalPlacement['rendererConflict'] ?? false) || ($finalPlacement['renderer'] ?? null) !== 'DIRECT_JS' || ! (bool) ($finalPlacement['enabled'] ?? false)) throw ValidationException::withMessages([$existingPlacement ? 'placement_id' : 'placement_preset' => 'This placement is already owned by another renderer or is not eligible for Direct Demand. Quick Monetize will not replace or double-render it.']);
+            }
             $this->configPublisher->publishActiveProduction($site->fresh(), $actor);
-            return ['account' => $account->refresh(), 'placement' => $placement->refresh()->load(['sizes', 'adFormat'])];
+            return ['account' => $account->refresh(), 'placement' => $placements[0]->refresh()->load(['sizes', 'adFormat']), 'placements' => $placements];
         });
     }
 

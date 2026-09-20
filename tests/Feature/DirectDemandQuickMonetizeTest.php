@@ -15,6 +15,10 @@ use App\Models\DemandNetwork;
 use App\Models\DemandPlacement;
 use App\Models\DemandSite;
 use App\Models\DemandWidget;
+use App\Models\Placement;
+use App\Enums\ConfigEnvironment;
+use App\Services\Inventory\SiteConfigurationBuilder;
+use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Demand\CustomThirdPartyTagConnector;
 use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
@@ -591,6 +595,116 @@ HTML;
             'is_disabled' => true,
         ]);
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+    }
+
+    public function test_responsive_activation_publishes_four_manual_centered_slots_with_one_tag_and_unique_runtime_ids(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $units = $this->responsiveUnits();
+        $this->assertCount(4, $units);
+        $this->assertSame($before + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $config = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
+        $ids = [];
+        foreach ($units as $unit) {
+            $public = collect($config['placements'])->firstWhere('code', $unit->code);
+            $this->assertFalse(data_get($public, 'format.settings.autoMount'));
+            $this->assertSame('center', data_get($public, 'format.settings.contentAlignment'));
+            $this->assertSame('DIRECT_JS', $public['renderer']);
+            $this->assertTrue($public['enabled']);
+            $recipe = data_get($config, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
+            $ids[] = data_get($recipe, 'container.id');
+            $this->assertSame('/1234567/lordai_header', data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
+        }
+        $this->assertCount(4, array_unique($ids));
+        $widgets = DemandWidget::withoutGlobalScopes()->get();
+        $this->assertCount(4, $widgets);
+        $this->assertSame([$this->gptTag()], $widgets->pluck('direct_tag_template')->unique()->values()->all());
+    }
+
+    public function test_responsive_retry_and_editing_a_member_update_the_same_four_without_changing_other_formats_or_protection(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        foreach (['sticky_bottom', 'sticky_top', 'video_floating', 'rewarded', 'in_article_display', 'high_impact_display'] as $preset) {
+            app(PlacementPresetBuilder::class)->create($this->site, $preset, $this->admin, [], false, true);
+        }
+        $other = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->get()->mapWithKeys(fn ($p) => [$p->id => $p->getAttributes()])->all();
+        $before = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $ids = $this->responsiveUnits()->pluck('id')->all();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $tag = str_replace('lordai_header', 'updated_unit', $this->gptTag());
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_id' => $ids[2], 'tag' => $tag,
+        ]))->assertSessionHasNoErrors();
+        $this->assertSame($ids, $this->responsiveUnits()->pluck('id')->all());
+        $this->assertSame(4, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
+        foreach ($other as $id => $attributes) $this->assertSame($attributes, Placement::withoutGlobalScopes()->findOrFail($id)->getAttributes());
+        $after = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
+        foreach (['trafficGate', 'clickGuard', 'controls', 'privacy'] as $key) $this->assertSame($before[$key], $after[$key], $key);
+    }
+
+    public function test_one_blocked_bundle_member_rolls_back_all_tag_updates_and_does_not_publish(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $member = $this->responsiveUnits()->last();
+        app(PlatformControlService::class)->set('PLACEMENT', $member->id, 'DIRECT_JS', true, 'Blocked member', $this->admin);
+        $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag' => str_replace('lordai_header', 'must_not_publish', $this->gptTag()),
+        ]))->assertSessionHasErrors('quick');
+        $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertCount(4, $this->responsiveUnits());
+        $this->assertSame([$this->gptTag()], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
+    }
+
+    public function test_admin_and_owner_can_copy_each_code_but_another_publisher_cannot_access_them(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        foreach (['admin.demand.quick.create', 'admin.sites.inventory.index', 'publisher.sites.show'] as $route) {
+            if ($route === 'publisher.sites.show') $this->actingAs($this->publisherUser);
+            $response = $this->get(route($route, ['site' => $this->site->id]))->assertOk();
+            foreach ($this->responsiveUnits() as $unit) $response->assertSee($unit->installationCode());
+            $response->assertDontSee('googletag.defineSlot');
+        }
+        $org = $this->makeOrganization(OrganizationType::Publisher, 'Another publisher');
+        $outsider = $this->makeUser($org, RoleName::PublisherAdmin);
+        $this->makePublisherFor($outsider);
+        $this->actingAs($outsider)->get(route('publisher.sites.show', $this->site))->assertNotFound();
+    }
+
+    public function test_legacy_responsive_identity_is_reused_and_incompatible_tag_rolls_back_entire_bundle(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $legacy = app(PlacementPresetBuilder::class)->create($this->site, 'responsive_display', $this->admin, [], false, true);
+        $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag' => str_replace('[300, 250]', '[160, 600]', $this->gptTag()),
+        ]))->assertSessionHasErrors('tag');
+        $this->assertCount(0, $this->responsiveUnits());
+        $this->assertTrue(data_get($legacy->fresh()->format_settings, 'autoMount'));
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $this->assertSame($legacy->id, $this->responsiveUnits()->first()->id);
+        $this->assertCount(4, $this->responsiveUnits());
+    }
+
+    private function responsiveUnits()
+    {
+        return Placement::withoutGlobalScopes()->where('site_id', $this->site->id)
+            ->where('metadata->responsive_bundle', 'v1')->orderBy('code')->get();
+    }
+
+    private function responsivePayload(array $overrides = []): array
+    {
+        return $this->payload(array_replace([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'responsive_display',
+        ], $overrides));
     }
 
     private function payload(array $overrides = []): array

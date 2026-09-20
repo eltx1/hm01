@@ -43,7 +43,7 @@ class SiteController extends Controller
     public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
     {
         return view('publisher.sites.show', [
-            'site' => $site->load(['domains.verifications', 'reviews', 'servingSettings', 'publisher']),
+            'site' => $site->load(['domains.verifications', 'reviews', 'servingSettings', 'publisher', 'placements']),
             'internal' => false,
             'adsTxtInstallation' => $adsTxt->bundle($site),
         ]);

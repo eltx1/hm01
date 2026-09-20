@@ -95,8 +95,9 @@ final class QuickMonetizeProviderAgnosticTest extends TestCase
 
         $this->assertTrue((bool) data_get($placement->metadata, 'quick_monetize_generated'));
         $this->assertSame('display_banner', $placement->adFormat?->code);
-        $this->assertTrue((bool) data_get($placement->format_settings, 'autoMount'));
-        $this->assertSame('article_end', data_get($placement->format_settings, 'autoMountTarget'));
+        $this->assertFalse((bool) data_get($placement->format_settings, 'autoMount'));
+        $this->assertSame(4, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertSame('center', data_get($placement->format_settings, 'contentAlignment'));
         $this->assertGreaterThan(1, $placement->sizes->where('is_active', true)->count());
 
         $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
