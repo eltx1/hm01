@@ -151,6 +151,7 @@ jobs:
           scp -P "$SSH_PORT" "$artifact_dir/horus-media-platform.zip" \
             ops/deploy/horus-atomic-deploy.sh \
             ops/deploy/write-mysql-client-config.php \
+            scripts/configure-static-delivery-automation.php \
             "$USER@$HOST:$remote_dir/"
 
       - name: Deploy atomically on production host
@@ -171,6 +172,27 @@ jobs:
              HORUS_DEPLOY_MYSQL_CONFIG_HELPER='$remote_dir/write-mysql-client-config.php' \
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
+
+      - name: Configure persistent static delivery automation
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          EDGE_TOKEN: ${{ secrets.HORUS_EDGE_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$EDGE_TOKEN" ]]; then
+            echo '::warning::Active CDN automation was not provisioned: HORUS_EDGE_GITHUB_TOKEN is absent. Do not treat deployment success as automation readiness.'
+            exit 0
+          fi
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
+          printf '%s' "$EDGE_TOKEN" | ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --apply && php artisan config:cache && php artisan static-delivery:automation-check"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "crontab -l" | grep -F 'artisan schedule:run' >/dev/null || {
+              echo '::error::The application scheduler cron was not found. Active CDN automation cannot be confirmed.'
+              exit 1
+            }
 
       - name: Verify Quick Monetize control-plane route
         shell: bash

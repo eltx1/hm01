@@ -77,7 +77,26 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Prefer the server outbox when active automation is configured
+        id: mode
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          mode=$(ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$app_root' && if test -f app/Console/Commands/CheckStaticDeliveryAutomation.php; then php artisan static-delivery:automation-check --driver-only; else echo external-pages-sync; fi")
+          if [[ "$mode" == 'cloudflare-pages-pipeline' ]]; then
+            echo 'active=true' >> "$GITHUB_OUTPUT"
+            ssh -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply && php artisan static-delivery:process"
+          else
+            echo 'active=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build snapshot from live production data
+        if: steps.mode.outputs.active != 'true'
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
@@ -105,6 +124,7 @@ jobs:
             "chmod 700 '$remote_dir/verify-static-edge-public.sh' '$remote_dir/verify-traffic-gate-public.sh'"
 
       - name: Validate sanitized production snapshot
+        if: steps.mode.outputs.active != 'true'
         run: |
           php scripts/validate-static-delivery.php "$RUNNER_TEMP/static-edge"
           # Public configuration only: expose exactly which surfaces reached the
@@ -133,6 +153,7 @@ jobs:
           }' "$RUNNER_TEMP/static-edge"
 
       - name: Compare complete public snapshot
+        if: steps.mode.outputs.active != 'true'
         id: compare
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
@@ -173,7 +194,7 @@ jobs:
       # Keep the deploy fail-closed, but retry the whole atomic Pages publish
       # rather than leaving production on the previous loader/config snapshot.
       - name: Deploy live snapshot to Cloudflare Pages · attempt 1
-        if: steps.compare.outputs.deploy == 'true'
+        if: steps.mode.outputs.active != 'true' && (steps.compare.outputs.deploy == 'true')
         id: deploy_attempt_1
         continue-on-error: true
         uses: cloudflare/wrangler-action@v4
@@ -183,7 +204,7 @@ jobs:
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
 
       - name: Deploy live snapshot to Cloudflare Pages · attempt 2
-        if: steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success'
+        if: steps.mode.outputs.active != 'true' && (steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success')
         id: deploy_attempt_2
         continue-on-error: true
         uses: cloudflare/wrangler-action@v4
@@ -193,7 +214,7 @@ jobs:
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
 
       - name: Deploy live snapshot to Cloudflare Pages · attempt 3
-        if: steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success' && steps.deploy_attempt_2.outcome != 'success'
+        if: steps.mode.outputs.active != 'true' && (steps.compare.outputs.deploy == 'true' && steps.deploy_attempt_1.outcome != 'success' && steps.deploy_attempt_2.outcome != 'success')
         id: deploy_attempt_3
         continue-on-error: true
         uses: cloudflare/wrangler-action@v4
@@ -203,7 +224,7 @@ jobs:
           command: pages deploy ${{ runner.temp }}/static-edge --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }} --branch=main
 
       - name: Resolve successful Pages deployment
-        if: steps.compare.outputs.deploy == 'true'
+        if: steps.mode.outputs.active != 'true' && (steps.compare.outputs.deploy == 'true')
         id: deploy
         env:
           ATTEMPT_1_OUTCOME: ${{ steps.deploy_attempt_1.outcome }}
@@ -233,7 +254,7 @@ jobs:
           echo "deployment-url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Verify exact Pages deployment and canonical edge
-        if: steps.compare.outputs.deploy == 'true'
+        if: steps.mode.outputs.active != 'true' && (steps.compare.outputs.deploy == 'true')
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
@@ -299,6 +320,7 @@ jobs:
           fi
 
       - name: Verify Traffic Gate origin before confirmation
+        if: steps.mode.outputs.active != 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
@@ -345,6 +367,7 @@ jobs:
           fi
 
       - name: Confirm manifest on production control plane
+        if: steps.mode.outputs.active != 'true'
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
@@ -356,7 +379,7 @@ jobs:
             "set -e; umask 077; mkdir -p '$REMOTE_HOME/shared/storage/app/static-delivery'; cat > '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp'; mv '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest.tmp' '$REMOTE_HOME/shared/storage/app/static-delivery/confirmed-manifest'"
 
       - name: Remove remote snapshot if interrupted
-        if: always()
+        if: steps.mode.outputs.active != 'true' && (always())
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}

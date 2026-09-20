@@ -129,6 +129,52 @@ class StaticDeliveryTest extends TestCase
         $this->assertSame(ConfigVersionStatus::Deployed, $version->refresh()->status);
     }
 
+    public function test_retry_limit_survives_creation_of_replacement_batches(): void
+    {
+        config(['static-delivery.max_attempts' => 3]);
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $version = app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $this->driver->fail = true;
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $version->deliveryItem()->update(['available_at' => now()]);
+            $batch = app(StaticDeliveryManager::class)->processPending();
+            $this->assertSame($attempt, (int) $batch->attempts);
+        }
+        $this->assertSame(StaticDeliveryStatus::Failed, $batch->status);
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        $this->assertCount(3, $this->driver->snapshots);
+    }
+
+    public function test_pending_changes_cannot_overtake_an_unconfirmed_deployment(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        $publisher = app(SiteConfigPublisher::class);
+        $publisher->publish($site, ConfigEnvironment::Production, $admin);
+        $this->driver->confirmed = false;
+        $first = app(StaticDeliveryManager::class)->processPending();
+        $this->assertSame(StaticDeliveryStatus::Uploading, $first->status);
+        $publisher->publish($site->refresh(), ConfigEnvironment::Production, $admin);
+        $this->assertNull(app(StaticDeliveryManager::class)->processPending());
+        $this->assertCount(1, $this->driver->snapshots);
+    }
+
+    public function test_unconfirmed_upload_times_out_and_is_retried_by_the_normal_scheduler(): void
+    {
+        config(['static-delivery.confirmation_timeout_seconds' => 120]);
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        $this->driver->confirmed = false;
+        $manager = app(StaticDeliveryManager::class);
+        $batch = $manager->processPending();
+        $this->assertSame(0, $manager->reconcileUploading());
+        $this->assertSame(StaticDeliveryStatus::Uploading, $batch->refresh()->status);
+        $batch->update(['submitted_at' => now()->subSeconds(121)]);
+        $manager->reconcileUploading();
+        $this->assertSame(StaticDeliveryStatus::RetryScheduled, $batch->refresh()->status);
+        $this->assertSame('DELIVERY_CONFIRMATION_TIMEOUT', $batch->error_code);
+        $this->assertNotNull($batch->next_retry_at);
+    }
+
     public function test_emergency_pause_is_urgent_and_ready_without_batch_delay(): void
     {
         config(['static-delivery.normal_batch_interval_minutes' => 30]);

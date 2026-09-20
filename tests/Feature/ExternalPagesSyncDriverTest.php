@@ -37,7 +37,7 @@ class ExternalPagesSyncDriverTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_missing_server_github_credential_uses_external_sync_instead_of_failing_delivery(): void
+    public function test_missing_server_github_credential_does_not_silently_disable_active_automation(): void
     {
         config([
             'static-delivery.driver' => 'cloudflare-pages-pipeline',
@@ -45,7 +45,10 @@ class ExternalPagesSyncDriverTest extends TestCase
         ]);
         putenv('HORUS_TEST_MISSING_EDGE_TOKEN');
 
-        $this->assertInstanceOf(ExternalPagesSyncDriver::class, app(StaticDeliveryDriverInterface::class));
+        $driver = app(StaticDeliveryDriverInterface::class);
+        $this->assertInstanceOf(\App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver::class, $driver);
+        $this->expectException(\App\Services\StaticDelivery\Exceptions\StaticDeliveryException::class);
+        $driver->deliver(new StaticDeliverySnapshot([], str_repeat('a', 64), 0, false), new StaticDeliveryBatch);
     }
 
     public function test_external_sync_requires_workflow_confirmation_then_confirms_exact_public_edges(): void

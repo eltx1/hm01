@@ -1,5 +1,54 @@
 # Static Delivery Batching and Operations
 
+## Active production automation
+
+The five-minute GitHub `schedule` is a recovery mechanism, not a delivery SLA.
+Production should use `cloudflare-pages-pipeline`: the existing once-per-minute
+Laravel scheduler processes the durable outbox, uploads the immutable snapshot
+to `edge-delivery`, and sends `repository_dispatch`. No operator or chat session
+is involved in subsequent configuration changes. The active driver must not
+silently switch to passive external sync when its credential is unavailable.
+
+Activation requires a persistent, repository-scoped GitHub credential. For a
+fine-grained token restricted to this repository, grant Contents read/write
+(Git objects and repository dispatch) and Actions read (run/job verification).
+Never persist the ephemeral Actions `GITHUB_TOKEN` on the server. Put the
+persistent credential in the production environment secret
+`HORUS_EDGE_GITHUB_TOKEN`; the normal release workflow installs it through pinned
+SSH, stdin, a private file, and a `file:` reference. The installer defaults to a
+no-write dry run unless `--apply` is supplied. It preserves unrelated environment
+settings and writes a redacted local audit record. Production activation chooses
+a five-minute batching interval; the general configuration default remains 30.
+
+The provisioning step deliberately warns when that secret is absent. A green
+code deployment without provisioning is **not** proof that automation is ready.
+Run the read-only `php artisan static-delivery:automation-check` to check local
+prerequisites. This command does not prove remote permissions or cron execution.
+The release checks for an existing scheduler crontab; the scheduler heartbeat
+and an actual automatic configuration publication must also be checked.
+
+Only one batch can remain in flight. A pending batch cannot overtake it. Failed
+submissions retain their attempt count across replacement batches; retries stop
+at the configured maximum. Unconfirmed uploads expire after 30 minutes by default
+(`HORUS_STATIC_DELIVERY_CONFIRMATION_TIMEOUT_SECONDS`) and enter bounded backoff.
+An accepted dispatch whose response was lost is reused when a running/successful
+workflow for that exact immutable commit is visible. Missing credentials and
+rejected dispatches are recorded as delivery failures, not success.
+
+The Pages delivery job uses the `production` environment and fails on missing
+Cloudflare credentials. Confirmation requires both a successful deployment step
+and matching public CDN and Traffic Gate artifacts. A successful GitHub run with
+stale public files remains unconfirmed. In active mode the legacy sync workflow
+only wakes the server outbox and refreshes runtime configuration; it does not
+publish an independent snapshot that could race the queued snapshot.
+
+Acceptance after activation: save a normal configuration change; observe a
+scheduler-created batch and a `repository_dispatch` run without manual dispatch;
+verify the exact published manifest and placement payload; then save a second
+change and repeat. The publisher needs no loader/code change. Do not claim a
+five-minute guarantee: batching eligibility is followed by scheduler, runner,
+deployment, and public verification time.
+
 Horus static delivery preserves one pipeline: database outbox →
 `StaticDeliveryManager` → deterministic snapshot → sanitized GitHub delivery
 branch → Cloudflare Pages workflow. HTTP controllers never write to GitHub or

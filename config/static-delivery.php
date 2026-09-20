@@ -4,6 +4,7 @@ return [
     'driver' => env('HORUS_STATIC_DELIVERY_DRIVER', 'local'),
     'local_root' => env('HORUS_STATIC_DELIVERY_LOCAL_ROOT') ?: base_path('cloudflare-pages-dist'),
     'normal_batch_interval_minutes' => (int) env('HORUS_STATIC_DELIVERY_BATCH_INTERVAL_MINUTES', 30),
+    'confirmation_timeout_seconds' => (int) env('HORUS_STATIC_DELIVERY_CONFIRMATION_TIMEOUT_SECONDS', 1800),
     'process_lock_seconds' => (int) env('HORUS_STATIC_DELIVERY_PROCESS_LOCK_SECONDS', 180),
     'pending_stale_grace_minutes' => (int) env('HORUS_STATIC_DELIVERY_PENDING_STALE_GRACE_MINUTES', 5),
     'retention_per_environment' => (int) env('HORUS_STATIC_DELIVERY_RETENTION', 5),

@@ -16,7 +16,10 @@ use Throwable;
 
 final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterface, StaticDeliveryStatusProbeInterface
 {
-    public function __construct(private readonly SecretReferenceResolver $secrets) {}
+    public function __construct(
+        private readonly SecretReferenceResolver $secrets,
+        private readonly ExternalPagesSyncDriver $publicVerifier,
+    ) {}
 
     public function name(): string { return 'cloudflare-pages-pipeline'; }
 
@@ -101,6 +104,23 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
             }
         }
 
+        // If dispatch was accepted but the response was lost, a retry must
+        // reuse the running/successful deployment of this immutable commit.
+        $runs = $this->json($request->get("repos/{$repository}/actions/workflows/cloudflare-pages-delivery.yml/runs", [
+            'event' => 'repository_dispatch', 'per_page' => 100,
+        ]), 'WORKFLOW_STATUS_UNAVAILABLE');
+        foreach ((array) ($runs['workflow_runs'] ?? []) as $run) {
+            if (str_contains((string) ($run['display_title'] ?? ''), $commitSha)
+                && (($run['status'] ?? '') !== 'completed' || ($run['conclusion'] ?? '') === 'success')) {
+                return new StaticDeliveryResult(
+                    remoteId: $commitSha,
+                    remoteUrl: "https://github.com/{$repository}/commit/{$commitSha}",
+                    confirmedDeployed: false,
+                    metadata: ['delivery_commit' => $commitSha, 'manifest_hash' => $snapshot->manifestHash],
+                );
+            }
+        }
+
         $dispatch = $request->post("repos/{$repository}/dispatches", [
             'event_type' => 'cloudflare-pages-static-delivery',
             'client_payload' => [
@@ -125,10 +145,10 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
     {
         $repository = $this->repository();
         $runs = $this->json($this->request()->get("repos/{$repository}/actions/workflows/cloudflare-pages-delivery.yml/runs", [
-            'event' => 'repository_dispatch', 'per_page' => 50,
+            'event' => 'repository_dispatch', 'per_page' => 100,
         ]), 'WORKFLOW_STATUS_UNAVAILABLE');
         foreach ((array) ($runs['workflow_runs'] ?? []) as $run) {
-            if (! str_contains((string) ($run['display_title'] ?? ''), $batch->id)) {
+            if (! str_contains((string) ($run['display_title'] ?? ''), (string) (data_get($batch->provider_metadata, 'delivery_commit') ?: $batch->id))) {
                 continue;
             }
             if (($run['status'] ?? null) !== 'completed') {
@@ -153,6 +173,10 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
                 );
             }
 
+            if ($this->publicVerifier->verifyPublicArtifacts($batch) === null) {
+                return null;
+            }
+
             return new StaticDeliveryResult(
                 remoteId: (string) ($run['id'] ?? $batch->remote_deployment_id),
                 remoteUrl: isset($run['html_url']) ? (string) $run['html_url'] : null,
@@ -174,6 +198,7 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
 
         return Http::baseUrl('https://api.github.com/')
             ->withToken($token)
+            ->withoutRedirecting()
             ->acceptJson()
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->connectTimeout((int) config('static-delivery.cloudflare.connect_timeout', 5))
@@ -212,6 +237,7 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
         return in_array($path, ['hm-loader.js', '_headers', '_routes.json', '404.html', 'delivery-manifest.json', 'sellers.json'], true)
             || str_starts_with($path, 'configs/')
             || str_starts_with($path, 'assets/')
+            || str_starts_with($path, 'runtime/')
             || str_starts_with($path, 'health/')
             || str_starts_with($path, 'supply/')
             || str_starts_with($path, 'traffic-gate/');
