@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\SystemHeartbeat;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\SecretReferenceResolver;
 use Illuminate\Console\Command;
@@ -9,7 +10,7 @@ use Throwable;
 
 class CheckStaticDeliveryAutomation extends Command
 {
-    protected $signature = 'static-delivery:automation-check {--driver-only}';
+    protected $signature = 'static-delivery:automation-check {--driver-only} {--require-scheduler}';
 
     protected $description = 'Check active static delivery prerequisites without publishing or exposing credentials';
 
@@ -38,6 +39,14 @@ class CheckStaticDeliveryAutomation extends Command
             $this->error('DRY_RUN_ONLY: external writes are disabled.');
 
             return self::FAILURE;
+        }
+        if ($this->option('require-scheduler')) {
+            $heartbeat = SystemHeartbeat::query()->where('key', 'scheduler')->first();
+            if (! $heartbeat?->last_seen_at || $heartbeat->last_seen_at->lt(now()->subMinutes(5))) {
+                $this->error('SCHEDULER_STALE: no scheduler heartbeat in the last five minutes.');
+
+                return self::FAILURE;
+            }
         }
         $this->info('Local prerequisites present. Scheduler execution, GitHub permissions, and public CDN delivery still require verification.');
         $this->line('Batch interval: '.config('static-delivery.normal_batch_interval_minutes').' minutes.');

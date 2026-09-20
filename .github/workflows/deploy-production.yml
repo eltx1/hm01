@@ -187,12 +187,8 @@ jobs:
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
           remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
           printf '%s' "$EDGE_TOKEN" | ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --apply && php artisan config:cache && php artisan static-delivery:automation-check"
-          ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "crontab -l" | grep -F 'artisan schedule:run' >/dev/null || {
-              echo '::error::The application scheduler cron was not found. Active CDN automation cannot be confirmed.'
-              exit 1
-            }
+            "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --apply && php artisan config:cache && php artisan static-delivery:automation-check --require-scheduler"
+
 
       - name: Verify Quick Monetize control-plane route
         shell: bash

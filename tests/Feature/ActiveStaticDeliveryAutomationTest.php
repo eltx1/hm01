@@ -11,6 +11,7 @@ use Tests\TestCase;
 
 class ActiveStaticDeliveryAutomationTest extends TestCase
 {
+    use \Illuminate\Foundation\Testing\RefreshDatabase;
     private string $credential;
     private const COMMIT = '1111111111111111111111111111111111111111';
 
@@ -111,6 +112,19 @@ class ActiveStaticDeliveryAutomationTest extends TestCase
         $this->artisan('static-delivery:automation-check')->assertFailed();
         config(['static-delivery.driver' => 'external-pages-sync']);
         $this->artisan('static-delivery:automation-check')->assertFailed();
+        Http::assertNothingSent();
+    }
+
+    public function test_scheduler_readiness_checks_the_real_heartbeat_without_creating_one(): void
+    {
+        $this->artisan('static-delivery:automation-check --require-scheduler')->assertFailed();
+        $this->assertDatabaseCount('system_heartbeats', 0);
+        \App\Models\SystemHeartbeat::query()->create([
+            'key' => 'scheduler', 'status' => 'HEALTHY', 'last_seen_at' => now()->subMinutes(10),
+        ]);
+        $this->artisan('static-delivery:automation-check --require-scheduler')->assertFailed();
+        \App\Models\SystemHeartbeat::query()->where('key', 'scheduler')->update(['last_seen_at' => now()]);
+        $this->artisan('static-delivery:automation-check --require-scheduler')->assertSuccessful();
         Http::assertNothingSent();
     }
 

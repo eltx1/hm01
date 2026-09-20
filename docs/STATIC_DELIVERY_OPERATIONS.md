@@ -24,8 +24,9 @@ The provisioning step deliberately warns when that secret is absent. A green
 code deployment without provisioning is **not** proof that automation is ready.
 Run the read-only `php artisan static-delivery:automation-check` to check local
 prerequisites. This command does not prove remote permissions or cron execution.
-The release checks for an existing scheduler crontab; the scheduler heartbeat
-and an actual automatic configuration publication must also be checked.
+The release uses `--require-scheduler` to require a heartbeat within five
+minutes, without manufacturing one. An actual automatic configuration
+publication must also be checked.
 
 Only one batch can remain in flight. A pending batch cannot overtake it. Failed
 submissions retain their attempt count across replacement batches; retries stop

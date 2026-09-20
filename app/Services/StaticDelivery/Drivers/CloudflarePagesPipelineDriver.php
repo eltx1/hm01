@@ -12,6 +12,7 @@ use App\Services\StaticDelivery\SecretReferenceResolver;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\File;
 use Throwable;
 
 final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterface, StaticDeliveryStatusProbeInterface
@@ -175,6 +176,14 @@ final class CloudflarePagesPipelineDriver implements StaticDeliveryDriverInterfa
 
             if ($this->publicVerifier->verifyPublicArtifacts($batch) === null) {
                 return null;
+            }
+
+            // Preserve the readiness-audit marker, but only after authenticated
+            // workflow success AND exact public CDN/gate verification above.
+            $marker = (string) config('static-delivery.external_sync.confirmation_path');
+            if ($marker !== '') {
+                File::ensureDirectoryExists(dirname($marker), 0700);
+                File::replace($marker, $batch->manifest_hash."\n", 0600);
             }
 
             return new StaticDeliveryResult(
