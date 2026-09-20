@@ -24,7 +24,7 @@ jobs:
       SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
       SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
       KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
-      EDGE_TOKEN: ${{ secrets.HORUS_EDGE_GITHUB_TOKEN }}
+      EDGE_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
     steps:
@@ -32,9 +32,9 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "$EDGE_TOKEN" ]]; then
-            echo 'production_edge_secret_present=true'
+            echo 'production_cloudflare_secret_present=true'
           else
-            echo 'production_edge_secret_present=false'
+            echo 'production_cloudflare_secret_present=false'
           fi
           test -n "$HOST" && test -n "$SSH_USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
@@ -52,7 +52,8 @@ jobs:
           echo 'configured_driver='.config('static-delivery.driver').PHP_EOL;
           echo 'effective_driver='.$app->make(App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface::class)->name().PHP_EOL;
           try {
-              $app->make(App\Services\StaticDelivery\SecretReferenceResolver::class)->resolve((string) config('static-delivery.cloudflare.github_token_reference'));
+              $key = config('static-delivery.driver') === 'cloudflare-pages-direct' ? 'api_token_reference' : 'github_token_reference';
+              $app->make(App\Services\StaticDelivery\SecretReferenceResolver::class)->resolve((string) config('static-delivery.cloudflare.'.$key));
               echo 'server_edge_credential_present=true'.PHP_EOL;
           } catch (Throwable) {
               echo 'server_edge_credential_present=false'.PHP_EOL;

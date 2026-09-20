@@ -19,6 +19,10 @@ return [
         'max_file_bytes' => (int) env('HORUS_STATIC_DELIVERY_MAX_FILE_BYTES', 26214400),
     ],
     'cloudflare' => [
+        'api_token_reference' => env('HORUS_EDGE_CLOUDFLARE_TOKEN_REFERENCE'),
+        'account_id' => env('HORUS_EDGE_CLOUDFLARE_ACCOUNT_ID'),
+        'project' => env('HORUS_EDGE_CLOUDFLARE_PROJECT', 'horus-media-cdn'),
+        'production_branch' => env('HORUS_EDGE_CLOUDFLARE_BRANCH', 'main'),
         'github_repository' => env('HORUS_EDGE_GITHUB_REPOSITORY', 'eltx1/hm01'),
         'delivery_branch' => env('HORUS_EDGE_GITHUB_BRANCH', 'edge-delivery'),
         'github_token_reference' => env('HORUS_EDGE_GITHUB_TOKEN_REFERENCE'),

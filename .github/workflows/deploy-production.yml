@@ -154,22 +154,6 @@ jobs:
             scripts/configure-static-delivery-automation.php \
             "$USER@$HOST:$remote_dir/"
 
-      - name: Install persistent static delivery configuration before release optimization
-        env:
-          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
-          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
-          EDGE_TOKEN: ${{ secrets.HORUS_EDGE_GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$EDGE_TOKEN" ]]; then
-            echo '::warning::Active CDN automation was not provisioned: HORUS_EDGE_GITHUB_TOKEN is absent. Do not treat deployment success as automation readiness.'
-            exit 0
-          fi
-          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
-          remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
-          printf '%s' "$EDGE_TOKEN" | ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --apply"
-
       - name: Deploy atomically on production host
         shell: bash
         env:
@@ -189,17 +173,26 @@ jobs:
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
 
-      - name: Verify active automation prerequisites after release optimization
+      - name: Configure automatic CDN delivery using existing SSH and Cloudflare credentials
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
-          EDGE_TOKEN: ${{ secrets.HORUS_EDGE_GITHUB_TOKEN }}
+          EDGE_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EDGE_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EDGE_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }}
         run: |
           set -euo pipefail
-          if [[ -n "$EDGE_TOKEN" ]]; then
-            ssh -p "$SSH_PORT" "$USER@$HOST" \
-              "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && php artisan static-delivery:automation-check --require-scheduler"
-          fi
+          test -n "$EDGE_TOKEN"
+          [[ "$EDGE_ACCOUNT" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$EDGE_PROJECT" =~ ^[a-z0-9][a-z0-9-]{0,57}$ ]]
+          app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          remote_dir="$REMOTE_HOME/incoming/$RELEASE_SHA"
+          # Only activate after the release containing the driver is healthy.
+          # Transfer the existing CF secret over pinned SSH, never in arguments.
+          printf '%s' "$EDGE_TOKEN" | ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --account='$EDGE_ACCOUNT' --project='$EDGE_PROJECT' --apply"
+          ssh -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$app_root' && /usr/bin/php8.4 artisan config:cache && sudo -n /usr/bin/systemctl reload php8.4-fpm && /usr/bin/php8.4 artisan static-delivery:automation-check --require-scheduler"
 
       - name: Verify Quick Monetize control-plane route
         shell: bash

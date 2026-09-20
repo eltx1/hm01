@@ -2,15 +2,21 @@
 
 // Run on the trusted production host. The credential is accepted only on stdin,
 // never in arguments, source control, command output, or public storage.
-$options = getopt('', ['env:', 'apply']);
+$options = getopt('', ['env:', 'account:', 'project:', 'apply']);
 $envPath = realpath((string) ($options['env'] ?? ''));
 if (! $envPath || ! is_file($envPath) || ! is_writable($envPath)) {
     fwrite(STDERR, "A writable shared environment file is required.\n");
     exit(1);
 }
+$account = (string) ($options['account'] ?? '');
+$project = (string) ($options['project'] ?? '');
+if (! preg_match('/^[a-f0-9]{32}$/', $account) || ! preg_match('/^[a-z0-9][a-z0-9-]{0,57}$/', $project)) {
+    fwrite(STDERR, "A valid existing Cloudflare account and Pages project are required.\n");
+    exit(1);
+}
 $token = trim(stream_get_contents(STDIN, 4097));
 if (strlen($token) < 20 || strlen($token) > 4096 || preg_match('/\s/', $token)) {
-    fwrite(STDERR, "A valid non-empty persistent GitHub credential must be supplied on stdin.\n");
+    fwrite(STDERR, "A valid non-empty Cloudflare deployment credential must be supplied on stdin.\n");
     exit(1);
 }
 if (! array_key_exists('apply', $options)) {
@@ -19,7 +25,7 @@ if (! array_key_exists('apply', $options)) {
 }
 umask(0077);
 $directory = dirname($envPath).'/secrets';
-$credentialPath = $directory.'/edge-github-token';
+$credentialPath = $directory.'/edge-cloudflare-token';
 if ((! is_dir($directory) && ! mkdir($directory, 0700, true)) || is_link($directory) || is_link($credentialPath)) {
     fwrite(STDERR, "Private credential directory could not be prepared.\n");
     exit(1);
@@ -35,8 +41,11 @@ if ($environment === false || str_contains($credentialPath, '"') || str_contains
     exit(1);
 }
 $settings = [
-    'HORUS_STATIC_DELIVERY_DRIVER' => 'cloudflare-pages-pipeline',
-    'HORUS_EDGE_GITHUB_TOKEN_REFERENCE' => '"file:'.$credentialPath.'"',
+    'HORUS_STATIC_DELIVERY_DRIVER' => 'cloudflare-pages-direct',
+    'HORUS_EDGE_CLOUDFLARE_TOKEN_REFERENCE' => '"file:'.$credentialPath.'"',
+    'HORUS_EDGE_CLOUDFLARE_ACCOUNT_ID' => $account,
+    'HORUS_EDGE_CLOUDFLARE_PROJECT' => $project,
+    'HORUS_EDGE_CLOUDFLARE_BRANCH' => 'main',
     'HORUS_STATIC_DELIVERY_BATCH_INTERVAL_MINUTES' => '5',
     'HORUS_STATIC_DELIVERY_DRY_RUN' => 'false',
 ];

@@ -1,8 +1,6 @@
 name: Sync production static edge
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '*/5 * * * *'
   workflow_run:
@@ -80,6 +78,7 @@ jobs:
       - name: Prefer the server outbox when active automation is configured
         id: mode
         env:
+          EVENT_NAME: ${{ github.event_name }}
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
         run: |
@@ -87,11 +86,18 @@ jobs:
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
           mode=$(ssh -p "$SSH_PORT" "$USER@$HOST" \
             "cd '$app_root' && if test -f app/Console/Commands/CheckStaticDeliveryAutomation.php; then php artisan static-delivery:automation-check --driver-only; else echo external-pages-sync; fi")
-          if [[ "$mode" == 'cloudflare-pages-pipeline' ]]; then
+          if [[ "$mode" == 'cloudflare-pages-pipeline' || "$mode" == 'cloudflare-pages-direct' ]]; then
             echo 'active=true' >> "$GITHUB_OUTPUT"
             ssh -p "$SSH_PORT" "$USER@$HOST" \
-              "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply && php artisan static-delivery:process"
+              "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply"
+            if [[ "$mode" == 'cloudflare-pages-pipeline' ]]; then
+              ssh -p "$SSH_PORT" "$USER@$HOST" "cd '$app_root' && php artisan static-delivery:process"
+            fi
           else
+            if [[ "$EVENT_NAME" != 'workflow_dispatch' ]]; then
+              echo 'Active server delivery is not configured; refusing an independent automatic upload.' >&2
+              exit 1
+            fi
             echo 'active=false' >> "$GITHUB_OUTPUT"
           fi
 

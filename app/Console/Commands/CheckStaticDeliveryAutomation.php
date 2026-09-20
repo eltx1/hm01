@@ -23,15 +23,16 @@ class CheckStaticDeliveryAutomation extends Command
         }
 
         $this->line('Driver: '.$driver->name());
-        if ($driver->name() !== 'cloudflare-pages-pipeline') {
+        if (! in_array($driver->name(), ['cloudflare-pages-pipeline', 'cloudflare-pages-direct'], true)) {
             $this->error('ACTIVE_AUTOMATION_UNAVAILABLE: configured driver does not submit a production deployment.');
 
             return self::FAILURE;
         }
         try {
-            $secrets->resolve((string) config('static-delivery.cloudflare.github_token_reference'));
+            $key = $driver->name() === 'cloudflare-pages-direct' ? 'api_token_reference' : 'github_token_reference';
+            $secrets->resolve((string) config('static-delivery.cloudflare.'.$key));
         } catch (Throwable) {
-            $this->error('CREDENTIAL_UNAVAILABLE: configure a persistent server GitHub credential reference.');
+            $this->error('CREDENTIAL_UNAVAILABLE: the configured private deployment credential could not be read.');
 
             return self::FAILURE;
         }
@@ -48,7 +49,7 @@ class CheckStaticDeliveryAutomation extends Command
                 return self::FAILURE;
             }
         }
-        $this->info('Local prerequisites present. Scheduler execution, GitHub permissions, and public CDN delivery still require verification.');
+        $this->info('Local prerequisites present. Scheduler execution, provider permissions, and public CDN delivery still require verification.');
         $this->line('Batch interval: '.config('static-delivery.normal_batch_interval_minutes').' minutes.');
 
         return self::SUCCESS;

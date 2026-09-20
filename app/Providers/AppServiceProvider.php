@@ -29,6 +29,7 @@ use App\Services\Network\Contracts\DnsResolver;
 use App\Services\Network\SystemDnsResolver;
 use App\Services\StaticDelivery\Contracts\StaticDeliveryDriverInterface;
 use App\Services\StaticDelivery\Drivers\CloudflarePagesPipelineDriver;
+use App\Services\StaticDelivery\Drivers\CloudflarePagesDirectDriver;
 use App\Services\StaticDelivery\Drivers\ExternalPagesSyncDriver;
 use App\Services\StaticDelivery\Drivers\LocalFilesystemStaticDeliveryDriver;
 use Illuminate\Auth\Notifications\ResetPassword;
@@ -59,6 +60,7 @@ class AppServiceProvider extends ServiceProvider
             $driver = config('static-delivery.driver');
 
             return match ($driver) {
+                'cloudflare-pages-direct' => $app->make(CloudflarePagesDirectDriver::class),
                 'cloudflare-pages-pipeline' => $app->make(CloudflarePagesPipelineDriver::class),
                 'external-pages-sync' => $app->make(ExternalPagesSyncDriver::class),
                 'local' => $app->make(LocalFilesystemStaticDeliveryDriver::class),
