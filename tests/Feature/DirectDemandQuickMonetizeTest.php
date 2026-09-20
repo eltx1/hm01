@@ -24,6 +24,7 @@ use App\Services\Demand\DemandConfigurationBuilder;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Operations\PlatformControlService;
 use App\Services\Security\PublicProviderOriginValidator;
+use App\Services\Settings\GlobalSettingsService;
 use Database\Seeders\AdFormatSeeder;
 use Database\Seeders\DemandNetworkSeeder;
 use Database\Seeders\InventoryDeliverySeeder;
@@ -109,7 +110,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
     {
         $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
 
-        $response = $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload());
+        $response = $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload(['tag_input_type' => 'PROVIDER_TAG']));
 
         $account = DemandAccount::withoutGlobalScopes()
             ->where('publisher_id', $this->publisher->id)
@@ -178,7 +179,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $tag = str_replace('[300, 250]', '[728, 90]', $this->gptTag());
 
         $this->adminSession()
-            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag]))
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag, 'tag_input_type' => 'PROVIDER_TAG']))
             ->assertSessionHasErrors('tag');
 
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
@@ -206,7 +207,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $tag = '<script async src="//cdn.taboola.com/libtrc/horus-test/loader.js"></script><div id="taboola-zone"></div>';
 
         $this->adminSession()
-            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag]))
+            ->post(route('admin.demand.quick.store'), $this->payload(['tag' => $tag, 'tag_input_type' => 'PROVIDER_TAG']))
             ->assertRedirect();
 
         $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
@@ -287,6 +288,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->bindPublicProviderDns();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
             'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'rewarded',
+            'tag_input_type' => 'GAM_AD_UNIT_PATH',
             'tag' => '/23055873217/rewarded',
         ]))->assertSessionHasNoErrors()->assertRedirect();
         $configuration = app(DemandConfigurationBuilder::class)->build($this->site->fresh());
@@ -297,16 +299,239 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertNull(data_get($tag, 'container.attributes.data-hm-vast-url'));
         $this->assertStringContainsString('/runtime/gpt/', $tag['scriptUrl']);
         $this->assertSame(30000, data_get($tag, 'render.timeoutMs'));
+        $this->assertSame([], data_get($tag, 'render.allowedSizes'));
+        $this->assertSame('GAM_REWARDED_PATH', data_get(DemandWidget::withoutGlobalScopes()->firstOrFail()->configuration, 'input_kind'));
+    }
+
+    public function test_gam_path_creates_four_manual_responsive_units_using_each_units_configured_sizes(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $path = '/1234567,7654321/news/responsive';
+        $before = $this->site->configVersions()->count();
+
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '  '.$path.'  ',
+        ]))->assertSessionHasNoErrors()->assertRedirect();
+
+        $units = $this->responsiveUnits();
+        $this->assertCount(4, $units);
+        $this->assertSame($before + 1, $this->site->configVersions()->count());
+        $config = $this->publishedConfiguration();
+        $runtimeIds = [];
+        foreach ($units as $unit) {
+            $public = collect($config['placements'])->firstWhere('code', $unit->code);
+            $recipe = data_get($config, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
+            $this->assertFalse(data_get($public, 'format.settings.autoMount'));
+            $this->assertSame('center', data_get($public, 'format.settings.contentAlignment'));
+            $this->assertSame('DIRECT_JS', $public['renderer']);
+            $this->assertSame('DISPLAY', data_get($recipe, 'format'));
+            $this->assertSame($path, data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
+            $this->assertEqualsCanonicalizing($public['sizes'], data_get($recipe, 'render.allowedSizes'));
+            $this->assertEqualsCanonicalizing($public['sizes'], json_decode(data_get($recipe, 'container.attributes.data-hm-gpt-sizes'), true, flags: JSON_THROW_ON_ERROR));
+            foreach ([[200, 200], [250, 250], [300, 50], [300, 100], [468, 60], [970, 90], [300, 600]] as $expandedSize) {
+                $this->assertContains($expandedSize, data_get($recipe, 'render.allowedSizes'));
+            }
+            $mobile = collect($public['responsiveMappings'])->firstWhere('device', 'MOBILE');
+            $this->assertNotContains([300, 600], $mobile['sizes']);
+            $this->assertNotContains([970, 90], $mobile['sizes']);
+            $this->assertNull(data_get($recipe, 'container.attributes.data-hm-gpt-rewarded'));
+            $this->assertNull(data_get($recipe, 'container.attributes.data-hm-vast-url'));
+            $runtimeIds[] = data_get($recipe, 'container.id');
+        }
+        $this->assertCount(4, array_unique($runtimeIds));
+        $widgets = DemandWidget::withoutGlobalScopes()->get();
+        $this->assertCount(4, $widgets);
+        $this->assertSame([$path], $widgets->pluck('direct_tag_template')->unique()->values()->all());
+        foreach ($widgets as $widget) {
+            $this->assertSame('GAM_AD_UNIT_PATH', data_get($widget->configuration, 'input_kind'));
+        }
+    }
+
+    public function test_legacy_auto_input_accepts_a_display_path_without_changing_the_existing_placement(): void
+    {
+        $before = $this->placement->refresh()->getAttributes();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'tag' => '/1234567/header',
+        ]))->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame($before, $this->placement->fresh()->getAttributes());
+        $recipe = data_get($this->publishedConfiguration(), 'directDemand.placements.header_banner.candidates.0.tag');
+        $this->assertSame('/1234567/header', data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
+        $this->assertSame([[300, 250]], data_get($recipe, 'render.allowedSizes'));
+        $this->assertSame(1, DemandWidget::withoutGlobalScopes()->count());
+    }
+
+    public function test_gam_path_uses_sticky_sizes_and_preserves_each_existing_sticky_setting(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        foreach (['sticky_top', 'sticky_bottom'] as $preset) {
+            $path = '/1234567/'.$preset;
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => $preset,
+                'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => $path,
+            ]))->assertSessionHasNoErrors();
+
+            $placement = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->where('code', 'quick_'.$preset)->firstOrFail();
+            $settings = $placement->format_settings;
+            $this->assertTrue($settings['autoMount']);
+            $this->assertTrue($settings['closeable']);
+            $settings['closeable'] = false;
+            $settings['surface']['testPublisherPreference'] = 'preserve';
+            $placement->update(['format_settings' => $settings]);
+            $before = $placement->refresh()->getAttributes();
+            $beforeSizes = $placement->sizes()->get()->map(fn ($size) => $size->getAttributes())->all();
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_id' => $placement->id,
+                'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => $path.'_updated',
+            ]))->assertSessionHasNoErrors();
+
+            $this->assertSame($before, $placement->fresh()->getAttributes());
+            $this->assertSame($beforeSizes, $placement->sizes()->get()->map(fn ($size) => $size->getAttributes())->all());
+            $config = $this->publishedConfiguration();
+            $public = collect($config['placements'])->firstWhere('code', $placement->code);
+            $recipe = data_get($config, 'directDemand.placements.'.$placement->code.'.candidates.0.tag');
+            $this->assertSame($path.'_updated', data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
+            $this->assertEqualsCanonicalizing($public['sizes'], data_get($recipe, 'render.allowedSizes'));
+            $this->assertContains([728, 90], data_get($recipe, 'render.allowedSizes'));
+            $this->assertContains([320, 50], data_get($recipe, 'render.allowedSizes'));
+            $this->assertNotContains([300, 250], data_get($recipe, 'render.allowedSizes'));
+            $this->assertFalse(data_get($public, 'format.settings.closeable'));
+        }
+        $this->assertSame(2, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertCount(0, $this->responsiveUnits());
+    }
+
+    public function test_explicit_input_mode_rejects_mismatched_or_invalid_paths_without_partial_writes(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $before = $this->site->configVersions()->count();
+        foreach ([
+            ['GAM_AD_UNIT_PATH', $this->gptTag(), 'tag'],
+            ['GAM_AD_UNIT_PATH', 'https://vast.vendor.net/tag', 'tag'],
+            ['GAM_AD_UNIT_PATH', '//1234567/header', 'tag'],
+            ['GAM_AD_UNIT_PATH', '/network/header', 'tag'],
+            ['GAM_AD_UNIT_PATH', '/1234567/header?extra=1', 'tag'],
+            ['GAM_AD_UNIT_PATH', '/1234567/header<script>alert(1)</script>', 'tag'],
+            ['PROVIDER_TAG', '/1234567/header', 'tag'],
+            ['UNRECOGNIZED', '/1234567/header', 'tag_input_type'],
+        ] as [$mode, $tag, $error]) {
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+                'tag_input_type' => $mode, 'tag' => $tag,
+            ]))->assertSessionHasErrors($error);
+        }
+        $this->assertCount(0, $this->responsiveUnits());
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandSite::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandPlacement::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame($before, $this->site->configVersions()->count());
+        $this->assertFalse($this->site->fresh()->native_demand_enabled);
+    }
+
+    public function test_gam_path_and_provider_tag_switches_reuse_the_bundle_and_preserve_live_other_formats_and_protection(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        config(['traffic_gate.origin' => 'https://verify.horusmedia.net']);
+        $settings = app(GlobalSettingsService::class);
+        $settings->set($this->admin, 'traffic_gate.site_key', '0x4AAAAA_quick_path_test', 'Enable protected path-mode test.');
+        $settings->set($this->admin, 'traffic_gate.enabled', true, 'Enable protected path-mode test.');
+        $this->site->siteConfig()->update(['click_guard_settings' => [
+            'inheritGlobal' => false, 'enabled' => true, 'maxClicks' => 5, 'windowHours' => 8, 'blockHours' => 24,
+        ]]);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload())->assertSessionHasNoErrors();
+        foreach (['video_floating' => 'https://vast.vendor.net/tag?slot=floating', 'rewarded' => '/1234567/rewarded'] as $preset => $tag) {
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => $preset, 'tag' => $tag,
+            ]))->assertSessionHasNoErrors();
+        }
+        $before = $this->publishedConfiguration();
+        $this->assertTrue($before['trafficGate']['enabled']);
+        $this->assertTrue($before['clickGuard']['enabled']);
+        $others = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->get()
+            ->mapWithKeys(fn ($placement) => [$placement->id => $placement->getAttributes()])->all();
+        $otherWidgets = DemandWidget::withoutGlobalScopes()->get()
+            ->mapWithKeys(fn ($widget) => [$widget->id => $widget->getAttributes()])->all();
+
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag_input_type' => 'PROVIDER_TAG',
+        ]))->assertSessionHasNoErrors();
+        $ids = $this->responsiveUnits()->pluck('id')->all();
+        $widgets = DemandWidget::withoutGlobalScopes()->whereNotIn('id', array_keys($otherWidgets))->orderBy('id')->pluck('id')->all();
+        foreach (['GAM_AD_UNIT_PATH', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'] as $mode) {
+            $tag = $mode === 'GAM_AD_UNIT_PATH' ? '/1234567/updated_responsive' : $this->gptTag();
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+                'placement_id' => $ids[2], 'tag_input_type' => $mode, 'tag' => $tag,
+            ]))->assertSessionHasNoErrors();
+            $this->assertSame($ids, $this->responsiveUnits()->pluck('id')->all());
+            $this->assertSame($widgets, DemandWidget::withoutGlobalScopes()->whereNotIn('id', array_keys($otherWidgets))->orderBy('id')->pluck('id')->all());
+            $after = $this->publishedConfiguration();
+            foreach ($this->responsiveUnits() as $unit) {
+                $recipe = data_get($after, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
+                $public = collect($after['placements'])->firstWhere('code', $unit->code);
+                $expectedPath = $mode === 'GAM_AD_UNIT_PATH' ? $tag : '/1234567/lordai_header';
+                $expectedSizes = $mode === 'GAM_AD_UNIT_PATH' ? $public['sizes'] : [[300, 250]];
+                $this->assertSame($expectedPath, data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
+                $this->assertEqualsCanonicalizing($expectedSizes, data_get($recipe, 'render.allowedSizes'));
+            }
+            foreach (DemandWidget::withoutGlobalScopes()->whereIn('id', $widgets)->get() as $widget) {
+                $this->assertSame($mode, data_get($widget->configuration, 'input_kind'));
+                $this->assertSame($tag, $widget->direct_tag_template);
+                $this->assertArrayNotHasKey('vast_origin', $widget->configuration);
+            }
+            foreach (['trafficGate', 'clickGuard', 'controls', 'privacy'] as $key) {
+                $this->assertSame($before[$key], $after[$key], $key);
+            }
+            foreach (['header_banner', 'quick_video_floating', 'quick_rewarded'] as $code) {
+                $this->assertSame(data_get($before, 'directDemand.placements.'.$code), data_get($after, 'directDemand.placements.'.$code), $code);
+                $this->assertSame(collect($before['placements'])->firstWhere('code', $code), collect($after['placements'])->firstWhere('code', $code));
+            }
+        }
+        foreach ($others as $id => $attributes) {
+            $this->assertSame($attributes, Placement::withoutGlobalScopes()->findOrFail($id)->getAttributes());
+        }
+        foreach ($otherWidgets as $id => $attributes) {
+            $this->assertSame($attributes, DemandWidget::withoutGlobalScopes()->findOrFail($id)->getAttributes());
+        }
     }
 
     public function test_gam_rewarded_path_cannot_be_saved_as_floating_video(): void
     {
         $this->seed(AdFormatSeeder::class);
+        foreach (['AUTO', 'GAM_AD_UNIT_PATH'] as $mode) {
+            foreach (['video_floating', 'video_outstream'] as $preset) {
+                $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+                    'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => $preset,
+                    'tag_input_type' => $mode, 'tag' => '/23055873217/rewarded',
+                ]))->assertSessionHasErrors('placement_preset');
+            }
+        }
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_floating']);
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_outstream']);
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+    }
+
+    public function test_a_gam_path_cannot_replace_a_working_vast_video_or_publish_partial_changes(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
             'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'video_floating',
-            'tag' => '/23055873217/rewarded',
-        ]))->assertSessionHasErrors('placement_preset');
-        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_floating']);
+            'tag' => 'https://vast.vendor.net/tag?slot=floating',
+        ]))->assertSessionHasNoErrors();
+        $video = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->where('code', 'quick_video_floating')->firstOrFail();
+        $before = $this->publishedConfiguration();
+        $beforeVersions = $this->site->configVersions()->count();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $beforeWidget = $widget->getAttributes();
+
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_id' => $video->id, 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/video',
+        ]))->assertSessionHasErrors('placement_id');
+
+        $this->assertSame($beforeWidget, $widget->fresh()->getAttributes());
+        $this->assertSame($before, $this->publishedConfiguration());
+        $this->assertSame($beforeVersions, $this->site->configVersions()->count());
     }
 
     public function test_runtime_refresh_is_dry_run_by_default_and_idempotent_when_applied(): void
@@ -658,9 +883,11 @@ HTML;
         $member = $this->responsiveUnits()->last();
         app(PlatformControlService::class)->set('PLACEMENT', $member->id, 'DIRECT_JS', true, 'Blocked member', $this->admin);
         $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
-        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
-            'tag' => str_replace('lordai_header', 'must_not_publish', $this->gptTag()),
-        ]))->assertSessionHasErrors('quick');
+        foreach (['PROVIDER_TAG' => str_replace('lordai_header', 'must_not_publish', $this->gptTag()), 'GAM_AD_UNIT_PATH' => '/1234567/must_not_publish'] as $mode => $tag) {
+            $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+                'tag_input_type' => $mode, 'tag' => $tag,
+            ]))->assertSessionHasErrors('quick');
+        }
         $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $this->assertCount(4, $this->responsiveUnits());
         $this->assertSame([$this->gptTag()], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
@@ -688,7 +915,7 @@ HTML;
         $legacy = app(PlacementPresetBuilder::class)->create($this->site, 'responsive_display', $this->admin, [], false, true);
         $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
-            'tag' => str_replace('[300, 250]', '[160, 600]', $this->gptTag()),
+            'tag' => str_replace('[300, 250]', '[999, 999]', $this->gptTag()),
         ]))->assertSessionHasErrors('tag');
         $this->assertCount(0, $this->responsiveUnits());
         $this->assertTrue(data_get($legacy->fresh()->format_settings, 'autoMount'));
@@ -703,6 +930,12 @@ HTML;
     {
         return Placement::withoutGlobalScopes()->where('site_id', $this->site->id)
             ->where('metadata->responsive_bundle', 'v1')->orderBy('code')->get();
+    }
+
+    private function publishedConfiguration(): array
+    {
+        return ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)
+            ->where('environment', ConfigEnvironment::Production->value)->orderByDesc('version')->firstOrFail()->payload;
     }
 
     private function responsivePayload(array $overrides = []): array

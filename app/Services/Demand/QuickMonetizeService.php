@@ -41,21 +41,28 @@ final class QuickMonetizeService
     ) {}
 
     /** @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>} */
-    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null): array
+    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO'): array
     {
         $tag = trim($tag);
+        $inputKind = strtoupper(trim($inputKind));
+        if (! in_array($inputKind, ['AUTO', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'], true)) {
+            throw ValidationException::withMessages(['tag_input_type' => 'Choose a full provider tag or a GAM ad unit path.']);
+        }
         try {
-            $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($tag);
-            $vast = $this->vastTags->parse($tag);
+            $adUnitPath = (new GoogleAdUnitPath())->parse($tag);
+            $vast = $adUnitPath === null && $inputKind !== 'GAM_AD_UNIT_PATH' ? $this->vastTags->parse($tag) : null;
         } catch (Throwable $exception) {
             throw ValidationException::withMessages(['tag' => $exception->getMessage()]);
         }
+        if ($inputKind === 'GAM_AD_UNIT_PATH' && $adUnitPath === null) {
+            throw ValidationException::withMessages(['tag' => 'Enter only the GAM ad unit path, such as /1234567/ad_unit. Select Full provider tag for HTML code, or use a VAST URL for video.']);
+        }
+        if ($inputKind === 'PROVIDER_TAG' && $adUnitPath !== null) {
+            throw ValidationException::withMessages(['tag' => 'Select GAM ad unit path to use /Network_Code/AdUnit_Code, or paste the full provider tag.']);
+        }
 
-        if ($rewardedPath !== null) {
-            if ($existingPlacement === null && $preset !== 'rewarded') {
-                throw ValidationException::withMessages(['placement_preset' => 'A GAM ad unit path requires Rewarded Video / Opt-in.']);
-            }
-            $tag = $rewardedPath;
+        if ($adUnitPath !== null) {
+            $tag = $adUnitPath;
             $scriptOrigins = ['https://securepubads.g.doubleclick.net'];
             $resourceOrigins = ['all' => $scriptOrigins, 'frame' => [], 'image' => [], 'style' => [], 'media' => [], 'font' => []];
         } elseif ($vast !== null) {
@@ -90,7 +97,7 @@ final class QuickMonetizeService
         if (count($isolationOrigins) > 20) throw ValidationException::withMessages(['tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.']);
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
-        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $rewardedPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
+        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $adUnitPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
             $bundle = ($existingPlacement === null && $preset === 'responsive_display')
                 || data_get($existingPlacement?->metadata, 'responsive_bundle') === 'v1';
             $placement = $existingPlacement;
@@ -101,7 +108,12 @@ final class QuickMonetizeService
                 $placement = $this->placements->create($site, $preset, $actor, ['name' => $placementName], false, true);
             }
             $placements ??= [$placement];
-            foreach ($placements as $placement) $this->assertPlacementReady($site, $placement);
+            foreach ($placements as $placement) {
+                $this->assertPlacementReady($site, $placement);
+                if ($adUnitPath !== null && ! in_array($placement->type->value, ['DISPLAY', 'STICKY', 'REWARDED'], true)) {
+                    throw ValidationException::withMessages([$existingPlacement ? 'placement_id' : 'placement_preset' => 'A GAM ad unit path requires a Display, Sticky, or Rewarded placement. Video placements use a VAST URL or a full provider tag.']);
+                }
+            }
 
             $siteRevenueShare = $this->publisherRevenueShare($site);
             $publisher = Publisher::withoutGlobalScopes()->whereKey($site->publisher_id)->lockForUpdate()->firstOrFail();
@@ -139,7 +151,9 @@ final class QuickMonetizeService
                 $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
                 $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
                 $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
-                $widgetConfiguration['input_kind'] = $rewardedPath !== null ? 'GAM_REWARDED_PATH' : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
+                $widgetConfiguration['input_kind'] = $adUnitPath !== null
+                    ? ($placement->type->value === 'REWARDED' ? 'GAM_REWARDED_PATH' : 'GAM_AD_UNIT_PATH')
+                    : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
                 if ($vast !== null) {
                     $widgetConfiguration['vast_origin'] = $vast['origin'];
                     $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));

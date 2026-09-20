@@ -16,7 +16,7 @@ function makeContainer(attributes) {
     };
 }
 
-function runAtWidth(width, overrides = {}) {
+function runAtWidth(width, overrides = {}, { contentWidth, padding = 0, queued = false } = {}) {
     const attributes = {
         'data-hm-gpt-direct': '1',
         'data-hm-gpt-ad-unit-path': '/1234567/lordai_anchor',
@@ -29,9 +29,12 @@ function runAtWidth(width, overrides = {}) {
         ...overrides,
     };
     const target = makeContainer(attributes);
+    const root = contentWidth === undefined ? null : { clientWidth: contentWidth };
+    target.closest = () => root;
     const definitions = [];
     const displayCalls = [];
     const listeners = [];
+    const commands = [];
     const pubads = {
         addEventListener(name, callback) { if (name === 'slotRenderEnded') listeners.push(callback); },
         removeEventListener(name, callback) {
@@ -42,7 +45,7 @@ function runAtWidth(width, overrides = {}) {
     };
     const googletag = {
         apiReady: true,
-        cmd: { push(callback) { callback(); } },
+        cmd: { push(callback) { if (queued) commands.push(callback); else callback(); } },
         defineSlot(path, sizes, id) {
             const slot = { path, sizes, id, addService() { return slot; } };
             definitions.push(slot);
@@ -64,10 +67,12 @@ function runAtWidth(width, overrides = {}) {
         constructor(callback) { this.callback = callback; }
         observe() {}
     }
-    const sandbox = { document, MutationObserver, console, innerWidth: width, innerHeight: 900, googletag };
+    const sandbox = { document, MutationObserver, console, innerWidth: width, innerHeight: 900, googletag,
+        getComputedStyle() { return { paddingLeft: padding + 'px', paddingRight: padding + 'px' }; },
+    };
     sandbox.window = sandbox;
     vm.runInNewContext(source, sandbox, { filename: 'hm-gpt-direct.js' });
-    return { target, attributes, definitions, displayCalls, listeners };
+    return { target, attributes, definitions, displayCalls, listeners, commands, root, sandbox };
 }
 
 test('trusted GPT runtime exposes only mobile-mapped sizes to GPT on a mobile viewport', () => {
@@ -169,4 +174,80 @@ test('trusted GPT runtime preserves fluid alongside fixed in-article sizes', () 
     assert.equal(attributes['data-hm-gpt-runtime-state'], 'rendered');
     assert.equal(attributes['data-hm-gpt-rendered-width'], '320');
     assert.equal(attributes['data-hm-gpt-rendered-height'], '180');
+});
+
+const mobileResponsive = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+const desktopResponsive = [[970, 250], [970, 90], [728, 90], [468, 60], ...mobileResponsive, [300, 600]];
+const responsiveAttributes = {
+    'data-hm-gpt-ad-unit-path': '/1234567,7654321/article/responsive',
+    'data-hm-gpt-fit-container': '1',
+    'data-hm-gpt-sizes': JSON.stringify(desktopResponsive),
+    'data-hm-gpt-size-map': JSON.stringify([
+        { viewport: [0, 0], maxViewport: [767, 65535], sizes: mobileResponsive },
+        { viewport: [768, 0], maxViewport: [1023, 65535], sizes: desktopResponsive.filter(size => size[0] < 970) },
+        { viewport: [1024, 0], maxViewport: [0, 0], sizes: desktopResponsive },
+    ]),
+};
+
+test('expanded responsive display intersects desktop mapping with the publisher content width', () => {
+    const { definitions } = runAtWidth(1440, responsiveAttributes, { contentWidth: 700 });
+    assert.equal(definitions.length, 1);
+    assert.equal(definitions[0].path, '/1234567,7654321/article/responsive');
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[468, 60], ...mobileResponsive, [300, 600]]);
+});
+
+test('mobile responsive requests exclude tall desktop demand and subtract placement padding', () => {
+    const { definitions } = runAtWidth(390, responsiveAttributes, { contentWidth: 350, padding: 16 });
+    assert.equal(definitions.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[300, 250], [300, 100], [300, 50], [250, 250], [200, 200]]);
+});
+
+test('a narrow responsive sidebar can request its 200-square fallback without overflowing', () => {
+    const { definitions } = runAtWidth(1440, responsiveAttributes, { contentWidth: 240 });
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+});
+
+test('hidden or too narrow responsive placements do not make an ad request', () => {
+    for (const contentWidth of [0, 190]) {
+        const { definitions, displayCalls, attributes } = runAtWidth(1440, responsiveAttributes, { contentWidth });
+        assert.equal(definitions.length, 0);
+        assert.equal(displayCalls.length, 0);
+        assert.equal(attributes['data-hm-gpt-runtime-state'], 'ineligible');
+    }
+});
+
+test('responsive width enforcement still applies when a provider supplies no size mapping', () => {
+    const { definitions } = runAtWidth(1440, { ...responsiveAttributes, 'data-hm-gpt-size-map': '' }, { contentWidth: 240 });
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+});
+
+test('responsive layout is rechecked after GPT loads but does not refresh after a request', () => {
+    const { root, commands, sandbox, definitions, displayCalls } = runAtWidth(1440, responsiveAttributes, { contentWidth: 1000, queued: true });
+    assert.equal(definitions.length, 0);
+    root.clientWidth = 240;
+    commands.shift()();
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+    root.clientWidth = 1000;
+    vm.runInNewContext(source, sandbox);
+    assert.equal(definitions.length, 1);
+    assert.equal(displayCalls.length, 1);
+});
+
+test('creative expansion cannot overflow an explicitly width-constrained responsive placement', () => {
+    const { definitions, listeners, attributes } = runAtWidth(1440, responsiveAttributes, { contentWidth: 320 });
+    listeners[0]({ slot: definitions[0], isEmpty: false, size: [400, 250] });
+    assert.equal(attributes['data-hm-gpt-runtime-state'], 'failed');
+});
+
+test('existing sticky mappings are unchanged by an unrelated parent container measurement', () => {
+    const { definitions } = runAtWidth(1440, {}, { contentWidth: 240 });
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[728, 90], [950, 90], [960, 90], [970, 90], [980, 90]]);
+});
+
+test('GPT paths reject malformed hierarchy or arbitrary URL input', () => {
+    for (const path of ['/123//responsive', '/123/responsive/', '/123,456,789/responsive', 'https://example.test/path', '/123/<script>']) {
+        const { definitions, attributes } = runAtWidth(390, { ...responsiveAttributes, 'data-hm-gpt-ad-unit-path': path });
+        assert.equal(definitions.length, 0);
+        assert.equal(attributes['data-hm-gpt-runtime-state'], 'invalid');
+    }
 });

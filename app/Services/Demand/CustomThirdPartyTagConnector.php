@@ -26,13 +26,13 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     public function parseDirectTag(string $tag): array
     {
         try {
-            $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($tag);
+            $adUnitPath = (new GoogleAdUnitPath())->parse($tag);
             $vast = app(VastTagUrlParser::class)->parse($tag);
         } catch (RuntimeException $exception) {
             return ['safe' => false, 'recipe' => null, 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => [$exception->getMessage()]];
         }
-        if ($rewardedPath !== null) {
-            return ['safe' => true, 'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT_REWARDED'], 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => []];
+        if ($adUnitPath !== null) {
+            return ['safe' => true, 'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT_AD_UNIT_PATH', 'adUnitPath' => $adUnitPath], 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => []];
         }
         if ($vast !== null) {
             return [
@@ -72,8 +72,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (! $widget?->direct_tag_template) return parent::generateDirectTag($placement);
 
         $html = trim((string) $widget->direct_tag_template);
-        $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($html);
-        if ($rewardedPath !== null) return $this->googleRewardedRecipe($rewardedPath, $placement);
+        $adUnitPath = (new GoogleAdUnitPath())->parse($html);
+        if ($adUnitPath !== null) return $this->googleAdUnitPathRecipe($adUnitPath, $configuration, $placement);
         $vast = app(VastTagUrlParser::class)->parse($html);
         if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement);
 
@@ -111,6 +111,21 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
         $size = $placement->placement->sizes->where('is_active', true)->first(fn ($candidate) => $candidate->size_type === 'FIXED' && $candidate->width && $candidate->height);
         return ['name' => $this->code().' - '.$placement->placement->name, 'creativeType' => 'THIRD_PARTY', 'size' => $size ? ['width' => (int) $size->width, 'height' => (int) $size->height] : ['width' => 1, 'height' => 1], 'snippet' => $snippet, 'safeFrameCompatible' => true];
+    }
+
+    private function googleAdUnitPathRecipe(string $path, array $configuration, DemandPlacement $placement): array
+    {
+        $type = $placement->placement->type->value;
+        if ($type === 'REWARDED') return $this->googleRewardedRecipe($path, $placement);
+        if (! in_array($type, ['DISPLAY', 'STICKY'], true)) {
+            throw new RuntimeException('A GAM ad unit path requires a Display, Sticky, or Rewarded placement. Video placements use a VAST URL or a full provider tag.');
+        }
+
+        return $this->googleGptRecipe([
+            'adUnitPath' => $path,
+            'containerId' => 'hm-gpt-'.$placement->id,
+            'sizes' => $this->placementSizes($placement),
+        ], $configuration, $placement);
     }
 
     private function googleRewardedRecipe(string $path, DemandPlacement $placement): array
@@ -158,6 +173,9 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $timeout = max(15000, min(30000, (int) ($configuration['render_timeout_ms'] ?? 15000)));
         $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
         $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'], 'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-gpt-inner-id' => $providerContainerId];
+        if (data_get($placement->placement->metadata, 'placement_preset') === 'responsive_display') {
+            $attributes['data-hm-gpt-fit-container'] = '1';
+        }
         return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'DISPLAY', 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-google-gpt-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-google-gpt', 'attributes' => $attributes], 'publicPlacementId' => $gpt['adUnitPath'], 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => $allowedFormats, 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-google-gpt', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false];
     }
 
@@ -178,7 +196,10 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $containerId = 'hm-isolated-'.$placement->id;
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
-        $attributes = ['data-hm-isolated-direct' => '1', 'data-hm-isolated-width' => (string) $frameSize[0], 'data-hm-isolated-height' => (string) $frameSize[1], 'data-hm-isolated-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-isolated-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        $attributes = ['data-hm-isolated-direct' => '1', 'data-hm-isolated-width' => (string) $frameSize[0], 'data-hm-isolated-height' => (string) $frameSize[1], 'data-hm-isolated-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        // Public recipe attributes remain capped at 2,000 characters. Keep
+        // small legacy maps verbatim and split larger maps before publication.
+        $attributes += $this->chunkedPayloadAttributes('data-hm-isolated-size-map', json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-html', $html);
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-csp', $csp);
         $successSelector = '#'.$containerId.'[data-hm-isolated-status="rendered"]';
@@ -270,10 +291,14 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     private function encodedPayloadAttributes(string $baseAttribute, string $payload): array
     {
-        $encoded = base64_encode($payload);
-        if (strlen($encoded) <= 1800) return [$baseAttribute => $encoded];
-        $parts = str_split($encoded, 1800);
-        if (count($parts) > 64) throw new RuntimeException('The encoded isolated tag exceeds the trusted runtime payload limit.');
+        return $this->chunkedPayloadAttributes($baseAttribute, base64_encode($payload));
+    }
+
+    private function chunkedPayloadAttributes(string $baseAttribute, string $payload): array
+    {
+        if (strlen($payload) <= 1800) return [$baseAttribute => $payload];
+        $parts = str_split($payload, 1800);
+        if (count($parts) > 64) throw new RuntimeException('The isolated tag exceeds the trusted runtime payload limit.');
         $attributes = [$baseAttribute.'-parts' => (string) count($parts)];
         foreach ($parts as $index => $part) $attributes[$baseAttribute.'-'.$index] = $part;
         return $attributes;

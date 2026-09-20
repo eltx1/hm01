@@ -9,8 +9,17 @@ const CDN = 'https://cdn.horusmedia.net';
 const SITE = 'RESPONSIVE_FOUR';
 const GATE = 'https://verify.horusmedia.net';
 const codes = ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4'];
+const mobileSizes = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+const tabletSizes = [[728, 90], [468, 60], ...mobileSizes, [300, 600]];
+const desktopSizes = [[970, 250], [970, 90], ...tabletSizes];
+const sizeMappings = [
+    { viewport: [0, 0], maxViewport: [767, 65535], device: 'MOBILE', sizes: mobileSizes },
+    { viewport: [768, 0], maxViewport: [1023, 65535], device: 'TABLET', sizes: tabletSizes },
+    { viewport: [1024, 0], maxViewport: [null, null], device: 'DESKTOP', sizes: desktopSizes },
+];
 
-function config(gated) {
+function config(gated, expanded = false) {
+    const sizes = expanded ? desktopSizes : [[300, 250]];
     return {
         schemaVersion: 4, siteKey: SITE, configVersion: 1, status: 'active', servingMode: 'HORUS_DIRECT',
         allowedHostnames: ['publisher.example'], immediatePause: false,
@@ -22,7 +31,7 @@ function config(gated) {
             timings: { initialWaitMs: 2000, maxWaitMs: 10000, retryIntervalMs: 500 } },
         prebid: { enabled: false }, nativeDemand: { enabled: false, placements: {} },
         placements: codes.map(code => ({ code, type: 'DISPLAY', enabled: true, status: 'active', renderer: 'DIRECT_JS',
-            directJsEnabled: true, rendererConflict: false, sizes: [[300, 250]], responsiveMappings: [],
+            directJsEnabled: true, rendererConflict: false, sizes, responsiveMappings: expanded ? sizeMappings : [],
             lazyLoad: { enabled: false }, refresh: { enabled: false },
             format: { code: 'display_banner', settings: { autoMount: false, reserveSpace: true, contentAlignment: 'center' } },
         })),
@@ -31,9 +40,9 @@ function config(gated) {
             return [code, { enabled: true, candidates: [{ network: 'CUSTOM_THIRD_PARTY_TAG', mode: 'MANUAL_TAG', tag: {
                 recipeVersion: 1, executionMode: 'STRUCTURED', format: 'DISPLAY',
                 scripts: [{ url: `${CDN}/runtime/gpt/test.js`, async: true, dedupeKey: 'gpt-runtime' }],
-                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': '[[300,250]]', 'data-hm-gpt-inner-id': 'same-provider-id' } },
+                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': JSON.stringify(sizes), 'data-hm-gpt-inner-id': 'same-provider-id', ...(expanded ? { 'data-hm-gpt-fit-container': '1' } : {}) } },
                 initialization: { type: 'NONE' },
-                render: { timeoutMs: 15000, successSelector: `#${id}[data-hm-gpt-status="rendered"]`, assumeLoadedIsSuccess: false, allowedFormats: ['DISPLAY'], allowedSizes: [[300, 250]] },
+                render: { timeoutMs: 15000, successSelector: `#${id}[data-hm-gpt-status="rendered"]`, assumeLoadedIsSuccess: false, allowedFormats: ['DISPLAY'], allowedSizes: sizes },
             } }] }];
         })) },
     };
@@ -47,19 +56,21 @@ const gpt = `(() => {
     const pubads = { addEventListener(name, fn) { listeners.add(fn); }, removeEventListener(name, fn) { listeners.delete(fn); } };
     window.googletag = { cmd: { push(fn) { fn(); } }, apiReady: true, pubadsReady: true,
         pubads() { return pubads; }, enableServices() {}, destroySlots() {},
-        defineSlot(path, sizes, id) { const slot = { path, id, addService() { return slot; } }; slots.push(slot); return slot; },
+        defineSlot(path, sizes, id) { const slot = { path, id, sizes, addService() { return slot; } }; slots.push(slot); return slot; },
         display(id) {
             window.testDisplays.push(id);
+            const slot = slots.find(s => s.id === id);
+            const size = slot.sizes[0];
             const frame = document.createElement('iframe');
-            frame.style.cssText = 'width:300px;height:250px;border:0';
+            frame.style.cssText = 'width:' + size[0] + 'px;height:' + size[1] + 'px;border:0';
             frame.title = 'Advertisement'; document.getElementById(id).appendChild(frame);
-            queueMicrotask(() => { for (const fn of [...listeners]) fn({ slot: slots.find(s => s.id === id), isEmpty: false, size: [300, 250] }); });
+            queueMicrotask(() => { for (const fn of [...listeners]) fn({ slot, isEmpty: false, size }); });
         },
     };
     queue.forEach(fn => fn());
 })();`;
 
-async function open(page, { count = 4, gated = false, blocked = false } = {}) {
+async function open(page, { count = 4, gated = false, blocked = false, expanded = false } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
     if (blocked) await page.addInitScript(site => {
@@ -67,12 +78,12 @@ async function open(page, { count = 4, gated = false, blocked = false } = {}) {
     }, SITE);
     await page.route('**/*', route => {
         const url = new URL(route.request().url());
-        if (url.origin === 'https://publisher.example') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}article{width:calc(100% - 32px);max-width:760px;margin:auto}.hm-ad{float:left;text-align:left;margin-left:0}.hm-direct-google-gpt{margin-right:0}</style><body><article><h1>Publisher article</h1>${codes.slice(0, count).map(code => `<p>Content at chosen position</p><div class="hm-ad" data-placement="${code}"></div>`).join('')}</article><script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-base="${CDN}/configs" data-environment="production" data-config-version="1"></script></body></html>` });
+        if (url.origin === 'https://publisher.example') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}article{width:calc(100% - 32px);max-width:${expanded ? 1100 : 760}px;margin:auto}.hm-ad{float:left;text-align:left;margin-left:0}.hm-direct-google-gpt{margin-right:0}.slot-position{display:flow-root;max-width:100%}</style><body><article><h1>Publisher article</h1>${codes.slice(0, count).map((code, i) => `<section class="slot-position" style="width:${expanded ? [1000, 700, 350, 240][i] + 'px' : '100%'}"><p>Content at chosen position</p><div class="hm-ad" data-placement="${code}" style="${expanded && i === 2 ? 'padding:0 16px' : ''}"></div></section>`).join('')}</article><script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-base="${CDN}/configs" data-environment="production" data-config-version="1"></script></body></html>` });
         if (url.origin === CDN) {
             if (url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: loader });
             if (url.pathname === '/runtime/gpt/test.js') return route.fulfill({ contentType: 'application/javascript', body: runtime });
-            if (url.pathname === `/configs/${SITE}/production.json`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(config(gated)) });
-            if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated).controls }) });
+            if (url.pathname === `/configs/${SITE}/production.json`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(config(gated, expanded)) });
+            if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated, expanded).controls }) });
             return route.fulfill({ status: 404, body: '' });
         }
         if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type}, event.origin); });</script>` });
@@ -109,6 +120,43 @@ test('uninstalled units stay absent and make no ad requests', async ({ page }) =
     await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(2);
     expect(await page.evaluate(() => window.testDisplays.length)).toBe(2);
     await expect(page.locator('.hm-ad')).toHaveCount(2);
+});
+
+test('expanded responsive units request only device-appropriate sizes fitting each actual publisher DIV', async ({ page }) => {
+    await open(page, { expanded: true });
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+    const slots = await page.evaluate(() => window.testSlots.map(({ id, path, sizes }) => ({ id, path, sizes })));
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    expect(new Set(slots.map(slot => slot.path)).size).toBe(1);
+    expect(slots.find(slot => slot.id === 'hm-gpt-member-3').sizes).toEqual([[200, 200]]);
+    const paddedSizes = slots.find(slot => slot.id === 'hm-gpt-member-2').sizes;
+    expect(paddedSizes).toContainEqual([300, 250]);
+    expect(paddedSizes).not.toContainEqual([336, 280]);
+    expect(paddedSizes).not.toContainEqual([320, 100]);
+
+    for (const slot of slots) {
+        const creative = page.locator('#' + slot.id);
+        const available = await creative.evaluate(node => {
+            const root = node.closest('.hm-ad');
+            const css = getComputedStyle(root);
+            return root.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+        });
+        for (const size of slot.sizes) {
+            expect(size[0]).toBeLessThanOrEqual(available);
+            if (page.viewportSize().width < 768) expect(size[1]).toBeLessThanOrEqual(280);
+        }
+        const bounds = await creative.locator('iframe').boundingBox();
+        const parent = await creative.evaluate(node => {
+            const rect = node.closest('.hm-ad').getBoundingClientRect();
+            return { x: rect.x, width: rect.width };
+        });
+        expect(Math.abs(bounds.x + bounds.width / 2 - parent.x - parent.width / 2)).toBeLessThan(2);
+    }
+    if (page.viewportSize().width >= 1024) {
+        expect(slots.find(slot => slot.id === 'hm-gpt-member-0').sizes).toContainEqual([970, 250]);
+        expect(slots.find(slot => slot.id === 'hm-gpt-member-1').sizes).not.toContainEqual([728, 90]);
+        expect(slots.find(slot => slot.id === 'hm-gpt-member-1').sizes).toContainEqual([468, 60]);
+    }
 });
 
 test('Click Guard blocks provider loading for all four units', async ({ page }) => {
