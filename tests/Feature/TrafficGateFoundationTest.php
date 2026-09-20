@@ -211,7 +211,7 @@ class TrafficGateFoundationTest extends TestCase
         );
 
         $resolved = app(TrafficGateConfigurationResolver::class)->resolve($site->refresh());
-        $this->assertTrue($resolved->enabled);
+        $this->assertFalse($resolved->enabled);
         $this->assertSame(TrafficGateReadiness::Disabled, $resolved->readiness);
         $this->assertTrue(AuditLog::query()->where('event', 'traffic_gate.emergency_disabled')->exists());
 

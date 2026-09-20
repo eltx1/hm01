@@ -16,7 +16,7 @@ class ExternalPagesSyncDriverTest extends TestCase
 {
     private const GATE_JS = "(() => { window.__horusGate = true; })();\n";
     private const GATE_PAGE = '<!doctype html><title>Horus Client Traffic Gate</title><script src="/assets/traffic-gate/horus-traffic-gate.js" defer></script>';
-    private const GATE_CSP = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors https:";
+    private const GATE_CSP = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; frame-ancestors https:";
 
     private string $confirmationPath;
 
