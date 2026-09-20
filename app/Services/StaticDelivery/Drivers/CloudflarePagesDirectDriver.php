@@ -9,6 +9,7 @@ use App\Services\StaticDelivery\Data\StaticDeliveryResult;
 use App\Services\StaticDelivery\Data\StaticDeliverySnapshot;
 use App\Services\StaticDelivery\Exceptions\StaticDeliveryException;
 use App\Services\StaticDelivery\PagesAssetHash;
+use App\Services\StaticDelivery\PagesDeploymentEvidence;
 use App\Services\StaticDelivery\SecretReferenceResolver;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -26,6 +27,7 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
         private readonly SecretReferenceResolver $secrets,
         private readonly PagesAssetHash $hashes,
         private readonly ExternalPagesSyncDriver $publicVerifier,
+        private readonly PagesDeploymentEvidence $deploymentEvidence,
     ) {}
 
     public function name(): string { return 'cloudflare-pages-direct'; }
@@ -37,7 +39,11 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
         }
         $this->deadline = microtime(true) + 100;
         try {
-            return $this->upload($snapshot, $batch);
+            $result = $this->upload($snapshot, $batch);
+            $health = json_decode($snapshot->files['health/delivery.json'] ?? 'null', true);
+
+            return new StaticDeliveryResult(remoteId: $result->remoteId, remoteUrl: $result->remoteUrl,
+                confirmedDeployed: false, metadata: $result->metadata + (is_array($health) ? ['snapshot_health' => $health] : []));
         } catch (StaticDeliveryException $exception) {
             throw $exception;
         } catch (Throwable) {
@@ -148,7 +154,7 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
         if (! preg_match('/^[a-zA-Z0-9-]+$/', $id)) {
             return null;
         }
-        $this->deadline = microtime(true) + 25;
+        $this->deadline = microtime(true) + 150;
         try {
             $deployment = $this->json($this->request()->get($this->projectPath().'/deployments/'.$id));
             if (($deployment['environment'] ?? null) !== 'production'
@@ -159,8 +165,11 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
             if (in_array($status, ['failure', 'canceled'], true)) {
                 throw new StaticDeliveryException('CLOUDFLARE_DEPLOYMENT_FAILED', 'Cloudflare reported a failed deployment.');
             }
-            if (data_get($deployment, 'latest_stage.name') !== 'deploy' || $status !== 'success'
-                || $this->publicVerifier->verifyPublicArtifacts($batch) === null) {
+            if (data_get($deployment, 'latest_stage.name') !== 'deploy' || $status !== 'success') {
+                return null;
+            }
+            $public = $this->publicVerifier->verifyPublicArtifacts($batch);
+            if ($public === null && ! $this->verifyWafBlockedOrigins($batch, $deployment)) {
                 return null;
             }
             $marker = (string) config('static-delivery.external_sync.confirmation_path');
@@ -169,7 +178,7 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
                 File::replace($marker, $batch->manifest_hash."\n", 0600);
             }
 
-            return $this->result($deployment, $batch->manifest_hash, true);
+            return $this->result($deployment, $batch->manifest_hash, true, $this->healthEvidence($batch, $deployment));
         } catch (StaticDeliveryException $exception) {
             throw $exception;
         } catch (Throwable) {
@@ -177,7 +186,83 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
         }
     }
 
-    private function result(array $deployment, string $hash, bool $confirmed = false): StaticDeliveryResult
+    /** Same guarded 403 policy as the established production verification scripts. */
+    private function verifyWafBlockedOrigins(StaticDeliveryBatch $batch, array $deployment): bool
+    {
+        $id = (string) $batch->remote_deployment_id;
+        $projectName = (string) config('static-delivery.cloudflare.project');
+        $origin = 'https://'.substr($id, 0, 8).'.'.$projectName.'.pages.dev';
+        if (! preg_match('/^[a-f0-9]{8}-[a-f0-9-]{27}$/', $id)
+            || rtrim((string) ($deployment['url'] ?? ''), '/') !== $origin) {
+            return false;
+        }
+        $origins = [
+            substr((string) config('static-delivery.external_sync.manifest_url'), 0, -strlen('/delivery-manifest.json')),
+            rtrim((string) config('traffic_gate.origin'), '/'),
+        ];
+        $blocked = [];
+        foreach ($origins as $index => $publicOrigin) {
+            if (! preg_match('#^https://([A-Za-z0-9.-]+)$#', $publicOrigin, $matches)) {
+                return false;
+            }
+            $response = Http::withoutRedirecting()->connectTimeout(3)->timeout(5)
+                ->get($publicOrigin.'/delivery-manifest.json', ['expected' => $batch->manifest_hash]);
+            if ($response->status() === 403) {
+                $blocked[$index] = $matches[1];
+            } elseif (! $response->successful() || $response->json('manifestHash') !== $batch->manifest_hash) {
+                return false; // Never reinterpret 404, 5xx, redirects or stale 200 as WAF.
+            }
+        }
+        if ($blocked === []) {
+            return false;
+        }
+        $project = $this->json($this->request()->get($this->projectPath()));
+        if (data_get($project, 'canonical_deployment.id') !== $id
+            || ! $this->deploymentEvidence->verify($batch, $origin)) {
+            return false;
+        }
+        foreach ($blocked as $index => $hostname) {
+            $domain = $this->json($this->request()->get($this->projectPath().'/domains/'.rawurlencode($hostname)));
+            if (($domain['status'] ?? null) !== 'active' || ($domain['name'] ?? null) !== $hostname) {
+                return false;
+            }
+            $origins[$index] = $origin;
+        }
+
+        return $this->publicVerifier->verifyPublicArtifacts($batch, $origins[0], $origins[1]) !== null;
+    }
+
+    private function healthEvidence(StaticDeliveryBatch $batch, array $deployment): ?array
+    {
+        $health = $batch->provider_metadata['snapshot_health'] ?? null;
+        if (is_array($health)) {
+            return $health;
+        }
+        // Upgrade an already-uploading batch using its immutable public file,
+        // without resubmitting it or rewriting its configuration.
+        $id = (string) $batch->remote_deployment_id;
+        $origin = 'https://'.substr($id, 0, 8).'.'.config('static-delivery.cloudflare.project').'.pages.dev';
+        if (! preg_match('/^[a-f0-9]{8}-[a-f0-9-]{27}$/', $id)
+            || rtrim((string) ($deployment['url'] ?? ''), '/') !== $origin) {
+            return null;
+        }
+        try {
+            $manifest = Http::withoutRedirecting()->connectTimeout(3)->timeout(5)->get($origin.'/delivery-manifest.json');
+            $expected = ($manifest->json('files') ?? [])['health/delivery.json'] ?? null;
+            if (! $manifest->successful() || $manifest->json('manifestHash') !== $batch->manifest_hash
+                || ! is_string($expected) || ! preg_match('/^[a-f0-9]{64}$/', $expected)) {
+                return null;
+            }
+            $response = Http::withoutRedirecting()->connectTimeout(3)->timeout(5)->get($origin.'/health/delivery.json');
+
+            return $response->successful() && hash_equals($expected, hash('sha256', $response->body()))
+                && is_array($response->json()) ? $response->json() : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function result(array $deployment, string $hash, bool $confirmed = false, ?array $health = null): StaticDeliveryResult
     {
         $id = (string) ($deployment['id'] ?? '');
         if (! preg_match('/^[a-zA-Z0-9-]+$/', $id)) {
@@ -185,7 +270,7 @@ final class CloudflarePagesDirectDriver implements StaticDeliveryDriverInterface
         }
 
         return new StaticDeliveryResult(remoteId: $id, remoteUrl: null,
-            confirmedDeployed: $confirmed, metadata: ['manifest_hash' => $hash]);
+            confirmedDeployed: $confirmed, metadata: ['manifest_hash' => $hash] + ($health !== null ? ['snapshot_health' => $health] : []));
     }
 
     private function request(?string $token = null): PendingRequest
