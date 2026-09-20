@@ -36,11 +36,33 @@ test('floating video clears rendered bottom anchors, follows resize and stops af
         const a = await bottom.boundingBox(), b = await floating.boundingBox();
         return a.y - b.y - b.height;
     }).toBeGreaterThanOrEqual(15);
+    // A later render/presentation pass must not undo the measured clearance.
+    await floating.evaluate(el => el.style.setProperty('bottom', '16px', 'important'));
+    await expect.poll(async () => {
+        const a = await bottom.boundingBox(), b = await floating.boundingBox();
+        return a.y - b.y - b.height;
+    }).toBeGreaterThanOrEqual(15);
     await bottom.evaluate(el => { el.style.height = '130px'; });
     await expect.poll(async () => {
         const a = await bottom.boundingBox(), b = await floating.boundingBox();
         return a.y - b.y - b.height;
     }).toBeGreaterThanOrEqual(15);
+    // Provider-owned iframe extending above a collapsed wrapper.
+    await bottom.evaluate(el => {
+        el.style.height = '0px';
+        const frame = document.createElement('iframe');
+        frame.setAttribute('data-test-anchor', '1');
+        frame.style.cssText = 'position:absolute;bottom:0;left:0;width:100%;height:110px;border:0';
+        el.appendChild(frame);
+    });
+    await expect.poll(async () => {
+        const a = await bottom.locator('[data-test-anchor]').boundingBox(), b = await floating.boundingBox();
+        return a.y - b.y - b.height;
+    }).toBeGreaterThanOrEqual(15);
+    await bottom.evaluate(el => {
+        el.querySelector('[data-test-anchor]').remove();
+        el.style.height = '110px';
+    });
     await bottom.locator('[data-hm-placement-close]').click();
     await expect.poll(() => floating.evaluate(el => parseFloat(getComputedStyle(el).bottom))).toBe(16);
     // Count writes after layout settles: observers must not trigger themselves.
@@ -155,9 +177,18 @@ async function openGptRewarded(page, options = {}) {
             destroySlots(slots) { if (slots.length === 1 && slots[0] === window.slot) window.destroyed++; },
         };
         if (options.capped) localStorage.setItem('hm:gpt:rewarded:v1:/123/rewarded', String(Date.now()));
+        if (options.grantAge) localStorage.setItem('hm:gpt:rewarded:v1:/123/rewarded', String(Date.now() - options.grantAge));
     }, options);
     await page.addScriptTag({content: gptRuntime});
 }
+
+test('GPT rewarded permits a new page after one minute, not fifteen', async ({page}) => {
+    await openGptRewarded(page, {grantAge: 61000});
+    expect(await page.evaluate(() => window.displayedOwnSlot)).toBe(true);
+    expect(await page.evaluate(() => window.visibleCalls)).toBe(0);
+    await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { window.visibleCalls++; return true; }}));
+    await expect(page.getByRole('dialog')).toBeVisible();
+});
 
 test('GPT rewarded uses official slot and grants only on Google grant, once', async ({page}) => {
     await openGptRewarded(page, {disableInitialLoad: true});
