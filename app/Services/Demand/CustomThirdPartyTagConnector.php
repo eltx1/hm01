@@ -26,13 +26,13 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     public function parseDirectTag(string $tag): array
     {
         try {
-            $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($tag);
+            $adUnitPath = (new GoogleAdUnitPath())->parse($tag);
             $vast = app(VastTagUrlParser::class)->parse($tag);
         } catch (RuntimeException $exception) {
             return ['safe' => false, 'recipe' => null, 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => [$exception->getMessage()]];
         }
-        if ($rewardedPath !== null) {
-            return ['safe' => true, 'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT_REWARDED'], 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => []];
+        if ($adUnitPath !== null) {
+            return ['safe' => true, 'recipe' => ['executionMode' => 'STRUCTURED', 'provider' => 'GOOGLE_GPT_AD_UNIT_PATH', 'adUnitPath' => $adUnitPath], 'detectedScripts' => [], 'detectedContainers' => [], 'detectedPublicIdentifiers' => [], 'detectedAttributes' => [], 'unsupportedInlineCode' => [], 'securityWarnings' => []];
         }
         if ($vast !== null) {
             return [
@@ -72,8 +72,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (! $widget?->direct_tag_template) return parent::generateDirectTag($placement);
 
         $html = trim((string) $widget->direct_tag_template);
-        $rewardedPath = (new GoogleRewardedAdUnitPath())->parse($html);
-        if ($rewardedPath !== null) return $this->googleRewardedRecipe($rewardedPath, $placement);
+        $adUnitPath = (new GoogleAdUnitPath())->parse($html);
+        if ($adUnitPath !== null) return $this->googleAdUnitPathRecipe($adUnitPath, $configuration, $placement);
         $vast = app(VastTagUrlParser::class)->parse($html);
         if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement);
 
@@ -111,6 +111,21 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
         $size = $placement->placement->sizes->where('is_active', true)->first(fn ($candidate) => $candidate->size_type === 'FIXED' && $candidate->width && $candidate->height);
         return ['name' => $this->code().' - '.$placement->placement->name, 'creativeType' => 'THIRD_PARTY', 'size' => $size ? ['width' => (int) $size->width, 'height' => (int) $size->height] : ['width' => 1, 'height' => 1], 'snippet' => $snippet, 'safeFrameCompatible' => true];
+    }
+
+    private function googleAdUnitPathRecipe(string $path, array $configuration, DemandPlacement $placement): array
+    {
+        $type = $placement->placement->type->value;
+        if ($type === 'REWARDED') return $this->googleRewardedRecipe($path, $placement);
+        if (! in_array($type, ['DISPLAY', 'STICKY'], true)) {
+            throw new RuntimeException('A GAM ad unit path requires a Display, Sticky, or Rewarded placement. Video placements use a VAST URL or a full provider tag.');
+        }
+
+        return $this->googleGptRecipe([
+            'adUnitPath' => $path,
+            'containerId' => 'hm-gpt-'.$placement->id,
+            'sizes' => $this->placementSizes($placement),
+        ], $configuration, $placement);
     }
 
     private function googleRewardedRecipe(string $path, DemandPlacement $placement): array
@@ -158,6 +173,9 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $timeout = max(15000, min(30000, (int) ($configuration['render_timeout_ms'] ?? 15000)));
         $successSelector = '#'.$containerId.'[data-hm-gpt-status="rendered"]';
         $attributes = ['data-hm-gpt-direct' => '1', 'data-hm-gpt-ad-unit-path' => $gpt['adUnitPath'], 'data-hm-gpt-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-gpt-inner-id' => $providerContainerId];
+        if (data_get($placement->placement->metadata, 'placement_preset') === 'responsive_display') {
+            $attributes['data-hm-gpt-fit-container'] = '1';
+        }
         return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'DISPLAY', 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-google-gpt-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-google-gpt', 'attributes' => $attributes], 'publicPlacementId' => $gpt['adUnitPath'], 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => $allowedFormats, 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-google-gpt', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false];
     }
 

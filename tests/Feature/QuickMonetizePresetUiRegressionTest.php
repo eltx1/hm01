@@ -84,6 +84,40 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString("preset.value = 'video_floating';", $html);
     }
 
+    public function test_quick_form_offers_full_provider_code_or_gam_path_with_the_selected_surface_type(): void
+    {
+        $response = $this->adminSession()->get(route('admin.demand.quick.create'))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertSame(1, preg_match('/<select[^>]*name="tag_input_type"[^>]*>(.*?)<\/select>/s', $html, $matches));
+        $this->assertSame(2, substr_count($matches[1], '<option '));
+        $this->assertStringContainsString('value="PROVIDER_TAG"', $matches[1]);
+        $this->assertStringContainsString('value="GAM_AD_UNIT_PATH"', $matches[1]);
+        $this->assertStringContainsString('Full provider tag · GPT or another provider', $matches[1]);
+        $this->assertStringContainsString('/Network_Code/Adunit_Code', $matches[1]);
+        foreach (['responsive_display' => 'DISPLAY', 'sticky_top' => 'STICKY', 'sticky_bottom' => 'STICKY', 'rewarded' => 'REWARDED', 'video_floating' => 'VIDEO'] as $preset => $type) {
+            $this->assertMatchesRegularExpression('/<option value="'.$preset.'"[^>]*data-placement-type="'.$type.'"/', $html);
+        }
+        $this->assertDoesNotMatchRegularExpression('/preset\.value\s*=\s*[\'"]rewarded[\'"]/', $html);
+    }
+
+    public function test_redisplaying_path_input_keeps_the_selected_responsive_surface_and_input_mode(): void
+    {
+        $response = $this->adminSession()->withSession(['_old_input' => [
+            'placement_mode' => 'new',
+            'placement_preset' => 'responsive_display',
+            'tag_input_type' => 'GAM_AD_UNIT_PATH',
+            'tag' => '/1234567/responsive',
+        ]])->get(route('admin.demand.quick.create'))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertMatchesRegularExpression('/<option value="GAM_AD_UNIT_PATH"[^>]*\sselected[^>]*>/', $html);
+        $this->assertMatchesRegularExpression('/<option value="responsive_display"[^>]*\sselected[^>]*>/', $html);
+        $this->assertDoesNotMatchRegularExpression('/<option value="rewarded"[^>]*\sselected[^>]*>/', $html);
+        $response->assertSee('/1234567/responsive');
+        $this->assertDoesNotMatchRegularExpression('/preset\.value\s*=\s*[\'"]rewarded[\'"]/', $html);
+    }
+
     private function adminSession(): static
     {
         $this->actingAs($this->admin);

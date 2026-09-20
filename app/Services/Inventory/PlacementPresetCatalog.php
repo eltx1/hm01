@@ -90,6 +90,26 @@ final class PlacementPresetCatalog
 
     private function responsiveDisplay(): array
     {
+        // A fixed-size inventory allowlist, not a promise to stretch creatives.
+        // GPT intersects these device mappings with the actual publisher DIV
+        // width. Tall half-page demand remains tablet/desktop-only.
+        $mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+        $tablet = array_merge([[728, 90], [468, 60]], $mobile, [[300, 600]]);
+        $desktop = array_merge([[970, 250], [970, 90]], $tablet);
+
+        return [
+            'sizes' => array_merge(
+                $this->fixed(array_merge($mobile, [[728, 90], [970, 250], [970, 90], [468, 60], [300, 600]])),
+                $this->responsive('MOBILE', 0, 0, 767, 65535, $mobile),
+                $this->responsive('TABLET', 768, 0, 1023, 65535, $tablet),
+                $this->responsive('DESKTOP', 1024, 0, null, null, $desktop),
+            ),
+            'format_settings' => ['reserveSpace' => true, 'autoMount' => false], 'lazy_load_enabled' => true, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
+        ];
+    }
+
+    private function inArticleBaseDisplay(): array
+    {
         return [
             'sizes' => array_merge($this->fixed([[300, 250], [336, 280], [728, 90], [970, 250], [320, 100], [320, 50]]), $this->responsive('MOBILE', 0, 0, 767, 65535, [[300, 250], [320, 100], [320, 50]]), $this->responsive('TABLET', 768, 0, 1023, 65535, [[728, 90], [336, 280], [300, 250]]), $this->responsive('DESKTOP', 1024, 0, null, null, [[970, 250], [728, 90], [336, 280], [300, 250]])),
             'format_settings' => ['reserveSpace' => true, 'autoMount' => false], 'lazy_load_enabled' => true, 'collapse_empty_div' => true, 'safeframe_enabled' => false, 'refresh_enabled' => false,
@@ -98,7 +118,9 @@ final class PlacementPresetCatalog
 
     private function inArticleDisplay(): array
     {
-        $data = $this->responsiveDisplay();
+        // In-content inventory has its own established compatibility contract;
+        // expanding manual Responsive Display must not change existing units.
+        $data = $this->inArticleBaseDisplay();
 
         // Keep the complete reviewed LordAI in-article compatibility set in
         // one place. 250x250 and 300x100 are both emitted by the site's GAM ad

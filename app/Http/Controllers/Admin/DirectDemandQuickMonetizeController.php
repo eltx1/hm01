@@ -77,6 +77,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             'placement_id' => ['nullable', 'ulid', 'exists:placements,id'],
             'placement_name' => ['nullable', 'string', 'max:255'],
             'tag' => ['required', 'string', 'max:60000'],
+            'tag_input_type' => ['nullable', Rule::in(['AUTO', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'])],
         ]);
 
         $network = $this->network();
@@ -139,6 +140,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $placement,
             $preset,
             $data['placement_name'] ?? null,
+            (string) ($data['tag_input_type'] ?? 'AUTO'),
         );
         $placement = $result['placement'];
         $account = $result['account'];

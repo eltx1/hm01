@@ -10,6 +10,7 @@
     // causing the UI to submit numeric values that fail backend validation.
     $presetGroups = collect($quickPresets)->groupBy(fn ($preset) => $preset['group'] ?? 'Formats', true);
     $oldMode = old('placement_mode', old('placement_id') ? 'existing' : 'new');
+    $oldInputType = old('tag_input_type', str_starts_with(trim((string) old('tag', '')), '/') ? 'GAM_AD_UNIT_PATH' : 'PROVIDER_TAG');
 @endphp
 
 <section class="hero workspace-section">
@@ -101,14 +102,14 @@
                     @foreach($presetGroups as $groupName => $groupPresets)
                         <optgroup label="{{ $groupName }}">
                             @foreach($groupPresets as $key => $preset)
-                                <option value="{{ $key }}" @selected(old('placement_preset', 'responsive_display') === $key)>
+                                <option value="{{ $key }}" data-placement-type="{{ $preset['type'] }}" @selected(old('placement_preset', 'responsive_display') === $key)>
                                     {{ $preset['label'] }}{{ !empty($preset['badge']) ? ' · '.$preset['badge'] : '' }}
                                 </option>
                             @endforeach
                         </optgroup>
                     @endforeach
                 </select>
-                <span class="muted" id="quick-preset-help">Responsive Display creates four manual placements from one provider tag. Other formats keep their existing placement behavior.</span>
+                <span class="muted" id="quick-preset-help">Responsive Display creates four centered manual placements from one provider tag or GAM ad unit path. Copy each placement's DIV into its exact position on the publisher website.</span>
                 @error('placement_preset')<span class="error">{{ $message }}</span>@enderror
             </label>
 
@@ -132,6 +133,8 @@
                             @endphp
                             <option value="{{ $placement->id }}"
                                     data-site-id="{{ $site->id }}"
+                                    data-placement-type="{{ $placement->type->value }}"
+                                    data-preset="{{ data_get($placement->metadata, 'placement_preset', '') }}"
                                     @selected(old('placement_id') === $placement->id)>
                                 {{ $placement->name }} · {{ $placement->code }}{{ $sizes ? ' · '.$sizes : '' }}
                             </option>
@@ -142,9 +145,19 @@
                 @error('placement_id')<span class="error">{{ $message }}</span>@enderror
             </label>
 
-            <label class="full">GAM rewarded unit path, VAST URL or provider-issued ad tag
-                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="GAM Rewarded: /1234567/rewarded_unit. Floating Video: HTTPS VAST/VMAP URL. Or paste a complete supported provider tag.">{{ old('tag') }}</textarea>
-                <span class="muted">For Google Ad Manager / AdX Rewarded, paste /NetworkCode/AdUnitCode: Horus uses official GPT Rewarded and Google's grant event. Google may preload the ad; it is shown only after opt-in. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit. You can also paste a supported script-only tag. Complete provider code keeps its provider-managed lifecycle.</span>
+            <label class="full" id="quick-input-type-wrap">Ad input
+                <select class="hm-input" name="tag_input_type" id="quick-input-type" @disabled($hasBlockingReason)>
+                    <option value="PROVIDER_TAG" @selected($oldInputType !== 'GAM_AD_UNIT_PATH')>Full provider tag · GPT or another provider</option>
+                    <option value="GAM_AD_UNIT_PATH" @selected($oldInputType === 'GAM_AD_UNIT_PATH')>GAM ad unit path · /Network_Code/Adunit_Code</option>
+                </select>
+                <span class="muted">Use a GAM path to let Horus configure the selected format's sizes. Full tags keep their declared creative sizes and supported provider settings.</span>
+                @error('tag_input_type')<span class="error">{{ $message }}</span>@enderror
+            </label>
+
+            <label class="full"><span id="quick-tag-label">VAST URL or provider-issued ad tag</span>
+                <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="Paste a complete GPT or supported provider tag.">{{ old('tag') }}</textarea>
+                <span class="muted" id="quick-tag-help">Complete provider code keeps its provider-managed lifecycle. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit.</span>
+                <span class="muted" id="quick-size-help"></span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
 
@@ -171,12 +184,44 @@
     const existingWrap = document.getElementById('quick-existing-wrap');
     const placement = document.getElementById('quick-placement');
     const tag = document.getElementById('quick-tag');
+    const inputType = document.getElementById('quick-input-type');
+    const inputTypeWrap = document.getElementById('quick-input-type-wrap');
+    const tagLabel = document.getElementById('quick-tag-label');
+    const tagHelp = document.getElementById('quick-tag-help');
+    const sizeHelp = document.getElementById('quick-size-help');
     const submit = document.getElementById('quick-submit');
     const help = document.getElementById('quick-placement-help');
     if (!site || !preset || !useExisting || !mode || !existingWrap || !placement || !submit) return;
 
     const blocked = {{ $hasBlockingReason ? 'true' : 'false' }};
     const allOptions = [...placement.querySelectorAll('option[data-site-id]')];
+
+    const refreshInput = () => {
+        if (!inputType || !tag) return;
+        const option = useExisting.checked ? placement.selectedOptions[0] : preset.selectedOptions[0];
+        const type = option?.dataset.placementType || '';
+        const key = useExisting.checked ? option?.dataset.preset : preset.value;
+        const video = type === 'VIDEO';
+        const pathSupported = ['DISPLAY', 'STICKY', 'REWARDED'].includes(type);
+        inputType.querySelector('[value="GAM_AD_UNIT_PATH"]').disabled = !pathSupported;
+        inputTypeWrap.style.display = video ? 'none' : '';
+        inputType.disabled = blocked || video;
+        if (!video && !pathSupported) inputType.value = 'PROVIDER_TAG';
+        const path = !video && inputType.value === 'GAM_AD_UNIT_PATH';
+        tag.rows = path ? 2 : 12;
+        tagLabel.textContent = path ? 'Google Ad Manager ad unit path' : (video ? 'VAST URL or provider-issued video tag' : 'Full provider tag');
+        tag.placeholder = path ? '/1234567/ad_unit' : (video ? 'HTTPS VAST/VMAP URL or a complete supported video provider tag.' : 'Paste a complete GPT or supported provider tag.');
+        tagHelp.textContent = path
+            ? (type === 'REWARDED'
+                ? 'Paste /NetworkCode/AdUnitCode. Horus uses official GPT Rewarded: the visitor opts in and content access follows Google’s reward grant event. No display sizes are applied.'
+                : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.')
+            : (video
+                ? 'A plain VAST/VMAP URL runs in the Horus video player. Complete provider code keeps its provider-managed lifecycle.'
+                : 'Paste the complete supported GPT or third-party tag. Its declared sizes are checked against this placement. Choose GAM ad unit path above if you only have the unit path.');
+        sizeHelp.textContent = key === 'responsive_display'
+            ? 'Responsive supports 13 sizes: 970×250, 970×90, 728×90, 468×60, 336×280, 320×100, 320×50, 300×600, 300×250, 300×100, 300×50, 250×250 and 200×200. Each request uses only sizes that fit its device and container; 300×600 is tablet/desktop only.'
+            : (type === 'STICKY' && path ? 'The selected placement keeps its own top, bottom or side position, supported sizes, close control and responsive settings.' : '');
+    };
 
     const refreshPlacements = () => {
         const siteId = site.value;
@@ -212,6 +257,7 @@
         preset.disabled = blocked || existing;
 
         refreshPlacements();
+        refreshInput();
         submit.disabled = blocked || !site.value || (existing ? !placement.value : !preset.value);
     };
 
@@ -219,13 +265,10 @@
     placement.addEventListener('change', refreshMode);
     preset.addEventListener('change', refreshMode);
     useExisting.addEventListener('change', refreshMode);
+    if (inputType) inputType.addEventListener('change', refreshInput);
     if (tag) tag.addEventListener('input', () => {
         const value = tag.value.trim();
-        if (!useExisting.checked && /^\/[0-9]+(?:,[0-9]+)?\/[A-Za-z0-9_.\/-]+$/.test(value) && preset.value === 'responsive_display') {
-            preset.value = 'rewarded';
-            refreshMode();
-        }
-        if (!useExisting.checked && /^https:\/\/\S+$/i.test(value) && preset.value === 'responsive_display') {
+        if ((!inputType || inputType.value === 'PROVIDER_TAG') && !useExisting.checked && /^https:\/\/\S+$/i.test(value) && preset.value === 'responsive_display') {
             preset.value = 'video_floating';
             refreshMode();
         }

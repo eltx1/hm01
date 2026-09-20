@@ -1,12 +1,18 @@
 # Responsive Display manual placements
 
-In **Direct Demand → Quick Monetize**, select a website, choose **Responsive Display**, paste one supported provider display tag and activate once. Horus creates four manual placements sharing that tag. This is a website-specific group: another website gets its own four identities.
+In **Direct Demand → Quick Monetize**, select a website, choose **Responsive Display**, then choose **Full provider tag** or **GAM ad unit path**. Paste the complete supported provider code or just `/Network_Code/Adunit_Code` and activate once. Horus creates four manual placements sharing that demand input. This is a website-specific group: another website gets its own four identities.
 
 Copy the four placement DIVs from the selected website's Quick Monetize result, **Inventory**, or the publisher's **Website details** page. Keep the permanent Horus Loader installed once. Place each DIV at its chosen location in the page or template, once per page. Install any or all four; absent DIVs do not auto-mount or request ads. Each installed unit is centered within its available container width.
 
 Use the generated codes, rather than constructing them yourself: existing inventory can require a collision-safe suffix. Do not paste the provider script into each publisher position. Horus shares the reviewed tag configuration, loads the runtime once, and gives every GPT slot a unique DOM identity even when all four use the same GAM ad unit path. Provider tags needing isolation keep separate frame contexts.
 
 Submitting Responsive Display again updates the same group. Selecting one group member in Quick Monetize's existing-placement option also updates the group's provider tag. An existing legacy Quick Responsive placement retains its identity and becomes manual when explicitly activated through this flow. Other presets remain on their existing paths; there is no automatic rollout to publishers.
+
+New or explicitly re-saved Responsive groups support these fixed sizes: 970×250, 970×90, 728×90, 468×60, 336×280, 320×100, 320×50, 300×600, 300×250, 300×100, 300×50, 250×250 and 200×200. Mobile excludes the large banners and 300×600. Tablet excludes 970px banners. Each GPT request also filters against the actual publisher DIV's content width, including padding, so a narrow article does not request a desktop-wide creative. A full GPT tag retains its own declared subset of eligible sizes; a GAM path uses the placement's active size list. No fluid/native size is automatically added to Responsive.
+
+The same GAM-path input works for other Display and Sticky placements using their own sizes and viewport mappings. Top/bottom sticky position and controls remain attached to the selected surface. Rewarded uses the existing official GPT rewarded flow, without fixed display sizes. Bare paths never change the selected format into Rewarded. Floating and outstream video keep their VAST URL / full provider tag input; GAM display paths are rejected for video. Input without an explicit mode remains supported for older clients through `AUTO` detection.
+
+The path is validated and converted to the existing structured GPT recipe; Horus does not generate or execute arbitrary inline JavaScript from it. Parent/child network paths and nested ad-unit paths are supported. Existing generated groups and provider code can be switched between input modes without changing publisher DIV identities. Custom inventory and unrelated ad formats are not rewritten by a deployment.
 
 Saving queues a production configuration; it does not prove live delivery or provider fill. The existing Traffic Gate, Click Guard, consent checks and emergency controls apply to all four. A blocked member rejects the whole activation transaction. No changes to protection policy, timed refresh or other ad formats are part of this feature.
 

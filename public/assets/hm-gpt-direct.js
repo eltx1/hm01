@@ -15,7 +15,8 @@
     var MAX_RENDER_RATIO = 2;
 
     function validPath(value) {
-        return /^\/[0-9]{1,20}\/[A-Za-z0-9_.\-/]{1,240}$/.test(String(value || ''));
+        var path = String(value || '');
+        return path.length <= 280 && /^\/[0-9]{1,20}(?:,[0-9]{1,20})?\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(path);
     }
 
     function normalizedSize(size) {
@@ -80,12 +81,12 @@
 
     function eligibleSizes(container, allowedSizes) {
         var mappings = sizeMappings(container.getAttribute('data-hm-gpt-size-map'));
-        if (!mappings.length) return allowedSizes.slice();
+        if (!mappings.length) return fitContainerSizes(container, allowedSizes);
 
         var viewport = viewportSize();
         var width = viewport[0];
         var height = viewport[1];
-        if (!width && !height) return allowedSizes.slice();
+        if (!width && !height) return fitContainerSizes(container, allowedSizes);
 
         var allowed = {};
         allowedSizes.forEach(function (size) { allowed[sizeKey(size)] = true; });
@@ -104,10 +105,30 @@
 
         for (var index = 0; index < matches.length; index += 1) {
             var selected = matches[index].sizes.filter(function (size) { return allowed[sizeKey(size)]; });
-            if (selected.length) return selected;
+            if (selected.length) return fitContainerSizes(container, selected);
         }
 
         return [];
+    }
+
+    function fitContainerSizes(container, selected) {
+        // Manual Responsive Display owns this explicit constraint. Existing
+        // sticky, in-article, rewarded and other surface contracts stay intact.
+        if (container.getAttribute('data-hm-gpt-fit-container') !== '1') return selected.slice();
+        var root = container.closest ? container.closest('.hm-ad[data-placement], .hm-native[data-placement]') : null;
+        root = root || container.parentElement;
+        var available = viewportSize()[0];
+        if (root && typeof root.clientWidth === 'number') {
+            var contentWidth = root.clientWidth;
+            if (typeof window.getComputedStyle === 'function') {
+                var css = window.getComputedStyle(root);
+                contentWidth -= (parseFloat(css.paddingLeft) || 0) + (parseFloat(css.paddingRight) || 0);
+            }
+            // A zero-width/hidden placement must not request a paid creative.
+            available = available > 0 ? Math.min(available, contentWidth) : contentWidth;
+        }
+        if (!(available > 0)) return [];
+        return selected.filter(function (size) { return size === 'fluid' || size[0] <= available; });
     }
 
     function validId(value) {
@@ -173,6 +194,14 @@
         var currentState = String(container.getAttribute('data-hm-gpt-runtime-state') || '');
         if (currentState === 'failed' || currentState === 'empty' || currentState === 'rendered' || currentState === 'requested') return;
 
+        // GPT may load after a layout change. Recheck before the actual request
+        // without refreshing or redefining an already requested placement.
+        if (container.getAttribute('data-hm-gpt-fit-container') === '1') {
+            allowedSizes = eligibleSizes(container, sizes(container.getAttribute('data-hm-gpt-sizes')) || allowedSizes);
+            container.setAttribute('data-hm-gpt-eligible-sizes', JSON.stringify(allowedSizes));
+            if (!allowedSizes.length) { report(container, 'ineligible'); return; }
+        }
+
         var googletag = window.googletag;
         if (!googletag || typeof googletag.defineSlot !== 'function' || typeof googletag.pubads !== 'function' || typeof googletag.display !== 'function') {
             report(container, 'failed');
@@ -213,6 +242,11 @@
             }
             var renderedSize = normalizedRenderedSize(event.size, allowedSizes);
             var fluidAllowed = allowedSizes.indexOf('fluid') !== -1;
+            if (renderedSize && !fitContainerSizes(container, [renderedSize]).length) {
+                report(container, 'failed');
+                destroySlot(slot);
+                return;
+            }
             if (!renderedSize && !fluidAllowed) {
                 report(container, 'failed');
                 destroySlot(slot);
