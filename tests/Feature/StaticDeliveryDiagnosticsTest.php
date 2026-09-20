@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\StaticDeliveryBatch;
+use App\Models\StaticGlobalArtifactChange;
 use App\Services\StaticDelivery\StaticDeliveryDiagnostics;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -26,6 +27,10 @@ class StaticDeliveryDiagnosticsTest extends TestCase
         $batch = StaticDeliveryBatch::create(['driver' => 'cloudflare-pages-direct', 'status' => 'UPLOADING',
             'priority' => 'NORMAL', 'trigger' => 'SCHEDULED', 'manifest_hash' => str_repeat('a', 64),
             'remote_deployment_id' => 'deployment-123', 'error_message' => 'private-error-must-not-leak']);
+        $pending = StaticGlobalArtifactChange::create(['artifact_type' => 'SUPPLY_CHAIN', 'batch_id' => $batch->id,
+            'status' => 'RETRY_SCHEDULED', 'priority' => 'NORMAL', 'available_at' => now()->addMinutes(20),
+            'context' => ['private' => 'outbox-context-must-not-leak']]);
+        StaticGlobalArtifactChange::create(['artifact_type' => 'SUPPLY_CHAIN', 'status' => 'DEPLOYED', 'priority' => 'NORMAL', 'available_at' => now()]);
         Http::preventStrayRequests();
         Http::fake(function ($request) {
             if (str_contains($request->url(), 'api.cloudflare.com')) {
@@ -42,6 +47,14 @@ class StaticDeliveryDiagnosticsTest extends TestCase
             $this->assertFalse($report['cdn']['matches_latest_batch']);
             $this->assertSame(str_repeat('b', 64), $report['gate']['manifest_hash']);
             $this->assertSame('success', $report['provider_batch']['deployment']['status']);
+            $this->assertSame(0, $report['outbox']['site_items']['count']);
+            $this->assertSame(1, $report['outbox']['global_items']['count']);
+            $this->assertSame($pending->id, $report['outbox']['global_items']['items'][0]['id']);
+            $this->assertSame('SUPPLY_CHAIN', $report['outbox']['global_items']['items'][0]['artifact_type']);
+            $this->assertSame($batch->id, $report['outbox']['global_items']['items'][0]['batch']['id']);
+            $this->assertSame($pending->available_at->toDateTimeString(), $report['outbox']['global_items']['next_available_at']);
+            $this->assertSame('RETRY_SCHEDULED', $pending->fresh()->status->value);
+            $this->assertDatabaseCount('static_global_artifact_changes', 2);
             $this->assertSame('UPLOADING', $batch->fresh()->status->value);
             $this->assertSame(0, $batch->fresh()->attempts);
             $this->assertDatabaseCount('static_delivery_batches', 1);
