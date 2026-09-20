@@ -153,6 +153,14 @@ misclassified as a remote upload failure.
 
 ## Operations evidence and warnings
 
+During the normal scheduler pass, an abandoned global-only `BATCHING` record
+can become `SUPERSEDED` once it has been untouched for at least ten minutes
+(and twice the process lock lifetime). It must have no submission or provider
+identity. Every attached change must be covered by the same artifact kind in
+a newer confirmed batch from the active driver, built after that change.
+This recovery is audited with the confirming batch IDs. It neither uploads
+again nor labels the abandoned batch as deployed, and preserves attempt counts.
+
 Pages canonicalizes HTML URLs: `404.html` is served at `/404`, and
 `traffic-gate/index.html` at `/traffic-gate/`. Immutable deployment verification
 requests these canonical paths directly and still requires each original
