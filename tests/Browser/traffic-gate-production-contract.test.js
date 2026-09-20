@@ -36,18 +36,11 @@ test('central pre-monetization predicate remains ahead of GAM, Prebid bridge/sta
     assert.match(loader, /function (?:loadDirectScript|runDirectInitialization|directCandidates)\(/, 'Direct JS path must remain in the centrally gated Loader');
 });
 
-test('BALANCED initial stall keeps the bound gate channel alive so a late valid PASS can still win before activity soft-allow', () => {
-    assert.ok(loader.includes("enterBalancedRecovery('INITIAL_WAIT_STALL', true)"));
-    assert.match(loader, /if \(type === 'HORUS_TRAFFIC_GATE_PASS'\) \{\s*trafficGateAllow\(TRAFFIC_GATE_STATES\.passed, 'PASS'\);/);
-    assert.match(loader, /function trafficGateMessageListener\(event\)[\s\S]*event\.source !== gate\.iframe\.contentWindow/);
-});
-
-test('BALANCED technical recovery preserves a bounded fallback instead of stranding monetization forever', () => {
-    assert.match(loader, /function trafficGateEnsureMaxTimer\(\)/);
-    assert.match(loader, /trafficGateEnsureMaxTimer\(\);\s*if \(!settings\.valid\)/, 'the max-wait deadline must exist before validation, crypto, or iframe creation can fail');
-    assert.match(loader, /preserveMaxTimer:\s*true,\s*preserveActivity:\s*true/);
-    assert.match(loader, /if \(gate\.settings && gate\.settings\.policy === 'BALANCED'\) \{[\s\S]*trafficGateAllow\(TRAFFIC_GATE_STATES\.softAllowed, 'MAX_WAIT_FALLBACK'\)/);
-    assert.match(loader, /gate\.status === TRAFFIC_GATE_STATES\.blocked[\s\S]*return/);
+test('all policies require server verification; elapsed time and activity are never sufficient', () => {
+    assert.ok(loader.includes("message.serverVerified === true"));
+    assert.ok(!loader.includes("trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed"));
+    assert.match(loader, /trafficGateEnsureMaxTimer\(\);\s*if \(!settings\.valid\)/);
+    assert.match(loader, /event\.source !== gate\.iframe\.contentWindow/);
 });
 
 test('production bootstrap provisions only an invisible Turnstile widget for the hidden gate origin', () => {
@@ -70,7 +63,8 @@ test('gate outcome path has no Horus beacon, analytics, reporting or per-view co
     assert.equal(/XMLHttpRequest/.test(gateSource), false);
     assert.equal(/analytics|reporting|pass[_-]?beacon|fail[_-]?beacon|activity[_-]?beacon/i.test(gateSource), false);
     const fetchCalls = [...gateSource.matchAll(/fetch\(([^\n]+)/g)].map(match => match[1]);
-    assert.equal(fetchCalls.length, 1, 'static gate should have only its same-origin Site configuration fetch');
+    assert.equal(fetchCalls.length, 2, 'only static configuration and dedicated verification Worker are requested');
+    assert.ok(fetchCalls[1].includes('https://siteverify.horusmedia.net/verify'));
     assert.ok(fetchCalls[0].includes('/configs/'));
 });
 

@@ -64,7 +64,7 @@ class TrafficGateFoundationTest extends TestCase
 
         $settings->set($admin, 'traffic_gate.enabled', true, 'Task 48 missing key readiness test.');
         $missing = $resolver->resolve($site->refresh());
-        $this->assertFalse($missing->enabled);
+        $this->assertTrue($missing->enabled);
         $this->assertSame(TrafficGateReadiness::ConfigurationRequired, $missing->readiness);
 
         $settings->set($admin, 'traffic_gate.site_key', '0x4AAAAA_task48_public_key', 'Task 48 public site key test.');
@@ -88,12 +88,12 @@ class TrafficGateFoundationTest extends TestCase
         $this->assertFalse($resolver->validOrigin('https://third-party.example'));
         $resolved = $resolver->resolve($site);
 
-        $this->assertFalse($resolved->enabled);
+        $this->assertTrue($resolved->enabled);
         $this->assertNull($resolved->gateOrigin);
         $this->assertSame(TrafficGateReadiness::InvalidConfiguration, $resolved->readiness);
 
         $payload = app(SiteConfigPublisher::class)->preview($site->refresh(), ConfigEnvironment::Production);
-        $this->assertFalse($payload['trafficGate']['enabled']);
+        $this->assertTrue($payload['trafficGate']['enabled']);
         $this->assertNull($payload['trafficGate']['gateOrigin']);
         $this->assertSame('INVALID_CONFIGURATION', $payload['trafficGate']['readiness']);
         $this->assertStringNotContainsString('third-party.example', json_encode($payload['trafficGate'], JSON_THROW_ON_ERROR));
@@ -179,7 +179,7 @@ class TrafficGateFoundationTest extends TestCase
         $payload = app(SiteConfigPublisher::class)->preview($site->refresh(), ConfigEnvironment::Production);
 
         $this->assertTrue($payload['trafficGate']['enabled']);
-        $this->assertSame('CLOUDFLARE_TURNSTILE_CLIENT_ONLY', $payload['trafficGate']['provider']);
+        $this->assertSame('CLOUDFLARE_TURNSTILE_SERVER_VERIFIED', $payload['trafficGate']['provider']);
         $this->assertSame('https://verify.horusmedia.net', $payload['trafficGate']['gateOrigin']);
         $this->assertSame('BALANCED', $payload['trafficGate']['policy']);
         $this->assertSame('READY', $payload['trafficGate']['readiness']);
@@ -211,7 +211,7 @@ class TrafficGateFoundationTest extends TestCase
         );
 
         $resolved = app(TrafficGateConfigurationResolver::class)->resolve($site->refresh());
-        $this->assertFalse($resolved->enabled);
+        $this->assertTrue($resolved->enabled);
         $this->assertSame(TrafficGateReadiness::Disabled, $resolved->readiness);
         $this->assertTrue(AuditLog::query()->where('event', 'traffic_gate.emergency_disabled')->exists());
 
@@ -292,6 +292,28 @@ class TrafficGateFoundationTest extends TestCase
     }
 
     /** @return array{0:\App\Models\Site,1:\App\Models\User} */
+    public function test_refresh_contract_is_dry_run_by_default_and_idempotent_without_changing_inventory(): void
+    {
+        [$site, $admin] = $this->fixture(active: true);
+        $this->configureReadyGlobal($admin);
+        $publisher = app(SiteConfigPublisher::class);
+        $publisher->publishActiveProduction($site, $admin);
+        $latest = $site->configVersions()->orderByDesc('version')->firstOrFail();
+        $payload = $latest->payload;
+        $payload['trafficGate']['provider'] = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
+        $latest->update(['payload' => $payload]);
+        $before = $site->configVersions()->count();
+        $this->artisan('traffic-gate:refresh-configs')->assertSuccessful();
+        $this->assertSame($before, $site->configVersions()->count());
+        $this->artisan('traffic-gate:refresh-configs', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($before + 1, $site->configVersions()->count());
+        $next = $site->configVersions()->orderByDesc('version')->firstOrFail()->payload;
+        $this->assertSame('CLOUDFLARE_TURNSTILE_SERVER_VERIFIED', $next['trafficGate']['provider']);
+        $this->assertEquals($payload['placements'], $next['placements']);
+        $this->artisan('traffic-gate:refresh-configs', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($before + 1, $site->configVersions()->count());
+    }
+
     private function fixture(bool $active = false): array
     {
         $horusOrganization = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');

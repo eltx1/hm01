@@ -87,7 +87,7 @@ jobs:
           app_root="$REMOTE_HOME/htdocs/app.horusmedia.net"
           mkdir -p "$RUNNER_TEMP/static-edge"
           ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "mkdir -p '$remote_dir' && cd '$app_root' && (test ! -f app/Console/Commands/RefreshQuickRuntimeConfigs.php || php artisan demand:refresh-quick-runtimes --apply) && php artisan static-delivery:build '$remote_dir'"
+            "mkdir -p '$remote_dir' && cd '$app_root' && (test ! -f app/Console/Commands/RefreshQuickRuntimeConfigs.php || php artisan demand:refresh-quick-runtimes --apply) && (test ! -f app/Console/Commands/RefreshTrafficGateConfigs.php || php artisan traffic-gate:refresh-configs --apply) && php artisan static-delivery:build '$remote_dir'"
           ssh -p "$SSH_PORT" "$USER@$HOST" "tar -C '$remote_dir' -czf - ." \
             | tar -xzf - -C "$RUNNER_TEMP/static-edge"
           ssh -p "$SSH_PORT" "$USER@$HOST" \

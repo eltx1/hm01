@@ -183,7 +183,7 @@ final class ExternalPagesSyncDriver implements StaticDeliveryDriverInterface, St
         foreach ([
             "script-src 'self' https://challenges.cloudflare.com",
             'frame-src https://challenges.cloudflare.com',
-            "connect-src 'self' https://challenges.cloudflare.com",
+            "connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net",
             'frame-ancestors https:',
         ] as $requiredDirective) {
             if (! str_contains($csp, $requiredDirective)) {

@@ -15,7 +15,7 @@ const ALWAYS_FAIL_INVISIBLE = '2x00000000000000000000BB';
 
 const parentCsp = "default-src 'none'; script-src 'self'; frame-src https://verify.horusmedia.net; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'";
 const blockedParentCsp = "default-src 'none'; script-src 'self'; frame-src 'none'; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'";
-const gateCsp = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:";
+const gateCsp = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://siteverify.horusmedia.net; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors https:";
 
 function configFor(siteKey, hostname, turnstileSiteKey = ALWAYS_PASS_INVISIBLE) {
     return {
@@ -23,7 +23,7 @@ function configFor(siteKey, hostname, turnstileSiteKey = ALWAYS_PASS_INVISIBLE) 
         allowedHostnames: [hostname],
         trafficGate: {
             enabled: true,
-            provider: 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY',
+            provider: 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED',
             gateOrigin: GATE_ORIGIN,
             siteKey: turnstileSiteKey,
             policy: 'BALANCED',
@@ -52,7 +52,7 @@ function parentScript() {
         window.addEventListener('message', event => {
             if (event.origin !== GATE_ORIGIN || event.source !== frame.contentWindow) return;
             const message = event.data;
-            if (!message || message.protocolVersion !== 1 || message.pageNonce !== nonce) return;
+            if (!message || message.protocolVersion !== 2 || message.pageNonce !== nonce) return;
             record.messages.push(message);
             if (message.type === 'HORUS_TRAFFIC_GATE_PASS' || message.type === 'HORUS_TRAFFIC_GATE_ERROR' || message.type === 'HORUS_TRAFFIC_GATE_TIMEOUT' || message.type === 'HORUS_TRAFFIC_GATE_DENIED') {
                 record.result = message.type;
@@ -64,7 +64,7 @@ function parentScript() {
             record.startedAt = performance.now();
             const hello = {
                 type: 'HORUS_TRAFFIC_GATE_HELLO',
-                protocolVersion: 1,
+                protocolVersion: 2,
                 pageNonce: nonce,
                 sitePublicKey: params.get('site') || 'admin-test'
             };
@@ -111,7 +111,7 @@ function cloudflareStub({ slowMs = 0 } = {}) {
     })();`;
 }
 
-async function installDeterministicNetwork(page, { cloudflare = 'pass', publisherFrameAllowed = true, slowMs = 0 } = {}) {
+async function installDeterministicNetwork(page, { cloudflare = 'pass', publisherFrameAllowed = true, slowMs = 0, verification = 'pass' } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
 
@@ -129,6 +129,12 @@ async function installDeterministicNetwork(page, { cloudflare = 'pass', publishe
                 headers: { 'Content-Security-Policy': publisherFrameAllowed ? parentCsp : blockedParentCsp, 'X-Frame-Options': 'DENY' },
                 body: parentHtml(),
             });
+        }
+
+        if (url.origin === 'https://siteverify.horusmedia.net') {
+            const headers = { 'Access-Control-Allow-Origin': GATE_ORIGIN, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' };
+            if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+            return route.fulfill({ status: verification === 'pass' ? 200 : 422, headers, contentType: 'application/json', body: JSON.stringify(verification === 'pass' ? { success: true, pageNonce: request.postDataJSON().pageNonce } : { success: false, retryable: false }) });
         }
 
         if (url.origin === GATE_ORIGIN) {
@@ -237,4 +243,14 @@ test('a Publisher CSP that blocks the Horus gate frame prevents the cross-origin
     await page.waitForTimeout(400);
     expect(await page.evaluate(() => window.__trafficGateTest?.result)).toBeNull();
     expect(requests.some(url => url.startsWith('https://challenges.cloudflare.com/'))).toBe(false);
+});
+
+test('a successful widget with rejected server token never sends PASS to the publisher', async ({ page }) => {
+    const requests = await installDeterministicNetwork(page, { verification: 'reject' });
+    await page.goto(`${PUBLISHER_A}/?site=${SITE_A}`);
+    await waitForResult(page, 'HORUS_TRAFFIC_GATE_ERROR');
+    expect(requests.some(url => url === 'https://siteverify.horusmedia.net/verify')).toBe(true);
+    const messages = await page.evaluate(() => window.__trafficGateTest.messages);
+    expect(messages.some(message => message.type === 'HORUS_TRAFFIC_GATE_PASS')).toBe(false);
+    expect(JSON.stringify(messages)).not.toContain('XXXX.DUMMY.TOKEN.XXXX');
 });

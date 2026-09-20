@@ -216,7 +216,7 @@ function createHarness() {
 
 test('production transform composes Traffic Gate with shadow-aware Click Guard', () => {
     assert.match(loaderSource, /function composedClickGuardParent\(node\)/);
-    assert.match(loaderSource, /TRAFFIC_GATE_PROTOCOL_VERSION = 1/);
+    assert.match(loaderSource, /TRAFFIC_GATE_PROTOCOL_VERSION = 2/);
     assert.equal(applyShadowClickGuardTransform(loaderSource), loaderSource);
 });
 

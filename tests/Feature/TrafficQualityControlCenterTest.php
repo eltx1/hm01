@@ -201,8 +201,8 @@ class TrafficQualityControlCenterTest extends TestCase
         [$admin] = $this->identityFixture();
         $response = $this->asAdmin($admin)->get(route('admin.operations.traffic-quality'));
         $response->assertOk()
-            ->assertSee('CLIENT-ONLY SOFT GATE')
-            ->assertSee('This client gate is a soft browser traffic filter. Horus does not perform server-side Turnstile token validation for ad serving.')
+            ->assertSee('SERVER-VERIFIED GATE')
+            ->assertSee('Ads require successful server-side Turnstile verification. Connection failures leave content available without starting ads on this page.')
             ->assertSee('data-mobile-responsive-table', false)
             ->assertSee('Task 49 Admin-test protocol')
             ->assertDontSee('TOKEN VALIDATED')

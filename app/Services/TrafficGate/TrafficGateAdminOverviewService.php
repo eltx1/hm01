@@ -65,7 +65,7 @@ final class TrafficGateAdminOverviewService
             'emergency_disabled' => $emergencyDisabled,
             'readiness' => $readiness->value,
             'provider' => 'Cloudflare Turnstile',
-            'validation_mode' => 'CLIENT-ONLY SOFT GATE',
+            'validation_mode' => 'SERVER-VERIFIED GATE',
             'widget' => 'Invisible',
             'origin' => trim((string) config('traffic_gate.origin')),
             'policy' => (string) $this->settings->get('traffic_gate.policy'),

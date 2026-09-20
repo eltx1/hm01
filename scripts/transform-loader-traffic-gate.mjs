@@ -1,4 +1,4 @@
-const MARKER = 'var TRAFFIC_GATE_PROTOCOL_VERSION = 1;';
+const MARKER = 'var TRAFFIC_GATE_PROTOCOL_VERSION = 2;';
 
 function replaceOnce(source, search, replacement, label) {
     const next = source.replace(search, replacement);
@@ -9,14 +9,14 @@ function replaceOnce(source, search, replacement, label) {
 }
 
 const trafficGateRuntime = String.raw`
-    var TRAFFIC_GATE_PROTOCOL_VERSION = 1;
+    var TRAFFIC_GATE_PROTOCOL_VERSION = 2;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
-    var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY';
-    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 6000;
+    var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
+    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 10000;
     var TRAFFIC_GATE_STATES = {
         disabled: 'DISABLED', booting: 'BOOTING', pending: 'PENDING', passed: 'PASSED',
         error: 'ERROR', timeout: 'TIMEOUT', unavailable: 'UNAVAILABLE',
-        waiting: 'WAITING_FOR_ACTIVITY', softAllowed: 'SOFT_ALLOWED', blocked: 'BLOCKED'
+        blocked: 'BLOCKED'
     };
 
     function freshTrafficGateRuntime() {
@@ -47,8 +47,7 @@ const trafficGateRuntime = String.raw`
     function trafficGateAllowsMonetization() {
         var status = trafficGateRuntimeState().status;
         return status === TRAFFIC_GATE_STATES.disabled
-            || status === TRAFFIC_GATE_STATES.passed
-            || status === TRAFFIC_GATE_STATES.softAllowed;
+            || status === TRAFFIC_GATE_STATES.passed;
     }
 
     function trafficGateDebugState() {
@@ -74,7 +73,7 @@ const trafficGateRuntime = String.raw`
 
     function trafficGateSettings(config) {
         var selected = config && config.trafficGate;
-        if (!selected || selected.enabled !== true || selected.readiness !== 'READY') {
+        if (!selected || selected.enabled !== true) {
             return { enabled: false, valid: true, policy: 'BALANCED', activityRecoveryEnabled: false };
         }
         var policy = String(selected.policy || '').toUpperCase();
@@ -85,7 +84,7 @@ const trafficGateRuntime = String.raw`
         var origin = canonicalTrafficGateOrigin(selected.gateOrigin);
         var siteKey = String(config && config.siteKey || '');
         var publicSiteKey = String(selected.siteKey || '');
-        var valid = selected.provider === TRAFFIC_GATE_PROVIDER
+        var valid = selected.readiness === 'READY' && selected.provider === TRAFFIC_GATE_PROVIDER
             && ['STRICT', 'BALANCED', 'PERMISSIVE'].indexOf(policy) !== -1
             && origin !== null
             && /^[A-Za-z0-9_-]{3,64}$/.test(siteKey)
@@ -125,8 +124,6 @@ const trafficGateRuntime = String.raw`
     function trafficGateEnsureMaxTimer() {
         var gate = trafficGateRuntimeState();
         if (gate.maxTimer !== null || !gate.settings) return;
-        var policy = String(gate.settings.policy || '').toUpperCase();
-        if (policy !== 'BALANCED' && policy !== 'PERMISSIVE') return;
         var delay = Number(gate.settings.maxWaitMs);
         if (!Number.isInteger(delay) || delay < 2000 || delay > 15000) {
             delay = TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS;
@@ -210,122 +207,25 @@ const trafficGateRuntime = String.raw`
         settleTrafficGateDecision();
     }
 
-    function currentScrollPosition() {
-        var root = document.documentElement || {};
-        var body = document.body || {};
-        return {
-            x: Number(window.scrollX || window.pageXOffset || root.scrollLeft || body.scrollLeft || 0),
-            y: Number(window.scrollY || window.pageYOffset || root.scrollTop || body.scrollTop || 0)
-        };
-    }
-
-    function trafficGateActivityIsMeaningful(event) {
-        if (!event) return false;
-        if ('isTrusted' in event && event.isTrusted !== true) return false;
-        var type = String(event.type || '');
-        if (type === 'pointerdown' || type === 'touchstart') return true;
-        if (type === 'keydown') {
-            var key = String(event.key || '');
-            return key !== '' && ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock'].indexOf(key) === -1;
-        }
-        if (type === 'scroll') {
-            var gate = trafficGateRuntimeState();
-            var baseline = gate.activityBaseline || currentScrollPosition();
-            var current = currentScrollPosition();
-            return Math.abs(current.x - baseline.x) >= 8 || Math.abs(current.y - baseline.y) >= 8;
-        }
-        return false;
-    }
-
-    function installTrafficGateActivityRecovery() {
-        var gate = trafficGateRuntimeState();
-        if (gate.activityListeners.length || !window.addEventListener) return;
-        gate.activityBaseline = currentScrollPosition();
-        ['pointerdown', 'touchstart', 'keydown', 'scroll'].forEach(function (type) {
-            var listener = function (event) {
-                if (trafficGateRuntimeState().status !== TRAFFIC_GATE_STATES.waiting) return;
-                if (!trafficGateActivityIsMeaningful(event)) return;
-                trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'TRUSTED_ACTIVITY');
-            };
-            gate.activityListeners.push({ type: type, listener: listener });
-            window.addEventListener(type, listener, true);
-        });
-    }
-
-    function enterBalancedRecovery(reason, keepGateRuntime) {
-        var gate = trafficGateRuntimeState();
-        if (!gate.settings || gate.settings.activityRecoveryEnabled !== true) return false;
-        trafficGateSetState(TRAFFIC_GATE_STATES.waiting, reason || 'TECHNICAL_FAILURE');
-        installTrafficGateActivityRecovery();
-        settleTrafficGateDecision();
-        trafficGateClearTimer('initialTimer');
-        // BALANCED technical failures may recover immediately from trusted
-        // activity, but must never strand monetization forever. Preserve the
-        // bounded max-wait timer even after the invisible gate iframe/runtime
-        // is cleaned up so a non-DENIED technical failure can soft-allow.
-        if (!keepGateRuntime) trafficGateCleanup({ preserveMaxTimer: true, preserveActivity: true });
-        return true;
-    }
-
     function trafficGateTechnicalFailure(stateName, reason) {
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
         trafficGateSetState(stateName, reason);
-        if (!gate.settings) {
-            trafficGateCleanup();
-            settleTrafficGateDecision();
-            return;
-        }
-        if (gate.settings.policy === 'STRICT') {
-            trafficGateCleanup();
-            settleTrafficGateDecision();
-            return;
-        }
-        if (gate.settings.policy === 'BALANCED') {
-            trafficGateEnsureMaxTimer();
-            if (enterBalancedRecovery(reason, false)) return;
-            // Trusted-activity recovery is optional; the bounded availability
-            // fallback is not. With activity recovery disabled, clean the
-            // invisible gate runtime but keep the max-wait timer alive.
-            trafficGateCleanup({ preserveMaxTimer: true });
-            settleTrafficGateDecision();
-            return;
-        }
-        // PERMISSIVE technical failures remain blocked until the bounded max-wait
-        // timer soft-allows. Keep the bounded decision pending until that fallback.
-        trafficGateEnsureMaxTimer();
-        trafficGateCleanup({ preserveMaxTimer: true });
+        trafficGateCleanup();
+        settleTrafficGateDecision();
     }
 
     function trafficGateOnInitialWait() {
-        var gate = trafficGateRuntimeState();
-        gate.initialTimer = null;
-        if (gate.status !== TRAFFIC_GATE_STATES.pending) return;
-        if (gate.settings && gate.settings.policy === 'BALANCED' && gate.settings.activityRecoveryEnabled === true) {
-            enterBalancedRecovery('INITIAL_WAIT_STALL', true);
-        }
+        // A slow challenge is not a verification result. Keep waiting within
+        // the original deadline; interaction must never authorize ads.
+        trafficGateRuntimeState().initialTimer = null;
     }
 
     function trafficGateOnMaxWait() {
         var gate = trafficGateRuntimeState();
         gate.maxTimer = null;
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
-        if (gate.settings && gate.settings.policy === 'PERMISSIVE') {
-            trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
-            return;
-        }
-        if (gate.settings && gate.settings.policy === 'BALANCED') {
-            // BALANCED is a soft traffic-quality filter, not a permanent
-            // availability dependency. If the invisible Turnstile path never
-            // yields PASS or DENIED, release monetization at the configured
-            // bounded deadline regardless of whether early trusted-activity
-            // recovery is enabled. Explicit DENIED remains fail-closed above.
-            trafficGateAllow(TRAFFIC_GATE_STATES.softAllowed, 'MAX_WAIT_FALLBACK');
-            return;
-        }
-        trafficGateSetState(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
-        trafficGateCleanup();
-        settleTrafficGateDecision();
+        trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
     }
 
     function generateTrafficGateNonce() {
@@ -352,7 +252,7 @@ const trafficGateRuntime = String.raw`
         if (message.pageNonce !== gate.pageNonce) return;
         var type = String(message.type || '');
         if (type === 'HORUS_TRAFFIC_GATE_READY') return;
-        if (type === 'HORUS_TRAFFIC_GATE_PASS') {
+        if (type === 'HORUS_TRAFFIC_GATE_PASS' && message.serverVerified === true) {
             trafficGateAllow(TRAFFIC_GATE_STATES.passed, 'PASS');
             return;
         }

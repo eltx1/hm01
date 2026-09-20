@@ -54,7 +54,7 @@ final class TrafficGateSiteSettingsService
                 $site,
                 $before,
                 $after,
-                ['reason' => mb_substr($reason, 0, 2000), 'client_only' => true],
+                ['reason' => mb_substr($reason, 0, 2000), 'server_verified' => true],
             );
         });
 

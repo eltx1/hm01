@@ -26,7 +26,7 @@ function config(gated, expanded = false) {
         controls: { adServingDisabled: false, gamDisabled: true, prebidDisabled: true, directJsDisabled: false, nativeDemandDisabled: false, trafficGateDisabled: false },
         privacy: { mode: 'AUTO', cmp: { timeoutMs: 100, actionOnTimeout: 'LIMITED_ADS' }, requireConsentBeforeAds: false },
         clickGuard: { enabled: true, maxClicks: 3, windowHours: 6, blockHours: 12 },
-        trafficGate: { enabled: gated, provider: 'CLOUDFLARE_TURNSTILE_CLIENT_ONLY', gateOrigin: GATE,
+        trafficGate: { enabled: gated, provider: 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED', gateOrigin: GATE,
             siteKey: '1x00000000000000000000BB', policy: 'BALANCED', readiness: gated ? 'READY' : 'DISABLED',
             timings: { initialWaitMs: 2000, maxWaitMs: 10000, retryIntervalMs: 500 } },
         prebid: { enabled: false }, nativeDemand: { enabled: false, placements: {} },
