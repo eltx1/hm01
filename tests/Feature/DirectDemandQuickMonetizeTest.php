@@ -378,7 +378,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             $settings['closeable'] = false;
             $settings['surface']['testPublisherPreference'] = 'preserve';
             $placement->update(['format_settings' => $settings]);
-            $before = $placement->getAttributes();
+            $before = $placement->refresh()->getAttributes();
             $beforeSizes = $placement->sizes()->get()->map(fn ($size) => $size->getAttributes())->all();
             $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
                 'placement_id' => $placement->id,
