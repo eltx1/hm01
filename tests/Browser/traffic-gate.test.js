@@ -58,6 +58,9 @@ function createHarness({
             renderOptions = options;
             queueMicrotask(() => {
                 if (behavior === 'pass') options.callback('TOKEN_MUST_NOT_LEAVE_FRAME');
+                if (behavior === 'interactive-attempt') {
+                    options['before-interactive-callback']();
+                }
                 if (behavior === 'fail') options['error-callback']('300001');
                 if (behavior === 'timeout') options['timeout-callback']();
                 if (behavior === 'unsupported') options['unsupported-callback']();
@@ -191,6 +194,22 @@ test('authorized Site origin receives READY then PASS with the exact nonce and n
     }
     assert.equal(harness.renderOptions['response-field'], false);
     assert.equal(harness.renderOptions.retry, 'never');
+    assert.equal(typeof harness.renderOptions['before-interactive-callback'], 'function');
+});
+
+test('interactive Turnstile is rejected because the Traffic Gate is invisible-only', async () => {
+    const harness = createHarness({ behavior: 'interactive-attempt' });
+    await harness.hello();
+
+    assert.equal(harness.renderCount, 1);
+    assert.deepEqual(harness.messages.map(({ payload }) => payload.type), [
+        'HORUS_TRAFFIC_GATE_READY',
+        'HORUS_TRAFFIC_GATE_ERROR',
+    ]);
+    const error = harness.messages.at(-1);
+    assert.equal(error.payload.category, 'INTERACTIVE_WIDGET_NOT_ALLOWED');
+    assert.equal(error.payload.state, 'ERROR');
+    assert.equal(harness.messages.some(({ payload }) => payload.type === 'HORUS_TRAFFIC_GATE_PASS'), false);
 });
 
 test('unauthorized parent origin is denied before Turnstile is loaded or rendered', async () => {

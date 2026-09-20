@@ -10,6 +10,7 @@ final readonly class TrafficGateConfiguration
     public function __construct(
         public bool $enabled,
         public string $provider,
+        public string $widgetMode,
         public ?string $gateOrigin,
         public ?string $siteKey,
         public TrafficGatePolicy $policy,
@@ -26,6 +27,7 @@ final readonly class TrafficGateConfiguration
         return [
             'enabled' => $this->enabled,
             'provider' => $this->provider,
+            'widgetMode' => $this->widgetMode,
             'gateOrigin' => $this->gateOrigin,
             'siteKey' => $this->siteKey,
             'policy' => $this->policy->value,

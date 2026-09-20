@@ -810,7 +810,10 @@ test('nonce comes from browser crypto, HELLO is bounded, iframe is non-visible, 
     assert.match(hello.payload.pageNonce, /^[a-f0-9]{48}$/);
     assert.equal(hello.targetOrigin, GATE_ORIGIN);
     assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/`);
+    assert.equal(runtime.gateFrame.style.values.width, '320px');
+    assert.equal(runtime.gateFrame.style.values.height, '90px');
     assert.equal(runtime.gateFrame.style.values.left, '-10000px');
+    assert.equal(runtime.gateFrame.style.values.opacity, '0');
     assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
 
     runtime.sendGate('PASS', { token: 'must-never-be-used' });
