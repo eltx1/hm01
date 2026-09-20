@@ -1,0 +1,8 @@
+{
+  "name": "horus-siteverify-runtime-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test siteverify.test.mjs" },
+  "devDependencies": { "miniflare": "4.20260730.0" },
+  "overrides": { "workerd": "1.20260920.1" }
+}
