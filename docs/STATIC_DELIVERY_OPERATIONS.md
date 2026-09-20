@@ -153,6 +153,12 @@ misclassified as a remote upload failure.
 
 ## Operations evidence and warnings
 
+Pages canonicalizes HTML URLs: `404.html` is served at `/404`, and
+`traffic-gate/index.html` at `/traffic-gate/`. Immutable deployment verification
+requests these canonical paths directly and still requires each original
+manifest file hash. Redirects from those canonical paths are rejected; the
+verifier never follows an arbitrary redirect to another origin.
+
 The Admin view derives its state only from persisted outbox and batch evidence:
 pending count and age, next normal boundary, current manifest, last successful
 and last remote deployment, remote ID, file count/size, recent actors/timestamps,
