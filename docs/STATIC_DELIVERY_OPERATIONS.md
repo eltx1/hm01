@@ -14,6 +14,12 @@ application release, it transfers the Cloudflare credential on stdin through SSH
 to `/home/horusapp/shared/secrets/edge-cloudflare-token` (0600), writes a `file:`
 reference in the shared environment, rebuilds the config cache, and reloads FPM
 using the deployment's existing command. No new secret needs to be created.
+The release also calls `static-delivery:queue-assets --apply`: a stable fingerprint
+of compiled assets, headers and gate files enqueues one normal outbox event when
+those assets change (including initial activation). Repeated checks of unchanged
+assets never create extra uploads or reset exhausted retries. Configuration and
+probe timestamps do not affect this fingerprint. This covers loader-only releases
+without requiring an ad configuration edit; the scheduler still performs the upload.
 The installer supports no-write dry run, preserves unrelated environment settings,
 and records a redacted audit entry. It configures five-minute batch boundaries;
 the portable application's default remains 30 minutes.

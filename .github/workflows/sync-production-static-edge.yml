@@ -89,7 +89,7 @@ jobs:
           if [[ "$mode" == 'cloudflare-pages-pipeline' || "$mode" == 'cloudflare-pages-direct' ]]; then
             echo 'active=true' >> "$GITHUB_OUTPUT"
             ssh -p "$SSH_PORT" "$USER@$HOST" \
-              "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply"
+              "cd '$app_root' && php artisan static-delivery:automation-check && php artisan demand:refresh-quick-runtimes --apply && php artisan traffic-gate:refresh-configs --apply && php artisan static-delivery:queue-assets --apply"
             if [[ "$mode" == 'cloudflare-pages-direct' ]]; then
               echo 'direct=true' >> "$GITHUB_OUTPUT"
             fi

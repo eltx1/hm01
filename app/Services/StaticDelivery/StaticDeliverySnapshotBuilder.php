@@ -21,6 +21,15 @@ final class StaticDeliverySnapshotBuilder
         private readonly SupplyChainArtifactBuilder $supplyChain,
     ) {}
 
+    /** Stable release assets only: configuration and probe timestamps cannot enqueue extra uploads. */
+    public function assetFingerprint(): string
+    {
+        $files = $this->baseAssets();
+        ksort($files);
+
+        return $this->hashFiles($files);
+    }
+
     /** @param list<string>|null $selectedPendingVersionIds */
     public function build(?array $selectedPendingVersionIds = null): StaticDeliverySnapshot
     {

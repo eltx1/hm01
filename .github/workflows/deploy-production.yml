@@ -192,7 +192,7 @@ jobs:
           printf '%s' "$EDGE_TOKEN" | ssh -p "$SSH_PORT" "$USER@$HOST" \
             "cd '$app_root' && php '$remote_dir/configure-static-delivery-automation.php' --env='$REMOTE_HOME/shared/.env' --account='$EDGE_ACCOUNT' --project='$EDGE_PROJECT' --apply"
           ssh -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$app_root' && /usr/bin/php8.4 artisan config:cache && sudo -n /usr/bin/systemctl reload php8.4-fpm && /usr/bin/php8.4 artisan static-delivery:automation-check --require-scheduler"
+            "cd '$app_root' && /usr/bin/php8.4 artisan config:cache && sudo -n /usr/bin/systemctl reload php8.4-fpm && /usr/bin/php8.4 artisan static-delivery:automation-check --require-scheduler && /usr/bin/php8.4 artisan static-delivery:queue-assets --apply"
 
       - name: Verify Quick Monetize control-plane route
         shell: bash
