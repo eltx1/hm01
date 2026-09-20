@@ -28,6 +28,10 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tests/Browser/siteverify-worker.test.js
+      - name: Test native Workers runtime before deployment
+        run: |
+          npm ci --prefix tests/Workers --no-audit --no-fund
+          npm test --prefix tests/Workers
       - name: Verify account readiness without writes
         run: node scripts/deploy-siteverify.mjs
         env:

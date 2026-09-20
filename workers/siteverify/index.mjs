@@ -54,7 +54,10 @@ export async function verifyRequest(request, env, upstream = fetch) {
     const timer = setTimeout(() => controller.abort(), 3500);
     try {
         const response = await upstream(ENDPOINT, {
-            method: 'POST', redirect: 'error', signal: controller.signal,
+            // Workers rejects redirect:"error" before sending the request.
+            // manual + the response.ok check below rejects every redirect
+            // without ever forwarding the secret to another destination.
+            method: 'POST', redirect: 'manual', signal: controller.signal,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 secret: env.TURNSTILE_SECRET,
