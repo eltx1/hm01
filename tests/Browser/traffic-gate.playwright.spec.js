@@ -208,11 +208,11 @@ test('Publisher B independently passes its own Site configuration', async ({ pag
     await waitForResult(page, 'HORUS_TRAFFIC_GATE_PASS');
 });
 
-test('Admin test origin accepts the current official Invisible always-pass key without Siteverify', async ({ page }) => {
+test('Admin test origin requires the verification endpoint after a successful widget', async ({ page }) => {
     const requests = await installDeterministicNetwork(page);
     await page.goto(`${ADMIN_ORIGIN}/?test=1&candidate=${ALWAYS_PASS_INVISIBLE}`);
     await waitForResult(page, 'HORUS_TRAFFIC_GATE_PASS');
-    expect(requests.some(url => /siteverify/i.test(url))).toBe(false);
+    expect(requests.some(url => /siteverify/i.test(url))).toBe(true);
     expect(requests.some(url => /\/api\/.*traffic|analytics|report|beacon/i.test(url))).toBe(false);
 });
 

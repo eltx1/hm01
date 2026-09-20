@@ -226,7 +226,7 @@
         status.textContent = 'Running server verification test…';
         nonce = makeNonce();
         frame = document.createElement('iframe');
-        frame.src = button.dataset.origin + '/traffic-gate/';
+        frame.src = button.dataset.origin + '/traffic-gate/?protocol=2';
         frame.title = 'Horus Traffic Gate Client Test';
         frame.setAttribute('aria-hidden', 'true');
         frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;border:0;opacity:0;pointer-events:none';

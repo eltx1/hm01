@@ -709,7 +709,7 @@ test('nonce comes from browser crypto, HELLO is bounded, iframe is non-visible, 
     assert.deepEqual(Object.keys(hello.payload).sort(), ['pageNonce', 'protocolVersion', 'sitePublicKey', 'type']);
     assert.match(hello.payload.pageNonce, /^[a-f0-9]{48}$/);
     assert.equal(hello.targetOrigin, GATE_ORIGIN);
-    assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/`);
+    assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/?protocol=2`);
     assert.equal(runtime.gateFrame.style.values.left, '-10000px');
     assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
 

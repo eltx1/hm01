@@ -183,7 +183,7 @@ if (trafficGateTestButton) {
         if (status) status.textContent = 'Running server verification test…';
         nonce = makeNonce();
         frame = document.createElement('iframe');
-        frame.src = `${origin}/traffic-gate/`;
+        frame.src = `${origin}/traffic-gate/?protocol=2`;
         frame.title = 'Horus Traffic Gate Client Test';
         frame.setAttribute('aria-hidden', 'true');
         frame.setAttribute('tabindex', '-1');

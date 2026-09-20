@@ -308,7 +308,7 @@ const trafficGateRuntime = String.raw`
         var iframe;
         try {
             iframe = document.createElement('iframe');
-            iframe.src = settings.origin + TRAFFIC_GATE_PATH;
+            iframe.src = settings.origin + TRAFFIC_GATE_PATH + '?protocol=2';
             iframe.title = 'Horus client traffic gate';
             iframe.setAttribute('aria-hidden', 'true');
             iframe.setAttribute('tabindex', '-1');

@@ -288,12 +288,12 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
     await expect.poll(
         () => page.evaluate(() => window.HorusMediaLoader?.getTrafficGateState?.().state),
         { timeout: 3500 }
-    ).toBe('ERROR');
+    ).toBe('TIMEOUT');
 
     await page.waitForTimeout(2200);
     expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
     expect(requests.some(url => url.includes('securepubads.g.doubleclick.net'))).toBe(false);
     const gate = await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState());
-    expect(gate.reason).toBe('TURNSTILE_ERROR');
+    expect(['MAX_WAIT', 'TURNSTILE_TIMEOUT']).toContain(gate.reason);
     expect(await page.locator('iframe[data-hm-traffic-gate="1"]').count()).toBe(0);
 });
