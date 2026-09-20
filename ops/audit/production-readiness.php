@@ -110,7 +110,7 @@ $add('Operations', 'queue_backlog', $queuedJobs <= 25 ? 'PASS' : ($queuedJobs <=
 // Static edge. Exact byte-level convergence is independently verified by the live verification workflow.
 $staticDriver = (string) config('static-delivery.driver');
 $staticDryRun = (bool) config('static-delivery.cloudflare.dry_run');
-$edgeDriverReady = in_array($staticDriver, ['external-pages-sync', 'cloudflare-pages-pipeline'], true);
+$edgeDriverReady = in_array($staticDriver, ['external-pages-sync', 'cloudflare-pages-pipeline', 'cloudflare-pages-direct'], true);
 $add('Static Edge', 'delivery_driver', $edgeDriverReady ? 'PASS' : 'BLOCKED', 'P1', $edgeDriverReady ? 'Production static delivery uses a supported Cloudflare Pages delivery path.' : 'Production static delivery is not using a production external Pages driver.', ['driver' => $staticDriver]);
 $add('Static Edge', 'delivery_not_dry_run', ! $staticDryRun ? 'PASS' : 'FAIL', 'P0', ! $staticDryRun ? 'Static delivery dry-run is disabled.' : 'Static delivery is still in dry-run mode.');
 $latestBatch = $exists('static_delivery_batches') ? DB::table('static_delivery_batches')->orderByDesc('created_at')->first() : null;
