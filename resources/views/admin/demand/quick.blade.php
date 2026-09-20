@@ -156,7 +156,7 @@
 
             <label class="full"><span id="quick-tag-label">VAST URL or provider-issued ad tag</span>
                 <textarea class="hm-input" rows="12" name="tag" id="quick-tag" required @disabled($hasBlockingReason) placeholder="Paste a complete GPT or supported provider tag.">{{ old('tag') }}</textarea>
-                <span class="muted" id="quick-tag-help">Complete provider code keeps its provider-managed lifecycle. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit.</span>
+                <span class="muted" id="quick-tag-help">Complete provider code keeps its provider-managed lifecycle. A supported script-only tag is also accepted. A plain VAST/VMAP URL runs in the Horus video player. Choose Rewarded Video for an explicit opt-in flow with a compatible rewarded VAST provider; a normal AdX video tag is not a GAM rewarded unit.</span>
                 <span class="muted" id="quick-size-help"></span>
                 @error('tag')<span class="error">{{ $message }}</span>@enderror
             </label>
@@ -217,7 +217,7 @@
                 : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.')
             : (video
                 ? 'A plain VAST/VMAP URL runs in the Horus video player. Complete provider code keeps its provider-managed lifecycle.'
-                : 'Paste the complete supported GPT or third-party tag. Its declared sizes are checked against this placement. Choose GAM ad unit path above if you only have the unit path.');
+                : 'Paste the complete supported GPT or third-party tag. A supported script-only tag is also accepted. Its declared sizes are checked against this placement. Choose GAM ad unit path above if you only have the unit path.');
         sizeHelp.textContent = key === 'responsive_display'
             ? 'Responsive supports 13 sizes: 970×250, 970×90, 728×90, 468×60, 336×280, 320×100, 320×50, 300×600, 300×250, 300×100, 300×50, 250×250 and 200×200. Each request uses only sizes that fit its device and container; 300×600 is tablet/desktop only.'
             : (type === 'STICKY' && path ? 'The selected placement keeps its own top, bottom or side position, supported sizes, close control and responsive settings.' : '');

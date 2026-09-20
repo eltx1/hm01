@@ -110,7 +110,35 @@ final class QuickMonetizeProviderAgnosticTest extends TestCase
         $sizes = data_get($candidate, 'tag.render.allowedSizes', []);
         $this->assertContains([300, 250], $sizes);
         $this->assertContains([970, 250], $sizes);
-        $this->assertNotEmpty(json_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-size-map'), true));
+        // Read the public recipe after attribute sanitization, exactly as the
+        // browser must. The expanded mapping must survive the 2,000-character
+        // per-attribute limit without losing its tablet/mobile restrictions.
+        $attributes = data_get($candidate, 'tag.container.attributes', []);
+        $this->assertArrayNotHasKey('data-hm-isolated-size-map', $attributes);
+        $partCount = (int) ($attributes['data-hm-isolated-size-map-parts'] ?? 0);
+        $this->assertGreaterThan(1, $partCount);
+        $this->assertLessThanOrEqual(64, $partCount);
+        $mappingJson = '';
+        for ($part = 0; $part < $partCount; $part++) {
+            $key = 'data-hm-isolated-size-map-'.$part;
+            $this->assertArrayHasKey($key, $attributes);
+            $this->assertLessThanOrEqual(1800, strlen($attributes[$key]));
+            $mappingJson .= $attributes[$key];
+        }
+        $mappings = json_decode($mappingJson, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertCount(32, $mappings);
+        $mobile = collect($mappings)->where('minWidth', 0);
+        $tablet = collect($mappings)->where('minWidth', 768);
+        $desktop = collect($mappings)->where('minWidth', 1024);
+        $mappingSizes = fn ($group): array => $group->map(fn ($mapping): array => [$mapping['width'], $mapping['height']])->values()->all();
+        $this->assertEqualsCanonicalizing([[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]], $mappingSizes($mobile));
+        $this->assertCount(11, $tablet);
+        $this->assertContains([300, 600], $mappingSizes($tablet));
+        $this->assertNotContains([970, 250], $mappingSizes($tablet));
+        $this->assertEqualsCanonicalizing($sizes, $mappingSizes($desktop));
+        $this->assertSame([767], $mobile->pluck('maxWidth')->unique()->values()->all());
+        $this->assertSame([1023], $tablet->pluck('maxWidth')->unique()->values()->all());
+        $this->assertSame([null], $desktop->pluck('maxWidth')->unique()->values()->all());
         $this->assertSame($sizes, json_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-isolated-sizes'), true));
 
         $public = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);

@@ -196,7 +196,10 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $containerId = 'hm-isolated-'.$placement->id;
         $timeout = max(500, min(10000, (int) ($configuration['render_timeout_ms'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $format = strtoupper((string) ($configuration['format'] ?? $placement->placement->type->value));
-        $attributes = ['data-hm-isolated-direct' => '1', 'data-hm-isolated-width' => (string) $frameSize[0], 'data-hm-isolated-height' => (string) $frameSize[1], 'data-hm-isolated-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 'data-hm-isolated-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        $attributes = ['data-hm-isolated-direct' => '1', 'data-hm-isolated-width' => (string) $frameSize[0], 'data-hm-isolated-height' => (string) $frameSize[1], 'data-hm-isolated-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        // Public recipe attributes remain capped at 2,000 characters. Keep
+        // small legacy maps verbatim and split larger maps before publication.
+        $attributes += $this->chunkedPayloadAttributes('data-hm-isolated-size-map', json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-html', $html);
         $attributes += $this->encodedPayloadAttributes('data-hm-isolated-csp', $csp);
         $successSelector = '#'.$containerId.'[data-hm-isolated-status="rendered"]';
@@ -288,10 +291,14 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
 
     private function encodedPayloadAttributes(string $baseAttribute, string $payload): array
     {
-        $encoded = base64_encode($payload);
-        if (strlen($encoded) <= 1800) return [$baseAttribute => $encoded];
-        $parts = str_split($encoded, 1800);
-        if (count($parts) > 64) throw new RuntimeException('The encoded isolated tag exceeds the trusted runtime payload limit.');
+        return $this->chunkedPayloadAttributes($baseAttribute, base64_encode($payload));
+    }
+
+    private function chunkedPayloadAttributes(string $baseAttribute, string $payload): array
+    {
+        if (strlen($payload) <= 1800) return [$baseAttribute => $payload];
+        $parts = str_split($payload, 1800);
+        if (count($parts) > 64) throw new RuntimeException('The isolated tag exceeds the trusted runtime payload limit.');
         $attributes = [$baseAttribute.'-parts' => (string) count($parts)];
         foreach ($parts as $index => $part) $attributes[$baseAttribute.'-'.$index] = $part;
         return $attributes;

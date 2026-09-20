@@ -11,6 +11,7 @@ use App\Models\ConfigVersion;
 use App\Models\DemandNetwork;
 use App\Models\DemandWidget;
 use App\Models\Placement;
+use App\Services\Demand\GoogleGptManualTagParser;
 use App\Services\Demand\QuickMonetizeService;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use Database\Seeders\DemandNetworkSeeder;
@@ -177,13 +178,14 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             ->whereHas('demandPlacement', fn ($query) => $query->where('placement_id', $placement->id))
             ->where('is_enabled', true)
             ->firstOrFail();
-        $tag = preg_replace('/\s+/', '', (string) $widget->direct_tag_template) ?: '';
+        $slot = app(GoogleGptManualTagParser::class)->parse((string) $widget->direct_tag_template);
 
-        $this->assertStringContainsString('[[728,90],[320,100],[320,50]]', $tag);
-        $this->assertStringNotContainsString('[300,250]', $tag);
-        $this->assertStringNotContainsString('[336,280]', $tag);
-        $this->assertStringNotContainsString('[970,250]', $tag);
-        $this->assertStringContainsString('/1234567/lordai_display', $tag);
+        $this->assertIsArray($slot);
+        $this->assertEqualsCanonicalizing([[728, 90], [320, 100], [320, 50], [970, 90]], $slot['sizes']);
+        foreach ([[300, 250], [336, 280], [970, 250], [300, 600], [468, 60]] as $unsupportedSourceSize) {
+            $this->assertNotContains($unsupportedSourceSize, $slot['sizes']);
+        }
+        $this->assertSame('/1234567/lordai_display', $slot['adUnitPath']);
     }
 
     public function test_incompatible_side_rail_is_skipped_instead_of_fabricating_vertical_gpt_sizes(): void

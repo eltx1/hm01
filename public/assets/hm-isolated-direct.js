@@ -105,8 +105,24 @@
         ];
     }
 
-    function mappingSize(container, sizes) {
-        var mappings = jsonAttribute(container, 'data-hm-isolated-size-map', []);
+    function sizeMappings(container) {
+        var attribute = 'data-hm-isolated-size-map';
+        if (container.getAttribute(attribute + '-parts') === null) {
+            var legacy = jsonAttribute(container, attribute, []);
+            return Array.isArray(legacy) ? legacy : [];
+        }
+        // Declared multipart maps must be complete. Falling back to the first
+        // display size here could request the wrong creative on a device.
+        if (container.getAttribute(attribute) !== null) return null;
+        try {
+            var parsed = JSON.parse(encodedPayload(container, attribute));
+            return Array.isArray(parsed) ? parsed : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function mappingSize(container, sizes, mappings) {
         if (!Array.isArray(mappings) || !mappings.length) return null;
         var viewport = viewportSize();
         var viewportWidth = viewport[0];
@@ -129,9 +145,9 @@
         return null;
     }
 
-    function selectedSize(container) {
+    function selectedSize(container, mappings) {
         var sizes = allowedSizes(container);
-        var mapped = mappingSize(container, sizes);
+        var mapped = mappingSize(container, sizes, mappings);
         if (mapped) return mapped;
         if (sizes.length) return sizes[0];
         return [
@@ -143,9 +159,14 @@
     function render(container) {
         if (!container || container.getAttribute('data-hm-isolated-runtime-state')) return;
 
+        var mappings = sizeMappings(container);
+        if (mappings === null) {
+            container.setAttribute('data-hm-isolated-runtime-state', 'invalid');
+            return;
+        }
         var html = decodeBase64(encodedPayload(container, 'data-hm-isolated-html'));
         var csp = decodeBase64(encodedPayload(container, 'data-hm-isolated-csp'));
-        var size = selectedSize(container);
+        var size = selectedSize(container, mappings);
         var width = size[0];
         var height = size[1];
         if (!html || !csp || /["<>]/.test(csp)) {

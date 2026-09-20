@@ -349,7 +349,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
     public function test_legacy_auto_input_accepts_a_display_path_without_changing_the_existing_placement(): void
     {
-        $before = $this->placement->getAttributes();
+        $before = $this->placement->refresh()->getAttributes();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
             'tag' => '/1234567/header',
         ]))->assertSessionHasNoErrors()->assertRedirect();

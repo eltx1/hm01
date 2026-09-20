@@ -103,6 +103,77 @@ test('isolated generic runtime remains backward compatible with legacy width and
     assert.deepEqual(frame.sandboxValues, ['allow-scripts']);
 });
 
+function expandedMapAttributes() {
+    const mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+    const tablet = [[728, 90], [468, 60], ...mobile, [300, 600]];
+    const desktop = [[970, 250], [970, 90], ...tablet];
+    const mappings = [
+        ...desktop.map(([width, height], priority) => ({ minWidth: 1024, minHeight: 0, maxWidth: null, maxHeight: null, width, height, priority })),
+        ...tablet.map(([width, height], priority) => ({ minWidth: 768, minHeight: 0, maxWidth: 1023, maxHeight: 65535, width, height, priority })),
+        ...mobile.map(([width, height], priority) => ({ minWidth: 0, minHeight: 0, maxWidth: 767, maxHeight: 65535, width, height, priority })),
+    ];
+    const json = JSON.stringify(mappings);
+    assert.equal(mappings.length, 32);
+    assert.ok(json.length > 2000, 'Expanded map must exercise the public attribute length limit');
+    const parts = json.match(/.{1,1800}/g);
+    return {
+        'data-hm-isolated-sizes': JSON.stringify(desktop),
+        'data-hm-isolated-size-map-parts': String(parts.length),
+        ...Object.fromEntries(parts.map((part, index) => ['data-hm-isolated-size-map-' + index, part])),
+    };
+}
+
+test('large multipart responsive maps survive the public attribute cap and select each viewport correctly', async () => {
+    for (const [viewport, expectedWidth, expectedHeight] of [[1440, 970, 250], [900, 728, 90], [390, 300, 250]]) {
+        const attributes = expandedMapAttributes();
+        assert.equal(attributes['data-hm-isolated-size-map'], undefined);
+        for (const value of Object.values(attributes)) assert.ok(value.length <= 1800);
+        // Match the publication boundary; no attribute limit needs increasing.
+        const published = Object.fromEntries(Object.entries(attributes).map(([name, value]) => [name, value.slice(0, 2000)]));
+        const target = makeContainer({ attributes: published });
+        const frame = run(target, viewport);
+        await tick();
+
+        assert.equal(frame.getAttribute('width'), String(expectedWidth));
+        assert.equal(frame.getAttribute('height'), String(expectedHeight));
+        assert.equal(target.attributes['data-hm-isolated-status'], 'loaded');
+    }
+});
+
+test('missing, oversized or invalid declared map parts fail closed before loading the provider', () => {
+    const cases = [];
+    const missing = expandedMapAttributes();
+    delete missing['data-hm-isolated-size-map-1'];
+    cases.push(missing);
+    cases.push({ ...expandedMapAttributes(), 'data-hm-isolated-size-map-parts': '65' });
+    cases.push({ ...expandedMapAttributes(), 'data-hm-isolated-size-map-parts': '0' });
+    cases.push({ ...expandedMapAttributes(), 'data-hm-isolated-size-map-0': 'x'.repeat(2001) });
+    cases.push({ ...expandedMapAttributes(), 'data-hm-isolated-size-map-0': 'invalid json' });
+    cases.push({ ...expandedMapAttributes(), 'data-hm-isolated-size-map': '[]' });
+
+    for (const attributes of cases) {
+        const target = makeContainer({ attributes });
+        assert.equal(run(target, 390), undefined);
+        assert.equal(target.frames.length, 0);
+        assert.equal(target.attributes['data-hm-isolated-runtime-state'], 'invalid');
+        assert.equal(target.attributes['data-hm-isolated-selected-width'], undefined);
+    }
+});
+
+test('legacy small raw maps keep their existing fallback behavior', async () => {
+    for (const legacy of ['malformed legacy map', 'null', '{}']) {
+        const target = makeContainer({ attributes: {
+            'data-hm-isolated-sizes': '[[300,250],[728,90]]',
+            'data-hm-isolated-size-map': legacy,
+        } });
+        const frame = run(target, 390);
+        await tick();
+        assert.equal(frame.getAttribute('width'), '300');
+        assert.equal(frame.getAttribute('height'), '250');
+        assert.equal(target.attributes['data-hm-isolated-status'], 'loaded');
+    }
+});
+
 test('iframe-only provider markup is preserved inside the reviewed isolated document', async () => {
     const html = '<iframe src="https://ads.example.org/render" width="300" height="250"></iframe>';
     const csp = "default-src 'none'; script-src 'unsafe-inline'; frame-src https://ads.example.org;";
