@@ -6,6 +6,7 @@ use App\Enums\ReportConnectionStatus;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\RevenueRuleScope;
+use App\Enums\ReportSourceCode;
 use App\Http\Controllers\Controller;
 use App\Models\FinancialPeriod;
 use App\Models\PublisherPayment;
@@ -58,6 +59,11 @@ class ReportingController extends Controller
             'timezone' => ['required', 'timezone'],
             'configuration_json' => ['nullable', 'json'],
         ]);
+
+        if ($data['connection_type'] === 'SITE_GAM_AD_UNIT'
+            || ReportSource::query()->findOrFail($data['report_source_id'])->code === ReportSourceCode::GamAdUnit) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['report_source_id' => 'Connect ad-unit reporting from the website Reports section so the Google unit and publisher are verified.']);
+        }
 
         ReportSourceConnection::withoutGlobalScopes()->updateOrCreate(
             [

@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\PublisherSiteController as AdminPublisherSiteCont
 use App\Http\Controllers\Admin\RolePermissionController;
 use App\Http\Controllers\Admin\SiteConfigController;
 use App\Http\Controllers\Admin\SiteController as AdminSiteController;
+use App\Http\Controllers\Admin\SiteGamReportingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\EmailVerificationController;
@@ -153,6 +154,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/admin/click-protection', [ClickProtectionController::class, 'index'])->middleware(['horus', 'permission:settings.view'])->name('admin.click-protection.index');
         Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
+        Route::post('/admin/sites/{site}/reporting/gam-ad-unit', [SiteGamReportingController::class, 'store'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:10,1'])->name('admin.sites.reporting.gam.store');
+        Route::get('/admin/sites/{site}/reporting/gam-ad-units', [SiteGamReportingController::class, 'units'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:60,1'])->name('admin.sites.reporting.gam.units');
         Route::get('/admin/sites/{site}/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view')->name('admin.sites.inventory.index');
         Route::post('/admin/sites/{site}/inventory/ad-units', [InventoryController::class, 'storeAdUnit'])->middleware('permission:inventory.manage')->name('admin.sites.inventory.ad-units.store');
         Route::post('/admin/sites/{site}/inventory/ad-units/{adUnit}/sync', [InventoryController::class, 'syncAdUnit'])->middleware('permission:inventory.sync')->name('admin.sites.inventory.ad-units.sync');

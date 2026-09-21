@@ -10,6 +10,7 @@
         ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
         ['label' => 'Serving', 'href' => '#serving'],
         ['label' => 'GAM', 'href' => '#gam'],
+        ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
         ['label' => 'Prebid', 'href' => '#prebid'],
         ['label' => 'Direct Monetization', 'href' => '#native-demand'],
         ['label' => 'Configuration', 'href' => '#configuration'],
@@ -51,6 +52,9 @@
 @endif
 
 @include('admin.sites.serving-control-center')
+@if(auth()->user()->hasPermission('reporting.sources.manage'))
+    @include('admin.sites.gam-reporting')
+@endif
 
 <section id="serving" class="detail-grid workspace-section">
     <article>

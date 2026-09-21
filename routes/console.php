@@ -85,5 +85,6 @@ Schedule::command('campaigns:monitor --reconcile')->everyFiveMinutes()->withoutO
 Schedule::command('data-retention:prune --execute')->dailyAt('00:40')->withoutOverlapping(180);
 Schedule::command('audit-logs:prune')->dailyAt('02:15');
 Schedule::command('reporting:import hourly --retry-failed')->hourlyAt(12)->withoutOverlapping();
+Schedule::command('reporting:sync-site-gam')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('reporting:import daily --retry-failed')->dailyAt('04:10')->withoutOverlapping();
 Schedule::command('reporting:close-period --force')->monthlyOn(2, '05:20')->withoutOverlapping();

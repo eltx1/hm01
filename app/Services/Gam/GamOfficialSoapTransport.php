@@ -7,6 +7,9 @@ use App\Models\GamConnection;
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\Exceptions\GamTransportException;
 use Google\AdsApi\AdManager\AdManagerSessionBuilder;
+use Google\AdsApi\AdManager\AdManagerServices;
+use Google\AdsApi\AdManager\AdManagerSoapLogMessageFormatterProvider;
+use Google\AdsApi\Common\AdsSoapClientFactory;
 use Google\AdsApi\Common\OAuth2TokenBuilder;
 use ReflectionClass;
 use SplObjectStorage;
@@ -14,6 +17,16 @@ use Throwable;
 
 final class GamOfficialSoapTransport implements GamSoapTransportInterface
 {
+    private ?int $soapTimeoutSeconds = null;
+
+    public function withTimeout(int $seconds): self
+    {
+        $transport = clone $this;
+        $transport->soapTimeoutSeconds = max(1, min(60, $seconds));
+
+        return $transport;
+    }
+
     public function __construct(
         private readonly GamSecretResolver $secrets,
         private readonly GamSoapVersionResolver $versions,
@@ -37,7 +50,9 @@ final class GamOfficialSoapTransport implements GamSoapTransportInterface
             $namespace = $this->versions->namespaceFor($version);
             $factoryClass = $namespace.'\\ServiceFactory';
             $factoryMethod = 'create'.$service;
-            $factory = new $factoryClass;
+            $factory = $this->soapTimeoutSeconds === null ? new $factoryClass : new $factoryClass(new AdManagerServices(
+                new AdsSoapClientFactory((new AdManagerSoapLogMessageFormatterProvider)->getSoapLogMessageFormatter(), null, $this->soapTimeoutSeconds),
+            ));
             if (! method_exists($factory, $factoryMethod)) {
                 throw new GamTransportException("GAM SOAP {$version} does not expose {$service}.", 'SOAP_SERVICE_UNAVAILABLE');
             }
