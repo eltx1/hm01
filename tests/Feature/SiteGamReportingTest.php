@@ -33,6 +33,7 @@ use App\Services\Reporting\RevenueRuleService;
 use App\Services\Reporting\SiteGamFinancialCoverage;
 use App\Services\Reporting\SiteGamReportingService;
 use App\Services\Reporting\SiteGamReportSynchronizer;
+use App\Services\Reporting\SiteGamTodayReport;
 use App\Services\Reporting\UnifiedReportService;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DemandNetworkSeeder;
@@ -133,6 +134,79 @@ class SiteGamReportingTest extends TestCase
     {
         return app(ReportImportService::class)->runConnection($binding->connection, CarbonImmutable::parse($from),
             CarbonImmutable::parse($to), ReportGranularity::Daily, ReportFinality::Finalized);
+    }
+
+    public function test_site_page_shows_current_estimates_without_changing_finalized_totals_or_calling_google(): void
+    {
+        $context = [$admin, , $publisherUser, $site] = $this->context();
+        $binding = $this->bind($context);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())
+            ->push($this->csv([['2026-09-21', '12345', 180, 150, 30, 125, 5, 456780000]]))]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        $job = app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $calls = count($this->google->calls);
+        $count = ReportImportJob::count();
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()
+            ->assertSee('Today so far')->assertSee('456.78 USD')->assertSee('Last imported: 2026-09-21 13:00:00')
+            ->assertSee('View completed-day reports')
+            ->assertViewHas('todayReport', fn ($report) => $report['available'] && $report['impressions'] === 125 && $report['clicks'] === 5);
+        $this->assertSame($calls, count($this->google->calls));
+        $this->assertSame($count, ReportImportJob::count());
+        $this->assertFalse($job->settlement_eligible);
+        $this->assertSame(12345, app(UnifiedReportService::class)->adminSummary('2026-09-01', '2026-09-21', 'USD')['gross_revenue_minor']);
+        $this->actingAs($publisherUser)->get(route('admin.sites.show', $site))->assertForbidden();
+    }
+
+    public function test_today_report_uses_network_midnight_and_distinguishes_pending_data_from_a_real_zero(): void
+    {
+        $context = [$admin, , , $site] = $this->context();
+        $binding = $this->bind($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '12345', 180, 150, 30, 125, 5, 456780000]]))->push($this->csv([]))]);
+        app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        // UTC is still September 21, but this network's new day has started.
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 22:30:00', 'UTC'));
+        $report = app(SiteGamTodayReport::class)->forSite($site->fresh());
+        $this->assertSame('2026-09-22', $report['date']);
+        $this->assertFalse($report['available']);
+        $this->assertNull($report['updated_at']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertSee("Today's report has not arrived yet.", false)->assertDontSee('456.78 USD');
+
+        $nextDay = $day->addDay();
+        $job = app(ReportImportService::class)->runConnection($binding->connection->fresh(), $nextDay, $nextDay->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $report = app(SiteGamTodayReport::class)->forSite($site->fresh());
+        $this->assertTrue($report['available']);
+        $this->assertSame(0, $report['gross_revenue_minor']);
+        $this->assertSame('2026-09-22 01:30:00', $report['updated_at']);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('0.00 USD')->assertDontSee('report has not arrived yet');
+    }
+
+    public function test_today_report_is_scoped_to_the_bound_website_and_requires_reporting_permission(): void
+    {
+        $context = [$admin, $publisher, $publisherUser, $site] = $this->context();
+        $binding = $this->bind($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv([['2026-09-21', '12345', 180, 150, 30, 125, 5, 456780000]]))]);
+        app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $otherSite = $this->makeSiteFor($publisher, $publisherUser);
+        $this->assertNull(app(SiteGamTodayReport::class)->forSite($otherSite));
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $row->dimension->update(['site_id' => $otherSite->id]);
+        $this->assertFalse(app(SiteGamTodayReport::class)->forSite($site->fresh())['available']);
+        $row->dimension->update(['site_id' => $site->id]);
+
+        $support = $this->makeUser($admin->organization, RoleName::SupportAgent);
+        $this->actingAs($support)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertViewHas('todayReport', null)->assertDontSee('456.78 USD');
+        $binding->connection->update(['organization_id' => $admin->organization_id]);
+        $this->assertNull(app(SiteGamTodayReport::class)->forSite($site->fresh()));
     }
 
     public function test_admin_connects_in_one_submission_with_no_serving_changes_and_safe_search(): void

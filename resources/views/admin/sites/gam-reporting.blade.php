@@ -1,5 +1,30 @@
 @php($reportBinding = $site->currentGamReportBinding)
 <article id="reporting" class="workspace-section">
+    @if($todayReport ?? null)
+        <section id="today-report" aria-labelledby="today-report-heading">
+            <div class="workspace-heading"><div><p class="eyebrow">{{ $site->primary_domain }} · Estimated performance</p><h2 id="today-report-heading">Today so far</h2><p class="muted">{{ $todayReport['date'] }} · {{ $todayReport['timezone'] }} · {{ $todayReport['currency'] }}</p></div><span class="pill">Estimated</span></div>
+            @if($todayReport['available'])
+                <div class="metric-grid">
+                    @foreach([
+                        ['Ad requests', number_format($todayReport['ad_requests'])],
+                        ['Impressions', number_format($todayReport['impressions'])],
+                        ['Clicks', number_format($todayReport['clicks'])],
+                        ['Estimated gross revenue', \App\Support\Money::formatMinor($todayReport['gross_revenue_minor']).' '.$todayReport['currency']],
+                        ['Estimated publisher earnings', \App\Support\Money::formatMinor($todayReport['publisher_earnings_minor']).' '.$todayReport['currency']],
+                    ] as [$label, $value])
+                        <article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ $value }}</strong></article>
+                    @endforeach
+                </div>
+                <p>Last imported: {{ $todayReport['updated_at'] }} · {{ $todayReport['timezone'] }}</p>
+            @else
+                <p role="status">Today's report has not arrived yet. Figures will appear after the next successful automatic import.</p>
+            @endif
+            <p class="muted">{{ $todayReport['refresh_enabled'] ? 'Updated automatically every hour. Google data may be delayed.' : 'Automatic refresh is paused for this reporting connection.' }} These are the latest imported estimates, not live counters or finalized payout amounts.</p>
+            @if(auth()->user()->hasPermission('reporting.admin.view'))
+                <a class="hm-button-secondary button-link" href="{{ route('admin.reporting.index', ['currency' => $todayReport['currency']]) }}">View completed-day reports</a>
+            @endif
+        </section>
+    @endif
     <div class="workspace-heading"><div><p class="eyebrow">Website reporting</p><h2>Connect an Ad Manager ad unit</h2><p class="muted">Choose an account and an ad unit. Reports, publisher revenue share and financial statements use this website's reporting source automatically.</p></div></div>
     @if($reportBinding)
         <div class="compact-row"><div><strong>{{ $reportBinding->gamConnection?->name }} · {{ $reportBinding->ad_unit_name }}</strong><p>Network {{ $reportBinding->network_code }} · Unit {{ $reportBinding->ad_unit_id }} · From {{ $reportBinding->starts_on->toDateString() }}</p></div><x-status-badge :status="$reportBinding->connection->is_enabled ? $reportBinding->connection->status : 'DISABLED'" /></div>
