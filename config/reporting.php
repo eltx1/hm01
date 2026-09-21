@@ -17,7 +17,7 @@ return [
         'HORUS_GAM' => ['name' => 'Horus GAM', 'primary' => true, 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],
         'MCM_PARTNER_GAM' => ['name' => 'MCM Partner GAM', 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],
         'PUBLISHER_GAM' => ['name' => 'Publisher GAM', 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],
-        'GAM_AD_UNIT' => ['name' => 'GAM ad unit — reporting only', 'capabilities' => ['API', 'HOURLY', 'DAILY'], 'finalized_methods' => ['API']],
+        'GAM_AD_UNIT' => ['name' => 'GAM ad unit — reporting only', 'capabilities' => ['API', 'DAILY'], 'finalized_methods' => ['API']],
         'PREBID_ESTIMATES' => ['name' => 'Prebid Estimates', 'capabilities' => ['ESTIMATED', 'CSV', 'MANUAL'], 'finalized_methods' => []],
         'MGID' => ['name' => 'MGID', 'capabilities' => ['API', 'CSV', 'MANUAL'], 'finalized_methods' => ['API', 'CSV', 'MANUAL']],
         'TABOOLA' => ['name' => 'Taboola', 'capabilities' => ['API', 'CSV', 'MANUAL'], 'finalized_methods' => ['API', 'CSV', 'MANUAL']],

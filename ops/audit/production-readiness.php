@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Services\Gam\GamReportingGoogleApp;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -33,7 +34,7 @@ $count = static function (string $table, ?callable $scope = null) use ($exists):
         }
 
         return (int) $query->count();
-    } catch (\Throwable) {
+    } catch (Throwable) {
         return 0;
     }
 };
@@ -51,7 +52,7 @@ $groups = static function (string $table, string $column) use ($hasColumn): arra
             ->get()
             ->mapWithKeys(fn ($row) => [(string) ($row->value ?? 'NULL') => (int) $row->aggregate])
             ->all();
-    } catch (\Throwable) {
+    } catch (Throwable) {
         return [];
     }
 };
@@ -204,7 +205,7 @@ $add('THOTH', 'website_quality_advisor', $thothReady ? 'PASS' : 'NOT_CONFIGURED'
 $metrics['site_quality_review_statuses'] = $groups('site_quality_review_runs', 'status');
 
 // Local platform configuration is distinct from actual Google authorization.
-$reportingGoogleConfigured = app(\App\Services\Gam\GamReportingGoogleApp::class)->ready();
+$reportingGoogleConfigured = app(GamReportingGoogleApp::class)->ready();
 $add('Reporting', 'google_account_onboarding', $reportingGoogleConfigured ? 'PASS' : 'NOT_CONFIGURED', 'P2',
     $reportingGoogleConfigured ? 'Platform Google application is configured locally; live account consent and network permissions are verified when connecting.' : 'Platform Google application has not been configured; new Google account authorization is unavailable.',
     ['platform_app_configured' => $reportingGoogleConfigured]);
@@ -247,6 +248,23 @@ $reportEnabled = $count('report_source_connections', fn ($query) => $query->wher
 $reportFinalized = $count('report_source_connections', fn ($query) => $query->where('is_enabled', 1)->whereNotNull('last_finalized_import_at'));
 $metrics['reporting'] = ['enabled_connections' => $reportEnabled, 'connections_with_finalized_import' => $reportFinalized, 'connection_statuses' => $groups('report_source_connections', 'status'), 'import_statuses' => $groups('report_import_jobs', 'status'), 'reconciliation_statuses' => $groups('reconciliation_runs', 'status')];
 $add('Reporting', 'financial_reporting_source', $reportFinalized > 0 ? 'PASS' : ($reportEnabled > 0 ? 'BLOCKED' : 'NOT_CONFIGURED'), 'P1', $reportFinalized > 0 ? 'At least one enabled reporting connection has a finalized import.' : ($reportEnabled > 0 ? 'Reporting connections exist but no finalized import has been proven.' : 'No enabled reporting source connection is configured.'), ['enabled_connections' => $reportEnabled, 'finalized_connections' => $reportFinalized]);
+
+// Read-only proof for the reporting-only route. Do not expose account identities,
+// credentials, provider error text or publisher revenue in the public audit.
+$unitConnectionScope = static fn ($q) => $q->where('connection_type', 'SITE_GAM_AD_UNIT')->where('is_enabled', 1);
+$unitImportScope = static fn ($q) => $q->whereIn('report_source_connection_id',
+    $unitConnectionScope(DB::table('report_source_connections'))->select('id'));
+$unitEnabled = $count('report_source_connections', $unitConnectionScope);
+$unitErrors = $count('report_source_connections', fn ($q) => $unitConnectionScope($q)->where('status', 'ERROR'));
+$unitEstimated = $count('report_import_jobs', fn ($q) => $unitImportScope($q)->where('status', 'COMPLETED')
+    ->where('granularity', 'DAILY')->where('finality', 'ESTIMATED')->where('completed_at', '>=', now()->subDay()));
+$unitFinalized = $count('report_import_jobs', fn ($q) => $unitImportScope($q)->where('status', 'COMPLETED')
+    ->where('granularity', 'DAILY')->where('finality', 'FINALIZED')->where('completed_at', '>=', now()->subDay()));
+$add('Reporting', 'ad_unit_daily_refresh', $unitEnabled === 0 ? 'NOT_CONFIGURED'
+    : ($unitErrors === 0 && $unitEstimated + $unitFinalized > 0 ? 'PASS' : 'BLOCKED'), 'P2',
+    'Reporting-only connection health and completed daily snapshots in the last 24 hours.',
+    ['enabled_connections' => $unitEnabled, 'connections_with_error' => $unitErrors,
+        'estimated_daily_imports_24h' => $unitEstimated, 'finalized_daily_imports_24h' => $unitFinalized]);
 
 $today = now()->toDateString();
 $currentTerms = $count('publisher_contracts', fn ($query) => $query

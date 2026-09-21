@@ -106,7 +106,7 @@ final class SiteGamReportingService
             }
             $source = ReportSource::query()->firstOrCreate(['code' => ReportSourceCode::GamAdUnit->value], [
                 'name' => config('reporting.sources.GAM_AD_UNIT.name'), 'is_primary' => false, 'is_enabled' => true,
-                'capabilities' => ['API', 'HOURLY', 'DAILY', 'FINALIZED_API'],
+                'capabilities' => ['API', 'DAILY', 'FINALIZED_API'],
             ]);
             $id = (string) Str::ulid();
             $connection = ReportSourceConnection::withoutGlobalScopes()->create([

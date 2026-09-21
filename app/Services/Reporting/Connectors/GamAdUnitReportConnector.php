@@ -29,6 +29,9 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
     public function fetch(ReportSourceConnection $connection, CarbonInterface $from, CarbonInterface $to,
         ReportGranularity $granularity, ReportFinality $finality, array $options = []): array
     {
+        if ($granularity !== ReportGranularity::Daily) {
+            throw new RuntimeException('GAM ad-unit reports use daily totals. Refresh daily estimates for intraday updates.');
+        }
         $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['gamConnection', 'site'])
             ->where('report_source_connection_id', $connection->id)->findOrFail($connection->connection_id);
         if (! $connection->is_enabled || ! $binding->gamConnection?->is_enabled || ! $binding->site
