@@ -1,0 +1,428 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Enums\OrganizationType;
+use App\Enums\ReportFinality;
+use App\Enums\ReportGranularity;
+use App\Enums\ReportImportStatus;
+use App\Enums\ReportSourceCode;
+use App\Enums\RoleName;
+use App\Models\ConfigVersion;
+use App\Models\DailyReport;
+use App\Models\DemandAccount;
+use App\Models\DemandNetwork;
+use App\Models\DemandSite;
+use App\Models\GamApiOperation;
+use App\Models\GamConnection;
+use App\Models\HourlyReport;
+use App\Models\ReportSource;
+use App\Models\ReportSourceConnection;
+use App\Models\SiteGamReportBinding;
+use App\Services\Gam\Contracts\GamSoapTransportInterface;
+use App\Services\Gam\GamSoapPayloadHydrator;
+use App\Services\Gam\GamSoapVersionResolver;
+use App\Services\Reporting\Connectors\GamAdUnitReportConnector;
+use App\Services\Reporting\FinancialPeriodService;
+use App\Services\Reporting\MonetizationFinancialReadinessService;
+use App\Services\Reporting\ReportImportService;
+use App\Services\Reporting\ReportingBridge;
+use App\Services\Reporting\RevenueRuleService;
+use App\Services\Reporting\SiteGamFinancialCoverage;
+use App\Services\Reporting\SiteGamReportingService;
+use App\Services\Reporting\SiteGamReportSynchronizer;
+use App\Services\Reporting\UnifiedReportService;
+use Carbon\CarbonImmutable;
+use Database\Seeders\DemandNetworkSeeder;
+use Database\Seeders\InventoryDeliverySeeder;
+use Database\Seeders\ReportingSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\ValidationException;
+use Tests\Concerns\InteractsWithGam;
+use Tests\Concerns\InteractsWithIdentity;
+use Tests\Concerns\InteractsWithPublisherSites;
+use Tests\TestCase;
+
+class SiteGamReportingTest extends TestCase
+{
+    use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
+
+    private object $google;
+
+    private function context(): array
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 10:00:00', 'UTC'));
+        $this->seedIdentity();
+        $this->seed([InventoryDeliverySeeder::class, ReportingSeeder::class]);
+        $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');
+        $admin = $this->makeUser($horus, RoleName::SuperAdmin);
+        $org = $this->makeOrganization(OrganizationType::Publisher, 'Publisher');
+        $user = $this->makeUser($org, RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($user);
+        $site = $this->makeSiteFor($publisher, $user);
+        $gam = $this->makeGamConnection($horus, $admin);
+        $this->google = new class implements GamSoapTransportInterface
+        {
+            public array $calls = [];
+
+            public array $units = [['id' => '12345', 'name' => 'Publisher unit', 'adUnitCode' => 'publisher_unit']];
+
+            public string $status = 'COMPLETED';
+
+            public string $url = 'https://storage.googleapis.com/report.csv?signature=private-download';
+
+            public string $timezone = 'Africa/Cairo';
+
+            public int $jobs = 0;
+
+            public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
+            {
+                $this->calls[] = compact('service', 'method', 'payload');
+                // Exercise the generated SDK objects too, not just our fake responses.
+                $versions = app(GamSoapVersionResolver::class);
+                $namespace = $versions->namespaceFor($versions->resolve());
+                $reflection = new \ReflectionClass($namespace.'\\'.$service);
+                app(GamSoapPayloadHydrator::class)->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
+
+                return match ($method) {
+                    'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => 'USD', 'timeZone' => $this->timezone],
+                    'getAdUnitsByStatement' => ['results' => $this->units],
+                    'runReportJob' => ['id' => (string) ++$this->jobs],
+                    'getReportJobStatus' => ['value' => $this->status],
+                    'getReportDownloadUrlWithOptions' => ['value' => $this->url],
+                    default => throw new \RuntimeException('Unexpected Google call: '.$method),
+                };
+            }
+        };
+        $this->app->instance(GamSoapTransportInterface::class, $this->google);
+        Http::preventStrayRequests();
+
+        return [$admin, $publisher, $user, $site, $gam];
+    }
+
+    private function bind(array $context): SiteGamReportBinding
+    {
+        return app(SiteGamReportingService::class)->bind($context[3], $context[4]->id, 'Publisher unit', $context[0]);
+    }
+
+    private function csv(array $rows = [['2026-09-20', '12345', 120, 100, 20, 95, 3, 123450000]], bool $hourly = false): string
+    {
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, ['Dimension.DATE', ...($hourly ? ['Dimension.HOUR'] : []), 'Dimension.AD_UNIT_ID',
+            ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamAdUnitReportConnector::COLUMNS))], escape: '');
+        foreach ($rows as $row) {
+            fputcsv($stream, $row, escape: '');
+        }
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+
+        return $csv;
+    }
+
+    private function import(SiteGamReportBinding $binding, string $from = '2026-09-20', string $to = '2026-09-20')
+    {
+        return app(ReportImportService::class)->runConnection($binding->connection, CarbonImmutable::parse($from),
+            CarbonImmutable::parse($to), ReportGranularity::Daily, ReportFinality::Finalized);
+    }
+
+    public function test_admin_connects_in_one_submission_with_no_serving_changes_and_safe_search(): void
+    {
+        $context = [$admin, , $user, $site, $gam] = $this->context();
+        $before = $site->fresh()->getAttributes();
+        $configs = ConfigVersion::query()->count();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->post(route('admin.sites.reporting.gam.store', $site), [
+            'gam_connection_id' => $gam->id, 'ad_unit' => 'Publisher unit',
+        ])->assertSessionHasNoErrors()->assertRedirect(route('admin.sites.show', $site).'#reporting');
+        $binding = SiteGamReportBinding::withoutGlobalScopes()->sole();
+        $this->assertSame('2026-09-01', $binding->starts_on->toDateString());
+        $this->assertSame('Africa/Cairo', $binding->connection->timezone);
+        $this->assertSame('USD', $binding->connection->currency);
+        $this->assertSame($site->organization_id, $binding->connection->organization_id);
+        $this->assertSame($before, $site->fresh()->getAttributes());
+        $this->assertSame($configs, ConfigVersion::query()->count());
+        $this->assertSame($binding->id, $this->bind($context)->id);
+        $this->actingAs($admin)->get(route('admin.sites.show', $site))->assertOk()->assertSee('Connect an Ad Manager ad unit')->assertSee('data-gam-report-binding', false);
+        $query = "unit' OR id > 0";
+        $this->getJson(route('admin.sites.reporting.gam.units', $site).'?'.http_build_query(['gam_connection_id' => $gam->id, 'q' => $query]))
+            ->assertOk()->assertJsonPath('units.0.id', '12345');
+        $call = end($this->google->calls);
+        $this->assertStringNotContainsString($query, $call['payload']['filterStatement']['query']);
+        $this->assertSame('%'.$query.'%', $call['payload']['filterStatement']['values'][0]['value']['value']);
+        $this->actingAs($user)->post(route('admin.sites.reporting.gam.store', $site), ['gam_connection_id' => $gam->id, 'ad_unit' => '12345'])->assertForbidden();
+        $this->getJson(route('admin.sites.reporting.gam.units', $site).'?gam_connection_id='.$gam->id)->assertForbidden();
+    }
+
+    public function test_ambiguous_unit_and_foreign_publisher_account_are_rejected_without_creating_a_binding(): void
+    {
+        [$admin, , $user, $site] = $context = $this->context();
+        $other = $this->makeOrganization(OrganizationType::Publisher, 'Other');
+        $foreign = $this->makeGamConnection($other, $admin);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->post(route('admin.sites.reporting.gam.store', $site), ['gam_connection_id' => $foreign->id, 'ad_unit' => '12345'])->assertSessionHasErrors('gam_connection_id');
+        $this->google->units[] = ['id' => '67890', 'name' => 'Publisher unit', 'adUnitCode' => 'other'];
+        $this->post(route('admin.sites.reporting.gam.store', $site), ['gam_connection_id' => $context[4]->id, 'ad_unit' => 'Publisher unit'])->assertSessionHasErrors('ad_unit');
+        $this->assertDatabaseCount('site_gam_report_bindings', 0);
+    }
+
+    public function test_same_physical_unit_cannot_be_assigned_to_two_websites_even_with_duplicate_connections(): void
+    {
+        [$admin, $publisher, $user, , $gam] = $context = $this->context();
+        $this->bind($context);
+        $second = $this->makeSiteFor($publisher, $user);
+        $duplicate = $this->makeGamConnection($admin->organization, $admin, ['network_code' => $gam->network_code]);
+        $this->expectException(ValidationException::class);
+        app(SiteGamReportingService::class)->bind($second, $duplicate->id, '12345', $admin);
+    }
+
+    public function test_real_csv_units_currency_rules_and_publisher_reports_use_the_existing_financial_pipeline(): void
+    {
+        [$admin, $publisher, , $site] = $context = $this->context();
+        $binding = $this->bind($context);
+        app(RevenueRuleService::class)->createRule(['name' => 'Website split', 'scope_type' => 'WEBSITE', 'scope_id' => $site->id,
+            'effective_from' => '2026-09-01', 'publisher_share_bp' => 8000, 'horus_share_bp' => 2000, 'mcm_partner_share_bp' => 0], $admin);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(12345, (int) $row->gross_revenue_minor);
+        $this->assertSame(9876, (int) $row->publisher_earnings_minor);
+        $this->assertTrue($row->settlement_eligible);
+        $this->assertSame($site->organization_id, $row->organization_id);
+        $this->assertSame($site->id, $row->dimension->site_id);
+        $this->assertSame('MATCHED', $job->reconciliations()->sole()->status->value);
+        $summary = app(UnifiedReportService::class)->publisherSummary($publisher, CarbonImmutable::parse('2026-09-20'), CarbonImmutable::parse('2026-09-20'));
+        $this->assertSame(9876, $summary['revenue_minor']);
+        $query = collect($this->google->calls)->firstWhere('method', 'runReportJob')['payload']['reportJob']['reportQuery'];
+        $this->assertSame('FLAT', $query['adUnitView']);
+        $this->assertSame('12345', $query['statement']['values'][0]['value']['value']);
+        $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        $this->assertStringNotContainsString('private-download', GamApiOperation::query()->get()->toJson());
+    }
+
+    public function test_pending_google_job_is_resumed_without_duplicate_submission_or_false_zero_revenue(): void
+    {
+        $binding = $this->bind($this->context());
+        $this->google->status = 'IN_PROGRESS';
+        $pending = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Pending, $pending->status);
+        $this->import($binding);
+        $this->assertSame(1, $this->google->jobs);
+        $this->assertDatabaseCount('daily_reports', 0);
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $this->assertSame(ReportImportStatus::Duplicate, $pending->fresh()->status);
+        $this->assertSame(1, $this->google->jobs);
+        $this->assertEmpty($binding->connection->fresh()->configuration['google_jobs']);
+    }
+
+    public function test_repeat_and_corrected_empty_snapshots_replace_rows_instead_of_adding_revenue(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())->push($this->csv())->push($this->csv([]))]);
+        $this->import($binding, '2026-09-19', '2026-09-20');
+        $again = $this->import($binding, '2026-09-19', '2026-09-20');
+        $this->assertSame(ReportImportStatus::Completed, $again->status, json_encode($again->toArray()));
+        $this->assertSame(2, $again->duplicate_count, json_encode($again->toArray()));
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $corrected = $this->import($binding, '2026-09-19', '2026-09-20');
+        $this->assertSame(ReportImportStatus::Completed, $corrected->status);
+        $this->assertDatabaseCount('daily_reports', 2);
+        $this->assertSame(0, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_wrong_unit_and_malformed_downloads_fail_atomically_and_do_not_become_zero_reports(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([['2026-09-20', '999', 1, 1, 0, 1, 0, 10000]]))]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertDatabaseCount('daily_reports', 0);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response('<html>Error</html>')]);
+        $this->assertSame(ReportImportStatus::Failed, $this->import($binding)->status);
+        $this->assertDatabaseCount('daily_reports', 0);
+    }
+
+    public function test_download_url_is_restricted_to_google_without_exposing_temporary_credentials(): void
+    {
+        $binding = $this->bind($this->context());
+        $this->google->url = 'https://attacker.invalid/report?signature=private-download';
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        Http::assertNothingSent();
+        $this->assertStringNotContainsString('private-download', $job->error_message);
+        $this->assertDatabaseCount('daily_reports', 0);
+    }
+
+    public function test_csv_overlap_is_excluded_only_for_this_site_and_previous_days_are_preserved(): void
+    {
+        [$admin, $publisher, $user, $site] = $context = $this->context();
+        $csv = ReportSourceConnection::withoutGlobalScopes()->create(['organization_id' => $publisher->organization_id,
+            'report_source_id' => ReportSource::where('code', ReportSourceCode::CustomCsv->value)->value('id'), 'name' => 'Existing CSV',
+            'connection_type' => 'CSV', 'currency' => 'USD', 'timezone' => 'UTC', 'is_enabled' => true, 'status' => 'ACTIVE']);
+        $imports = app(ReportImportService::class);
+        $oldDay = CarbonImmutable::parse('2026-09-10');
+        $imports->importRows($csv, [['date' => '2026-09-10', 'site_id' => $site->id, 'gross_revenue_minor' => 1000]], ReportGranularity::Daily, ReportFinality::Finalized, $oldDay, $oldDay, $admin, importType: 'CSV');
+        $binding = $this->bind($context);
+        $this->assertSame('2026-09-11', $binding->starts_on->toDateString());
+        $otherSite = $this->makeSiteFor($publisher, $user);
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = $imports->importRows($csv, [
+            ['date' => '2026-09-20', 'site_id' => $site->id, 'gross_revenue_minor' => 2000],
+            ['date' => '2026-09-20', 'site_id' => $otherSite->id, 'gross_revenue_minor' => 3000],
+        ], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, importType: 'CSV', sourceTotals: ['gross_revenue_minor' => 5000]);
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $this->assertSame(1, $job->row_count);
+        $this->assertSame('MATCHED', $job->reconciliations()->sole()->status->value);
+        $this->assertSame(4000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertSame('SITE_REPORTING_SOURCE_EXCLUDED_ROWS', $job->warnings[0]['code']);
+        $this->expectException(ValidationException::class);
+        $imports->importRows($binding->connection, [], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, importType: 'CSV');
+    }
+
+    public function test_complete_month_reaches_financial_close_and_incomplete_month_blocks_close(): void
+    {
+        [$admin] = $context = $this->context();
+        $binding = $this->bind($context);
+        $period = app(FinancialPeriodService::class)->periodFor('2026-09-20', 'USD');
+        $this->assertCount(1, app(SiteGamFinancialCoverage::class)->blockers($period));
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $job = $this->import($binding, '2026-09-01', '2026-09-30');
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertCount(0, app(SiteGamFinancialCoverage::class)->blockers($period));
+        $readiness = app(FinancialPeriodService::class)->readiness($period);
+        $this->assertTrue($readiness['ready'], json_encode($readiness['blockers']));
+        app(FinancialPeriodService::class)->close($period, $admin);
+        $this->assertSame('CLOSED', $period->fresh()->status->value);
+        $this->assertDatabaseCount('publisher_statements', 1);
+        $blocked = $this->import($binding);
+        $this->assertSame(ReportImportStatus::BlockedClosedPeriod, $blocked->status, $blocked->error_message ?? '');
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_scheduler_uses_network_dates_hourly_estimates_and_resumes_previous_day_pending_jobs(): void
+    {
+        $context = $this->context();
+        $this->google->timezone = 'Asia/Tokyo';
+        $this->travelTo(CarbonImmutable::parse('2026-09-20 16:00:00', 'UTC'));
+        $binding = $this->bind($context);
+        $this->google->status = 'IN_PROGRESS';
+        app(SiteGamReportSynchronizer::class)->sync($binding);
+        $queries = collect($this->google->calls)->where('method', 'runReportJob')->values();
+        $this->assertCount(2, $queries);
+        $this->assertSame(20, $queries[0]['payload']['reportJob']['reportQuery']['endDate']['day']);
+        $this->assertSame(21, $queries[1]['payload']['reportJob']['reportQuery']['startDate']['day']);
+        $this->assertSame(['DATE', 'HOUR', 'AD_UNIT_ID'], $queries[1]['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->travel(5)->minutes();
+        app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+        $this->assertSame(2, $this->google->jobs);
+        $this->assertDatabaseCount('hourly_reports', 0);
+        $this->assertDatabaseCount('daily_reports', 0);
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => function () {
+            $id = collect($this->google->calls)->where('method', 'getReportDownloadUrlWithOptions')->last()['payload']['reportJobId'];
+
+            return Http::response($id === '2'
+                ? $this->csv([['2026-09-21', 0, '12345', 10, 9, 1, 8, 1, 1250000]], true) : $this->csv());
+        }]);
+        $this->travel(5)->minutes();
+        app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+        $this->assertSame(2, $this->google->jobs);
+        $this->assertSame(20, DailyReport::withoutGlobalScopes()->count());
+        $this->assertSame(2, HourlyReport::withoutGlobalScopes()->count());
+        $this->assertSame(125, (int) HourlyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertFalse((bool) HourlyReport::withoutGlobalScopes()->first()->settlement_eligible);
+        $this->assertSame('ESTIMATED', HourlyReport::withoutGlobalScopes()->first()->finality->value);
+        $this->assertSame(0, $binding->connection->imports()->where('status', 'PENDING')->count());
+        $before = count($this->google->calls);
+        app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+        $this->assertSame($before, count($this->google->calls));
+    }
+
+    public function test_expired_google_jobs_are_replaced_and_a_success_clears_prior_failures(): void
+    {
+        $binding = $this->bind($this->context());
+        $this->google->status = 'IN_PROGRESS';
+        $this->import($binding);
+        $this->travel(7)->hours();
+        $failed = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $failed->status);
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $this->assertSame(2, $this->google->jobs);
+        $this->assertSame(ReportImportStatus::Duplicate, $failed->fresh()->status);
+        $this->assertSame('ACTIVE', $binding->connection->fresh()->status->value);
+    }
+
+    public function test_changing_unit_preserves_old_reports_and_versions_the_effective_dates(): void
+    {
+        $context = $this->context();
+        $first = $this->bind($context);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->import($first);
+        $this->google->units = [['id' => '67890', 'name' => 'Replacement', 'adUnitCode' => 'replacement']];
+        $second = $this->bind($context);
+        $this->assertSame('2026-09-21', $second->starts_on->toDateString());
+        $this->assertSame('2026-09-20', $first->fresh()->ends_on->toDateString());
+        $this->assertNull($first->fresh()->active_site_id);
+        $this->assertSame($context[3]->id, $second->active_site_id);
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertNotSame($first->report_source_connection_id, $second->report_source_connection_id);
+        $this->assertSame(ReportImportStatus::Failed, $this->import($second)->status);
+    }
+
+    public function test_generic_reporting_endpoint_cannot_create_an_unverified_ad_unit_source(): void
+    {
+        [$admin] = $this->context();
+        $source = ReportSource::query()->where('code', 'GAM_AD_UNIT')->sole();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.reporting.connections.store'), ['report_source_id' => $source->id, 'name' => 'Forged',
+                'connection_type' => 'CUSTOM', 'currency' => 'USD', 'timezone' => 'UTC'])
+            ->assertSessionHasErrors('report_source_id');
+        $this->assertDatabaseCount('site_gam_report_bindings', 0);
+        $this->assertDatabaseCount('report_source_connections', 0);
+    }
+
+    public function test_site_source_satisfies_direct_account_coverage_without_hiding_an_uncovered_second_site(): void
+    {
+        [$admin, $publisher, $user, $site] = $context = $this->context();
+        $this->seed(DemandNetworkSeeder::class);
+        $network = DemandNetwork::where('code', 'CUSTOM')->first() ?? DemandNetwork::firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id, 'demand_network_id' => $network->id, 'name' => 'Site demand',
+            'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS', 'approval_status' => 'APPROVED', 'is_enabled' => true,
+        ]);
+        $mapping = ['organization_id' => $site->organization_id, 'demand_account_id' => $account->id,
+            'approval_status' => 'APPROVED', 'is_enabled' => true, 'integration_mode' => 'DIRECT_JS'];
+        DemandSite::withoutGlobalScopes()->create($mapping + ['site_id' => $site->id]);
+        $binding = $this->bind($context);
+        $period = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
+        $readiness = app(MonetizationFinancialReadinessService::class);
+        $this->assertCount(0, $readiness->blockersForPeriod($period));
+        $other = $this->makeSiteFor($publisher, $user);
+        $other->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
+        DemandSite::withoutGlobalScopes()->create($mapping + ['site_id' => $other->id]);
+        $this->assertCount(1, $readiness->blockersForPeriod($period));
+    }
+
+    public function test_full_network_import_cannot_duplicate_the_bound_google_unit_even_without_a_site_mapping(): void
+    {
+        [$admin, , , , $gam] = $context = $this->context();
+        $this->bind($context);
+        $network = app(ReportingBridge::class)->connectionForGam($gam, $admin);
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = app(ReportImportService::class)->importRows($network, [
+            ['date' => '2026-09-20', 'ad_unit_id' => '12345', 'gross_revenue_minor' => 1000],
+            ['date' => '2026-09-20', 'ad_unit_id' => '67890', 'gross_revenue_minor' => 2000],
+        ], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, importType: 'API');
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $this->assertSame(1, $job->row_count);
+        $this->assertSame(2000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+}

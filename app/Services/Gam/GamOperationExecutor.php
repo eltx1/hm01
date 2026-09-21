@@ -91,6 +91,7 @@ final class GamOperationExecutor
         }
 
         $maxAttempts = max(1, (int) config($isWrite ? 'gam.retry.write_attempts' : 'gam.retry.read_attempts', $isWrite ? 2 : 3));
+        $maxAttempts = min($maxAttempts, max(1, (int) ($options['max_attempts'] ?? $maxAttempts)));
         $attempt = 0;
 
         do {

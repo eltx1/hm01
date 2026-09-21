@@ -20,6 +20,7 @@ use App\Services\Audit\AuditRecorder;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
@@ -36,6 +37,7 @@ final class ReportImportService
         private readonly ReconciliationService $reconciliation,
         private readonly FinancialSettlementEligibilityService $settlementEligibility,
         private readonly AuditRecorder $audit,
+        private readonly SiteReportSourcePolicy $siteSources,
     ) {
     }
 
@@ -49,6 +51,10 @@ final class ReportImportService
         array $options = [],
     ): ReportImportJob {
         $connection->loadMissing('source');
+        if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && ! ($options['_site_lock'] ?? false)) {
+            return Cache::lock('site-gam-report:'.$connection->id, 300)->block(3,
+                fn () => $this->runConnection($connection->refresh(), $from, $to, $granularity, $finality, $actor, array_replace($options, ['_site_lock' => true])));
+        }
         try {
             $connection->update(['last_attempted_at' => now(), 'last_error' => null]);
             $payload = $this->sources->for($connection)->fetch(
@@ -60,7 +66,7 @@ final class ReportImportService
                 $options,
             );
 
-            return $this->importRows(
+            $job = $this->importRows(
                 $connection,
                 (array) ($payload['rows'] ?? []),
                 $granularity,
@@ -73,6 +79,28 @@ final class ReportImportService
                 'API',
                 (array) ($payload['totals'] ?? []),
             );
+            if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $job->status === ReportImportStatus::Completed) {
+                $configuration = $connection->fresh()->configuration ?? [];
+                unset($configuration['google_jobs'][$payload['pending_key'] ?? '']);
+                $connection->update(['configuration' => $configuration, 'status' => ReportConnectionStatus::Active, 'last_error' => null]);
+                ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+                    ->where('granularity', $granularity->value)->where('id', '!=', $job->id)
+                    ->whereDate('period_start', '>=', $from->toDateString())->whereDate('period_end', '<=', $to->toDateString())
+                    ->whereIn('status', [ReportImportStatus::Pending->value, ReportImportStatus::Failed->value])
+                    ->update(['status' => ReportImportStatus::Duplicate->value, 'error_message' => null, 'next_retry_at' => null, 'completed_at' => now()]);
+            }
+
+            return $job;
+        } catch (GamReportPending $exception) {
+            $key = hash('sha256', implode('|', [$connection->id, 'google-pending', $granularity->value, $from->toDateString(), $to->toDateString()]));
+
+            return ReportImportJob::withoutGlobalScopes()->updateOrCreate(['idempotency_key' => $key], [
+                'organization_id' => $connection->organization_id, 'report_source_connection_id' => $connection->id,
+                'import_type' => 'API', 'granularity' => $granularity, 'finality' => $finality,
+                'settlement_eligible' => false, 'settlement_ineligibility_reason' => 'GOOGLE_REPORT_PENDING',
+                'status' => ReportImportStatus::Pending, 'period_start' => $from, 'period_end' => $to,
+                'attempt_count' => 1, 'next_retry_at' => now()->addMinute(), 'created_by' => $actor?->id,
+            ]);
         } catch (Throwable $exception) {
             $key = hash('sha256', implode('|', [
                 $connection->id, 'API', $granularity->value, $finality->value,
@@ -97,6 +125,10 @@ final class ReportImportService
                     'created_by' => $actor?->id,
                 ],
             );
+            if ($connection->connection_type === 'SITE_GAM_AD_UNIT') {
+                $job->update(['status' => ReportImportStatus::Failed, 'error_message' => $exception->getMessage(),
+                    'next_retry_at' => now()->addMinutes((int) config('reporting.retry_delay_minutes', 30))]);
+            }
             $connection->update(['status' => ReportConnectionStatus::Error, 'last_error' => $exception->getMessage()]);
             $this->recordError($connection, $job, 'SOURCE_IMPORT', 'FETCH_FAILED', $exception->getMessage(), true);
 
@@ -119,6 +151,9 @@ final class ReportImportService
         ?string $manualReason = null,
     ): ReportImportJob {
         $connection->loadMissing('source');
+        if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $importType !== 'API') {
+            throw ValidationException::withMessages(['source' => 'This website connection imports directly from Google. CSV and manual imports must use their own sources.']);
+        }
         if ($importType === 'MANUAL') {
             if (! $actor || ! $actor->isHorusAdministrator() || ! $actor->hasPermission('finance.adjustments.create')) {
                 abort(403);
@@ -142,11 +177,12 @@ final class ReportImportService
         ]));
 
         $existing = ReportImportJob::withoutGlobalScopes()->where('idempotency_key', $idempotencyKey)->first();
-        if ($existing) {
+        if ($existing && ! ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $existing->status === ReportImportStatus::Failed)) {
             return $existing;
         }
 
-        $job = ReportImportJob::withoutGlobalScopes()->create([
+        $job = $existing ?? new ReportImportJob;
+        $job->fill([
             'organization_id' => $connection->organization_id,
             'report_source_connection_id' => $connection->id,
             'import_type' => $importType,
@@ -160,11 +196,12 @@ final class ReportImportService
             'external_report_id' => $externalReportId ?: null,
             'idempotency_key' => $idempotencyKey,
             'checksum' => $checksum,
-            'attempt_count' => 1,
+            'attempt_count' => $existing ? $existing->attempt_count + 1 : 1,
             'source_totals' => $sourceTotals ?: null,
             'started_at' => now(),
             'created_by' => $actor?->id,
-        ]);
+            'error_message' => null, 'next_retry_at' => null, 'completed_at' => null,
+        ])->save();
 
         try {
             $result = DB::transaction(function () use (
@@ -175,6 +212,7 @@ final class ReportImportService
                 $duplicates = 0;
                 $totals = $this->emptyTotals();
                 $periodIds = [];
+                $excluded = 0;
 
                 foreach ($rows as $index => $raw) {
                     if (! is_array($raw)) {
@@ -185,6 +223,15 @@ final class ReportImportService
                         throw ValidationException::withMessages([
                             "rows.{$index}.date" => 'Every report row requires a valid date.',
                         ]);
+                    }
+                    if (! $this->siteSources->accepts($connection, $row, $importType)) {
+                        $excluded++;
+                        foreach ($sourceTotals as $field => $value) {
+                            if (is_numeric($value) && isset($row[$field])) {
+                                $sourceTotals[$field] -= $row[$field];
+                            }
+                        }
+                        continue;
                     }
                     if ($settlement['eligible'] && strtoupper($row['currency']) !== strtoupper($connection->currency)) {
                         throw ValidationException::withMessages([
@@ -255,10 +302,14 @@ final class ReportImportService
                 }
 
                 $warnings = $this->discrepancyWarnings($sourceTotals, $totals);
+                if ($excluded) {
+                    $warnings[] = ['code' => 'SITE_REPORTING_SOURCE_EXCLUDED_ROWS', 'count' => $excluded];
+                }
                 $job->update([
                     'financial_period_id' => count($periodIds) === 1 ? array_key_first($periodIds) : null,
                     'status' => ReportImportStatus::Completed,
-                    'row_count' => count($rows),
+                    'row_count' => count($rows) - $excluded,
+                    'source_totals' => $sourceTotals ?: null,
                     'inserted_count' => $inserted,
                     'updated_count' => $updated,
                     'duplicate_count' => $duplicates,
@@ -299,10 +350,10 @@ final class ReportImportService
                     );
                 }
 
-                return ['totals' => $totals, 'warnings' => $warnings];
+                return ['totals' => $totals, 'warnings' => $warnings, 'source_totals' => $sourceTotals];
             });
 
-            $this->reconciliation->forImport($job->refresh(), $result['totals'], $sourceTotals, $actor);
+            $this->reconciliation->forImport($job->refresh(), $result['totals'], $result['source_totals'], $actor);
 
             return $job->refresh();
         } catch (ValidationException $exception) {
@@ -413,12 +464,13 @@ final class ReportImportService
             'report_hour' => (int) ($metrics['hour'] ?? 0),
             'report_dimension_id' => $dimensionId,
         ];
-        $existing = HourlyReport::withoutGlobalScopes()->where($identity)->first();
+        $existing = HourlyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
+            ->whereDate('report_date', $metrics['date'])->first();
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
 
-        HourlyReport::withoutGlobalScopes()->updateOrCreate($identity, array_merge(
+        $attributes = array_merge(
             $this->metricPayload($metrics),
             [
                 'organization_id' => $organizationId,
@@ -431,7 +483,8 @@ final class ReportImportService
                 'source_row_hash' => $sourceRowHash,
                 'revision' => $existing ? $existing->revision + 1 : 1,
             ],
-        ));
+        );
+        $existing ? $existing->update($attributes) : HourlyReport::withoutGlobalScopes()->create($identity + $attributes);
 
         return [$existing === null, true];
     }
@@ -453,12 +506,13 @@ final class ReportImportService
             'report_date' => $metrics['date'],
             'report_dimension_id' => $dimensionId,
         ];
-        $existing = DailyReport::withoutGlobalScopes()->where($identity)->first();
+        $existing = DailyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
+            ->whereDate('report_date', $metrics['date'])->first();
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
 
-        DailyReport::withoutGlobalScopes()->updateOrCreate($identity, array_merge(
+        $attributes = array_merge(
             $this->metricPayload($metrics),
             [
                 'organization_id' => $organizationId,
@@ -471,7 +525,8 @@ final class ReportImportService
                 'source_row_hash' => $sourceRowHash,
                 'revision' => $existing ? $existing->revision + 1 : 1,
             ],
-        ));
+        );
+        $existing ? $existing->update($attributes) : DailyReport::withoutGlobalScopes()->create($identity + $attributes);
 
         return [$existing === null, true];
     }

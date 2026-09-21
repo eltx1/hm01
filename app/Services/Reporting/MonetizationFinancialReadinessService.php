@@ -16,6 +16,8 @@ use Illuminate\Support\Collection;
 
 final class MonetizationFinancialReadinessService
 {
+    public function __construct(private readonly SiteGamFinancialCoverage $siteReports) {}
+
     /** @return array{status: string, ready: bool, reasons: array<int, array{code: string, message: string}>, binding: ?MonetizationFinancialBinding} */
     public function status(DemandAccount|BidderAccount $subject, ?string $expectedCurrency = null, ?FinancialPeriod $period = null): array
     {
@@ -116,6 +118,12 @@ final class MonetizationFinancialReadinessService
             ->each(fn (BidderAccount $account) => $subjects->push($account));
 
         return $subjects->map(function (DemandAccount|BidderAccount $subject) use ($period): ?array {
+            $siteIds = $subject instanceof DemandAccount
+                ? $subject->sites()->where('is_enabled', true)->pluck('site_id')
+                : $subject->siteMappings()->where('enabled', true)->pluck('site_id');
+            if ($siteIds->isNotEmpty() && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period))) {
+                return null;
+            }
             $configuredCurrency = strtoupper((string) (
                 $subject->financialBinding?->currency
                 ?? ($subject instanceof DemandAccount ? data_get($subject->configuration, 'currency') : null)
@@ -136,7 +144,7 @@ final class MonetizationFinancialReadinessService
                 'status' => $result['status'],
                 'reasons' => $result['reasons'],
             ];
-        })->filter()->values();
+        })->filter()->concat($this->siteReports->blockers($period))->values();
     }
 
     private function result(FinancialReadinessStatus $status, string $code, string $message, ?MonetizationFinancialBinding $binding): array

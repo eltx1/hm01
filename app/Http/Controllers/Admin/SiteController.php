@@ -18,6 +18,7 @@ use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
 use App\Services\TrafficGate\TrafficGateConfigurationResolver;
+use App\Services\Reporting\SiteGamReportingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -36,7 +37,7 @@ class SiteController extends Controller
         return view('admin.sites.index', ['sites' => $sites, 'activeStatus' => $status]);
     }
 
-    public function show(Request $request, Site $site, TrafficGateConfigurationResolver $trafficGateResolver): View
+    public function show(Request $request, Site $site, TrafficGateConfigurationResolver $trafficGateResolver, SiteGamReportingService $gamReporting): View
     {
         $site->load([
             'publisher.organization',
@@ -47,6 +48,8 @@ class SiteController extends Controller
             'servingSettings',
             'servingModeChanges',
             'gamConnection',
+            'currentGamReportBinding.connection.source',
+            'currentGamReportBinding.gamConnection',
             'adUnits',
             'placements',
             'siteConfig.versions.deliveryItem.batch',
@@ -58,6 +61,8 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'reportingGamConnections' => $request->user()->hasPermission('reporting.sources.manage')
+                ? $gamReporting->availableConnections($site)->orderBy('name')->get() : collect(),
             'trafficGate' => $trafficGateResolver->resolve($site),
             'auditEvents' => $request->user()->hasPermission('audit.view')
                 ? AuditLog::query()->where('organization_id', $site->organization_id)->where('auditable_id', $site->id)->latest()->limit(30)->get()
