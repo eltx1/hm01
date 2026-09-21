@@ -26,7 +26,17 @@ The callback uses configured `APP_URL`, not the request Host header:
 `https://app.horusmedia.net/admin/gam/reporting/oauth/callback`
 
 After obtaining the platform application's private downloaded file, operations
-can install it in encrypted shared storage with:
+can open **/admin/gam/reporting/google-app**, choose the original JSON file, and
+save it directly into encrypted shared storage. This one-time platform page
+requires Horus staff membership, verified authentication, administrator 2FA,
+and all of `settings.manage`, `reporting.sources.manage`, and
+`gam.connections.manage`. It is separate from the normal website connection UI.
+It never displays credentials, replaces an active application, or overrides an
+explicit server-managed reference. Repeated submissions are serialized and leave
+an already configured application untouched. Success means local configuration
+only; the operator must then choose a website and authorize its Google account.
+
+Alternatively, operations can install it with:
 
 ```sh
 php artisan gam:reporting-google --file=/private/path/google-web-client.json

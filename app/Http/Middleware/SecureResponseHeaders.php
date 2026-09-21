@@ -13,7 +13,10 @@ final class SecureResponseHeaders
         $response = $next($request);
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', 'DENY');
-        $response->headers->set('Referrer-Policy', (string) config('security.headers.referrer_policy'));
+        // OAuth and private setup responses can require stricter referrer privacy.
+        if ($response->headers->get('Referrer-Policy') !== 'no-referrer') {
+            $response->headers->set('Referrer-Policy', (string) config('security.headers.referrer_policy'));
+        }
         $response->headers->set('Permissions-Policy', (string) config('security.headers.permissions_policy'));
         $response->headers->set('Content-Security-Policy', $this->contentSecurityPolicy($request));
         $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');

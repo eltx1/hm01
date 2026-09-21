@@ -155,6 +155,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
         Route::middleware(['horus', 'permission:reporting.sources.manage', 'permission:gam.connections.manage', 'throttle:20,1'])->group(function (): void {
+            Route::get('/admin/gam/reporting/google-app', [\App\Http\Controllers\Admin\GamReportingGoogleAppController::class, 'show'])->middleware('permission:settings.manage')->name('admin.gam.reporting.google-app.show');
+            Route::post('/admin/gam/reporting/google-app', [\App\Http\Controllers\Admin\GamReportingGoogleAppController::class, 'store'])->middleware('permission:settings.manage')->name('admin.gam.reporting.google-app.store');
             Route::get('/admin/sites/{site}/reporting/accounts/connect', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'show'])->name('admin.sites.reporting.accounts.show');
             Route::post('/admin/sites/{site}/reporting/accounts/google-app', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'setup'])->name('admin.sites.reporting.accounts.setup');
             Route::post('/admin/sites/{site}/reporting/accounts/google', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'start'])->name('admin.sites.reporting.accounts.start');
