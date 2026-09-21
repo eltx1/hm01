@@ -9,18 +9,23 @@
         <p class="muted">Current reporting: existing GAM or CSV sources. Connect below to make the selected ad unit this website's reporting source.</p>
     @endif
     @if(auth()->user()->hasPermission('gam.connections.manage'))
-        <p><a class="hm-button-secondary button-link" href="{{ route('admin.sites.reporting.accounts.show', $site) }}">{{ $reportingGamConnections->isEmpty() ? 'Connect your first Ad Manager account' : 'Connect another Ad Manager account' }}</a></p>
+        @if($reportingGamConnections->isEmpty())
+            <h3>Connect your first Ad Manager account</h3>
+            @include('admin.gam.reporting-google-button', ['googleReady' => $reportingGoogleReady])
+        @else
+            <details><summary>Connect another Ad Manager account</summary>
+                @include('admin.gam.reporting-google-button', ['googleReady' => $reportingGoogleReady])
+            </details>
+        @endif
     @endif
-    @if($reportingGamConnections->isEmpty())
-        <p>Connect a Google account above to find its Ad Manager networks automatically, then choose the ad unit for this website.</p>
-    @else
+    @if($reportingGamConnections->isNotEmpty())
         <form method="POST" action="{{ route('admin.sites.reporting.gam.store', $site) }}" class="form-stack" data-gam-report-binding data-units-url="{{ route('admin.sites.reporting.gam.units', $site) }}">
             @csrf
             <label>Ad Manager account<select class="hm-input" name="gam_connection_id" required>
                 <option value="">Choose an account</option>
                 @foreach($reportingGamConnections as $connection)<option value="{{ $connection->id }}" @selected(old('gam_connection_id', session('reporting_gam_connection_id', $reportBinding?->gam_connection_id ?? ($reportingGamConnections->count() === 1 ? $connection->id : null))) === $connection->id)>{{ $connection->name }} · {{ $connection->network_code }}</option>@endforeach
             </select></label>
-            <label>Ad unit<input class="hm-input" name="ad_unit" list="gam-report-unit-options" value="{{ old('ad_unit', session()->has('reporting_gam_connection_id') ? '' : $reportBinding?->ad_unit_id) }}" placeholder="Search by name, code or ID" autocomplete="off" maxlength="255" required aria-describedby="gam-report-unit-help"></label>
+            <label>Ad unit<input class="hm-input" name="ad_unit" list="gam-report-unit-options" value="{{ old('ad_unit', session()->has('reporting_gam_connection_id') && session('reporting_gam_connection_id') !== $reportBinding?->gam_connection_id ? '' : $reportBinding?->ad_unit_id) }}" placeholder="Search by name, code or ID" autocomplete="off" maxlength="255" required aria-describedby="gam-report-unit-help"></label>
             <datalist id="gam-report-unit-options"></datalist>
             <small id="gam-report-unit-help" data-unit-feedback aria-live="polite">Select a search result or enter the exact name, code or ID.</small>
             <p class="muted">Reports cover the selected unit only, excluding child units. Currency and timezone come from Google. The first import covers the current open month, starting after any days already imported for this website. Existing financial history is preserved. Ad delivery settings stay as configured.</p>

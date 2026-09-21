@@ -57,6 +57,8 @@ class GamReportingOnboardingTest extends TestCase
 
             public ?string $error = null;
 
+            public array $units = [['id' => '555', 'name' => 'Site unit', 'adUnitCode' => 'site_unit']];
+
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
             {
                 $this->calls[] = compact('service', 'method', 'payload');
@@ -67,7 +69,7 @@ class GamReportingOnboardingTest extends TestCase
                 return match ($method) {
                     'getAllNetworks' => count($this->networks) === 1 ? $this->networks[0] : $this->networks,
                     'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => 'USD', 'timeZone' => 'Africa/Cairo'],
-                    'getAdUnitsByStatement' => ['results' => [['id' => '555', 'name' => 'Site unit', 'adUnitCode' => 'site_unit']]],
+                    'getAdUnitsByStatement' => ['results' => $this->units],
                     default => throw new \RuntimeException('Unexpected call '.$method),
                 };
             }
@@ -110,10 +112,10 @@ class GamReportingOnboardingTest extends TestCase
         ]);
     }
 
-    private function start($admin, $site): array
+    private function start($admin, $site, string $adUnit = ''): array
     {
         app(GamReportingOnboarding::class)->saveApp($this->appJson(), $admin);
-        $response = $this->post(route('admin.sites.reporting.accounts.start', $site))->assertRedirect();
+        $response = $this->post(route('admin.sites.reporting.accounts.start', $site), ['ad_unit' => $adUnit])->assertRedirect();
         $url = $response->headers->get('Location');
         $this->assertSame('accounts.google.com', parse_url($url, PHP_URL_HOST));
         parse_str(parse_url($url, PHP_URL_QUERY), $parameters);
@@ -126,15 +128,31 @@ class GamReportingOnboardingTest extends TestCase
         return $this->get(route('admin.gam.reporting.oauth.callback').'?'.http_build_query(['state' => $state, 'code' => 'private-authorization-code']));
     }
 
-    public function test_first_account_page_has_setup_and_secure_file_upload_without_server_paths(): void
+    public function test_first_account_page_keeps_platform_setup_out_of_the_admin_workflow(): void
     {
         [, $site, $publisher] = $this->context();
         $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Connect your first Ad Manager account');
         $this->get(route('admin.sites.reporting.accounts.show', $site))->assertOk()
-            ->assertSee('Set up Google sign-in once')->assertSee(app(GamReportingOnboarding::class)->redirectUri())
-            ->assertSee('Service-account JSON key')->assertDontSee('credential_reference');
+            ->assertSee('Google connection is awaiting platform activation')
+            ->assertDontSee('type="file"', false)->assertDontSee('console.cloud.google.com')
+            ->assertDontSee('JSON')->assertDontSee('credential_reference');
         $this->actingAs($publisher)->get(route('admin.sites.reporting.accounts.show', $site))->assertForbidden();
         $this->post(route('admin.sites.reporting.accounts.start', $site))->assertForbidden();
+    }
+
+    public function test_ready_website_starts_google_directly_and_missing_or_corrupt_app_never_prompts_for_files(): void
+    {
+        [$admin, $site] = $this->context();
+        $this->post(route('admin.sites.reporting.accounts.start', $site))->assertSessionHasErrors('gam_account');
+        app(GamReportingOnboarding::class)->saveApp($this->appJson(), $admin);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Connect with Google')
+            ->assertSee(route('admin.sites.reporting.accounts.start', $site), false)
+            ->assertDontSee('Google Web application JSON')->assertDontSee('console.cloud.google.com');
+        $this->post(route('admin.sites.reporting.accounts.start', $site), ['ad_unit' => str_repeat('a', 256)])
+            ->assertSessionHasErrors('ad_unit');
+        File::put($this->privateDirectory.'/oauth-app.enc', 'broken-ciphertext');
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Google connection is awaiting platform activation');
+        Http::assertNothingSent();
     }
 
     public function test_app_upload_starts_google_consent_with_pkce_and_no_secret_in_redirect_or_audit(): void
@@ -184,6 +202,53 @@ class GamReportingOnboardingTest extends TestCase
             && rtrim(strtr(base64_encode(hash('sha256', $request['code_verifier'], true)), '+/', '-_'), '=') === $start['code_challenge']);
         $this->post(route('admin.sites.reporting.gam.store', $site), ['gam_connection_id' => $connection->id, 'ad_unit' => '555'])->assertSessionHasNoErrors();
         $this->assertSame($connection->id, SiteGamReportBinding::withoutGlobalScopes()->sole()->gam_connection_id);
+    }
+
+    public function test_one_network_and_prefilled_unit_complete_site_reports_in_the_google_return(): void
+    {
+        [$admin, $site] = $this->context();
+        $before = $site->fresh()->getAttributes();
+        $configs = ConfigVersion::count();
+        $this->tokenResponses();
+        $this->completeConsent($this->start($admin, $site, 'site_unit')['state'])
+            ->assertSessionHasNoErrors()->assertSessionHas('status', 'Reports connected to Site unit. Synchronization starts automatically within five minutes.');
+        $binding = SiteGamReportBinding::withoutGlobalScopes()->sole();
+        $this->assertSame('555', $binding->ad_unit_id);
+        $this->assertSame($site->id, $binding->site_id);
+        $this->assertSame($before, $site->fresh()->getAttributes());
+        $this->assertSame($configs, ConfigVersion::count());
+    }
+
+    public function test_unit_failure_preserves_google_account_and_unit_input_for_correction(): void
+    {
+        [$admin, $site] = $this->context();
+        $this->tokenResponses();
+        $this->google->units = [];
+        $this->completeConsent($this->start($admin, $site, 'missing_unit')['state'])
+            ->assertSessionHasErrors('ad_unit')->assertSessionHas('_old_input.ad_unit', 'missing_unit');
+        $this->assertDatabaseCount('gam_connections', 1);
+        $this->assertDatabaseCount('site_gam_report_bindings', 0);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('missing_unit');
+    }
+
+    public function test_prefilled_unit_requires_an_explicit_single_network_and_ignores_replaced_unit_input(): void
+    {
+        [$admin, $site] = $this->context();
+        $this->google->networks[] = ['networkCode' => '202', 'displayName' => 'Other'];
+        $this->tokenResponses();
+        $response = $this->completeConsent($this->start($admin, $site, 'original_unit')['state']);
+        parse_str(parse_url($response->headers->get('Location'), PHP_URL_QUERY), $query);
+        $this->get($response->headers->get('Location'))->assertOk()->assertSee('original_unit')->assertSee('type="radio"', false);
+        $this->post(route('admin.sites.reporting.accounts.connect', $site), ['flow' => $query['flow'], 'networks' => ['101', '202']])->assertSessionHasErrors('gam_account');
+        $this->assertDatabaseCount('gam_connections', 0);
+        session()->forget('errors');
+        $data = ['flow' => $query['flow'], 'networks' => ['202'], 'ad_unit' => 'forged_unit'];
+        $this->post(route('admin.sites.reporting.accounts.connect', $site), $data)->assertSessionHasNoErrors();
+        $this->post(route('admin.sites.reporting.accounts.connect', $site), $data)->assertSessionHasNoErrors();
+        $this->assertSame('202', SiteGamReportBinding::withoutGlobalScopes()->sole()->network_code);
+        $calls = array_values(array_filter($this->google->calls, fn ($call) => $call['method'] === 'getAdUnitsByStatement'));
+        $this->assertSame('original_unit', $calls[0]['payload']['filterStatement']['values'][0]['value']['value']);
+        $this->assertDatabaseCount('gam_connections', 1);
     }
 
     public function test_several_networks_can_be_added_together_and_retried_without_duplicates(): void

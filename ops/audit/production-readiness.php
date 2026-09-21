@@ -203,6 +203,12 @@ $thothReady = $thothEnabled && $providerCredential && $providerFresh;
 $add('THOTH', 'website_quality_advisor', $thothReady ? 'PASS' : 'NOT_CONFIGURED', 'P2', $thothReady ? 'THOTH is enabled with a recently connected provider.' : 'THOTH is optional but not fully ready in production.', ['enabled' => $thothEnabled, 'provider' => $thothProvider, 'credential_configured' => $providerCredential, 'connection_ready' => $providerFresh]);
 $metrics['site_quality_review_statuses'] = $groups('site_quality_review_runs', 'status');
 
+// Local platform configuration is distinct from actual Google authorization.
+$reportingGoogleConfigured = app(\App\Services\Gam\GamReportingGoogleApp::class)->ready();
+$add('Reporting', 'google_account_onboarding', $reportingGoogleConfigured ? 'PASS' : 'NOT_CONFIGURED', 'P2',
+    $reportingGoogleConfigured ? 'Platform Google application is configured locally; live account consent and network permissions are verified when connecting.' : 'Platform Google application has not been configured; new Google account authorization is unavailable.',
+    ['platform_app_configured' => $reportingGoogleConfigured]);
+
 // Monetization integrations.
 $gamEnabled = $count('gam_connections', fn ($query) => $query->where('is_enabled', 1)->whereNull('deleted_at'));
 $gamReal = $count('gam_connections', fn ($query) => $query->where('is_enabled', 1)->where('dry_run_default', 0)->whereNull('deleted_at'));

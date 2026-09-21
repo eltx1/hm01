@@ -24,35 +24,29 @@ final class GamReportingOnboarding
         private readonly GamManagedCredentials $secrets,
         private readonly GamSoapTransportInterface $transport,
         private readonly AuditRecorder $audit,
+        private readonly GamReportingGoogleApp $googleApp,
     ) {}
 
     public function redirectUri(): string
     {
-        return rtrim(config('app.url'), '/').route('admin.gam.reporting.oauth.callback', absolute: false);
+        return $this->googleApp->redirectUri();
     }
 
     public function saveApp(array $json, User $actor): void
     {
-        $web = $json['web'] ?? [];
-        if (! is_array($web) || ! is_string($web['client_id'] ?? null) || ! preg_match('/^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$/D', $web['client_id'])
-            || ! is_string($web['client_secret'] ?? null) || strlen($web['client_secret']) < 8
-            || ! is_array($web['redirect_uris'] ?? null)
-            || ! in_array($this->redirectUri(), $web['redirect_uris'] ?? [], true)) {
-            $this->fail('Upload the Web application JSON from Google Cloud with the callback URL shown below in its authorized redirect URIs.');
-        }
-        $this->secrets->write(['client_id' => $web['client_id'], 'client_secret' => $web['client_secret']], 'oauth-app');
-        $this->audit->record('gam.reporting.oauth_app.configured', $actor->organization_id, $actor);
+        $this->googleApp->save($json, $actor);
     }
 
     public function start(Request $request, Site $site): string
     {
-        if (! $this->secrets->hasApp()) {
-            $this->fail('Complete the one-time Google app setup below, or connect with a service-account file.');
+        $input = $request->validate(['ad_unit' => ['nullable', 'string', 'max:255']]);
+        $app = $this->googleApp->credentials();
+        if ($app === null) {
+            $this->fail('Google connection is awaiting platform activation. No technical setup is needed from you. Existing connected accounts remain available.');
         }
-        $app = $this->secrets->read('managed:oauth-app');
         $state = bin2hex(random_bytes(32));
         $verifier = bin2hex(random_bytes(32));
-        $this->put('state', $state, $this->owner($request, $site) + ['app' => $app, 'verifier' => $verifier, 'redirect_uri' => $this->redirectUri()], 10);
+        $this->put('state', $state, $this->owner($request, $site) + ['app' => $app, 'verifier' => $verifier, 'redirect_uri' => $this->redirectUri(), 'ad_unit' => trim($input['ad_unit'] ?? '')], 10);
         $this->audit->record('gam.reporting.authorization.started', $site->organization_id, $request->user(), $site);
 
         return 'https://accounts.google.com/o/oauth2/v2/auth?'.http_build_query([
@@ -111,7 +105,7 @@ final class GamReportingOnboarding
             }
             $material = $state['app'] + ['refresh_token' => $token['refresh_token'], 'token_uri' => 'https://oauth2.googleapis.com/token'];
 
-            return $this->discover($request, $site, $material, GamCredentialType::OAuth2, 'google:'.$identity->json('sub'), $identity->json('email'));
+            return $this->discover($request, $site, $material, GamCredentialType::OAuth2, 'google:'.$identity->json('sub'), $identity->json('email'), $state['ad_unit'] ?? '');
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (Throwable) {
@@ -133,7 +127,7 @@ final class GamReportingOnboarding
         return $this->discover($request, $site, $material, GamCredentialType::ServiceAccount, 'service:'.$json['client_email'], $json['client_email']);
     }
 
-    private function discover(Request $request, Site $site, array $material, GamCredentialType $type, string $identity, string $email): string
+    private function discover(Request $request, Site $site, array $material, GamCredentialType $type, string $identity, string $email, string $adUnit = ''): string
     {
         $connection = new GamConnection(['is_enabled' => true, 'is_reporting_only' => true, 'credential_type' => $type, 'application_name' => config('gam.application_name')]);
         $connection->setRelation('credential', new GamCredential(['credential_type' => $type, 'scopes' => [config('gam.oauth.scope')]]));
@@ -169,7 +163,7 @@ final class GamReportingOnboarding
         }
         $flow = (string) Str::ulid();
         $this->put('pending', $flow, $this->owner($request, $site) + [
-            'material' => $material, 'type' => $type->value, 'identity' => $identity, 'email' => $email, 'networks' => $networks,
+            'material' => $material, 'type' => $type->value, 'identity' => $identity, 'email' => $email, 'networks' => $networks, 'ad_unit' => $adUnit,
         ], 20);
         $this->audit->record('gam.reporting.networks.discovered', $site->organization_id, $request->user(), $site, newValues: ['count' => count($networks)]);
 
@@ -196,6 +190,9 @@ final class GamReportingOnboarding
                 return $data['connected_ids'];
             }
             $codes = array_values(array_unique($codes));
+            if (($data['ad_unit'] ?? '') !== '' && count($codes) !== 1) {
+                $this->fail('Choose the network containing this website’s ad unit.');
+            }
             if ($codes === [] || count($codes) > 25 || array_diff($codes, array_map('strval', array_keys($data['networks'])))) {
                 $this->fail('Select the Ad Manager networks returned by Google for this account.');
             }
