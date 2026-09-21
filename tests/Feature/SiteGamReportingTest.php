@@ -16,12 +16,14 @@ use App\Models\DemandSite;
 use App\Models\GamApiOperation;
 use App\Models\GamConnection;
 use App\Models\HourlyReport;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\SiteGamReportBinding;
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Services\Gam\GamSoapPayloadHydrator;
 use App\Services\Gam\GamSoapVersionResolver;
+use App\Services\Monetization\ReportingHealthService;
 use App\Services\Reporting\Connectors\GamAdUnitReportConnector;
 use App\Services\Reporting\FinancialPeriodService;
 use App\Services\Reporting\MonetizationFinancialReadinessService;
@@ -86,6 +88,10 @@ class SiteGamReportingTest extends TestCase
                 $namespace = $versions->namespaceFor($versions->resolve());
                 $reflection = new \ReflectionClass($namespace.'\\'.$service);
                 app(GamSoapPayloadHydrator::class)->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
+
+                if ($method === 'runReportJob' && in_array('HOUR', $payload['reportJob']['reportQuery']['dimensions'], true)) {
+                    throw new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
+                }
 
                 return match ($method) {
                     'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
@@ -304,7 +310,7 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
     }
 
-    public function test_scheduler_uses_network_dates_hourly_estimates_and_resumes_previous_day_pending_jobs(): void
+    public function test_scheduler_refreshes_daily_estimates_hourly_without_incompatible_hour_dimensions(): void
     {
         $context = $this->context();
         $this->google->timezone = 'Asia/Tokyo';
@@ -316,7 +322,8 @@ class SiteGamReportingTest extends TestCase
         $this->assertCount(2, $queries);
         $this->assertSame(20, $queries[0]['payload']['reportJob']['reportQuery']['endDate']['day']);
         $this->assertSame(21, $queries[1]['payload']['reportJob']['reportQuery']['startDate']['day']);
-        $this->assertSame(['DATE', 'HOUR', 'AD_UNIT_ID'], $queries[1]['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->assertSame(['DATE', 'AD_UNIT_ID'], $queries[1]['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->assertSame(array_keys(GamAdUnitReportConnector::COLUMNS), $queries[1]['payload']['reportJob']['reportQuery']['columns']);
         $this->travel(5)->minutes();
         app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
         $this->assertSame(2, $this->google->jobs);
@@ -327,20 +334,91 @@ class SiteGamReportingTest extends TestCase
             $id = collect($this->google->calls)->where('method', 'getReportDownloadUrlWithOptions')->last()['payload']['reportJobId'];
 
             return Http::response($id === '2'
-                ? $this->csv([['2026-09-21', 0, '12345', 10, 9, 1, 8, 1, 1250000]], true) : $this->csv());
+                ? $this->csv([['2026-09-21', '12345', 10, 9, 1, 8, 1, 1250000]]) : $this->csv());
         }]);
         $this->travel(5)->minutes();
         app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
         $this->assertSame(2, $this->google->jobs);
-        $this->assertSame(20, DailyReport::withoutGlobalScopes()->count());
-        $this->assertSame(2, HourlyReport::withoutGlobalScopes()->count());
-        $this->assertSame(125, (int) HourlyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
-        $this->assertFalse((bool) HourlyReport::withoutGlobalScopes()->first()->settlement_eligible);
-        $this->assertSame('ESTIMATED', HourlyReport::withoutGlobalScopes()->first()->finality->value);
+        $this->assertSame(21, DailyReport::withoutGlobalScopes()->count());
+        $this->assertSame(0, HourlyReport::withoutGlobalScopes()->count());
+        $today = DailyReport::withoutGlobalScopes()->whereDate('report_date', '2026-09-21')->sole();
+        $this->assertSame(125, (int) $today->gross_revenue_minor);
+        $this->assertFalse((bool) $today->settlement_eligible);
+        $this->assertSame('ESTIMATED', $today->finality->value);
         $this->assertSame(0, $binding->connection->imports()->where('status', 'PENDING')->count());
         $before = count($this->google->calls);
         app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
         $this->assertSame($before, count($this->google->calls));
+    }
+
+    public function test_legacy_hourly_retry_becomes_one_daily_snapshot_and_keeps_all_metrics_and_financial_finality(): void
+    {
+        $binding = $this->bind($this->context());
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        $legacy = ReportImportJob::withoutGlobalScopes()->create([
+            'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->connection->id,
+            'import_type' => 'API', 'granularity' => 'HOURLY', 'finality' => 'ESTIMATED', 'status' => 'FAILED',
+            'period_start' => $day, 'period_end' => $day->endOfDay(), 'idempotency_key' => hash('sha256', 'legacy-hourly'),
+            'error_message' => 'ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', 'next_retry_at' => now()->subMinute(),
+        ]);
+        $legacyKey = hash('sha256', 'HOURLY|2026-09-21|2026-09-21');
+        $binding->connection->update(['status' => 'ERROR', 'last_error' => $legacy->error_message,
+            'configuration' => ['google_jobs' => [$legacyKey => ['id' => '999', 'requested_at' => now()->toIso8601String()]]]]);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 123450000]]))
+            ->push($this->csv([['2026-09-21', '12345', 130, 108, 22, 101, 4, 135000000]]))
+            ->push($this->csv([['2026-09-21', '12345', 130, 108, 22, 101, 4, 140000000]]))]);
+        $imports = app(ReportImportService::class);
+        $run = fn () => $imports->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Hourly, ReportFinality::Estimated);
+        $first = $run();
+        $this->assertSame(ReportImportStatus::Completed, $first->status, $first->error_message ?? '');
+        $this->assertSame(ReportGranularity::Daily, $first->granularity);
+        $this->assertSame(ReportImportStatus::Duplicate, $legacy->fresh()->status);
+        $this->assertArrayNotHasKey($legacyKey, $binding->connection->fresh()->configuration['google_jobs']);
+        $this->assertSame('ACTIVE', $binding->connection->fresh()->status->value);
+        $this->assertNull($binding->connection->fresh()->last_error);
+        $this->assertNull($binding->connection->fresh()->last_finalized_import_at);
+        $this->assertSame(ReportImportStatus::Completed, $run()->status);
+        $this->assertDatabaseCount('hourly_reports', 0);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame([130, 108, 22, 101, 4, 13500], array_map('intval', [$row->ad_requests, $row->matched_requests,
+            $row->unfilled_requests, $row->impressions, $row->clicks, $row->gross_revenue_minor]));
+        $this->assertFalse($row->settlement_eligible);
+        $this->travelTo($day->addDay()->addHours(10));
+        $final = $this->import($binding, '2026-09-21', '2026-09-21');
+        $this->assertSame(ReportImportStatus::Completed, $final->status, $final->error_message ?? '');
+        $row = $row->fresh();
+        $this->assertSame('FINALIZED', $row->finality->value);
+        $this->assertTrue($row->settlement_eligible);
+        $this->assertSame(14000, (int) $row->gross_revenue_minor);
+        $this->assertDatabaseCount('daily_reports', 1);
+    }
+
+    public function test_scheduler_recovers_a_previous_day_legacy_hourly_failure_as_finalized_daily_data(): void
+    {
+        $binding = $this->bind($this->context());
+        $day = CarbonImmutable::parse('2026-09-20', 'Africa/Cairo');
+        $legacy = ReportImportJob::withoutGlobalScopes()->create([
+            'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->connection->id,
+            'import_type' => 'API', 'granularity' => 'HOURLY', 'finality' => 'ESTIMATED', 'status' => 'FAILED',
+            'period_start' => $day, 'period_end' => $day->endOfDay(), 'idempotency_key' => hash('sha256', 'yesterday-hourly'),
+            'error_message' => 'ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', 'next_retry_at' => now()->subMinute(),
+        ]);
+        $binding->connection->update(['configuration' => ['sync_due' => [
+            'daily_2026-09-01_2026-09-20' => now()->addHours(6)->toIso8601String(),
+            'intraday_2026-09-21' => now()->addHour()->toIso8601String(),
+        ]]]);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $results = app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+        $this->assertCount(1, $results);
+        $this->assertSame(ReportImportStatus::Completed, $results[0]->status, $results[0]->error_message ?? '');
+        $this->assertSame(ReportGranularity::Daily, $results[0]->granularity);
+        $this->assertSame(ReportFinality::Finalized, $results[0]->finality);
+        $this->assertSame(ReportImportStatus::Duplicate, $legacy->fresh()->status);
+        $this->assertDatabaseCount('hourly_reports', 0);
+        $this->assertTrue(DailyReport::withoutGlobalScopes()->sole()->settlement_eligible);
+        $this->assertSame([], app(SiteGamReportSynchronizer::class)->sync($binding->fresh()));
+        $this->assertSame(1, $this->google->jobs);
     }
 
     public function test_expired_google_jobs_are_replaced_and_a_success_clears_prior_failures(): void
@@ -433,7 +511,7 @@ class SiteGamReportingTest extends TestCase
     {
         $context = $this->context();
         $binding = $this->bind($context);
-        $health = app(\App\Services\Monetization\ReportingHealthService::class);
+        $health = app(ReportingHealthService::class);
         $this->assertSame('PENDING', $health->forSite($context[3])['status']);
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->import($binding);
@@ -449,13 +527,13 @@ class SiteGamReportingTest extends TestCase
     public function test_network_currency_drives_site_coverage_without_blocking_an_unrelated_currency_period(): void
     {
         [$admin, , , $site] = $context = $this->context();
-        $this->seed(\Database\Seeders\DemandNetworkSeeder::class);
-        $account = \App\Models\DemandAccount::withoutGlobalScopes()->create([
-            'organization_id' => $admin->organization_id, 'demand_network_id' => \App\Models\DemandNetwork::firstOrFail()->id,
+        $this->seed(DemandNetworkSeeder::class);
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id, 'demand_network_id' => DemandNetwork::firstOrFail()->id,
             'name' => 'Demand account with default USD reporting', 'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS',
             'approval_status' => 'APPROVED', 'is_enabled' => true,
         ]);
-        \App\Models\DemandSite::withoutGlobalScopes()->create(['organization_id' => $site->organization_id,
+        DemandSite::withoutGlobalScopes()->create(['organization_id' => $site->organization_id,
             'demand_account_id' => $account->id, 'site_id' => $site->id, 'is_enabled' => true,
             'approval_status' => 'APPROVED', 'integration_mode' => 'DIRECT_JS']);
         $this->google->currency = 'EGP';
@@ -465,7 +543,7 @@ class SiteGamReportingTest extends TestCase
         $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
-        $readiness = app(\App\Services\Reporting\MonetizationFinancialReadinessService::class);
+        $readiness = app(MonetizationFinancialReadinessService::class);
         $this->assertCount(0, $readiness->blockersForPeriod($usd));
         $this->assertCount(0, $readiness->blockersForPeriod($egp));
         DailyReport::withoutGlobalScopes()->whereDate('report_date', '2026-09-25')->delete();

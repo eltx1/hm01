@@ -29,14 +29,20 @@ final class SiteGamReportSynchronizer
             ->where(fn ($q) => $q->whereNull('next_retry_at')->orWhere('next_retry_at', '<=', now()))
             ->orderBy('created_at')->limit(2)->get();
         foreach ($pending as $job) {
+            if (! in_array($job->fresh()->status, [ReportImportStatus::Pending, ReportImportStatus::Failed], true)) {
+                continue;
+            }
             if (! $this->open($job->period_start->toDateString(), $connection->currency)) {
                 continue;
             }
+            $intraday = $job->period_end->toDateString() >= $now->toDateString();
+            $finality = $job->granularity === ReportGranularity::Hourly
+                ? ($intraday ? ReportFinality::Estimated : ReportFinality::Finalized) : $job->finality;
             $result = $this->imports->runConnection($connection,
-                CarbonImmutable::parse($job->period_start), CarbonImmutable::parse($job->period_end), $job->granularity, $job->finality);
-            $key = $job->granularity === ReportGranularity::Hourly ? 'hourly_'.$job->period_start->toDateString()
+                CarbonImmutable::parse($job->period_start), CarbonImmutable::parse($job->period_end), ReportGranularity::Daily, $finality);
+            $key = $intraday ? 'intraday_'.$job->period_start->toDateString()
                 : 'daily_'.$job->period_start->toDateString().'_'.$job->period_end->toDateString();
-            $this->next($connection, $key, $result, $job->granularity === ReportGranularity::Hourly ? 60 : 360);
+            $this->next($connection, $key, $result, $intraday ? 60 : 360);
             $results[] = $result;
         }
         $first = CarbonImmutable::parse($binding->starts_on->toDateString(), $connection->timezone);
@@ -59,9 +65,9 @@ final class SiteGamReportSynchronizer
         }
         if ($first->lte($now) && (! $binding->ends_on || $binding->ends_on->toDateString() >= $now->toDateString())
             && $this->open($now->toDateString(), $connection->currency)) {
-            $key = 'hourly_'.$now->toDateString();
+            $key = 'intraday_'.$now->toDateString();
             if ($this->due($connection->fresh()->configuration ?? [], $key)) {
-                $job = $this->imports->runConnection($connection, $now->startOfDay(), $now->endOfDay(), ReportGranularity::Hourly, ReportFinality::Estimated);
+                $job = $this->imports->runConnection($connection, $now->startOfDay(), $now->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
                 $this->next($connection, $key, $job, 60);
                 $results[] = $job;
             }

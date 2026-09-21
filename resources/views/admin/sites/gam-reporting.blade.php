@@ -4,7 +4,7 @@
     @if($reportBinding)
         <div class="compact-row"><div><strong>{{ $reportBinding->gamConnection?->name }} · {{ $reportBinding->ad_unit_name }}</strong><p>Network {{ $reportBinding->network_code }} · Unit {{ $reportBinding->ad_unit_id }} · From {{ $reportBinding->starts_on->toDateString() }}</p></div><x-status-badge :status="$reportBinding->connection->is_enabled ? $reportBinding->connection->status : 'DISABLED'" /></div>
         <dl><dt>Currency / timezone</dt><dd>{{ $reportBinding->connection->currency }} · {{ $reportBinding->connection->timezone }}</dd><dt>Last successful import</dt><dd>{{ $reportBinding->connection->last_successful_import_at ?? 'Waiting for the first automatic synchronization' }}</dd><dt>Last finalized import</dt><dd>{{ $reportBinding->connection->last_finalized_import_at ?? 'Pending' }}</dd></dl>
-        @if($reportBinding->connection->last_error)<p role="alert">{{ $reportBinding->connection->last_error }}</p>@endif
+        @if($reportBinding->connection->last_error)<p role="alert">Latest refresh failed: {{ $reportBinding->connection->last_error }}</p><p class="muted">The timestamps above show earlier successful imports. Their data is preserved while the failed refresh retries automatically.</p>@endif
     @else
         <p class="muted">Current reporting: existing GAM or CSV sources. Connect below to make the selected ad unit this website's reporting source.</p>
     @endif
@@ -31,6 +31,6 @@
             <p class="muted">Reports cover the selected unit only, excluding child units. Currency and timezone come from Google. The first import covers the current open month, starting after any days already imported for this website. Existing financial history is preserved. Ad delivery settings stay as configured.</p>
             <button class="hm-button-primary">{{ $reportBinding ? 'Update reporting connection' : 'Connect reports' }}</button>
         </form>
-        <p class="muted">Synchronization checks every five minutes. Today's estimates refresh hourly; completed days refresh every six hours while the financial period is open. Google may take time to prepare a report.</p>
+        <p class="muted">Synchronization checks every five minutes. Today's daily totals are estimates refreshed every hour; completed days refresh every six hours while the financial period is open. Google may take time to prepare a report.</p>
     @endif
 </article>

@@ -38,8 +38,7 @@ final class ReportImportService
         private readonly FinancialSettlementEligibilityService $settlementEligibility,
         private readonly AuditRecorder $audit,
         private readonly SiteReportSourcePolicy $siteSources,
-    ) {
-    }
+    ) {}
 
     public function runConnection(
         ReportSourceConnection $connection,
@@ -51,6 +50,13 @@ final class ReportImportService
         array $options = [],
     ): ReportImportJob {
         $connection->loadMissing('source');
+        // This source needs all request metrics and total revenue (including
+        // CPD). Google rejects that combination with HOUR. Refresh a daily
+        // estimated snapshot instead; never invent an hourly distribution.
+        if ($connection->connection_type === 'SITE_GAM_AD_UNIT'
+            && $granularity === ReportGranularity::Hourly && $finality === ReportFinality::Estimated) {
+            $granularity = ReportGranularity::Daily;
+        }
         if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && ! ($options['_site_lock'] ?? false)) {
             return Cache::lock('site-gam-report:'.$connection->id, 300)->block(3,
                 fn () => $this->runConnection($connection->refresh(), $from, $to, $granularity, $finality, $actor, array_replace($options, ['_site_lock' => true])));
@@ -80,13 +86,17 @@ final class ReportImportService
                 (array) ($payload['totals'] ?? []),
             );
             if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $job->status === ReportImportStatus::Completed) {
+                $obsolete = ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+                    ->where('id', '!=', $job->id)
+                    ->whereDate('period_start', '>=', $from->toDateString())->whereDate('period_end', '<=', $to->toDateString())
+                    ->whereIn('status', [ReportImportStatus::Pending->value, ReportImportStatus::Failed->value]);
                 $configuration = $connection->fresh()->configuration ?? [];
+                foreach ((clone $obsolete)->where('granularity', ReportGranularity::Hourly->value)->get() as $legacy) {
+                    unset($configuration['google_jobs'][hash('sha256', 'HOURLY|'.$legacy->period_start->toDateString().'|'.$legacy->period_end->toDateString())]);
+                }
                 unset($configuration['google_jobs'][$payload['pending_key'] ?? '']);
                 $connection->update(['configuration' => $configuration, 'status' => ReportConnectionStatus::Active, 'last_error' => null]);
-                ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
-                    ->where('granularity', $granularity->value)->where('id', '!=', $job->id)
-                    ->whereDate('period_start', '>=', $from->toDateString())->whereDate('period_end', '<=', $to->toDateString())
-                    ->whereIn('status', [ReportImportStatus::Pending->value, ReportImportStatus::Failed->value])
+                $obsolete->whereIn('granularity', [$granularity->value, ReportGranularity::Hourly->value])
                     ->update(['status' => ReportImportStatus::Duplicate->value, 'error_message' => null, 'next_retry_at' => null, 'completed_at' => now()]);
             }
 
@@ -235,6 +245,7 @@ final class ReportImportService
                                 $sourceTotals[$field] -= $row[$field];
                             }
                         }
+
                         continue;
                     }
                     if ($settlement['eligible'] && strtoupper($row['currency']) !== strtoupper($connection->currency)) {
@@ -370,6 +381,7 @@ final class ReportImportService
                 'completed_at' => now(),
             ]);
             $this->recordError($connection, $job, 'VALIDATION', $closed ? 'CLOSED_PERIOD' : 'INVALID_REPORT', $exception->getMessage(), false);
+
             return $job->refresh();
         } catch (Throwable $exception) {
             $job->update([
@@ -382,6 +394,7 @@ final class ReportImportService
             ]);
             $connection->update(['status' => ReportConnectionStatus::Error, 'last_error' => $exception->getMessage()]);
             $this->recordError($connection, $job, 'IMPORT', 'PROCESSING_FAILED', $exception->getMessage(), true);
+
             return $job->refresh();
         }
     }
@@ -707,6 +720,7 @@ final class ReportImportService
                 ];
             }
         }
+
         return $warnings;
     }
 
@@ -728,6 +742,7 @@ final class ReportImportService
                     $rows[] = array_combine($headers, $values);
                 }
             }
+
             return $rows;
         } finally {
             fclose($handle);
@@ -750,6 +765,7 @@ final class ReportImportService
         if ($normalized === '') {
             return 0;
         }
+
         return (int) round(((float) $normalized) * 100);
     }
 
@@ -764,6 +780,7 @@ final class ReportImportService
         if (! array_is_list($value)) {
             ksort($value);
         }
+
         return $value;
     }
 
