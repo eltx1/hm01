@@ -35,6 +35,7 @@ function runAtWidth(width, overrides = {}, { contentWidth, padding = 0, queued =
     const displayCalls = [];
     const listeners = [];
     const commands = [];
+    const destroyedSlots = [];
     const pubads = {
         addEventListener(name, callback) { if (name === 'slotRenderEnded') listeners.push(callback); },
         removeEventListener(name, callback) {
@@ -54,7 +55,7 @@ function runAtWidth(width, overrides = {}, { contentWidth, padding = 0, queued =
         pubads() { return pubads; },
         enableServices() {},
         display(id) { displayCalls.push(id); },
-        destroySlots() { return true; },
+        destroySlots(slots) { destroyedSlots.push(...slots); return true; },
     };
     const document = {
         documentElement: { clientWidth: width, clientHeight: 900 },
@@ -72,7 +73,7 @@ function runAtWidth(width, overrides = {}, { contentWidth, padding = 0, queued =
     };
     sandbox.window = sandbox;
     vm.runInNewContext(source, sandbox, { filename: 'hm-gpt-direct.js' });
-    return { target, attributes, definitions, displayCalls, listeners, commands, root, sandbox };
+    return { target, attributes, definitions, displayCalls, listeners, commands, root, sandbox, destroyedSlots };
 }
 
 test('trusted GPT runtime exposes only mobile-mapped sizes to GPT on a mobile viewport', () => {
@@ -188,6 +189,68 @@ const responsiveAttributes = {
         { viewport: [1024, 0], maxViewport: [0, 0], sizes: desktopResponsive },
     ]),
 };
+
+for (const [viewport, contentWidth, returnedSize] of [
+    [909, 909, [728, 600]], // Exact LordAI production response: filled, but formerly discarded.
+    [1440, 820, [728, 600]],
+    [1440, 740, [728, 600]],
+    [1440, 686, [640, 600]],
+    [390, 358, [320, 600]],
+    [390, 240, [200, 600]],
+    [1440, 909, [728, 1000]],
+    [390, 358, [114, 30]],
+]) {
+    test(`filled GPT ${returnedSize.join('x')} survives in ${contentWidth}px without a requested-size ratio restriction`, () => {
+        const runtime = runAtWidth(viewport, responsiveAttributes, { contentWidth });
+        const requested = JSON.parse(JSON.stringify(runtime.definitions[0].sizes));
+        runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: returnedSize });
+        assert.equal(runtime.attributes['data-hm-gpt-runtime-state'], 'rendered');
+        assert.equal(runtime.target.style.width, returnedSize[0] + 'px');
+        assert.equal(runtime.target.style.height, returnedSize[1] + 'px');
+        assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), requested);
+        assert.deepEqual(runtime.destroyedSlots, []);
+        vm.runInNewContext(source, runtime.sandbox);
+        assert.equal(runtime.displayCalls.length, 1);
+    });
+}
+
+for (const returnedSize of [null, [], [728], [728, 0], [0, 600], [-1, 600],
+    [728, Infinity], [NaN, 600], [728, 600.5], [728, 10001], ['728', 600], [true, 600]]) {
+    test(`fixed GPT rejects malformed rendered dimensions ${JSON.stringify(returnedSize)}`, () => {
+        const runtime = runAtWidth(1440, responsiveAttributes, { contentWidth: 909 });
+        runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: returnedSize });
+        assert.equal(runtime.attributes['data-hm-gpt-runtime-state'], 'failed');
+        assert.deepEqual(runtime.destroyedSlots, [runtime.definitions[0]]);
+    });
+}
+
+test('responsive no-fill stays empty even when the event includes a valid expanded size', () => {
+    const runtime = runAtWidth(909, responsiveAttributes, { contentWidth: 909 });
+    runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: true, size: [728, 600] });
+    assert.equal(runtime.attributes['data-hm-gpt-runtime-state'], 'empty');
+    assert.deepEqual(runtime.destroyedSlots, [runtime.definitions[0]]);
+});
+
+test('fluid support does not turn malformed fixed dimensions into a rendered ad', () => {
+    const runtime = runAtWidth(390, {
+        'data-hm-gpt-sizes': '["fluid"]', 'data-hm-gpt-size-map': '', 'data-hm-gpt-fit-container': '1',
+    });
+    runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: [-1, 600] });
+    assert.equal(runtime.attributes['data-hm-gpt-runtime-state'], 'failed');
+    assert.deepEqual(runtime.destroyedSlots, [runtime.definitions[0]]);
+});
+
+for (const fitAttribute of [undefined, '0']) {
+    test(`non-responsive GPT preserves its previous size policy with fit-container=${fitAttribute}`, () => {
+        const attributes = { ...responsiveAttributes };
+        if (fitAttribute === undefined) delete attributes['data-hm-gpt-fit-container'];
+        else attributes['data-hm-gpt-fit-container'] = fitAttribute;
+        const runtime = runAtWidth(909, attributes, { contentWidth: 909 });
+        runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: [728, 600] });
+        assert.equal(runtime.attributes['data-hm-gpt-runtime-state'], 'failed');
+        assert.deepEqual(runtime.destroyedSlots, [runtime.definitions[0]]);
+    });
+}
 
 test('expanded responsive display intersects desktop mapping with the publisher content width', () => {
     const { definitions } = runAtWidth(1440, responsiveAttributes, { contentWidth: 700 });
