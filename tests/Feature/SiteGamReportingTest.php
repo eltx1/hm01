@@ -74,6 +74,8 @@ class SiteGamReportingTest extends TestCase
 
             public string $timezone = 'Africa/Cairo';
 
+            public string $currency = 'USD';
+
             public int $jobs = 0;
 
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
@@ -86,7 +88,7 @@ class SiteGamReportingTest extends TestCase
                 app(GamSoapPayloadHydrator::class)->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
 
                 return match ($method) {
-                    'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => 'USD', 'timeZone' => $this->timezone],
+                    'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
                     'getAdUnitsByStatement' => ['results' => $this->units],
                     'runReportJob' => ['id' => (string) ++$this->jobs],
                     'getReportJobStatus' => ['value' => $this->status],
@@ -442,5 +444,32 @@ class SiteGamReportingTest extends TestCase
         $this->assertNull($context[3]->fresh()->gam_connection_id);
         $binding->connection->update(['status' => 'ERROR']);
         $this->assertSame('DEGRADED', $health->forSite($context[3])['status']);
+    }
+
+    public function test_network_currency_drives_site_coverage_without_blocking_an_unrelated_currency_period(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $this->seed(\Database\Seeders\DemandNetworkSeeder::class);
+        $account = \App\Models\DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id, 'demand_network_id' => \App\Models\DemandNetwork::firstOrFail()->id,
+            'name' => 'Demand account with default USD reporting', 'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED', 'is_enabled' => true,
+        ]);
+        \App\Models\DemandSite::withoutGlobalScopes()->create(['organization_id' => $site->organization_id,
+            'demand_account_id' => $account->id, 'site_id' => $site->id, 'is_enabled' => true,
+            'approval_status' => 'APPROVED', 'integration_mode' => 'DIRECT_JS']);
+        $this->google->currency = 'EGP';
+        $binding = $this->bind($context);
+        $usd = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
+        $egp = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'EGP');
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
+        $readiness = app(\App\Services\Reporting\MonetizationFinancialReadinessService::class);
+        $this->assertCount(0, $readiness->blockersForPeriod($usd));
+        $this->assertCount(0, $readiness->blockersForPeriod($egp));
+        DailyReport::withoutGlobalScopes()->whereDate('report_date', '2026-09-25')->delete();
+        $this->assertCount(0, $readiness->blockersForPeriod($usd));
+        $this->assertCount(1, $readiness->blockersForPeriod($egp));
     }
 }

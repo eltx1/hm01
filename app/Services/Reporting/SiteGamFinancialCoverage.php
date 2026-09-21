@@ -14,7 +14,8 @@ final class SiteGamFinancialCoverage
     public function coversSite(string $siteId, FinancialPeriod $period): bool
     {
         $site = Site::withoutGlobalScopes()->find($siteId);
-        if (! $site || ! $this->bindings($period)->where('site_id', $siteId)->exists()) {
+        $bindings = $this->bindings($period)->with('connection')->where('site_id', $siteId)->get();
+        if (! $site || $bindings->isEmpty()) {
             return false;
         }
         $from = CarbonImmutable::parse($period->starts_on)->max(CarbonImmutable::parse($site->created_at)->startOfDay());
@@ -24,9 +25,22 @@ final class SiteGamFinancialCoverage
         }
         $days = DailyReport::withoutGlobalScopes()->whereHas('dimension', fn ($q) => $q->where('site_id', $siteId))
             ->where('currency', $period->currency)->where('finality', 'FINALIZED')->where('settlement_eligible', true)
-            ->whereDate('report_date', '>=', $from->toDateString())->whereDate('report_date', '<=', $to->toDateString())->distinct()->count('report_date');
+            ->whereDate('report_date', '>=', $from->toDateString())->whereDate('report_date', '<=', $to->toDateString())
+            ->get(['report_date'])->mapWithKeys(fn ($report) => [$report->report_date->toDateString() => true]);
+        for ($day = $from; $day->lte($to); $day = $day->addDay()) {
+            $date = $day->toDateString();
+            $binding = $bindings->first(fn ($item) => $item->starts_on->toDateString() <= $date
+                && (! $item->ends_on || $item->ends_on->toDateString() >= $date));
+            // A source in EGP must not invent a missing USD liability (or an exchange rate).
+            if ($binding && $binding->connection->currency !== $period->currency) {
+                continue;
+            }
+            if (! $days->has($date)) {
+                return false;
+            }
+        }
 
-        return $days === (int) $from->diffInDays($to) + 1;
+        return true;
     }
 
     public function blockers(FinancialPeriod $period): Collection
