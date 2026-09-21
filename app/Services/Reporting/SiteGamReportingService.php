@@ -111,7 +111,7 @@ final class SiteGamReportingService
             $id = (string) Str::ulid();
             $connection = ReportSourceConnection::withoutGlobalScopes()->create([
                 'organization_id' => $site->organization_id, 'report_source_id' => $source->id,
-                'name' => $site->display_name.' — GAM ad unit', 'connection_type' => 'SITE_GAM_AD_UNIT',
+                'name' => Str::limit($site->display_name, 220, '').' — GAM ad unit', 'connection_type' => 'SITE_GAM_AD_UNIT',
                 'connection_id' => $id, 'account_identifier' => $key,
                 'currency' => $network['currencyCode'], 'timezone' => $network['timeZone'],
                 'status' => 'ACTIVE', 'is_enabled' => true, 'created_by' => $actor->id, 'updated_by' => $actor->id,

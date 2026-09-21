@@ -69,16 +69,17 @@ class GamAdUnitReportClient
             throw new RuntimeException('Google returned an invalid report download location.');
         }
         try {
-            $download = Http::connectTimeout(10)->timeout(40)->withOptions(['allow_redirects' => false, 'stream' => true])->get($url);
+            $download = Http::connectTimeout(10)->timeout(40)->withOptions(['allow_redirects' => false, 'stream' => true, 'read_timeout' => 15])->get($url);
             if (! $download->successful()) {
                 throw new RuntimeException('Report download failed.');
             }
             $stream = $download->toPsrResponse()->getBody();
             $maximum = (int) config('reporting.csv_max_bytes', 25 * 1024 * 1024);
+            $deadline = microtime(true) + 40;
             $csv = '';
             while (! $stream->eof()) {
                 $csv .= $stream->read(65536);
-                if (strlen($csv) > $maximum) {
+                if (strlen($csv) > $maximum || microtime(true) > $deadline) {
                     throw new RuntimeException('Report exceeds the download size limit.');
                 }
             }

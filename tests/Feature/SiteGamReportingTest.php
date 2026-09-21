@@ -349,6 +349,7 @@ class SiteGamReportingTest extends TestCase
         $this->travel(7)->hours();
         $failed = $this->import($binding);
         $this->assertSame(ReportImportStatus::Failed, $failed->status);
+        $this->assertSame(0, $binding->connection->imports()->where('status', 'PENDING')->count());
         $this->google->status = 'COMPLETED';
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);

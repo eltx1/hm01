@@ -8,8 +8,8 @@ financial-close, and publisher-statement pipeline.
 
 Validation before opening the PR:
 
-- Focused reporting/finance/GAM regressions: **50 passed, 389 assertions**.
-- New feature coverage: **16 passed, 110 assertions** (included above).
+- Focused reporting/finance/GAM regressions: **50 passed, 390 assertions**.
+- New feature coverage: **16 passed, 111 assertions** (included above).
 - Existing loader/browser unit suite: **234 passed, 0 failed**.
 - Production asset build: **passed**.
 - `git diff --check`: **passed**.

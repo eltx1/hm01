@@ -128,6 +128,10 @@ final class ReportImportService
             if ($connection->connection_type === 'SITE_GAM_AD_UNIT') {
                 $job->update(['status' => ReportImportStatus::Failed, 'error_message' => $exception->getMessage(),
                     'next_retry_at' => now()->addMinutes((int) config('reporting.retry_delay_minutes', 30))]);
+                ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+                    ->where('granularity', $granularity->value)->where('status', ReportImportStatus::Pending->value)
+                    ->whereDate('period_start', $from->toDateString())->whereDate('period_end', $to->toDateString())
+                    ->update(['status' => ReportImportStatus::Duplicate->value, 'next_retry_at' => null, 'completed_at' => now()]);
             }
             $connection->update(['status' => ReportConnectionStatus::Error, 'last_error' => $exception->getMessage()]);
             $this->recordError($connection, $job, 'SOURCE_IMPORT', 'FETCH_FAILED', $exception->getMessage(), true);
