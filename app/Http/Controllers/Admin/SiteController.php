@@ -16,6 +16,7 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Gam\GamReportingGoogleApp;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Reporting\SiteGamReportingService;
+use App\Services\Reporting\SiteGamTodayReport;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
@@ -62,6 +63,9 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'todayReport' => $request->user()->hasPermission('reporting.admin.view')
+                && $request->user()->hasPermission('reporting.sources.manage')
+                ? app(SiteGamTodayReport::class)->forSite($site) : null,
             'reportingGoogleReady' => $request->user()->hasPermission('gam.connections.manage')
                 && app(GamReportingGoogleApp::class)->ready(),
             'reportingGamConnections' => $request->user()->hasPermission('reporting.sources.manage')
