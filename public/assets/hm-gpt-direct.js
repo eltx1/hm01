@@ -135,9 +135,13 @@
         return /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(String(value || ''));
     }
 
-    function normalizedRenderedSize(size, allowedSizes) {
+    function normalizedRenderedSize(size, allowedSizes, flexible) {
+        // Only manual Responsive Display opts into actual-creative sizing.
+        // GPT's returned dimensions may differ from every requested size pair;
+        // the surface's available width is checked separately before rendering.
+        if (flexible && (!Array.isArray(size) || typeof size[0] !== 'number' || typeof size[1] !== 'number')) return null;
         var normalized = normalizedSize(size);
-        if (!normalized) return null;
+        if (!normalized || flexible) return normalized;
 
         for (var exactIndex = 0; exactIndex < allowedSizes.length; exactIndex += 1) {
             var exact = allowedSizes[exactIndex];
@@ -240,14 +244,16 @@
                 destroySlot(slot);
                 return;
             }
-            var renderedSize = normalizedRenderedSize(event.size, allowedSizes);
+            var flexibleSize = container.getAttribute('data-hm-gpt-fit-container') === '1';
+            var renderedSize = normalizedRenderedSize(event.size, allowedSizes, flexibleSize);
             var fluidAllowed = allowedSizes.indexOf('fluid') !== -1;
+            var fluidRendered = fluidAllowed && (!flexibleSize || event.size == null || normalizedSlotSize(event.size) === 'fluid');
             if (renderedSize && !fitContainerSizes(container, [renderedSize]).length) {
                 report(container, 'failed');
                 destroySlot(slot);
                 return;
             }
-            if (!renderedSize && !fluidAllowed) {
+            if (!renderedSize && !fluidRendered) {
                 report(container, 'failed');
                 destroySlot(slot);
                 return;

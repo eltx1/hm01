@@ -53,14 +53,15 @@ const gpt = `(() => {
     const listeners = new Set();
     const slots = window.testSlots = [];
     window.testDisplays = [];
+    window.testDestroyedSlots = [];
     const pubads = { addEventListener(name, fn) { listeners.add(fn); }, removeEventListener(name, fn) { listeners.delete(fn); } };
     window.googletag = { cmd: { push(fn) { fn(); } }, apiReady: true, pubadsReady: true,
-        pubads() { return pubads; }, enableServices() {}, destroySlots() {},
+        pubads() { return pubads; }, enableServices() {}, destroySlots(slots) { window.testDestroyedSlots.push(...slots.map(slot => slot.id)); },
         defineSlot(path, sizes, id) { const slot = { path, id, sizes, addService() { return slot; } }; slots.push(slot); return slot; },
         display(id) {
             window.testDisplays.push(id);
             const slot = slots.find(s => s.id === id);
-            const size = slot.sizes[0];
+            const size = window.testCreativeSizes?.[slots.indexOf(slot)] || slot.sizes[0];
             const frame = document.createElement('iframe');
             frame.style.cssText = 'width:' + size[0] + 'px;height:' + size[1] + 'px;border:0';
             frame.title = 'Advertisement'; document.getElementById(id).appendChild(frame);
@@ -70,9 +71,10 @@ const gpt = `(() => {
     queue.forEach(fn => fn());
 })();`;
 
-async function open(page, { count = 4, gated = false, blocked = false, expanded = false } = {}) {
+async function open(page, { count = 4, gated = false, blocked = false, expanded = false, creativeSizes = null } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
+    if (creativeSizes) await page.addInitScript(sizes => { window.testCreativeSizes = sizes; }, creativeSizes);
     if (blocked) await page.addInitScript(site => {
         localStorage.setItem('hm:click-guard:v2:' + site, JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + 3600000 }));
     }, SITE);
@@ -157,6 +159,38 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
         expect(slots.find(slot => slot.id === 'hm-gpt-member-1').sizes).not.toContainEqual([728, 90]);
         expect(slots.find(slot => slot.id === 'hm-gpt-member-1').sizes).toContainEqual([468, 60]);
     }
+});
+
+test('four filled creatives with different returned sizes remain rendered, centered and requested only once', async ({ page }) => {
+    const creativeSizes = page.viewportSize().width >= 1024
+        ? [[728, 600], [640, 600], [300, 600], [200, 600]]
+        : [[300, 600], [300, 600], [300, 600], [200, 600]];
+    await open(page, { expanded: true, creativeSizes });
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+    const slots = await page.evaluate(() => window.testSlots.map(({ id, sizes }) => ({ id, sizes })));
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    // Requested inventory remains constrained even when GPT renders a taller ad.
+    expect(slots[3].sizes).toEqual([[200, 200]]);
+    for (const [index, code] of codes.entries()) {
+        const root = page.locator(`[data-placement="${code}"]`);
+        const bounds = await root.boundingBox();
+        const frame = await root.locator('iframe').boundingBox();
+        expect([frame.width, frame.height]).toEqual(creativeSizes[index]);
+        expect(bounds.height).toBeGreaterThanOrEqual(frame.height);
+        expect(Math.abs(frame.x + frame.width / 2 - bounds.x - bounds.width / 2)).toBeLessThan(2);
+        expect(frame.x).toBeGreaterThanOrEqual(bounds.x);
+        expect(frame.x + frame.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+        expect(frame.x + frame.width).toBeLessThanOrEqual(page.viewportSize().width);
+        await expect(root.locator('[data-hm-gpt-status="rendered"]')).toHaveAttribute('data-hm-gpt-rendered-height', '600');
+    }
+    await page.evaluate(() => {
+        for (let i = 0; i < 10; i++) document.querySelector('article').appendChild(document.createElement('p'));
+        window.dispatchEvent(new Event('resize'));
+    });
+    await page.waitForTimeout(300);
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+    expect(await page.evaluate(() => window.testDisplays.length)).toBe(4);
+    expect(await page.evaluate(() => window.testDestroyedSlots)).toEqual([]);
 });
 
 test('Click Guard blocks provider loading for all four units', async ({ page }) => {
