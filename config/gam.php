@@ -17,6 +17,7 @@ return [
     ],
     'onboarding' => [
         'storage_path' => storage_path('app/private/gam-credentials'),
+        'oauth_app_reference' => env('GAM_REPORTING_OAUTH_APP_REFERENCE'),
     ],
     'retry' => [
         'read_attempts' => (int) env('GAM_READ_ATTEMPTS', 3),

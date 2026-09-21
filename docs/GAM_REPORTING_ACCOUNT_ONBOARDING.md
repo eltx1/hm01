@@ -1,38 +1,61 @@
 # Connect Google Ad Manager accounts from a website
 
-From **Admin → Website → Reports**, select **Connect your first Ad Manager
-account** (or **Connect another Ad Manager account**). Sign in with Google and
-approve access. A sole accessible network is selected automatically; if Google
-returns several networks, select one or more together. The administrator returns
-to the same website with the new account selected and chooses its ad unit.
-Existing connected accounts remain available for reuse across websites.
+From **Admin → Website → Reports**, use **Connect with Google** directly.
+The admin may enter the exact ad unit name, code or ID before authorization; it is
+kept in encrypted, session-bound state. After Google consent, a sole network is
+selected automatically and the unit is verified and bound through the existing
+financial reporting service. With several networks, the admin explicitly chooses
+the one containing that unit. Horus never guesses which network owns a website.
 
-## One-time Google app setup
+If no unit was entered, one or more networks may be saved together and the admin
+returns to the same website with its account selected to search for the unit.
+If unit verification fails, the account stays connected and the original input
+is preserved for correction without repeating Google consent. Repeated submission
+reuses the saved connection and existing identical site binding.
 
-Google authorization requires an OAuth Web application belonging to the platform.
-If it has not been configured, the same connection screen opens setup instructions
-and provides the exact callback URI:
+## Platform provisioning (operations only)
+
+Website administrators do not create Google apps, enter callbacks, or upload
+credential files. The platform operator provisions **one platform-owned Google
+Web OAuth application** for all reporting accounts. A Google Cloud project and
+registered Web client are still required by Google; local readiness never claims
+that external provisioning, approval or live consent has already succeeded.
+
+The callback uses configured `APP_URL`, not the request Host header:
 
 `https://app.horusmedia.net/admin/gam/reporting/oauth/callback`
 
-Configure the Google Auth Platform audience and consent screen, create a Web
-application client with that authorized redirect URI, download its JSON, and use
-**Save and continue with Google**. No server paths, refresh tokens, SSH changes,
-or individual Google Cloud project per website are required. The callback uses
-the configured application URL rather than an untrusted request host.
+After obtaining the platform application's private downloaded file, operations
+can install it in encrypted shared storage with:
 
-For an external app in Testing, add permitted test users. Google's seven-day
-refresh-token expiry for this mode applies to Ad Manager authorization; configure
-the appropriate production audience/verification for ongoing reporting. Google
-account consent and any required Google application configuration are external
-steps which the platform cannot silently bypass. Ad Manager API access must also
-be enabled in the selected network.
+```sh
+php artisan gam:reporting-google --file=/private/path/google-web-client.json
+php artisan gam:reporting-google
+```
 
-An administrator who already has a Google service-account key can instead upload
-its JSON through the alternative form. The service-account email must be added to
-the Google network with the needed inventory/reporting permissions. Networks are
-discovered and verified through Google in the same way. Uploaded JSON cannot
-choose token endpoints or redirect destinations.
+The import validates client type, credential structure, and the exact authorized
+callback. Public-directory files are rejected; failed imports preserve existing
+configuration. No secrets are accepted as command arguments or printed. Imported
+secrets are encrypted; the original source should remain only in protected
+operator storage. The command is not a live authorization test.
+
+Alternatively configure `GAM_REPORTING_OAUTH_APP_REFERENCE=file:/private/path/...`
+(or an existing `env:` reference). Explicit deployment configuration takes
+precedence and fails closed if unreadable/invalid rather than silently switching
+clients. Existing encrypted `managed:oauth-app` configuration remains supported.
+No automatic guessing or reuse of unrelated Google OAuth clients is performed.
+
+If the platform app is absent or corrupt, the admin sees a truthful activation
+pending message, with no technical setup form. Existing GAM/CSV sources stay
+available. The normal production audit separately reports this local readiness
+without printing secrets. The older permission-protected upload endpoints remain
+compatible for existing operational tooling; they are not in the website flow.
+
+Google Cloud audience/consent configuration and any required production
+verification belong to platform operations. Google's Testing-mode refresh-token
+expiry still applies. Each Google account owner authorizes their account, and
+Ad Manager API/reporting access must be enabled for its networks. These Google
+requirements cannot be bypassed by changing the admin interface.
 
 ## Account isolation and reconnection
 
@@ -47,8 +70,8 @@ choose token endpoints or redirect destinations.
 - Google's SOAP API has one Ad Manager scope whose consent wording includes
   management. Horus enforces the reporting-only restriction in both its serving
   resolver and SOAP/REST execution paths and explains the consent wording in UI.
-- Reports do not begin until the administrator chooses the actual website ad
-  unit. The previous reporting feature's effective dates, financial rules,
+- Reports do not begin until the actual website ad unit has been verified and
+  bound, including the optional unit entered before Google consent. The previous reporting feature's effective dates, financial rules,
   historical preservation and duplicate protection still apply.
 
 ## Credential lifecycle

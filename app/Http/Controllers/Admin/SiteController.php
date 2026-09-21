@@ -6,19 +6,20 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Enums\VerificationMethod;
 use App\Http\Controllers\Controller;
-use App\Models\ServingModeChange;
 use App\Models\AuditLog;
+use App\Models\ServingModeChange;
 use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Models\SiteNote;
 use App\Models\SiteReview;
 use App\Services\Audit\AuditRecorder;
+use App\Services\Gam\GamReportingGoogleApp;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Reporting\SiteGamReportingService;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
 use App\Services\TrafficGate\TrafficGateConfigurationResolver;
-use App\Services\Reporting\SiteGamReportingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,6 +62,8 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'reportingGoogleReady' => $request->user()->hasPermission('gam.connections.manage')
+                && app(GamReportingGoogleApp::class)->ready(),
             'reportingGamConnections' => $request->user()->hasPermission('reporting.sources.manage')
                 ? $gamReporting->availableConnections($site)->orderBy('name')->get() : collect(),
             'trafficGate' => $trafficGateResolver->resolve($site),
