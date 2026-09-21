@@ -35,6 +35,9 @@ final class GamSecretResolver
 
     public function readJson(string $reference): array
     {
+        if (str_starts_with($reference, 'managed:')) {
+            return app(GamManagedCredentials::class)->read($reference);
+        }
         $decoded = json_decode((string) file_get_contents($this->resolveFile($reference)), true, 512, JSON_THROW_ON_ERROR);
 
         if (! is_array($decoded)) {

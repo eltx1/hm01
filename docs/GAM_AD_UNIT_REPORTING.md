@@ -7,6 +7,13 @@ JavaScript. When only one account is available it is selected automatically.
 Ambiguous names require selection of the intended ID. Account access, unit ID,
 network currency and timezone are verified before the binding is saved.
 
+If no account has been connected, select **Connect your first Ad Manager
+account** in the same section. Google sign-in discovers one or several networks
+and returns to the website with the account selected. **Connect another Ad Manager
+account** adds further Google identities or networks. One-time OAuth app setup
+and a service-account file alternative are available in that screen; see
+`docs/GAM_REPORTING_ACCOUNT_ONBOARDING.md`.
+
 This creates a `GAM_AD_UNIT` source connection with type `SITE_GAM_AD_UNIT`.
 It does not assign the site's serving GAM connection, change its serving mode,
 create advertising inventory, or publish a CDN configuration. Existing Horus,

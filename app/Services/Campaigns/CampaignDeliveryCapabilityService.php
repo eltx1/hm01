@@ -258,7 +258,7 @@ final class CampaignDeliveryCapabilityService
     private function resolveSelectedConnection(Site $site): ?GamConnection
     {
         if ($site->gam_connection_id) {
-            return GamConnection::withoutGlobalScopes()
+            return GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->whereKey($site->gam_connection_id)
                 ->where('is_enabled', true)
                 ->first();
@@ -270,20 +270,20 @@ final class CampaignDeliveryCapabilityService
     private function candidateIncludingDisabled(Site $site): ?GamConnection
     {
         if ($site->gam_connection_id) {
-            return GamConnection::withoutGlobalScopes()->find($site->gam_connection_id);
+            return GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)->find($site->gam_connection_id);
         }
 
         return match ($site->serving_mode) {
-            ServingMode::HorusGam => GamConnection::withoutGlobalScopes()
+            ServingMode::HorusGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::HorusGam->value)
                 ->where('is_primary', true)
                 ->first(),
-            ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()
+            ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::McmPartnerGam->value)
                 ->orderByDesc('is_enabled')
                 ->orderByDesc('last_successful_sync_at')
                 ->first(),
-            ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()
+            ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::PublisherGam->value)
                 ->where('organization_id', $site->organization_id)
                 ->orderByDesc('is_enabled')

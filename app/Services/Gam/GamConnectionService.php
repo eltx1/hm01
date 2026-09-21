@@ -80,6 +80,10 @@ final class GamConnectionService
 
     public function update(GamConnection $connection, array $data, User $actor): GamConnection
     {
+        if ($connection->is_reporting_only) {
+            throw ValidationException::withMessages(['connection' => 'This account is connected for reports only. Reconnect it from the website reporting page to refresh access.']);
+        }
+
         if (isset($data['credential_reference'])) {
             $this->credentialValidator->validate((string) $data['credential_reference']);
         }
@@ -137,6 +141,10 @@ final class GamConnectionService
 
     public function setPrimary(GamConnection $connection, User $actor): GamConnection
     {
+        if ($connection->is_reporting_only) {
+            throw ValidationException::withMessages(['connection' => 'This account is connected for reports only. Reconnect it from the website reporting page to refresh access.']);
+        }
+
         if ($connection->type !== GamConnectionType::HorusGam) {
             throw ValidationException::withMessages(['connection' => 'Only a HORUS_GAM connection can be the primary Horus network.']);
         }
@@ -187,6 +195,10 @@ final class GamConnectionService
 
     public function assignToSite(Site $site, GamConnection $connection, User $actor, string $reason): Site
     {
+        if ($connection->is_reporting_only) {
+            throw ValidationException::withMessages(['connection' => 'This account is connected for reports only. Reconnect it from the website reporting page to refresh access.']);
+        }
+
         if (! $connection->is_enabled) {
             throw ValidationException::withMessages(['gam_connection_id' => 'The selected GAM connection is disabled.']);
         }
