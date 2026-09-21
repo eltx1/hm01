@@ -9,6 +9,8 @@ use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\ReportDimension;
 use App\Models\Site;
+use App\Models\SiteGamReportBinding;
+use Carbon\CarbonImmutable;
 use App\Services\Serving\SiteEngineStateResolver;
 use Illuminate\Support\Collection;
 
@@ -21,6 +23,17 @@ final class ReportingHealthService
     /** @return array{status:string,reason:string,last_update:mixed,sources:array<int,array<string,mixed>>} */
     public function forSite(Site $site): array
     {
+        $unitBinding = SiteGamReportBinding::withoutGlobalScopes()->with('connection.source')
+            ->where('site_id', $site->id)->orderByDesc('starts_on')->get()
+            ->first(function (SiteGamReportBinding $binding): bool {
+                $today = CarbonImmutable::now($binding->connection->timezone)->toDateString();
+
+                return $binding->starts_on->toDateString() <= $today
+                    && (! $binding->ends_on || $binding->ends_on->toDateString() >= $today);
+            });
+        if ($unitBinding) {
+            return $this->adUnitHealth($unitBinding);
+        }
         $state = $this->engines->resolve($site);
         $required = collect();
 
@@ -127,6 +140,36 @@ final class ReportingHealthService
             },
             'last_update' => $sourceCollection->pluck('last_successful_import_at')->filter()->sortDesc()->first(),
             'sources' => $sources,
+        ];
+    }
+
+    private function adUnitHealth(SiteGamReportBinding $binding): array
+    {
+        $connection = $binding->connection;
+        $latest = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+            ->where('finality', 'FINALIZED')->where('settlement_eligible', true)->orderByDesc('report_date')->first();
+        $lastSuccess = $connection->last_finalized_import_at;
+        $error = ! $connection->is_enabled || ! $connection->source->is_enabled
+            || in_array($connection->status->value, ['ERROR', 'DISABLED'], true);
+        $stale = $latest && ($latest->report_date->toDateString() < CarbonImmutable::now($connection->timezone)->subDays(self::FRESH_DAYS)->toDateString()
+            || ! $lastSuccess || $lastSuccess->lt(now()->subDays(self::FRESH_DAYS)));
+        $status = $error || $stale ? 'DEGRADED' : ($latest ? 'ACTIVE' : 'PENDING');
+
+        return [
+            'status' => $status,
+            'reason' => match ($status) {
+                'ACTIVE' => 'The selected GAM ad unit supplies fresh website financial reports.',
+                'DEGRADED' => 'The website GAM ad-unit reporting source is stale or unavailable.',
+                default => 'The website GAM ad-unit connection is waiting for its first completed daily report.',
+            },
+            'last_update' => $lastSuccess?->toIso8601String(),
+            'sources' => [[
+                'key' => 'SITE_GAM_AD_UNIT:'.$binding->id, 'engine' => 'REPORTING', 'label' => $binding->ad_unit_name,
+                'status' => $error ? 'ERROR' : ($stale ? 'STALE' : ($latest ? 'FRESH' : 'MISSING')),
+                'report_source' => $connection->source->code->value, 'connection_name' => $connection->name,
+                'last_report_date' => $latest?->report_date->toDateString(),
+                'last_successful_import_at' => $lastSuccess?->toIso8601String(),
+            ]],
         ];
     }
 

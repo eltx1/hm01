@@ -8,8 +8,9 @@ financial-close, and publisher-statement pipeline.
 
 Validation before opening the PR:
 
-- Focused reporting/finance/GAM regressions: **50 passed, 390 assertions**.
-- New feature coverage: **16 passed, 111 assertions** (included above).
+- Focused reporting/finance/GAM regressions: **51 passed, 396 assertions**.
+- New feature coverage: **17 passed, 117 assertions** (included above).
+- Existing publisher monetization health regressions: **4 passed, 26 assertions**.
 - Existing loader/browser unit suite: **234 passed, 0 failed**.
 - Production asset build: **passed**.
 - `git diff --check`: **passed**.
@@ -44,6 +45,7 @@ Changed files:
 - `app/Models/SiteGamReportBinding.php`
 - `app/Services/Gam/GamOfficialSoapTransport.php`
 - `app/Services/Gam/GamOperationExecutor.php`
+- `app/Services/Monetization/ReportingHealthService.php`
 - `app/Services/Reporting/Connectors/GamAdUnitReportConnector.php`
 - `app/Services/Reporting/GamAdUnitReportClient.php`
 - `app/Services/Reporting/GamReportPending.php`

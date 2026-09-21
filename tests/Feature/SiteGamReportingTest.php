@@ -426,4 +426,21 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(1, $job->row_count);
         $this->assertSame(2000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
     }
+
+    public function test_site_health_tracks_the_reporting_unit_independently_of_the_serving_engines(): void
+    {
+        $context = $this->context();
+        $binding = $this->bind($context);
+        $health = app(\App\Services\Monetization\ReportingHealthService::class);
+        $this->assertSame('PENDING', $health->forSite($context[3])['status']);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $this->import($binding);
+        $result = $health->forSite($context[3]);
+        $this->assertSame('ACTIVE', $result['status']);
+        $this->assertSame('GAM_AD_UNIT', $result['sources'][0]['report_source']);
+        $this->assertSame('REPORTING', $result['sources'][0]['engine']);
+        $this->assertNull($context[3]->fresh()->gam_connection_id);
+        $binding->connection->update(['status' => 'ERROR']);
+        $this->assertSame('DEGRADED', $health->forSite($context[3])['status']);
+    }
 }
