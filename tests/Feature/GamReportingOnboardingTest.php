@@ -115,8 +115,8 @@ class GamReportingOnboardingTest extends TestCase
     private function start($admin, $site, string $adUnit = ''): array
     {
         app(GamReportingOnboarding::class)->saveApp($this->appJson(), $admin);
-        $response = $this->post(route('admin.sites.reporting.accounts.start', $site), ['ad_unit' => $adUnit])->assertRedirect();
-        $url = $response->headers->get('Location');
+        $response = $this->post(route('admin.sites.reporting.accounts.start', $site), ['ad_unit' => $adUnit])->assertOk();
+        $url = $response->viewData('authorizationUrl');
         $this->assertSame('accounts.google.com', parse_url($url, PHP_URL_HOST));
         parse_str(parse_url($url, PHP_URL_QUERY), $parameters);
 
@@ -159,19 +159,46 @@ class GamReportingOnboardingTest extends TestCase
     {
         [, $site] = $this->context();
         $response = $this->post(route('admin.sites.reporting.accounts.setup', $site), ['google_app' => UploadedFile::fake()->createWithContent('client.json', json_encode($this->appJson()))])
-            ->assertSessionHasNoErrors()->assertRedirect();
-        parse_str(parse_url($response->headers->get('Location'), PHP_URL_QUERY), $query);
+            ->assertSessionHasNoErrors()->assertOk();
+        parse_str(parse_url($response->viewData('authorizationUrl'), PHP_URL_QUERY), $query);
         $this->assertSame('offline', $query['access_type']);
         $this->assertSame('consent select_account', $query['prompt']);
         $this->assertSame('S256', $query['code_challenge_method']);
         $this->assertSame(43, strlen($query['code_challenge']));
         $this->assertSame(64, strlen($query['state']));
-        $this->assertStringNotContainsString('private-client-secret', $response->headers->get('Location'));
+        $this->assertStringNotContainsString('private-client-secret', $response->getContent());
         $this->assertStringNotContainsString('private-client-secret', file_get_contents($this->privateDirectory.'/oauth-app.enc'));
         $this->assertStringNotContainsString('private-client-secret', AuditLog::all()->toJson());
         $cached = Cache::get('gam:onboarding:state:'.hash('sha256', $query['state']));
         $this->assertStringNotContainsString('private-client-secret', $cached);
         $this->assertSame(0600, fileperms($this->privateDirectory.'/oauth-app.enc') & 0777);
+    }
+
+    public function test_google_handoff_preserves_strict_csp_and_the_entered_unit_without_exposing_secrets(): void
+    {
+        [$admin, $site] = $this->context();
+        app(GamReportingOnboarding::class)->saveApp($this->appJson(), $admin);
+        $response = $this->post(route('admin.sites.reporting.accounts.start', $site), ['ad_unit' => '23375345468'])
+            ->assertOk()->assertViewIs('admin.gam.reporting-google-redirect')
+            ->assertHeader('Referrer-Policy', 'no-referrer')
+            ->assertSee('Continue to Google')->assertDontSee('private-client-secret');
+        $this->assertFalse($response->headers->has('Location'));
+        $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+        $policy = $response->headers->get('Content-Security-Policy');
+        $this->assertStringContainsString("form-action 'self';", $policy);
+        $this->assertStringNotContainsString('accounts.google.com', $policy);
+        $url = $response->viewData('authorizationUrl');
+        $this->assertSame('https', parse_url($url, PHP_URL_SCHEME));
+        $this->assertSame('accounts.google.com', parse_url($url, PHP_URL_HOST));
+        $response->assertSee('content="0;url='.e($url).'"', false)
+            ->assertSee('href="'.e($url).'" rel="noreferrer"', false)
+            ->assertViewHas('returnUrl', route('admin.sites.show', $site).'#reporting');
+        parse_str(parse_url($url, PHP_URL_QUERY), $query);
+        $request = request();
+        $request->query->set('state', $query['state']);
+        $state = app(GamReportingOnboarding::class)->consumeState($request);
+        $this->assertSame('23375345468', $state['ad_unit']);
+        Http::assertNothingSent();
     }
 
     public function test_one_network_is_selected_automatically_and_site_ad_unit_can_be_connected_next(): void

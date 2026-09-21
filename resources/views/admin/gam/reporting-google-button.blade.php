@@ -3,7 +3,7 @@
         @csrf
         <label>Ad unit name or ID <span class="muted">(optional)</span><input class="hm-input" name="ad_unit" value="{{ old('ad_unit') }}" maxlength="255" placeholder="Enter the unit now, or choose it after connecting" autocomplete="off"></label>
         <small>Enter the unit once and we will connect its reports after Google authorization. If your account has several networks, choose the network containing this unit.</small>
-        <button class="hm-button-primary">Connect with Google</button>
+        <button class="hm-button-primary" type="submit" data-submitting-label="Connecting to Google…">Connect with Google</button>
     </form>
     <p class="muted">Choose your Google account and approve access. You can connect more than one account and reuse connected accounts for other websites.</p>
     <small>Google describes its Ad Manager permission as “view and manage”. Horus uses this connection for reports and prevents it from changing ads.</small>

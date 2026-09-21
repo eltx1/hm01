@@ -33,16 +33,22 @@ class GamReportingAccountController extends Controller
         ])->header('Cache-Control', 'private, no-store')->header('Referrer-Policy', 'no-referrer');
     }
 
-    public function setup(Request $request, Site $site, GamReportingOnboarding $onboarding): RedirectResponse
+    public function setup(Request $request, Site $site, GamReportingOnboarding $onboarding): Response
     {
         $onboarding->saveApp($this->uploadedJson($request, 'google_app'), $request->user());
 
         return $this->start($request, $site, $onboarding);
     }
 
-    public function start(Request $request, Site $site, GamReportingOnboarding $onboarding): RedirectResponse
+    public function start(Request $request, Site $site, GamReportingOnboarding $onboarding): Response
     {
-        return redirect()->away($onboarding->start($request, $site))->withHeaders(['Cache-Control' => 'private, no-store', 'Referrer-Policy' => 'no-referrer']);
+        // A cross-origin redirect after POST is blocked by form-action 'self'
+        // in Chromium. Commit a same-origin document first, then navigate to
+        // Google's fixed authorization endpoint without relaxing the CSP.
+        return response()->view('admin.gam.reporting-google-redirect', [
+            'authorizationUrl' => $onboarding->start($request, $site),
+            'returnUrl' => route('admin.sites.show', $site).'#reporting',
+        ])->withHeaders(['Cache-Control' => 'private, no-store', 'Referrer-Policy' => 'no-referrer']);
     }
 
     public function callback(Request $request, GamReportingOnboarding $onboarding): RedirectResponse
