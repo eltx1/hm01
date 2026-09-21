@@ -20,7 +20,7 @@
     @forelse($connections as $connection)
         <tr>
             <td><strong>{{ $connection->name }}</strong><br><span class="muted">{{ $connection->driver }}</span></td>
-            <td>{{ $connection->type->value }}</td>
+            <td>{{ $connection->is_reporting_only ? 'Reports only' : $connection->type->value }}</td>
             <td>{{ $connection->network_code ?: 'Pending test' }}</td>
             <td><span class="pill">{{ $connection->health_status->value }}</span></td>
             <td>{{ $connection->is_primary ? 'Yes' : 'No' }}</td>

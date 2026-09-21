@@ -13,7 +13,7 @@ final class GamConnectionResolver
     public function resolve(Site $site): ?GamConnection
     {
         if ($site->gam_connection_id) {
-            $explicit = GamConnection::withoutGlobalScopes()
+            $explicit = GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->whereKey($site->gam_connection_id)
                 ->where('is_enabled', true)
                 ->first();
@@ -24,17 +24,17 @@ final class GamConnectionResolver
         }
 
         return match ($site->serving_mode) {
-            ServingMode::HorusGam => GamConnection::withoutGlobalScopes()
+            ServingMode::HorusGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::HorusGam->value)
                 ->where('is_primary', true)
                 ->where('is_enabled', true)
                 ->first(),
-            ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()
+            ServingMode::McmPartnerGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::McmPartnerGam->value)
                 ->where('is_enabled', true)
                 ->orderByDesc('last_successful_sync_at')
                 ->first(),
-            ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()
+            ServingMode::PublisherGam => GamConnection::withoutGlobalScopes()->where('is_reporting_only', false)
                 ->where('type', GamConnectionType::PublisherGam->value)
                 ->where('organization_id', $site->organization_id)
                 ->where('is_enabled', true)

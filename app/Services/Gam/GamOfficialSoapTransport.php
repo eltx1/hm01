@@ -11,6 +11,7 @@ use Google\AdsApi\AdManager\AdManagerServices;
 use Google\AdsApi\AdManager\AdManagerSoapLogMessageFormatterProvider;
 use Google\AdsApi\Common\AdsSoapClientFactory;
 use Google\AdsApi\Common\OAuth2TokenBuilder;
+use Google\Auth\Credentials\ServiceAccountCredentials;
 use ReflectionClass;
 use SplObjectStorage;
 use Throwable;
@@ -18,6 +19,16 @@ use Throwable;
 final class GamOfficialSoapTransport implements GamSoapTransportInterface
 {
     private ?int $soapTimeoutSeconds = null;
+
+    private ?array $credentialMaterial = null;
+
+    public function withCredentialMaterial(array $material): self
+    {
+        $transport = clone $this;
+        $transport->credentialMaterial = $material;
+
+        return $transport;
+    }
 
     public function withTimeout(int $seconds): self
     {
@@ -35,6 +46,12 @@ final class GamOfficialSoapTransport implements GamSoapTransportInterface
 
     public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
     {
+        if ($connection->is_reporting_only && ! in_array($service.'.'.$method, [
+            'NetworkService.getAllNetworks', 'NetworkService.getCurrentNetwork', 'InventoryService.getAdUnitsByStatement',
+            'ReportService.runReportJob', 'ReportService.getReportJobStatus', 'ReportService.getReportDownloadUrlWithOptions',
+        ], true)) {
+            throw new GamTransportException('This account is connected for website reports only.', 'REPORTING_ONLY_ACCOUNT');
+        }
         if (! extension_loaded('soap')) {
             throw new GamTransportException('The PHP SOAP extension is required for GAM fallback writes.', 'SOAP_EXTENSION_MISSING');
         }
@@ -57,11 +74,13 @@ final class GamOfficialSoapTransport implements GamSoapTransportInterface
                 throw new GamTransportException("GAM SOAP {$version} does not expose {$service}.", 'SOAP_SERVICE_UNAVAILABLE');
             }
 
-            $session = (new AdManagerSessionBuilder)
+            $builder = (new AdManagerSessionBuilder)
                 ->withNetworkCode((string) $connection->network_code)
                 ->withApplicationName((string) ($connection->application_name ?: config('gam.application_name')))
-                ->withOAuth2Credential($this->credential($connection))
-                ->build();
+                ->withOAuth2Credential($this->credential($connection));
+            // The SDK warns about an omitted network even for getAllNetworks,
+            // the documented discovery call which explicitly omits that header.
+            $session = $method === 'getAllNetworks' && ! $connection->network_code ? @$builder->build() : $builder->build();
             $client = $factory->{$factoryMethod}($session);
             $arguments = $this->hydrator->arguments($client, $method, $payload, $namespace);
             $response = $client->{$method}(...$arguments);
@@ -90,16 +109,20 @@ final class GamOfficialSoapTransport implements GamSoapTransportInterface
 
     private function credential(GamConnection $connection): object
     {
-        $credential = $connection->credential()->firstOrFail();
+        $credential = $connection->relationLoaded('credential') ? $connection->getRelation('credential') : $connection->credential()->firstOrFail();
+        $material = $this->credentialMaterial;
         $builder = new OAuth2TokenBuilder;
         if ($credential->credential_type === GamCredentialType::ServiceAccount) {
+            if ($material !== null || str_starts_with($credential->reference, 'managed:')) {
+                return new ServiceAccountCredentials([config('gam.oauth.scope')], $material ?? $this->secrets->readJson($credential->reference));
+            }
             return $builder
                 ->withJsonKeyFilePath($this->secrets->resolveFile($credential->reference))
                 ->withScopes(implode(' ', $credential->scopes ?: [config('gam.oauth.scope')]))
                 ->build();
         }
 
-        $material = $this->secrets->readJson($credential->reference);
+        $material ??= $this->secrets->readJson($credential->reference);
 
         return $builder
             ->withClientId($material['client_id'] ?? null)

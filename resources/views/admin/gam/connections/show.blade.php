@@ -7,6 +7,7 @@
     <div class="status-row"><span class="pill">{{ $connection->health_status->value }}</span>@if($connection->is_primary)<span class="pill">Primary HORUS_GAM</span>@endif</div>
 </section>
 
+@if(! $connection->is_reporting_only)
 <div class="status-row" style="margin:1rem 0">
     <a class="hm-button-secondary button-link" href="{{ route('admin.gam.connections.edit', $connection) }}">Edit</a>
     <form method="POST" action="{{ route('admin.gam.connections.test', $connection) }}">@csrf<button class="hm-button-primary">Test and synchronize</button></form>
@@ -14,6 +15,10 @@
     <form method="POST" action="{{ route('admin.gam.connections.primary', $connection) }}">@csrf<button class="hm-button-secondary">Make primary HORUS_GAM</button></form>
     @endif
 </div>
+
+@else
+<p>This account is connected for website reports. To refresh access or add another account, open the website → Reports → Connect another Ad Manager account.</p>
+@endif
 
 <div class="metric-grid">
     <article><span class="muted">Assigned sites</span><strong class="metric">{{ $connection->sites->count() }}</strong></article>
@@ -32,6 +37,7 @@
 </article>
 
 <div class="split-grid">
+@if(! $connection->is_reporting_only)
 <article>
     <div class="section-heading"><div><p class="eyebrow">Website routing</p><h3>Assign this connection</h3></div></div>
     <form class="form-stack" method="POST" action="{{ route('admin.gam.connections.assign-site', $connection) }}">@csrf
@@ -42,6 +48,7 @@
     <div class="domain-card"><strong>Currently assigned</strong>@forelse($connection->sites as $site)<p><a class="text-link" href="{{ route('admin.sites.show', $site) }}">{{ $site->display_name }}</a> <span class="muted">{{ $site->primary_domain }}</span></p>@empty<p class="muted">No website is explicitly assigned.</p>@endforelse</div>
 </article>
 
+@endif
 <article>
     <p class="eyebrow">Credential posture</p><h3>Protected reference</h3>
     <dl><dt>Type</dt><dd>{{ $connection->credential?->credential_type?->value }}</dd><dt>Reference</dt><dd>[ENCRYPTED]</dd><dt>Client hint</dt><dd>{{ $connection->credential?->client_email_hint ?: $connection->credential?->oauth_client_id_hint ?: 'Not supplied' }}</dd><dt>Rotated</dt><dd>{{ $connection->credential?->rotated_at?->toDayDateTimeString() ?? 'Unknown' }}</dd><dt>Dry-run default</dt><dd>{{ $connection->dry_run_default ? 'Enabled' : 'Disabled' }}</dd></dl>

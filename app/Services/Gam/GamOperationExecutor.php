@@ -29,6 +29,9 @@ final class GamOperationExecutor
         array $options = [],
     ): GamResult {
         $isWrite = (bool) ($options['write'] ?? false);
+        if ($connection->is_reporting_only && $isWrite) {
+            return GamResult::failure('PERMISSION', 'REPORTING_ONLY_ACCOUNT', 'This account is connected for website reports only.');
+        }
         $dryRun = (bool) ($options['dry_run'] ?? $connection->dry_run_default ?? config('gam.dry_run_default', true));
         $idempotencyKey = $options['idempotency_key'] ?? ($isWrite ? $this->idempotencyKey($connection, $operationName, $payload, $options) : null);
         $existing = null;

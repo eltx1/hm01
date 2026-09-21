@@ -19,7 +19,7 @@ class GamConnection extends Model
 
     protected $fillable = [
         'organization_id', 'name', 'type', 'credential_type', 'driver', 'network_code',
-        'application_name', 'is_primary', 'is_enabled', 'dry_run_default', 'health_status',
+        'application_name', 'is_primary', 'is_enabled', 'dry_run_default', 'health_status', 'is_reporting_only', 'reporting_account_key',
         'last_health_check_at', 'last_successful_sync_at', 'configuration', 'created_by', 'updated_by',
     ];
 
@@ -31,6 +31,7 @@ class GamConnection extends Model
             'health_status' => GamHealthStatus::class,
             'is_primary' => 'boolean',
             'is_enabled' => 'boolean',
+            'is_reporting_only' => 'boolean',
             'dry_run_default' => 'boolean',
             'last_health_check_at' => 'datetime',
             'last_successful_sync_at' => 'datetime',
@@ -95,6 +96,6 @@ class GamConnection extends Model
 
     public function isPrimaryHorus(): bool
     {
-        return $this->type === GamConnectionType::HorusGam && $this->is_primary && $this->is_enabled;
+        return ! $this->is_reporting_only && $this->type === GamConnectionType::HorusGam && $this->is_primary && $this->is_enabled;
     }
 }

@@ -178,6 +178,9 @@ final class GamRestConnector implements GamConnectorInterface
 
     private function request(string $operation, string $service, string $method, string $verb, string $path, array $payload, array $query, array $options): GamResult
     {
+        if ($this->gamConnection->is_reporting_only && $verb !== 'GET' && ! ($service === 'reports' && $method === 'run')) {
+            return GamResult::failure('PERMISSION', 'REPORTING_ONLY_ACCOUNT', 'This account is connected for website reports only.');
+        }
         $auditPayload = ['httpMethod' => $verb, 'path' => $path, 'query' => $query, 'body' => $payload];
         return $this->executor->execute(
             $this->gamConnection,

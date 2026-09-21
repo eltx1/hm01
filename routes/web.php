@@ -154,6 +154,14 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/admin/click-protection', [ClickProtectionController::class, 'index'])->middleware(['horus', 'permission:settings.view'])->name('admin.click-protection.index');
         Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
+        Route::middleware(['horus', 'permission:reporting.sources.manage', 'permission:gam.connections.manage', 'throttle:20,1'])->group(function (): void {
+            Route::get('/admin/sites/{site}/reporting/accounts/connect', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'show'])->name('admin.sites.reporting.accounts.show');
+            Route::post('/admin/sites/{site}/reporting/accounts/google-app', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'setup'])->name('admin.sites.reporting.accounts.setup');
+            Route::post('/admin/sites/{site}/reporting/accounts/google', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'start'])->name('admin.sites.reporting.accounts.start');
+            Route::post('/admin/sites/{site}/reporting/accounts/service-account', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'upload'])->name('admin.sites.reporting.accounts.upload');
+            Route::post('/admin/sites/{site}/reporting/accounts/networks', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'connect'])->name('admin.sites.reporting.accounts.connect');
+            Route::get('/admin/gam/reporting/oauth/callback', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'callback'])->name('admin.gam.reporting.oauth.callback');
+        });
         Route::post('/admin/sites/{site}/reporting/gam-ad-unit', [SiteGamReportingController::class, 'store'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:10,1'])->name('admin.sites.reporting.gam.store');
         Route::get('/admin/sites/{site}/reporting/gam-ad-units', [SiteGamReportingController::class, 'units'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:60,1'])->name('admin.sites.reporting.gam.units');
         Route::get('/admin/sites/{site}/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view')->name('admin.sites.inventory.index');

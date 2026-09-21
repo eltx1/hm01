@@ -15,6 +15,9 @@ return [
         'scope' => 'https://www.googleapis.com/auth/admanager',
         'token_uri' => 'https://oauth2.googleapis.com/token',
     ],
+    'onboarding' => [
+        'storage_path' => storage_path('app/private/gam-credentials'),
+    ],
     'retry' => [
         'read_attempts' => (int) env('GAM_READ_ATTEMPTS', 3),
         'write_attempts' => (int) env('GAM_SAFE_WRITE_ATTEMPTS', 2),
