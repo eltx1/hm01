@@ -11,6 +11,7 @@ use App\Models\DemandNetwork;
 use App\Models\Placement;
 use App\Models\Site;
 use App\Services\Demand\QuickMonetizeService;
+use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\PlacementPresetCatalog;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Http\RedirectResponse;
@@ -144,7 +145,9 @@ final class DirectDemandQuickMonetizeController extends Controller
         );
         $placement = $result['placement'];
         $account = $result['account'];
-        $savedName = count($result['placements'] ?? []) === 4 ? 'Responsive Display · 4 manual placements' : $placement->name;
+        $savedName = count($result['placements'] ?? []) === PlacementPresetBuilder::RESPONSIVE_BUNDLE_SIZE
+            ? 'Responsive Display · '.PlacementPresetBuilder::RESPONSIVE_BUNDLE_SIZE.' manual placements'
+            : $placement->name;
 
         return redirect()
             ->route('admin.demand.quick.create', ['site' => $site->id])

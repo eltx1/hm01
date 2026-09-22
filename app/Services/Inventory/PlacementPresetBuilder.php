@@ -12,6 +12,7 @@ use Illuminate\Validation\ValidationException;
 
 final class PlacementPresetBuilder
 {
+    public const RESPONSIVE_BUNDLE_SIZE = 6;
     public function __construct(
         private readonly PlacementPresetCatalog $presets,
         private readonly InventoryManager $inventory,
@@ -108,7 +109,7 @@ final class PlacementPresetBuilder
             Site::withoutGlobalScopes()->whereKey($site->id)->where('organization_id', $site->organization_id)->lockForUpdate()->firstOrFail();
             $first = $this->create($site, 'responsive_display', $actor, ['name' => $name], false, true);
             $members = [];
-            for ($index = 1; $index <= 4; $index++) {
+            for ($index = 1; $index <= self::RESPONSIVE_BUNDLE_SIZE; $index++) {
                 $placement = $first;
                 if ($index > 1) {
                     $matches = Placement::withoutGlobalScopes()

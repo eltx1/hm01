@@ -58,6 +58,8 @@ final class QuickMonetizePresetUiRegressionTest extends TestCase
         $this->assertStringContainsString('value="sticky_top"', $html);
         $this->assertStringContainsString('value="video_floating"', $html);
         $this->assertStringContainsString('value="rewarded"', $html);
+        $this->assertStringContainsString('Responsive Display creates 6 centered manual placements', $html);
+        $this->assertStringContainsString('updates all 6', $html);
 
         $this->assertStringNotContainsString('<option value="0"', $html);
         $this->assertStringNotContainsString('<option value="1"', $html);

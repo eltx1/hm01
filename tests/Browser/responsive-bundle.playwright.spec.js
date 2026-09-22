@@ -6,9 +6,9 @@ import { readFile } from 'node:fs/promises';
 const loader = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 const runtime = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
 const CDN = 'https://cdn.horusmedia.net';
-const SITE = 'RESPONSIVE_FOUR';
+const SITE = 'RESPONSIVE_SIX';
 const GATE = 'https://verify.horusmedia.net';
-const codes = ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4'];
+const codes = ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4', 'quick_responsive_display_5', 'quick_responsive_display_6'];
 const mobileSizes = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
 const tabletSizes = [[728, 90], [468, 60], ...mobileSizes, [300, 600]];
 const desktopSizes = [[970, 250], [970, 90], ...tabletSizes];
@@ -71,7 +71,7 @@ const gpt = `(() => {
     queue.forEach(fn => fn());
 })();`;
 
-async function open(page, { count = 4, gated = false, blocked = false, expanded = false, creativeSizes = null } = {}) {
+async function open(page, { count = 6, gated = false, blocked = false, expanded = false, creativeSizes = null } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
     if (creativeSizes) await page.addInitScript(sizes => { window.testCreativeSizes = sizes; }, creativeSizes);
@@ -80,7 +80,7 @@ async function open(page, { count = 4, gated = false, blocked = false, expanded 
     }, SITE);
     await page.route('**/*', route => {
         const url = new URL(route.request().url());
-        if (url.origin === 'https://publisher.example') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}article{width:calc(100% - 32px);max-width:${expanded ? 1100 : 760}px;margin:auto}.hm-ad{float:left;text-align:left;margin-left:0}.hm-direct-google-gpt{margin-right:0}.slot-position{display:flow-root;max-width:100%}</style><body><article><h1>Publisher article</h1>${codes.slice(0, count).map((code, i) => `<section class="slot-position" style="width:${expanded ? [1000, 700, 350, 240][i] + 'px' : '100%'}"><p>Content at chosen position</p><div class="hm-ad" data-placement="${code}" style="${expanded && i === 2 ? 'padding:0 16px' : ''}"></div></section>`).join('')}</article><script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-base="${CDN}/configs" data-environment="production" data-config-version="1"></script></body></html>` });
+        if (url.origin === 'https://publisher.example') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}article{width:calc(100% - 32px);max-width:${expanded ? 1100 : 760}px;margin:auto}.hm-ad{float:left;text-align:left;margin-left:0}.hm-direct-google-gpt{margin-right:0}.slot-position{display:flow-root;max-width:100%}</style><body><article><h1>Publisher article</h1>${codes.slice(0, count).map((code, i) => `<section class="slot-position" style="width:${expanded ? [1000, 700, 350, 240, 600, 320][i] + 'px' : '100%'}"><p>Content at chosen position</p><div class="hm-ad" data-placement="${code}" style="${expanded && i === 2 ? 'padding:0 16px' : ''}"></div></section>`).join('')}</article><script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-base="${CDN}/configs" data-environment="production" data-config-version="1"></script></body></html>` });
         if (url.origin === CDN) {
             if (url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: loader });
             if (url.pathname === '/runtime/gpt/test.js') return route.fulfill({ contentType: 'application/javascript', body: runtime });
@@ -97,11 +97,11 @@ async function open(page, { count = 4, gated = false, blocked = false, expanded 
     return requests;
 }
 
-test('four manually installed units share demand, stay centered and never redefine slots on DOM changes', async ({ page }) => {
+test('six manually installed units share demand, stay centered and never redefine slots on DOM changes', async ({ page }) => {
     const requests = await open(page);
-    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
-    expect(await page.evaluate(() => window.testSlots.map(s => s.path))).toEqual(Array(4).fill('/123/shared'));
-    expect(await page.evaluate(() => new Set(window.testSlots.map(s => s.id)).size)).toBe(4);
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
+    expect(await page.evaluate(() => window.testSlots.map(s => s.path))).toEqual(Array(6).fill('/123/shared'));
+    expect(await page.evaluate(() => new Set(window.testSlots.map(s => s.id)).size)).toBe(6);
     for (const code of codes) {
         const root = page.locator(`[data-placement="${code}"]`);
         const bounds = await root.boundingBox();
@@ -112,7 +112,7 @@ test('four manually installed units share demand, stay centered and never redefi
     }
     await page.evaluate(() => { for (let i = 0; i < 10; i++) document.querySelector('article').appendChild(document.createElement('p')); window.dispatchEvent(new Event('resize')); });
     await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.testDisplays.length)).toBe(4);
+    expect(await page.evaluate(() => window.testDisplays.length)).toBe(6);
     expect(requests.filter(url => url.endsWith('/tag/js/gpt.js'))).toHaveLength(1);
     expect(requests.filter(url => url.endsWith('/runtime/gpt/test.js'))).toHaveLength(1);
 });
@@ -126,9 +126,9 @@ test('uninstalled units stay absent and make no ad requests', async ({ page }) =
 
 test('expanded responsive units request only device-appropriate sizes fitting each actual publisher DIV', async ({ page }) => {
     await open(page, { expanded: true });
-    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
     const slots = await page.evaluate(() => window.testSlots.map(({ id, path, sizes }) => ({ id, path, sizes })));
-    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     expect(new Set(slots.map(slot => slot.path)).size).toBe(1);
     expect(slots.find(slot => slot.id === 'hm-gpt-member-3').sizes).toEqual([[200, 200]]);
     const paddedSizes = slots.find(slot => slot.id === 'hm-gpt-member-2').sizes;
@@ -161,14 +161,14 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
     }
 });
 
-test('four filled creatives with different returned sizes remain rendered, centered and requested only once', async ({ page }) => {
+test('six filled creatives with different returned sizes remain rendered, centered and requested only once', async ({ page }) => {
     const creativeSizes = page.viewportSize().width >= 1024
-        ? [[728, 600], [640, 600], [300, 600], [200, 600]]
-        : [[300, 600], [300, 600], [300, 600], [200, 600]];
+        ? [[728, 600], [640, 600], [300, 600], [200, 600], [468, 600], [300, 600]]
+        : [[300, 600], [300, 600], [300, 600], [200, 600], [300, 600], [300, 600]];
     await open(page, { expanded: true, creativeSizes });
-    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
     const slots = await page.evaluate(() => window.testSlots.map(({ id, sizes }) => ({ id, sizes })));
-    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     // Requested inventory remains constrained even when GPT renders a taller ad.
     expect(slots[3].sizes).toEqual([[200, 200]]);
     for (const [index, code] of codes.entries()) {
@@ -188,12 +188,12 @@ test('four filled creatives with different returned sizes remain rendered, cente
         window.dispatchEvent(new Event('resize'));
     });
     await page.waitForTimeout(300);
-    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
-    expect(await page.evaluate(() => window.testDisplays.length)).toBe(4);
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
+    expect(await page.evaluate(() => window.testDisplays.length)).toBe(6);
     expect(await page.evaluate(() => window.testDestroyedSlots)).toEqual([]);
 });
 
-test('Click Guard blocks provider loading for all four units', async ({ page }) => {
+test('Click Guard blocks provider loading for all six units', async ({ page }) => {
     const requests = await open(page, { blocked: true });
     await page.waitForTimeout(600);
     expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);
@@ -201,7 +201,7 @@ test('Click Guard blocks provider loading for all four units', async ({ page }) 
 });
 
 for (const outcome of ['PASS', 'DENIED']) {
-    test(`Traffic Gate ${outcome} governs all four units and rejects a forged parent message`, async ({ page }) => {
+    test(`Traffic Gate ${outcome} governs all six units and rejects a forged parent message`, async ({ page }) => {
         const requests = await open(page, { gated: true });
         await expect(page.locator('iframe[data-hm-traffic-gate]')).toHaveCount(1);
         const frame = page.frames().find(frame => frame.url().startsWith(GATE));
@@ -211,7 +211,7 @@ for (const outcome of ['PASS', 'DENIED']) {
         expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);
         await frame.evaluate(outcome => window.reply('HORUS_TRAFFIC_GATE_' + outcome), outcome);
         if (outcome === 'PASS') {
-            await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(4);
+            await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
         } else {
             await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('BLOCKED');
             expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);

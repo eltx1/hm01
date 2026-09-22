@@ -8,7 +8,7 @@
 <section class="workspace-section" aria-label="Responsive display installation codes">
     <div class="workspace-heading"><div><p class="eyebrow">{{ $site->primary_domain }} · Manual placement</p><h2>Responsive Display · {{ $units->count() }} placement codes</h2></div></div>
     <p>One provider tag powers these independent placements. Keep the permanent Horus Loader installed once, then place each code at its chosen position in your page or template.</p>
-    <p class="muted">Use each code once per page. You can install any or all four. Ads appear only where their code is installed, centered within the available space. Availability depends on published configuration, visitor eligibility and provider demand.</p>
+    <p class="muted">Use each code once per page. You can install any or all {{ $units->count() }}. Ads appear only where their code is installed, centered within the available space. Availability depends on published configuration, visitor eligibility and provider demand.</p>
     <div class="detail-grid">
         @foreach($units as $unit)
             <article>

@@ -4,6 +4,7 @@
 @section('content')
 @php
     $hasBlockingReason = $blockingReasons !== [];
+    $responsiveBundleSize = \App\Services\Inventory\PlacementPresetBuilder::RESPONSIVE_BUNDLE_SIZE;
     $groupedSites = $sites->groupBy(fn ($site) => $site->publisher?->display_name ?? 'Unassigned');
     // Preserve the original preset keys (responsive_display, sticky_bottom, ...).
     // Without preserveKeys=true, Collection::groupBy() reindexes each group to 0..N,
@@ -109,13 +110,13 @@
                         </optgroup>
                     @endforeach
                 </select>
-                <span class="muted" id="quick-preset-help">Responsive Display creates four centered manual placements from one provider tag or GAM ad unit path. Copy each placement's DIV into its exact position on the publisher website.</span>
+                <span class="muted" id="quick-preset-help">Responsive Display creates {{ $responsiveBundleSize }} centered manual placements from one provider tag or GAM ad unit path. Copy each placement's DIV into its exact position on the publisher website.</span>
                 @error('placement_preset')<span class="error">{{ $message }}</span>@enderror
             </label>
 
             <label class="full" style="display:flex;gap:.65rem;align-items:center">
                 <input type="checkbox" id="quick-use-existing" value="1" @checked($oldMode === 'existing') @disabled($hasBlockingReason)>
-                <span>Use an existing placement instead <span class="muted">(Advanced — selecting a responsive bundle member updates all four)</span></span>
+                <span>Use an existing placement instead <span class="muted">(Advanced — selecting a responsive bundle member updates all {{ $responsiveBundleSize }})</span></span>
             </label>
 
             <label class="full" id="quick-existing-wrap" style="{{ $oldMode === 'existing' ? '' : 'display:none;' }}">Existing placement

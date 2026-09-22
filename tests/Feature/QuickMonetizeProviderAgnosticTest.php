@@ -74,7 +74,7 @@ final class QuickMonetizeProviderAgnosticTest extends TestCase
             ->assertDontSee('Add and activate a publisher website with at least one active placement first.');
     }
 
-    public function test_script_only_provider_tag_auto_creates_responsive_placement_and_multi_size_recipe(): void
+    public function test_script_only_provider_tag_auto_creates_six_responsive_placements_and_multi_size_recipe(): void
     {
         $tag = '<script async src="//cdn.taboola.com/libtrc/horus-test/loader.js"></script>';
 
@@ -96,7 +96,7 @@ final class QuickMonetizeProviderAgnosticTest extends TestCase
         $this->assertTrue((bool) data_get($placement->metadata, 'quick_monetize_generated'));
         $this->assertSame('display_banner', $placement->adFormat?->code);
         $this->assertFalse((bool) data_get($placement->format_settings, 'autoMount'));
-        $this->assertSame(4, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertSame(6, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $this->assertSame('center', data_get($placement->format_settings, 'contentAlignment'));
         $this->assertGreaterThan(1, $placement->sizes->where('is_active', true)->count());
 

@@ -303,7 +303,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame('GAM_REWARDED_PATH', data_get(DemandWidget::withoutGlobalScopes()->firstOrFail()->configuration, 'input_kind'));
     }
 
-    public function test_gam_path_creates_four_manual_responsive_units_using_each_units_configured_sizes(): void
+    public function test_gam_path_creates_six_manual_responsive_units_using_each_units_configured_sizes(): void
     {
         $this->seed(AdFormatSeeder::class);
         $path = '/1234567,7654321/news/responsive';
@@ -311,10 +311,11 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
             'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '  '.$path.'  ',
-        ]))->assertSessionHasNoErrors()->assertRedirect();
+        ]))->assertSessionHasNoErrors()->assertRedirect()
+            ->assertSessionHas('status', fn ($value) => str_contains((string) $value, 'Responsive Display · 6 manual placements'));
 
         $units = $this->responsiveUnits();
-        $this->assertCount(4, $units);
+        $this->assertCount(6, $units);
         $this->assertSame($before + 1, $this->site->configVersions()->count());
         $config = $this->publishedConfiguration();
         $runtimeIds = [];
@@ -338,9 +339,9 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             $this->assertNull(data_get($recipe, 'container.attributes.data-hm-vast-url'));
             $runtimeIds[] = data_get($recipe, 'container.id');
         }
-        $this->assertCount(4, array_unique($runtimeIds));
+        $this->assertCount(6, array_unique($runtimeIds));
         $widgets = DemandWidget::withoutGlobalScopes()->get();
-        $this->assertCount(4, $widgets);
+        $this->assertCount(6, $widgets);
         $this->assertSame([$path], $widgets->pluck('direct_tag_template')->unique()->values()->all());
         foreach ($widgets as $widget) {
             $this->assertSame('GAM_AD_UNIT_PATH', data_get($widget->configuration, 'input_kind'));
@@ -822,13 +823,41 @@ HTML;
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
     }
 
-    public function test_responsive_activation_publishes_four_manual_centered_slots_with_one_tag_and_unique_runtime_ids(): void
+    public function test_existing_four_member_responsive_bundle_expands_to_six_without_changing_the_first_four_ids(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $builder = app(PlacementPresetBuilder::class);
+        $created = collect($builder->responsiveBundle($this->site, $this->admin));
+        $this->assertCount(6, $created);
+
+        $firstFourIds = $created->take(4)->pluck('id')->all();
+        foreach ($created->slice(4) as $unit) {
+            $unit->sizes()->delete();
+            $unit->targeting()->delete();
+            $unit->forceDelete();
+        }
+        $this->assertCount(4, $this->responsiveUnits());
+
+        $expanded = collect($builder->responsiveBundle($this->site->fresh(), $this->admin));
+        $this->assertCount(6, $expanded);
+        $this->assertSame($firstFourIds, $expanded->take(4)->pluck('id')->all());
+        $this->assertSame(
+            [1, 2, 3, 4, 5, 6],
+            $expanded->map(fn ($unit) => (int) data_get($unit->metadata, 'responsive_bundle_index'))->all(),
+        );
+        $this->assertSame(
+            ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4', 'quick_responsive_display_5', 'quick_responsive_display_6'],
+            $expanded->pluck('code')->all(),
+        );
+    }
+
+    public function test_responsive_activation_publishes_six_manual_centered_slots_with_one_tag_and_unique_runtime_ids(): void
     {
         $this->seed(AdFormatSeeder::class);
         $before = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
         $units = $this->responsiveUnits();
-        $this->assertCount(4, $units);
+        $this->assertCount(6, $units);
         $this->assertSame($before + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $config = app(SiteConfigurationBuilder::class)->build($this->site->fresh(), ConfigEnvironment::Production, 1);
         $ids = [];
@@ -842,13 +871,13 @@ HTML;
             $ids[] = data_get($recipe, 'container.id');
             $this->assertSame('/1234567/lordai_header', data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
         }
-        $this->assertCount(4, array_unique($ids));
+        $this->assertCount(6, array_unique($ids));
         $widgets = DemandWidget::withoutGlobalScopes()->get();
-        $this->assertCount(4, $widgets);
+        $this->assertCount(6, $widgets);
         $this->assertSame([$this->gptTag()], $widgets->pluck('direct_tag_template')->unique()->values()->all());
     }
 
-    public function test_responsive_retry_and_editing_a_member_update_the_same_four_without_changing_other_formats_or_protection(): void
+    public function test_responsive_retry_and_editing_a_member_update_the_same_six_without_changing_other_formats_or_protection(): void
     {
         $this->seed(AdFormatSeeder::class);
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload())->assertSessionHasNoErrors();
@@ -867,7 +896,7 @@ HTML;
             'placement_id' => $ids[2], 'tag' => $tag,
         ]))->assertSessionHasNoErrors();
         $this->assertSame($ids, $this->responsiveUnits()->pluck('id')->all());
-        $this->assertSame(5, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame(7, DemandWidget::withoutGlobalScopes()->count());
         $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->where('id', '!=', $existingWidget->id)->get()->pluck('direct_tag_template')->unique()->values()->all());
         $this->assertSame($existingWidgetAttributes, $existingWidget->fresh()->getAttributes());
         foreach ($other as $id => $attributes) $this->assertSame($attributes, Placement::withoutGlobalScopes()->findOrFail($id)->getAttributes());
@@ -889,7 +918,7 @@ HTML;
             ]))->assertSessionHasErrors('quick');
         }
         $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
-        $this->assertCount(4, $this->responsiveUnits());
+        $this->assertCount(6, $this->responsiveUnits());
         $this->assertSame([$this->gptTag()], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
     }
 
@@ -923,7 +952,7 @@ HTML;
         $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
         $this->assertSame($legacy->id, $this->responsiveUnits()->first()->id);
-        $this->assertCount(4, $this->responsiveUnits());
+        $this->assertCount(6, $this->responsiveUnits());
     }
 
     private function responsiveUnits()
