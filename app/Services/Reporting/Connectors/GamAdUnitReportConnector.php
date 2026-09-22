@@ -46,20 +46,25 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             || (string) $binding->gamConnection->network_code !== $binding->network_code) {
             throw new RuntimeException('The report dates or connection do not match this website reporting binding.');
         }
-        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString());
+        $reportCurrency = $this->canonicalCurrency();
+        if (strtoupper((string) $connection->currency) !== $reportCurrency) {
+            throw new RuntimeException('Site GAM reporting must use the canonical Horus report currency. Reconnect or normalize this reporting source.');
+        }
+        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.$reportCurrency);
         $configuration = $connection->configuration ?? [];
         $jobId = data_get($configuration, 'google_jobs.'.$key.'.id');
         if (! $jobId) {
             $network = $this->google->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
             if ((string) ($network['networkCode'] ?? '') !== $binding->network_code
-                || ($network['currencyCode'] ?? '') !== $connection->currency || ($network['timeZone'] ?? '') !== $connection->timezone) {
-                throw new RuntimeException('The Google network currency or timezone changed. Reconnect the ad unit from the website Reports section.');
+                || ! preg_match('/^[A-Z]{3}$/D', (string) ($network['currencyCode'] ?? ''))
+                || ($network['timeZone'] ?? '') !== $connection->timezone) {
+                throw new RuntimeException('The Google network identity or timezone changed. Reconnect the ad unit from the website Reports section.');
             }
             $date = fn (CarbonInterface $day): array => ['year' => $day->year, 'month' => $day->month, 'day' => $day->day];
             $query = [
                 'dimensions' => $granularity === ReportGranularity::Hourly ? ['DATE', 'HOUR', 'AD_UNIT_ID'] : ['DATE', 'AD_UNIT_ID'],
                 'columns' => array_keys(self::COLUMNS), 'adUnitView' => 'FLAT', 'dateRangeType' => 'CUSTOM_DATE',
-                'startDate' => $date($from), 'endDate' => $date($to), 'reportCurrency' => $connection->currency,
+                'startDate' => $date($from), 'endDate' => $date($to), 'reportCurrency' => $reportCurrency,
                 'statement' => ['query' => 'WHERE AD_UNIT_ID = :unit', 'values' => [
                     ['key' => 'unit', 'value' => ['__type' => 'NumberValue', 'value' => $binding->ad_unit_id]],
                 ]],
@@ -152,7 +157,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     $micros = $metrics['revenue_micros'];
                     unset($metrics['revenue_micros']);
                     $rows[] = $metrics + [
-                        'date' => $day->toDateString(), 'hour' => $hour, 'currency' => $connection->currency,
+                        'date' => $day->toDateString(), 'hour' => $hour, 'currency' => $this->canonicalCurrency(),
                         'organization_id' => $binding->organization_id, 'site_id' => $binding->site_id,
                         'publisher_id' => $binding->site->publisher_id, 'gam_connection_id' => $binding->gam_connection_id,
                         'gam_ad_unit_id' => $binding->ad_unit_id,
@@ -166,6 +171,13 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         } finally {
             fclose($stream);
         }
+    }
+
+    private function canonicalCurrency(): string
+    {
+        $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+
+        return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
     }
 
     private function integer(string $value): int
