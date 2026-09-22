@@ -47,6 +47,25 @@ class ContractManagementTest extends TestCase
         $service->transition($contract, ContractStatus::Active, $admin);
     }
 
+    public function test_future_dated_contract_never_prices_revenue_before_its_start_date(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser);
+        $contract = $this->contract($publisher->id, $publisher->organization_id, $admin->id);
+        $startsOn = now()->addDays(5)->startOfDay();
+        $contract->update(['starts_at' => $startsOn]);
+
+        app(ContractLifecycleService::class)->transition($contract, ContractStatus::Active, $admin, 'Future commercial start');
+
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->where('scope_type', RevenueRuleScope::Publisher->value)
+            ->where('scope_id', $publisher->id)
+            ->firstOrFail();
+        $this->assertSame($startsOn->toDateString(), $rule->currentVersion->effective_from->toDateString());
+    }
+
     public function test_legacy_contract_document_endpoints_are_retired(): void
     {
         $this->seedIdentity();
