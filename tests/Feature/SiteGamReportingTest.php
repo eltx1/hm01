@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
 use App\Enums\ReportFinality;
+use App\Enums\FinancialReportingMethod;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
@@ -26,6 +27,7 @@ use App\Services\Gam\GamSoapVersionResolver;
 use App\Services\Monetization\ReportingHealthService;
 use App\Services\Reporting\Connectors\GamAdUnitReportConnector;
 use App\Services\Reporting\FinancialPeriodService;
+use App\Services\Reporting\MonetizationFinancialBindingService;
 use App\Services\Reporting\MonetizationFinancialReadinessService;
 use App\Services\Reporting\ReportImportService;
 use App\Services\Reporting\ReportingBridge;
@@ -559,7 +561,22 @@ class SiteGamReportingTest extends TestCase
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
         $readiness = app(MonetizationFinancialReadinessService::class);
+        $this->assertCount(1, $readiness->blockersForPeriod($period), 'Site GAM must not silently cover independent provider revenue.');
+
+        app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider contract confirms revenue is included in the bound Site GAM unit.',
+            ],
+        );
         $this->assertCount(0, $readiness->blockersForPeriod($period));
+
         $other = $this->makeSiteFor($publisher, $user);
         $other->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
         DemandSite::withoutGlobalScopes()->create($mapping + ['site_id' => $other->id]);
