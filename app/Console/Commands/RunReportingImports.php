@@ -56,6 +56,9 @@ class RunReportingImports extends Command
         $connections = ReportSourceConnection::withoutGlobalScopes()
             ->where('is_enabled', true)
             ->where('connection_type', '!=', 'SITE_GAM_AD_UNIT')
+            ->whereDoesntHave('financialBindings', fn ($binding) => $binding
+                ->where('is_enabled', true)
+                ->where('configuration->site_gam_included', true))
             ->where('status', '!=', 'DISABLED')
             ->where(function ($query): void {
                 $query->whereDoesntHave('financialBindings')
