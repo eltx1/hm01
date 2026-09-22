@@ -598,6 +598,67 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(2000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
     }
 
+    public function test_site_gam_ownership_does_not_suppress_independent_provider_financial_rows(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $this->bind($context);
+        $this->seed(DemandNetworkSeeder::class);
+
+        $network = DemandNetwork::where('code', 'CUSTOM')->first() ?? DemandNetwork::firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id,
+            'demand_network_id' => $network->id,
+            'name' => 'Independent Direct Provider',
+            'scope' => 'HORUS_MEDIA',
+            'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $site->id,
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+            'integration_mode' => 'DIRECT_JS',
+        ]);
+        $financial = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+        );
+
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = app(ReportImportService::class)->importRows(
+            $financial->connection,
+            [[
+                'date' => $day->toDateString(),
+                'publisher_id' => $site->publisher_id,
+                'site_id' => $site->id,
+                'impressions' => 25,
+                'gross_revenue_minor' => 2500,
+                'currency' => 'USD',
+            ]],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $day,
+            $day,
+            $admin,
+            'independent-provider-row',
+            importType: 'CSV',
+        );
+
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertSame(1, $job->row_count);
+        $this->assertDatabaseHas('daily_reports', [
+            'report_source_connection_id' => $financial->report_source_connection_id,
+            'gross_revenue_minor' => 2500,
+        ]);
+    }
+
     public function test_site_health_tracks_the_reporting_unit_independently_of_the_serving_engines(): void
     {
         $context = $this->context();
