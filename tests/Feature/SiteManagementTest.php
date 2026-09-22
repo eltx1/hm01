@@ -107,6 +107,95 @@ class SiteManagementTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['event' => 'site.status.changed', 'auditable_id' => $site->id]);
     }
 
+    public function test_super_admin_can_force_approve_and_activate_draft_website_without_ads_txt_verification(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser, ['business_domain' => 'publisher-owner.example']);
+        $site = $this->makeSiteFor($publisher, $publisherUser);
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+
+        $this->assertSame(SiteStatus::Draft, $site->status);
+        $this->assertFalse(app(SiteAdsTxtInstallationService::class)->hasCurrentCoreVerification($site));
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.sites.force-activate', $site), [
+                'reason' => 'Approved for an emergency managed launch.',
+                'confirmation' => '1',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $site->refresh();
+        $this->assertSame(SiteStatus::Active, $site->status);
+        $this->assertNotNull($site->submitted_at);
+        $this->assertNotNull($site->approved_at);
+        $this->assertDatabaseHas('site_status_history', [
+            'site_id' => $site->id,
+            'previous_status' => SiteStatus::Draft->value,
+            'new_status' => SiteStatus::PendingReview->value,
+        ]);
+        $this->assertDatabaseHas('site_status_history', [
+            'site_id' => $site->id,
+            'previous_status' => SiteStatus::PendingReview->value,
+            'new_status' => SiteStatus::Approved->value,
+        ]);
+        $this->assertDatabaseHas('site_status_history', [
+            'site_id' => $site->id,
+            'previous_status' => SiteStatus::Approved->value,
+            'new_status' => SiteStatus::Active->value,
+        ]);
+        $this->assertDatabaseHas('site_reviews', [
+            'site_id' => $site->id,
+            'decision' => 'APPROVED',
+            'internal_reason' => 'Approved for an emergency managed launch.',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'site.force_approved_and_activated',
+            'auditable_id' => $site->id,
+        ]);
+        $this->assertDatabaseHas('config_versions', [
+            'site_id' => $site->id,
+            'environment' => 'PRODUCTION',
+        ]);
+    }
+
+    public function test_force_activation_is_restricted_to_super_admin_even_when_other_admin_can_review_sites(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $operationsAdmin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::OperationsAdmin);
+
+        $this->actingAs($operationsAdmin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.sites.force-activate', $site), [
+                'reason' => 'Attempted operational override.',
+                'confirmation' => '1',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(SiteStatus::Draft, $site->fresh()->status);
+        $this->assertDatabaseMissing('audit_logs', [
+            'event' => 'site.force_approved_and_activated',
+            'auditable_id' => $site->id,
+        ]);
+    }
+
+    public function test_force_activation_requires_explicit_reason_and_confirmation(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $site = $this->makeSiteFor($this->makePublisherFor($publisherUser), $publisherUser);
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.sites.force-activate', $site), [])
+            ->assertRedirect()
+            ->assertSessionHasErrors(['reason', 'confirmation']);
+
+        $this->assertSame(SiteStatus::Draft, $site->fresh()->status);
+    }
+
     public function test_serving_mode_can_change_back_to_horus_gam_without_changing_installation_code(): void
     {
         $this->seedIdentity();

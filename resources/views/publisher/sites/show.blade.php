@@ -122,7 +122,15 @@
     <article>
         <p class="eyebrow">Review controls</p><h2>Decision and lifecycle actions</h2>
         @if(auth()->user()->hasPermission('sites.review'))
-            @if($site->status === \App\Enums\SiteStatus::PendingReview)
+            @if($site->status === \App\Enums\SiteStatus::Draft && auth()->user()->hasRole(\App\Enums\RoleName::SuperAdmin->value))
+                <form method="POST" action="{{ route('admin.sites.force-activate', $site) }}" class="form-stack danger-zone">
+                    @csrf
+                    <p class="muted"><strong>Super Admin override.</strong> This bypasses the activation ads.txt gate while preserving the full DRAFT → PENDING_REVIEW → APPROVED → ACTIVE audit trail.</p>
+                    <label>Required override reason<textarea class="hm-input" name="reason" required maxlength="2000" placeholder="Why is immediate activation authorized?"></textarea></label>
+                    <label><input type="checkbox" name="confirmation" value="1" required> I confirm that I am intentionally bypassing the normal ads.txt activation verification for this website.</label>
+                    <button class="hm-button-danger">Force Approve &amp; Activate</button>
+                </form>
+            @elseif($site->status === \App\Enums\SiteStatus::PendingReview)
                 <form method="POST" action="{{ route('admin.sites.approve', $site) }}" class="form-stack">@csrf<label>Publisher message<textarea class="hm-input" name="publisher_message"></textarea></label><label>Internal reason<textarea class="hm-input" name="internal_reason"></textarea></label><p class="muted">One action approves the website, activates serving, and publishes Production configuration.</p><button class="hm-button-primary">Approve &amp; activate website</button></form>
                 <form method="POST" action="{{ route('admin.sites.reject', $site) }}" class="form-stack danger-zone">@csrf<label>Publisher explanation<textarea class="hm-input" name="publisher_message" required></textarea></label><label>Internal reason<textarea class="hm-input" name="internal_reason" required></textarea></label><button class="hm-button-danger">Reject website</button></form>
             @elseif($site->status === \App\Enums\SiteStatus::Approved)
