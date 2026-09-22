@@ -90,8 +90,8 @@ final class UnifiedReportService
             'impressions' => $impressions,
             'revenue_minor' => $revenue,
             'ecpm_micros' => $impressions > 0 ? (int) round($revenue * 10000 / $impressions) : 0,
-            'websites' => $this->group($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
-            'placements' => $this->group($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
+            'websites' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
+            'placements' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
             'payment_balance_minor' => (int) ($this->latestPublisherStatements($currency, $publisher->id)
                 ->first()?->balance_due_minor ?? 0),
             'statements' => PublisherStatement::withoutGlobalScopes()
@@ -201,6 +201,15 @@ final class UnifiedReportService
             'publisher_earnings_minor' => (int) $group->sum('publisher_earnings_minor'),
             'horus_earnings_minor' => (int) $group->sum('horus_earnings_minor'),
         ])->sortByDesc('gross_revenue_minor')->values();
+    }
+
+    private function publisherGroup(Collection $rows, callable $key): Collection
+    {
+        return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
+            'label' => $label,
+            'impressions' => (int) $group->sum('impressions'),
+            'publisher_earnings_minor' => (int) $group->sum('publisher_earnings_minor'),
+        ])->sortByDesc('publisher_earnings_minor')->values();
     }
 
     private function range(CarbonInterface|string|null $from, CarbonInterface|string|null $to): array
