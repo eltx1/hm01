@@ -44,6 +44,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             'dateRangeType' => 'CUSTOM_DATE',
             'startDate' => $from->toDateString(),
             'endDate' => $to->toDateString(),
+            'currencyCode' => strtoupper((string) config('reporting.gam_report_currency', 'USD')),
             'statement' => $options['statement'] ?? null,
         ], [
             'dry_run' => false,
