@@ -378,9 +378,13 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertFalse((bool) $oldConnection->fresh()->is_enabled);
         $this->assertSame('DISABLED', $oldConnection->fresh()->status->value);
         $this->assertTrue((bool) $newBinding->connection->is_enabled);
-        $this->assertSame(ReportImportStatus::Duplicate->value, ReportImportJob::withoutGlobalScopes()
-            ->where('idempotency_key', hash('sha256', 'provider-old-source-failed-cutover'))
-            ->value('status'));
+        $this->assertSame(
+            ReportImportStatus::Duplicate,
+            ReportImportJob::withoutGlobalScopes()
+                ->where('idempotency_key', hash('sha256', 'provider-old-source-failed-cutover'))
+                ->firstOrFail()
+                ->status,
+        );
         $this->assertDatabaseHas('daily_reports', [
             'report_import_job_id' => $historical->id,
             'report_source_connection_id' => $oldConnection->id,
