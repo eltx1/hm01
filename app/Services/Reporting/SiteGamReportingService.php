@@ -31,7 +31,7 @@ final class SiteGamReportingService
         return strtoupper((string) config('reporting.canonical_currency', 'USD'));
     }
 
-    public function ensureCanonicalCurrency(SiteGamReportBinding $binding, ?User $actor = null): SiteGamReportBinding
+    public function ensureCanonicalCurrency(SiteGamReportBinding $binding, ?User $actor = null, ?array $network = null): SiteGamReportBinding
     {
         $binding->loadMissing(['connection', 'gamConnection', 'site']);
         $connection = $binding->connection;
@@ -39,7 +39,7 @@ final class SiteGamReportingService
             return $binding;
         }
 
-        $network = $this->google->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
+        $network ??= $this->google->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
         if ((string) ($network['networkCode'] ?? '') !== (string) $binding->network_code
             || ! preg_match('/^[A-Z]{3}$/D', (string) ($network['currencyCode'] ?? ''))
             || ! in_array($network['timeZone'] ?? '', timezone_identifiers_list(\DateTimeZone::ALL_WITH_BC), true)) {
@@ -141,7 +141,7 @@ final class SiteGamReportingService
             Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
             $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']) {
-                $current = $this->ensureCanonicalCurrency($current, $actor);
+                $current = $this->ensureCanonicalCurrency($current, $actor, $network);
                 $current->update(['ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
                 if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
