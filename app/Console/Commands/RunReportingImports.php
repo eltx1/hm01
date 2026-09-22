@@ -32,7 +32,11 @@ class RunReportingImports extends Command
         if ($this->option('retry-failed')) {
             ReportImportJob::withoutGlobalScopes()
                 ->where('status', ReportImportStatus::Failed->value)
-                ->whereHas('connection', fn ($q) => $q->where('connection_type', '!=', 'SITE_GAM_AD_UNIT'))
+                ->whereHas('connection', fn ($q) => $q
+                    ->where('connection_type', '!=', 'SITE_GAM_AD_UNIT')
+                    ->whereDoesntHave('financialBindings', fn ($binding) => $binding
+                        ->where('is_enabled', true)
+                        ->where('configuration->site_gam_included', true)))
                 ->where(fn ($query) => $query->whereNull('next_retry_at')->orWhere('next_retry_at', '<=', now()))
                 ->with('connection.source')
                 ->each(fn (ReportImportJob $job) => $imports->retry($job));
