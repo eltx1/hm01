@@ -108,6 +108,8 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             'quick_responsive_display_2',
             'quick_responsive_display_3',
             'quick_responsive_display_4',
+            'quick_responsive_display_5',
+            'quick_responsive_display_6',
             'quick_in_article_display',
             'quick_high_impact_display',
             'quick_mobile_display',
@@ -116,8 +118,8 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
 
         $placements = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->get();
         $this->assertEqualsCanonicalizing($expected, $placements->pluck('code')->all());
-        $this->assertSame(9, $placements->count());
-        $this->assertSame(9, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
+        $this->assertSame(11, $placements->count());
+        $this->assertSame(11, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_right']);
         $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_side_rail_left']);
 
@@ -146,7 +148,7 @@ final class QuickMonetizeDisplaySuiteCommandTest extends TestCase
             '--preset' => $presets,
         ]);
         $this->assertSame(0, $exit, Artisan::output());
-        $this->assertSame(9, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
+        $this->assertSame(11, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->whereNull('deleted_at')->count());
         $this->assertSame($versionCount, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
