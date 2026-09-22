@@ -41,6 +41,15 @@ final class MonetizationFinancialBindingService
         if ($this->containsSensitiveKey($configuration)) {
             throw ValidationException::withMessages(['configuration' => 'Financial binding configuration must contain non-secret metadata only.']);
         }
+        $siteGamIncluded = (bool) data_get($configuration, 'site_gam_included', false);
+        if ($siteGamIncluded && mb_strlen(trim((string) data_get($configuration, 'site_gam_inclusion_reason', ''))) < 12) {
+            throw ValidationException::withMessages([
+                'site_gam_inclusion_reason' => 'Explicit Site GAM financial coverage requires a specific evidence reason of at least 12 characters.',
+            ]);
+        }
+        if (! $siteGamIncluded) {
+            unset($configuration['site_gam_inclusion_reason']);
+        }
 
         $this->assertSourceMatchesSubject($subject, $source);
 
@@ -52,7 +61,7 @@ final class MonetizationFinancialBindingService
 
         return DB::transaction(function () use (
             $subject, $source, $method, $currency, $timezone, $actor, $configuration,
-            $enabled, $type, $finalizedCapable
+            $enabled, $type, $finalizedCapable, $siteGamIncluded
         ): MonetizationFinancialBinding {
             $connection = ReportSourceConnection::withoutGlobalScopes()->updateOrCreate(
                 [
@@ -100,6 +109,8 @@ final class MonetizationFinancialBindingService
                 'timezone' => $timezone,
                 'is_enabled' => $enabled,
                 'is_finalized_capable' => $finalizedCapable,
+                'site_gam_included' => $siteGamIncluded,
+                'site_gam_inclusion_reason' => $siteGamIncluded ? data_get($configuration, 'site_gam_inclusion_reason') : null,
                 'configuration_keys' => array_keys($configuration),
             ]);
 
