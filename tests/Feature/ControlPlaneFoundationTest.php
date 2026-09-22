@@ -115,6 +115,32 @@ class ControlPlaneFoundationTest extends TestCase
         $this->get(route('admin.sites.show', $site))->assertForbidden();
     }
 
+    public function test_publisher_websites_have_clear_task_navigation_and_direct_actions(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser);
+        $site = $this->makeSiteFor($publisher, $publisherUser, [
+            'display_name' => 'Publisher UX Site',
+            'primary_domain' => 'publisher-ux.example',
+        ]);
+
+        $this->actingAs($publisherUser)->get(route('publisher.sites.index'))
+            ->assertOk()
+            ->assertSee('Your websites')
+            ->assertSee('Open website')
+            ->assertSee('Publisher UX Site');
+
+        $this->get(route('publisher.sites.show', $site))
+            ->assertOk()
+            ->assertSee('aria-label="Website sections"', false)
+            ->assertSee('Monetization')
+            ->assertSee('Ads.txt')
+            ->assertSee('Installation')
+            ->assertSee('Privacy')
+            ->assertSee('Ad codes');
+    }
+
     public function test_publisher_isolation_and_internal_information_are_preserved_in_the_new_surfaces(): void
     {
         $this->seedIdentity();
