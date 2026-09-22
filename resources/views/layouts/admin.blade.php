@@ -29,6 +29,10 @@
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
             <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
             <p class="eyebrow">{{ $workspaceLabel }}</p>
+            <label class="navigation-finder">
+                <span class="sr-only">Find a page</span>
+                <input type="search" placeholder="Find a page…" autocomplete="off" data-nav-filter aria-label="Find a page in navigation">
+            </label>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
