@@ -58,9 +58,9 @@
         ['Total publishers', $totalPublishers],
         ['Total websites', $totalWebsites],
         ['Managed impressions', $reporting ? number_format($reporting['managed_impressions']) : null],
-        ['Gross revenue · USD', $reporting ? \App\Support\Money::formatMinor((int) $reporting['gross_revenue_minor']).' '.$reporting['currency'] : null],
-        ['Horus margin · USD', $reporting && $showInternalMargin ? \App\Support\Money::formatMinor((int) $reporting['horus_margin_minor']).' '.$reporting['currency'] : null],
-        ['Publisher payable · USD', $reporting ? \App\Support\Money::formatMinor((int) $reporting['outstanding_publisher_payments_minor']).' '.$reporting['currency'] : null],
+        ['Gross revenue · '.($reporting['currency'] ?? 'USD'), $reporting ? \App\Support\Money::formatMinor((int) $reporting['gross_revenue_minor']).' '.$reporting['currency'] : null],
+        ['Horus margin · '.($reporting['currency'] ?? 'USD'), $reporting && $showInternalMargin ? \App\Support\Money::formatMinor((int) $reporting['horus_margin_minor']).' '.$reporting['currency'] : null],
+        ['Publisher payable · '.($reporting['currency'] ?? 'USD'), $reporting ? \App\Support\Money::formatMinor((int) $reporting['outstanding_publisher_payments_minor']).' '.$reporting['currency'] : null],
         ['Total advertisers', $totalAdvertisers],
         ['Active campaigns', $activeCampaigns],
     ])->filter(fn ($metric) => $metric[1] !== null);
