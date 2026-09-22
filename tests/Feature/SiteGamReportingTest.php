@@ -650,28 +650,31 @@ class SiteGamReportingTest extends TestCase
         );
 
         $providerDay = CarbonImmutable::parse('2026-09-20');
-        $providerJob = app(ReportImportService::class)->importRows(
-            $financial->connection,
-            [[
-                'date' => $providerDay->toDateString(),
-                'publisher_id' => $publisher->id,
-                'site_id' => $site->id,
-                'impressions' => 95,
-                'gross_revenue_minor' => 99999,
-                'currency' => 'USD',
-            ]],
-            ReportGranularity::Daily,
-            ReportFinality::Finalized,
-            $providerDay,
-            $providerDay,
-            $admin,
-            importType: 'CSV',
-            sourceTotals: ['impressions' => 95, 'gross_revenue_minor' => 99999],
-        );
+        try {
+            app(ReportImportService::class)->importRows(
+                $financial->connection,
+                [[
+                    'date' => $providerDay->toDateString(),
+                    'publisher_id' => $publisher->id,
+                    'site_id' => $site->id,
+                    'impressions' => 95,
+                    'gross_revenue_minor' => 99999,
+                    'currency' => 'USD',
+                ]],
+                ReportGranularity::Daily,
+                ReportFinality::Finalized,
+                $providerDay,
+                $providerDay,
+                $admin,
+                importType: 'CSV',
+                sourceTotals: ['impressions' => 95, 'gross_revenue_minor' => 99999],
+            );
+            $this->fail('Provider-specific revenue must not import while Site GAM is the declared canonical source.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('source', $exception->errors());
+            $this->assertStringContainsString('Site GAM', $exception->errors()['source'][0]);
+        }
 
-        $this->assertSame(ReportImportStatus::Completed, $providerJob->status, $providerJob->error_message ?? '');
-        $this->assertSame(0, $providerJob->row_count);
-        $this->assertSame('SITE_REPORTING_SOURCE_EXCLUDED_ROWS', $providerJob->warnings[0]['code']);
         $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
         $this->assertCount(0, app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period));
 
