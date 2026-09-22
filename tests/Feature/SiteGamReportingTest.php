@@ -808,10 +808,13 @@ class SiteGamReportingTest extends TestCase
 
     public function test_legacy_open_non_usd_site_connection_self_heals_to_usd_and_reimports_open_rows(): void
     {
-        [, , , , ] = $context = $this->context();
+        $context = $this->context();
         $this->google->currency = 'AED';
         $binding = $this->bind($context);
-        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())->push($this->csv())]);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv())
+            ->push($this->csv())
+            ->push($this->csv([['2026-09-21', '12345', 20, 18, 2, 16, 1, 1000000]]))]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
 
         $aedPeriod = app(FinancialPeriodService::class)->periodFor('2026-09-20', 'AED');
