@@ -4,11 +4,13 @@ namespace App\Services\Reporting;
 
 use App\Enums\GamConnectionType;
 use App\Enums\OrganizationType;
+use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
 use App\Models\DailyReport;
 use App\Models\FinancialPeriod;
 use App\Models\GamConnection;
 use App\Models\HourlyReport;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\Site;
@@ -56,19 +58,23 @@ final class SiteGamReportingService
             throw ValidationException::withMessages(['gam_connection_id' => 'Google returned incomplete or inconsistent network information.']);
         }
 
-        return DB::transaction(function () use ($site, $gam, $unit, $network, $actor): SiteGamReportBinding {
+        $reportCurrency = $this->canonicalCurrency();
+        $networkCurrency = strtoupper((string) $network['currencyCode']);
+
+        return DB::transaction(function () use ($site, $gam, $unit, $network, $networkCurrency, $reportCurrency, $actor): SiteGamReportBinding {
             GamConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($gam->id);
             Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
             $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']
-                && $current->connection->currency === $network['currencyCode'] && $current->connection->timezone === $network['timeZone']) {
+                && $current->connection->timezone === $network['timeZone']) {
                 $current->update(['ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
+                $this->normalizeConnectionCurrency($current, $networkCurrency, $reportCurrency, $actor);
                 if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
                     $this->audit->record('reporting.site_gam.reenabled', $site->organization_id, $actor, $current);
                 }
 
-                return $current;
+                return $current->fresh(['connection']);
             }
             $key = $gam->network_code.':'.$unit['id'];
             if (SiteGamReportBinding::withoutGlobalScopes()->where('active_unit_key', $key)->where('site_id', '!=', $site->id)->exists()) {
@@ -77,7 +83,7 @@ final class SiteGamReportingService
             $today = CarbonImmutable::now($network['timeZone'])->startOfDay();
             $starts = $today->startOfMonth();
             // Serialize the cutover with financial closing as well as report imports.
-            $period = app(FinancialPeriodService::class)->periodFor($today, $network['currencyCode']);
+            $period = app(FinancialPeriodService::class)->periodFor($today, $reportCurrency);
             FinancialPeriod::query()->whereKey($period->id)->lockForUpdate()->firstOrFail();
             $networkConnections = ReportSourceConnection::withoutGlobalScopes()->where('connection_type', 'GAM_CONNECTION')
                 ->whereIn('connection_id', GamConnection::withoutGlobalScopes()->where('network_code', $gam->network_code)->select('id'))->pluck('id');
@@ -90,7 +96,7 @@ final class SiteGamReportingService
                     $starts = $starts->max(CarbonImmutable::parse($last, $network['timeZone'])->addDay());
                 }
             }
-            $lockedEnd = FinancialPeriod::query()->where('currency', $network['currencyCode'])->where('status', '!=', 'OPEN')->max('ends_on');
+            $lockedEnd = FinancialPeriod::query()->where('currency', $reportCurrency)->where('status', '!=', 'OPEN')->max('ends_on');
             if ($lockedEnd) {
                 $starts = $starts->max(CarbonImmutable::parse($lockedEnd, $network['timeZone'])->addDay());
             }
@@ -113,7 +119,12 @@ final class SiteGamReportingService
                 'organization_id' => $site->organization_id, 'report_source_id' => $source->id,
                 'name' => Str::limit($site->display_name, 220, '').' — GAM ad unit', 'connection_type' => 'SITE_GAM_AD_UNIT',
                 'connection_id' => $id, 'account_identifier' => $key,
-                'currency' => $network['currencyCode'], 'timezone' => $network['timeZone'],
+                'currency' => $reportCurrency, 'timezone' => $network['timeZone'],
+                'configuration' => [
+                    'currency_policy' => 'CANONICAL_REPORTING_CURRENCY',
+                    'report_currency' => $reportCurrency,
+                    'source_network_currency' => $networkCurrency,
+                ],
                 'status' => 'ACTIVE', 'is_enabled' => true, 'created_by' => $actor->id, 'updated_by' => $actor->id,
             ]);
             $binding = SiteGamReportBinding::withoutGlobalScopes()->create([
@@ -125,9 +136,94 @@ final class SiteGamReportingService
                 'starts_on' => $starts->toDateString(), 'created_by' => $actor->id,
             ]);
             $this->audit->record('reporting.site_gam.connected', $site->organization_id, $actor, $binding,
-                newValues: $binding->only(['site_id', 'gam_connection_id', 'network_code', 'ad_unit_id', 'starts_on']));
+                newValues: $binding->only(['site_id', 'gam_connection_id', 'network_code', 'ad_unit_id', 'starts_on']) + [
+                    'report_currency' => $reportCurrency,
+                    'source_network_currency' => $networkCurrency,
+                ]);
 
             return $binding;
         });
+    }
+
+    private function canonicalCurrency(): string
+    {
+        $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+
+        return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
+    }
+
+    private function normalizeConnectionCurrency(
+        SiteGamReportBinding $binding,
+        string $networkCurrency,
+        string $reportCurrency,
+        User $actor,
+    ): void {
+        $connection = $binding->connection;
+        $configuration = (array) ($connection->configuration ?? []);
+        $changed = strtoupper((string) $connection->currency) !== $reportCurrency
+            || data_get($configuration, 'report_currency') !== $reportCurrency
+            || data_get($configuration, 'source_network_currency') !== $networkCurrency;
+
+        if (! $changed) {
+            return;
+        }
+
+        $lockedPeriodIds = FinancialPeriod::query()
+            ->where('status', '!=', 'OPEN')
+            ->pluck('id');
+        $hasLockedRows = $lockedPeriodIds->isNotEmpty()
+            && (DailyReport::withoutGlobalScopes()
+                ->where('report_source_connection_id', $connection->id)
+                ->whereIn('financial_period_id', $lockedPeriodIds)
+                ->exists()
+                || HourlyReport::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $connection->id)
+                    ->whereIn('financial_period_id', $lockedPeriodIds)
+                    ->exists());
+
+        if ($hasLockedRows && strtoupper((string) $connection->currency) !== $reportCurrency) {
+            throw ValidationException::withMessages([
+                'gam_connection_id' => 'This reporting source has closed historical accounting in '.$connection->currency.'. Horus will not relabel closed money. Create a Finance-approved USD cutover from the next open day.',
+            ]);
+        }
+
+        $oldCurrency = strtoupper((string) $connection->currency);
+        unset($configuration['google_jobs'], $configuration['sync_due']);
+        $configuration['currency_policy'] = 'CANONICAL_REPORTING_CURRENCY';
+        $configuration['report_currency'] = $reportCurrency;
+        $configuration['source_network_currency'] = $networkCurrency;
+        $configuration['currency_normalized_at'] = now()->toIso8601String();
+
+        $connection->update([
+            'currency' => $reportCurrency,
+            'configuration' => $configuration,
+            'last_error' => null,
+            'updated_by' => $actor->id,
+        ]);
+
+        if ($oldCurrency !== $reportCurrency) {
+            ReportImportJob::withoutGlobalScopes()
+                ->where('report_source_connection_id', $connection->id)
+                ->whereIn('status', [
+                    ReportImportStatus::Pending->value,
+                    ReportImportStatus::Failed->value,
+                ])
+                ->update([
+                    'status' => ReportImportStatus::Duplicate->value,
+                    'error_message' => null,
+                    'next_retry_at' => null,
+                    'completed_at' => now(),
+                ]);
+
+            $this->audit->record(
+                'reporting.site_gam.currency_normalized',
+                $binding->organization_id,
+                $actor,
+                $binding,
+                ['report_currency' => $oldCurrency, 'source_network_currency' => $networkCurrency],
+                ['report_currency' => $reportCurrency, 'source_network_currency' => $networkCurrency],
+                ['reimport_required' => true],
+            );
+        }
     }
 }
