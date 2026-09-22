@@ -128,7 +128,7 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
     await open(page, { expanded: true });
     await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
     const slots = await page.evaluate(() => window.testSlots.map(({ id, path, sizes }) => ({ id, path, sizes })));
-    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     expect(new Set(slots.map(slot => slot.path)).size).toBe(1);
     expect(slots.find(slot => slot.id === 'hm-gpt-member-3').sizes).toEqual([[200, 200]]);
     const paddedSizes = slots.find(slot => slot.id === 'hm-gpt-member-2').sizes;
@@ -168,7 +168,7 @@ test('six filled creatives with different returned sizes remain rendered, center
     await open(page, { expanded: true, creativeSizes });
     await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
     const slots = await page.evaluate(() => window.testSlots.map(({ id, sizes }) => ({ id, sizes })));
-    expect(new Set(slots.map(slot => slot.id)).size).toBe(4);
+    expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     // Requested inventory remains constrained even when GPT renders a taller ad.
     expect(slots[3].sizes).toEqual([[200, 200]]);
     for (const [index, code] of codes.entries()) {
