@@ -822,6 +822,34 @@ HTML;
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
     }
 
+    public function test_existing_four_member_responsive_bundle_expands_to_six_without_changing_the_first_four_ids(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $builder = app(PlacementPresetBuilder::class);
+        $created = collect($builder->responsiveBundle($this->site, $this->admin));
+        $this->assertCount(6, $created);
+
+        $firstFourIds = $created->take(4)->pluck('id')->all();
+        foreach ($created->slice(4) as $unit) {
+            $unit->sizes()->delete();
+            $unit->targeting()->delete();
+            $unit->forceDelete();
+        }
+        $this->assertCount(4, $this->responsiveUnits());
+
+        $expanded = collect($builder->responsiveBundle($this->site->fresh(), $this->admin));
+        $this->assertCount(6, $expanded);
+        $this->assertSame($firstFourIds, $expanded->take(4)->pluck('id')->all());
+        $this->assertSame(
+            [1, 2, 3, 4, 5, 6],
+            $expanded->map(fn ($unit) => (int) data_get($unit->metadata, 'responsive_bundle_index'))->all(),
+        );
+        $this->assertSame(
+            ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4', 'quick_responsive_display_5', 'quick_responsive_display_6'],
+            $expanded->pluck('code')->all(),
+        );
+    }
+
     public function test_responsive_activation_publishes_six_manual_centered_slots_with_one_tag_and_unique_runtime_ids(): void
     {
         $this->seed(AdFormatSeeder::class);
