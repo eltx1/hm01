@@ -629,15 +629,31 @@ class SiteGamReportingTest extends TestCase
             'approval_status' => 'APPROVED', 'integration_mode' => 'DIRECT_JS']);
         $this->google->currency = 'EGP';
         $binding = $this->bind($context);
+        app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'EGP',
+            'Africa/Cairo',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider settlement is explicitly included in this EGP Site GAM reporting unit.',
+            ],
+        );
+
         $usd = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
         $egp = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'EGP');
         $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
         $readiness = app(MonetizationFinancialReadinessService::class);
-        $this->assertCount(0, $readiness->blockersForPeriod($usd));
+        $this->assertCount(0, $readiness->blockersForPeriod($usd), 'An EGP financial binding must not block an unrelated USD period.');
         $this->assertCount(0, $readiness->blockersForPeriod($egp));
-        DailyReport::withoutGlobalScopes()->whereDate('report_date', '2026-09-25')->delete();
+        DailyReport::withoutGlobalScopes()
+            ->where('report_source_connection_id', $binding->report_source_connection_id)
+            ->whereDate('report_date', '2026-09-25')
+            ->delete();
         $this->assertCount(0, $readiness->blockersForPeriod($usd));
         $this->assertCount(1, $readiness->blockersForPeriod($egp));
     }
