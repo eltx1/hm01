@@ -36,8 +36,10 @@ class ReportingController extends Controller
         $from = $request->date('from') ?: now()->startOfMonth();
         $to = $request->date('to') ?: now();
 
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+
         return view('admin.reporting.index', [
-            'summary' => $reports->adminSummary($from, $to, $request->string('currency')->value() ?: null),
+            'summary' => $reports->adminSummary($from, $to, $canonicalCurrency),
             'sources' => ReportSource::query()->withCount('connections')->orderByDesc('is_primary')->orderBy('name')->get(),
             'connections' => ReportSourceConnection::withoutGlobalScopes()->with('source')->latest()->limit(100)->get(),
             'imports' => ReportImportJob::withoutGlobalScopes()->with('connection.source')->latest()->limit(100)->get(),
@@ -60,10 +62,20 @@ class ReportingController extends Controller
             'configuration_json' => ['nullable', 'json'],
         ]);
 
+        $source = ReportSource::query()->findOrFail($data['report_source_id']);
         if ($data['connection_type'] === 'SITE_GAM_AD_UNIT'
-            || ReportSource::query()->findOrFail($data['report_source_id'])->code === ReportSourceCode::GamAdUnit) {
+            || $source->code === ReportSourceCode::GamAdUnit) {
             throw \Illuminate\Validation\ValidationException::withMessages(['report_source_id' => 'Connect ad-unit reporting from the website Reports section so the Google unit and publisher are verified.']);
         }
+
+        $gamSources = [
+            ReportSourceCode::HorusGam,
+            ReportSourceCode::McmPartnerGam,
+            ReportSourceCode::PublisherGam,
+        ];
+        $currency = in_array($source->code, $gamSources, true)
+            ? strtoupper((string) config('reporting.canonical_currency', 'USD'))
+            : strtoupper($data['currency']);
 
         ReportSourceConnection::withoutGlobalScopes()->updateOrCreate(
             [
@@ -75,7 +87,7 @@ class ReportingController extends Controller
                 'organization_id' => $data['organization_id'] ?? $request->user()->organization_id,
                 'name' => $data['name'],
                 'account_identifier' => $data['account_identifier'] ?? null,
-                'currency' => strtoupper($data['currency']),
+                'currency' => $currency,
                 'timezone' => $data['timezone'],
                 'status' => ReportConnectionStatus::Active,
                 'is_enabled' => true,
