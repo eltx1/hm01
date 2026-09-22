@@ -563,7 +563,7 @@ class SiteGamReportingTest extends TestCase
         $readiness = app(MonetizationFinancialReadinessService::class);
         $this->assertCount(1, $readiness->blockersForPeriod($period), 'Site GAM must not silently cover independent provider revenue.');
 
-        app(MonetizationFinancialBindingService::class)->bind(
+        $financialBinding = app(MonetizationFinancialBindingService::class)->bind(
             $account,
             ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
             FinancialReportingMethod::Csv,
@@ -576,6 +576,29 @@ class SiteGamReportingTest extends TestCase
             ],
         );
         $this->assertCount(0, $readiness->blockersForPeriod($period));
+
+        try {
+            app(ReportImportService::class)->importRows(
+                $financialBinding->connection,
+                [[
+                    'date' => '2026-09-20',
+                    'publisher_id' => $publisher->id,
+                    'site_id' => $site->id,
+                    'gross_revenue_minor' => 9999,
+                    'currency' => 'USD',
+                ]],
+                ReportGranularity::Daily,
+                ReportFinality::Finalized,
+                CarbonImmutable::parse('2026-09-20'),
+                CarbonImmutable::parse('2026-09-20'),
+                $admin,
+                'must-not-double-count-provider-revenue',
+                importType: 'CSV',
+            );
+            $this->fail('Provider revenue must not be imported separately when Site GAM is declared canonical.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('source', $exception->errors());
+        }
 
         $other = $this->makeSiteFor($publisher, $user);
         $other->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
