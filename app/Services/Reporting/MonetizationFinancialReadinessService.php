@@ -141,11 +141,25 @@ final class MonetizationFinancialReadinessService
                 'site_gam_included',
                 false,
             );
-            if ($siteGamDeclared
-                && $subject->financialBinding?->is_enabled
-                && $siteIds->isNotEmpty()
-                && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period))) {
-                return null;
+            if ($siteGamDeclared) {
+                $siteGamComplete = $subject->financialBinding?->is_enabled
+                    && $siteIds->isNotEmpty()
+                    && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period));
+
+                if ($siteGamComplete) {
+                    return null;
+                }
+
+                return [
+                    'subject_type' => $subject instanceof DemandAccount ? 'DEMAND_ACCOUNT' : 'BIDDER_ACCOUNT',
+                    'subject_id' => $subject->id,
+                    'subject_name' => $subject->name,
+                    'status' => FinancialReadinessStatus::Stale->value,
+                    'reasons' => [[
+                        'code' => 'SITE_GAM_DECLARED_COVERAGE_INCOMPLETE',
+                        'message' => 'This provider declares Site GAM as its canonical financial source, but complete finalized Site GAM coverage is missing for one or more active websites.',
+                    ]],
+                ];
             }
             $result = $this->status($subject, $period->currency, $period);
             if ($result['ready'] && ! $this->hasCompletePeriodImportCoverage($subject, $result['binding'], $period)) {
