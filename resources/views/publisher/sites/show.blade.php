@@ -6,16 +6,11 @@
 @php
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
-        ['label' => 'Monetization', 'href' => '#monetization-health'],
-        ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
-        ['label' => 'Serving', 'href' => '#serving'],
-        ['label' => 'GAM', 'href' => '#gam'],
+        ['label' => 'Monetization health', 'href' => '#monetization-health'],
+        ['label' => 'Inventory & serving', 'href' => auth()->user()->hasPermission('inventory.view') ? '#inventory' : '#serving'],
         ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
-        ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
-        ['label' => 'Configuration', 'href' => '#configuration'],
-        ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Health', 'href' => '#health'],
+        ['label' => 'Demand', 'href' => '#prebid'],
+        ['label' => 'Compliance & health', 'href' => '#compliance'],
         ['label' => 'History', 'href' => '#history'],
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();
