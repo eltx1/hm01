@@ -42,6 +42,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             'dimensions' => $dimensions,
             'columns' => $columns,
             'dateRangeType' => 'CUSTOM_DATE',
+            'reportCurrency' => strtoupper((string) config('reporting.canonical_currency', 'USD')),
             'startDate' => $from->toDateString(),
             'endDate' => $to->toDateString(),
             'statement' => $options['statement'] ?? null,
