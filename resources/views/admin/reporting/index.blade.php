@@ -3,7 +3,7 @@
 @section('heading', 'Unified reporting sources')
 @section('content')
 <section class="hero"><div><p class="eyebrow">Horus Media source of truth</p><h2>Aggregated delivery and source imports</h2><p>Horus GAM remains clearly identified while optional GAM, Prebid and native sources are normalized into the authoritative reporting ledger. Monthly liability and payouts are operated in Finance Operations.</p></div>@if(auth()->user()->hasPermission('finance.operations.view'))<a class="hm-button-primary button-link" href="{{ route('admin.finance.overview') }}">Open Finance Operations</a>@endif</section>
-<form method="get" class="form-grid"><label>From<input type="date" name="from" value="{{ $summary['from']->toDateString() }}"></label><label>To<input type="date" name="to" value="{{ $summary['to']->toDateString() }}"></label><label>Currency<input name="currency" value="{{ $summary['currency'] }}" maxlength="3"></label><button class="hm-button-primary" type="submit">Apply</button></form>
+<form method="get" class="form-grid"><label>From<input type="date" name="from" value="{{ $summary['from']->toDateString() }}"></label><label>To<input type="date" name="to" value="{{ $summary['to']->toDateString() }}"></label><label>Reporting currency<input class="hm-input" value="{{ $summary['currency'] }}" readonly aria-readonly="true"><span class="muted">Horus requests GAM revenue from Google in USD regardless of the Ad Manager network currency.</span></label><button class="hm-button-primary" type="submit">Apply</button></form>
 <section class="metric-grid">
 @foreach ([
 ['Managed impressions',number_format($summary['managed_impressions'])],
