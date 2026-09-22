@@ -8,6 +8,7 @@
     $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
     $primary = $currencies->firstWhere('currency', $canonicalCurrency);
     $legacyCurrencies = $currencies->where('currency', '!=', $canonicalCurrency)->values();
+    $financeActions = collect($actions)->reject(fn ($action) => ($action['code'] ?? '') === 'NONE')->values();
 @endphp
 
 <section class="hero">
@@ -22,11 +23,11 @@
     </div>
 </section>
 
-@if($actions->isNotEmpty())
+@if($financeActions->isNotEmpty())
 <article class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Needs your attention</p><h2>Finance actions</h2></div><span class="pill">{{ $actions->count() }}</span></div>
+    <div class="workspace-heading"><div><p class="eyebrow">Needs your attention</p><h2>Finance actions</h2></div><span class="pill">{{ $financeActions->count() }}</span></div>
     <div class="compact-list">
-        @foreach($actions as $action)
+        @foreach($financeActions as $action)
             <div class="compact-row"><div><strong>{{ $action['label'] }}</strong><p>{{ str($action['code'])->replace('_', ' ')->headline() }}</p></div></div>
         @endforeach
     </div>
