@@ -7,6 +7,7 @@ use App\Enums\ConfigEnvironment;
 use App\Enums\PublisherApplicationStatus;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
+use App\Models\DemandSite;
 use App\Models\LoaderRelease;
 use App\Models\ServingModeChange;
 use App\Models\Site;
@@ -19,6 +20,7 @@ use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Notifications\DomainNotificationService;
+use App\Services\Reporting\RevenueRuleService;
 use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -31,6 +33,7 @@ class SiteLifecycleService
         private readonly SiteConfigPublisher $publisher,
         private readonly DomainNotificationService $notifications,
         private readonly HorusSellerIdentityService $sellerIdentities,
+        private readonly RevenueRuleService $revenueRules,
     ) {}
 
     public function create(array $data, User $actor): Site
@@ -168,6 +171,17 @@ class SiteLifecycleService
             $site->update(['default_revenue_share_percent' => $percentage]);
             $settings = $site->servingSettings()->firstOrFail();
             $settings->update(['revenue_share_percent' => $percentage, 'configuration_version' => $settings->configuration_version + 1]);
+
+            // The finance ledger resolves RevenueRule versions, not serving metadata.
+            // Keep the Website 360 control and financial source of truth atomic.
+            $this->revenueRules->syncWebsiteRevenueShare($site->refresh(), $percentage, $administrator, $reason);
+
+            // Direct-demand mappings keep the same operational percentage for
+            // diagnostics/UI, while the RevenueRule remains authoritative for money.
+            DemandSite::withoutGlobalScopes()
+                ->where('site_id', $site->id)
+                ->update(['revenue_share_percent' => $percentage, 'updated_by' => $administrator->id]);
+
             $this->audit->record('site.revenue_share.changed', $site->organization_id, $administrator, $site, ['revenue_share_percent' => $previous], ['revenue_share_percent' => $percentage], ['reason' => $reason]);
         });
 
