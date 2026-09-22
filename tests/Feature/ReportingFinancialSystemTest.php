@@ -81,6 +81,40 @@ class ReportingFinancialSystemTest extends TestCase
         $this->actingAs($publisherUser)->get(route('publisher.reporting.index'))->assertOk();
     }
 
+    public function test_settlement_eligible_finalized_row_cannot_be_downgraded_to_estimated(): void
+    {
+        [$admin, $publisher, , $site] = $this->reportingContext();
+        $connection = $this->connection(ReportSourceCode::HorusGam, $admin->organization_id, 'Horus GAM');
+        $date = now()->startOfMonth()->addDay()->toImmutable();
+        $imports = app(ReportImportService::class);
+
+        $finalized = $imports->importRows($connection, [[
+            'date' => $date->toDateString(),
+            'publisher_id' => $publisher->id,
+            'site_id' => $site->id,
+            'impressions' => 100,
+            'gross_revenue_minor' => 10000,
+            'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'finality-finalized');
+        $this->assertSame(ReportImportStatus::Completed, $finalized->status);
+
+        $lateEstimate = $imports->importRows($connection, [[
+            'date' => $date->toDateString(),
+            'publisher_id' => $publisher->id,
+            'site_id' => $site->id,
+            'impressions' => 50,
+            'gross_revenue_minor' => 5000,
+            'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Estimated, $date, $date, $admin, 'finality-late-estimate');
+
+        $this->assertSame(ReportImportStatus::Failed, $lateEstimate->status);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(ReportFinality::Finalized, $row->finality);
+        $this->assertTrue((bool) $row->settlement_eligible);
+        $this->assertSame(10000, (int) $row->gross_revenue_minor);
+        $this->assertSame(1, (int) $row->revision);
+    }
+
     public function test_most_specific_rule_wins_every_change_versions_and_closed_history_is_immutable(): void
     {
         [$admin, $publisher, , $site] = $this->reportingContext();
