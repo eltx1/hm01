@@ -196,6 +196,8 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('aria-controls="control-navigation"', false)
             ->assertSee('aria-expanded="false"', false)
             ->assertSee('aria-label="Control plane navigation"', false)
+            ->assertSee('data-nav-filter', false)
+            ->assertSee('Find a page')
             ->assertSee('Action Center');
     }
 }
