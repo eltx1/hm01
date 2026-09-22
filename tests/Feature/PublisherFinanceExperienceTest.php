@@ -16,6 +16,7 @@ use App\Models\PublisherPaymentProfile;
 use App\Models\PublisherStatement;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
+use App\Services\Reporting\PublisherFinanceService;
 use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\PublisherPaymentService;
 use App\Services\Reporting\ReportImportService;
@@ -68,6 +69,85 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
         $this->get(route('publisher.reporting.index'))->assertOk();
+    }
+
+    public function test_publisher_today_so_far_exposes_only_estimated_contractual_earnings(): void
+    {
+        [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
+        $connection = $this->connection($admin->organization_id);
+        $today = now()->toImmutable();
+
+        app(ReportImportService::class)->importRows($connection, [[
+            'date' => $today->toDateString(),
+            'publisher_id' => $publisher->id,
+            'site_id' => $site->id,
+            'impressions' => 321,
+            'clicks' => 7,
+            'gross_revenue_minor' => 10000,
+            'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Estimated, $today, $today, $admin, 'publisher-today-estimate');
+
+        $page = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
+        $page->assertOk()
+            ->assertSee('Today so far')
+            ->assertSee('321')
+            ->assertSee('7')
+            ->assertSee('USD 70.00')
+            ->assertSee('Your contractual share only');
+
+        $summary = app(PublisherFinanceService::class)->overview($publisher);
+        $usd = $summary['currencies']->firstWhere('currency', 'USD');
+        $this->assertTrue($usd['today_available']);
+        $this->assertSame(7000, $usd['today_estimated_earnings_minor']);
+        $this->assertArrayNotHasKey('latest_statement', $usd);
+    }
+
+    public function test_publisher_finance_projection_never_contains_gross_net_or_horus_margin(): void
+    {
+        [, $publisher] = $this->context();
+        $statement = $this->statement($publisher, 'HM-SAFE-PROJECTION', 5000, 10000, PublisherInvoiceStatus::NotRequired, null, [[
+            'source' => 'HORUS_GAM',
+            'site' => 'Publisher Site',
+            'impressions' => 50,
+            'gross_revenue_minor' => 10000,
+            'net_revenue_minor' => 8000,
+            'publisher_earnings_minor' => 5000,
+            'horus_earnings_minor' => 3000,
+        ]]);
+
+        $projection = app(PublisherFinanceService::class)->statement($statement);
+        $payload = json_encode($projection, JSON_THROW_ON_ERROR);
+
+        $this->assertStringNotContainsString('gross_revenue_minor', $payload);
+        $this->assertStringNotContainsString('net_revenue_minor', $payload);
+        $this->assertStringNotContainsString('horus_earnings_minor', $payload);
+        $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
+    }
+
+    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    {
+        [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
+        $usd = $this->connection($admin->organization_id);
+        $eur = $this->connection($admin->organization_id);
+        $eur->update(['currency' => 'EUR', 'name' => 'Horus GAM EUR']);
+        $date = now()->startOfMonth()->addDay()->toImmutable();
+
+        app(ReportImportService::class)->importRows($usd, [[
+            'date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+            'impressions' => 100, 'gross_revenue_minor' => 10000, 'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'dashboard-usd');
+        app(ReportImportService::class)->importRows($eur, [[
+            'date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+            'impressions' => 50, 'gross_revenue_minor' => 5000, 'currency' => 'EUR',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'dashboard-eur');
+
+        $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
+        $page->assertOk()
+            ->assertSee('Publisher earnings · USD')
+            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('USD 70.00')
+            ->assertSee('EUR 35.00')
+            ->assertSee('150');
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
