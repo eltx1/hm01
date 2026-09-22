@@ -19,7 +19,7 @@ const setNavigation = (open, { restoreFocus = false } = {}) => {
 
     if (open) {
         returnFocusToNavigationToggle = true;
-        window.requestAnimationFrame(() => navigation.querySelector('a, button, summary')?.focus());
+        window.requestAnimationFrame(() => navigation.querySelector('[data-nav-filter], a, button, summary')?.focus());
     } else if (restoreFocus && returnFocusToNavigationToggle) {
         returnFocusToNavigationToggle = false;
         navigationToggle.focus();
