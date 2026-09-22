@@ -23,13 +23,15 @@ final class RevenueRuleService
 {
     private const COMPOSITE_SCOPE_SEPARATOR = '|';
     private const COMMERCIAL_TERMS_RULE_NAME = 'Commercial terms default';
+    private const WEBSITE_REVENUE_SHARE_RULE_NAME = 'Website revenue share override';
+    private const WEBSITE_REVENUE_SHARE_PRIORITY = 100000;
 
     public function __construct(private readonly AuditRecorder $audit) {}
 
-    public function createRule(array $attributes, ?User $actor, bool $allowCommercialTermsManager = false): RevenueRule
+    public function createRule(array $attributes, ?User $actor, bool $allowCommercialTermsManager = false, bool $allowSiteServingManager = false): RevenueRule
     {
         if ($actor) {
-            $this->authorize($actor, $allowCommercialTermsManager);
+            $this->authorize($actor, $allowCommercialTermsManager, $allowSiteServingManager);
         }
 
         return DB::transaction(function () use ($attributes, $actor): RevenueRule {
@@ -74,9 +76,9 @@ final class RevenueRuleService
         });
     }
 
-    public function changeRule(RevenueRule $rule, array $attributes, User $actor, bool $allowCommercialTermsManager = false): RevenueRuleVersion
+    public function changeRule(RevenueRule $rule, array $attributes, User $actor, bool $allowCommercialTermsManager = false, bool $allowSiteServingManager = false): RevenueRuleVersion
     {
-        $this->authorize($actor, $allowCommercialTermsManager);
+        $this->authorize($actor, $allowCommercialTermsManager, $allowSiteServingManager);
 
         return DB::transaction(function () use ($rule, $attributes, $actor): RevenueRuleVersion {
             $rule = RevenueRule::withoutGlobalScopes()->with(['versions', 'currentVersion'])->lockForUpdate()->findOrFail($rule->id);
@@ -134,6 +136,71 @@ final class RevenueRuleService
         $this->authorize($actor, allowCommercialTermsManager: true);
 
         return $this->syncPublisherCommercialTermsRecord($contract, $actor);
+    }
+
+    public function syncWebsiteRevenueShare(Site $site, string $percentage, User $actor, string $reason): RevenueRule
+    {
+        $this->authorize($actor, allowSiteServingManager: true);
+
+        $publisherShare = (int) round(((float) $percentage) * 100);
+        if ($publisherShare < 0 || $publisherShare > 10000) {
+            throw ValidationException::withMessages([
+                'revenue_share_percent' => 'Website revenue share must be between 0 and 100 percent.',
+            ]);
+        }
+
+        $attributes = [
+            'name' => self::WEBSITE_REVENUE_SHARE_RULE_NAME,
+            'scope_type' => RevenueRuleScope::Website,
+            'scope_id' => $site->id,
+            'organization_id' => $site->organization_id,
+            'effective_from' => now()->toDateString(),
+            'effective_to' => null,
+            'publisher_share_bp' => $publisherShare,
+            'horus_share_bp' => 10000 - $publisherShare,
+            'mcm_partner_share_bp' => 0,
+            'currency' => null,
+            'priority' => self::WEBSITE_REVENUE_SHARE_PRIORITY,
+            'reason' => $reason,
+        ];
+
+        $rule = RevenueRule::withoutGlobalScopes()
+            ->with(['versions', 'currentVersion'])
+            ->where('scope_type', RevenueRuleScope::Website->value)
+            ->where('scope_id', $site->id)
+            ->where('name', self::WEBSITE_REVENUE_SHARE_RULE_NAME)
+            ->first();
+
+        if (! $rule) {
+            return $this->createRule(
+                $attributes,
+                $actor,
+                allowSiteServingManager: true,
+            );
+        }
+
+        if (! $rule->is_active) {
+            $rule->update(['is_active' => true, 'updated_by' => $actor->id]);
+        }
+
+        $current = $rule->currentVersion;
+        if ($current
+            && (int) $current->publisher_share_bp === $publisherShare
+            && (int) $current->horus_share_bp === 10000 - $publisherShare
+            && (int) $current->mcm_partner_share_bp === 0
+            && $current->currency === null
+            && $current->effective_to === null) {
+            return $rule->fresh(['currentVersion', 'versions']);
+        }
+
+        $this->changeRule(
+            $rule,
+            $attributes,
+            $actor,
+            allowSiteServingManager: true,
+        );
+
+        return $rule->fresh(['currentVersion', 'versions']);
     }
 
     /**
@@ -201,13 +268,18 @@ final class RevenueRuleService
     private function commercialTermsAttributes(PublisherContract $contract): array
     {
         $publisherShare = (int) round((float) $contract->revenue_share_percent * 100);
+        // Activation is the non-retroactive accounting boundary. A future-dated
+        // contract must never price revenue before its contractual start date.
+        $effectiveFrom = $contract->starts_at && $contract->starts_at->isFuture()
+            ? $contract->starts_at->toDateString()
+            : now()->toDateString();
 
         return [
             'name' => self::COMMERCIAL_TERMS_RULE_NAME,
             'scope_type' => RevenueRuleScope::Publisher,
             'scope_id' => $contract->publisher_id,
             'organization_id' => $contract->organization_id,
-            'effective_from' => now()->toDateString(),
+            'effective_from' => $effectiveFrom,
             'effective_to' => $contract->ends_at && $contract->ends_at->greaterThanOrEqualTo(today()) ? $contract->ends_at->toDateString() : null,
             'publisher_share_bp' => $publisherShare,
             'horus_share_bp' => 10000 - $publisherShare,
@@ -478,10 +550,11 @@ final class RevenueRuleService
         return $publisher->organization_id;
     }
 
-    private function authorize(User $actor, bool $allowCommercialTermsManager = false): void
+    private function authorize(User $actor, bool $allowCommercialTermsManager = false, bool $allowSiteServingManager = false): void
     {
         $hasPermission = $actor->hasPermission('finance.revenue_rules.manage')
-            || ($allowCommercialTermsManager && $actor->hasPermission('contracts.manage'));
+            || ($allowCommercialTermsManager && $actor->hasPermission('contracts.manage'))
+            || ($allowSiteServingManager && $actor->hasPermission('sites.serving.manage'));
         if (! $actor->isHorusAdministrator() || ! $hasPermission) {
             abort(403);
         }
