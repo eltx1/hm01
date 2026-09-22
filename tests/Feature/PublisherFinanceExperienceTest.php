@@ -128,9 +128,8 @@ class PublisherFinanceExperienceTest extends TestCase
     public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
-        $usd = $this->connection($admin->organization_id);
-        $eur = $this->connection($admin->organization_id);
-        $eur->update(['currency' => 'EUR', 'name' => 'Horus GAM EUR']);
+        $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
+        $eur = $this->connection($admin->organization_id, 'EUR', 'publisher-finance-eur');
         $date = now()->startOfMonth()->addDay()->toImmutable();
 
         app(ReportImportService::class)->importRows($usd, [[
@@ -336,14 +335,14 @@ class PublisherFinanceExperienceTest extends TestCase
         return [$finance, $publisher, $publisherAdmin, $publisherViewer, $site];
     }
 
-    private function connection(string $organizationId): ReportSourceConnection
+    private function connection(string $organizationId, string $currency = 'USD', string $connectionId = 'publisher-finance'): ReportSourceConnection
     {
         $source = ReportSource::query()->where('code', ReportSourceCode::HorusGam->value)->firstOrFail();
 
         return ReportSourceConnection::withoutGlobalScopes()->create([
             'organization_id' => $organizationId, 'report_source_id' => $source->id,
-            'name' => 'Horus GAM', 'connection_type' => 'TEST', 'connection_id' => 'publisher-finance',
-            'currency' => 'USD', 'timezone' => 'UTC', 'status' => 'ACTIVE', 'is_enabled' => true,
+            'name' => 'Horus GAM '.$currency, 'connection_type' => 'TEST', 'connection_id' => $connectionId,
+            'currency' => $currency, 'timezone' => 'UTC', 'status' => 'ACTIVE', 'is_enabled' => true,
         ]);
     }
 
