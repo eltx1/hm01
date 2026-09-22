@@ -59,12 +59,15 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $response = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
         $response->assertOk()
+            ->assertSee('Reports &amp; earnings', false)
+            ->assertSee('Reporting currency · USD')
             ->assertSee('Estimated earnings')
             ->assertSee('Finalized earnings')
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('Every currency is shown separately');
+            ->assertSee('Older accounting records in other currencies (1)')
+            ->assertSee('EUR records')
+            ->assertDontSee('EUR 35.00');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
@@ -93,7 +96,7 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertSee('321')
             ->assertSee('7')
             ->assertSee('USD 70.00')
-            ->assertSee('Your contractual share only');
+            ->assertSee('Your contractual share');
 
         $summary = app(PublisherFinanceService::class)->overview($publisher);
         $usd = $summary['currencies']->firstWhere('currency', 'USD');
@@ -125,7 +128,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
-    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    public function test_publisher_dashboard_uses_one_canonical_usd_currency_without_mixing_legacy_money(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
@@ -143,11 +146,13 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
-            ->assertSee('Publisher earnings · USD')
-            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('Reports &amp; earnings', false)
+            ->assertSee('This month · finalized')
             ->assertSee('USD 70.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('150');
+            ->assertSee('100')
+            ->assertSee('standard reporting currency')
+            ->assertDontSee('EUR 35.00')
+            ->assertDontSee('150');
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
