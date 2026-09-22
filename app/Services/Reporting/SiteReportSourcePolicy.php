@@ -3,6 +3,7 @@
 namespace App\Services\Reporting;
 
 use App\Models\GamConnection;
+use App\Models\MonetizationFinancialBinding;
 use App\Models\ReportSourceConnection;
 use App\Models\Site;
 use App\Models\SiteGamReportBinding;
@@ -36,8 +37,20 @@ final class SiteReportSourcePolicy
             return true;
         }
         $providerFinancialConnection = in_array($connection->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true);
-        if (! $providerFinancialConnection
-            && ! empty($row['site_id'])
+        if ($providerFinancialConnection) {
+            $financialBinding = MonetizationFinancialBinding::withoutGlobalScopes()
+                ->where('report_source_connection_id', $connection->id)
+                ->where('is_enabled', true)
+                ->first();
+
+            // An explicit Site GAM attestation makes Site GAM the canonical
+            // financial source for this provider. Never admit the provider's
+            // own financial rows into the ledger as well, or the same realized
+            // revenue could be counted twice.
+            if ((bool) data_get($financialBinding?->configuration, 'site_gam_included', false)) {
+                return false;
+            }
+        } elseif (! empty($row['site_id'])
             && (clone $bindings)->where('site_id', $row['site_id'])->exists()) {
             return false;
         }
