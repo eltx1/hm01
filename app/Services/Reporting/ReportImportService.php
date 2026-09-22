@@ -483,6 +483,7 @@ final class ReportImportService
         ];
         $existing = HourlyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
             ->whereDate('report_date', $metrics['date'])->first();
+        $this->assertMonotonicFinality($existing, $finality);
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
@@ -525,6 +526,7 @@ final class ReportImportService
         ];
         $existing = DailyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
             ->whereDate('report_date', $metrics['date'])->first();
+        $this->assertMonotonicFinality($existing, $finality);
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
@@ -546,6 +548,20 @@ final class ReportImportService
         $existing ? $existing->update($attributes) : DailyReport::withoutGlobalScopes()->create($identity + $attributes);
 
         return [$existing === null, true];
+    }
+
+    private function assertMonotonicFinality(HourlyReport|DailyReport|null $existing, ReportFinality $incoming): void
+    {
+        if (! $existing
+            || $existing->finality !== ReportFinality::Finalized
+            || ! (bool) $existing->settlement_eligible
+            || $incoming === ReportFinality::Finalized) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'finality' => 'A settlement-eligible FINALIZED report row cannot be downgraded to ESTIMATED.',
+        ]);
     }
 
     private function upsertAdvertiserReport(
