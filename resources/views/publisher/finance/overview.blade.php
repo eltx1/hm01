@@ -40,7 +40,7 @@
                     <article><p class="eyebrow">Clicks</p><strong class="metric-small">{{ number_format((int) $currency['today_clicks']) }}</strong><span class="table-note">Source-local reporting day</span></article>
                     <article><p class="eyebrow">Estimated earnings</p><strong class="metric-small money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['today_estimated_earnings_minor']) }}</strong><span class="table-note">Your contractual share only</span></article>
                 </section>
-                <p class="muted">Today so far is estimated and may change before finalization. Gross revenue, net revenue and Horus margin are not Publisher-visible. @if($currency['today_updated_at']) Last ledger update: {{ $currency['today_updated_at']->format('Y-m-d H:i:s') }}.@endif</p>
+                <p class="muted">Today so far is estimated and may change before finalization. Internal platform economics are not Publisher-visible. @if($currency['today_updated_at']) Last ledger update: {{ $currency['today_updated_at']->format('Y-m-d H:i:s') }}.@endif</p>
             @else
                 <p class="muted">No current-day estimated rows are available yet for this currency. Finalized accounting remains unchanged.</p>
             @endif
