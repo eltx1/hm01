@@ -64,9 +64,24 @@ class DashboardController extends Controller
             'contracts' => fn ($query) => $query->latest(),
             'paymentProfile',
         ])->firstOrFail();
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
         $reporting = $request->user()->hasPermission('finance.publisher.view_own')
             ? app(PublisherFinanceService::class)->dashboard($publisher)
-            : ['impressions' => 0, 'currencies' => collect(), 'statements' => collect()];
+            : [
+                'canonical_currency' => $canonicalCurrency,
+                'primary' => [
+                    'currency' => $canonicalCurrency,
+                    'today_available' => false,
+                    'today_impressions' => 0,
+                    'today_clicks' => 0,
+                    'today_estimated_earnings_minor' => 0,
+                    'finalized_earnings_minor' => 0,
+                    'statement_balance_due_minor' => 0,
+                ],
+                'impressions' => 0,
+                'statements' => collect(),
+                'legacy_currency_count' => 0,
+            ];
 
         return view('dashboards.publisher', [
             'publisher' => $publisher,
