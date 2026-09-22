@@ -27,11 +27,11 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher accounts')
-            ->assertSee('Reporting sources')
-            ->assertSee('Finance Operations')
-            ->assertSee('Ads.txt')
-            ->assertDontSee('Production operations')
+            ->assertSee('Publishers')
+            ->assertSee('Reports')
+            ->assertSee('Finance')
+            ->assertSee('Ads.txt &amp; supply chain', false)
+            ->assertDontSee('Production')
             ->assertDontSee('Access control')
             ->assertSee('data-nav-toggle', false);
     }
@@ -45,13 +45,37 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($viewer)->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher overview')
+            ->assertSee('Dashboard')
+            ->assertSee('Reports &amp; earnings', false)
+            ->assertSee('Statements')
             ->assertSee('Websites')
-            ->assertSee('Earnings &amp; Payments', false)
+            ->assertSee('Monetization health')
+            ->assertSee('Ads.txt &amp; compliance', false)
             ->assertSee('Commercial terms')
-            ->assertDontSee('Invite a team member')
-            ->assertSee('Supply Chain Compliance')
-            ->assertDontSee('Production operations');
+            ->assertDontSee('Team members')
+            ->assertDontSee('Production');
+    }
+
+    public function test_navigation_uses_fewer_task_based_groups_and_workspace_context(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $this->makePublisherFor($publisherUser);
+
+        $service = app(\App\Services\ControlPlane\ControlPlaneNavigation::class);
+        $adminNavigation = $service->for($admin);
+        $publisherNavigation = $service->for($publisherUser);
+
+        $this->assertLessThanOrEqual(6, count($adminNavigation));
+        $this->assertSame(['Home', 'Publishers & Sites', 'Revenue & Reporting', 'Delivery & Compliance', 'Platform', 'Support & Access'], array_column($adminNavigation, 'label'));
+        $this->assertSame(['Home', 'Reports & Money', 'Monetization', 'Account', 'Help'], array_column($publisherNavigation, 'label'));
+
+        $this->actingAs($publisherUser)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('Publisher workspace')
+            ->assertSee('What do you want to do?')
+            ->assertSee('Reports &amp; earnings', false);
     }
 
     public function test_dashboard_permission_is_required_even_for_an_active_user(): void
