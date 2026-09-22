@@ -35,7 +35,10 @@ final class SiteReportSourcePolicy
 
             return true;
         }
-        if (! empty($row['site_id']) && (clone $bindings)->where('site_id', $row['site_id'])->exists()) {
+        $providerFinancialConnection = in_array($connection->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true);
+        if (! $providerFinancialConnection
+            && ! empty($row['site_id'])
+            && (clone $bindings)->where('site_id', $row['site_id'])->exists()) {
             return false;
         }
         // A full-network import may identify the Google unit before it has a local site mapping.
