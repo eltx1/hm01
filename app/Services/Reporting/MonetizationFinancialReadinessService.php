@@ -121,7 +121,19 @@ final class MonetizationFinancialReadinessService
             $siteIds = $subject instanceof DemandAccount
                 ? $subject->sites()->where('is_enabled', true)->pluck('site_id')
                 : $subject->siteMappings()->where('enabled', true)->pluck('site_id');
-            if ($siteIds->isNotEmpty() && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period))) {
+            // Site-level GAM reporting may substitute for a provider-specific
+            // financial source only after an explicit finance attestation on the
+            // subject's binding. Presence of a Site GAM report alone never proves
+            // that Direct JS, VAST or standalone Prebid revenue is included there.
+            $siteGamDeclared = (bool) data_get(
+                $subject->financialBinding?->configuration,
+                'site_gam_included',
+                false,
+            );
+            if ($siteGamDeclared
+                && $subject->financialBinding?->is_enabled
+                && $siteIds->isNotEmpty()
+                && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period))) {
                 return null;
             }
             $configuredCurrency = strtoupper((string) (
