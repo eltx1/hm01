@@ -80,7 +80,7 @@ final class ControlPlaneNavigation
                 $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Reports & Money', [
-                $this->item('Reports & earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.overview', 'publisher.reporting.*']),
+                $this->item('Reports & earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.overview', 'publisher.finance.payment-method.*', 'publisher.reporting.*']),
                 $this->item('Statements', 'publisher.finance.statements.index', 'finance.publisher.view_own', ['publisher.finance.statements.*']),
                 $this->item('Payout history', 'publisher.finance.payouts.index', 'finance.publisher.view_own', ['publisher.finance.payouts.*']),
             ]),
