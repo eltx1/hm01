@@ -311,6 +311,11 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('USD', $query['reportCurrency']);
         $this->assertSame('USD', $row->currency);
         $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.index', ['currency' => 'AED']))
+            ->assertOk()
+            ->assertViewHas('summary', fn (array $summary): bool => $summary['currency'] === 'USD')
+            ->assertSee('Horus requests GAM revenue from Google in USD');
         $this->assertStringNotContainsString('private-download', GamApiOperation::query()->get()->toJson());
     }
 
