@@ -37,12 +37,16 @@ class ReportingController extends Controller
         ]);
     }
 
-    public function statement(Request $request, PublisherStatement $publisherStatement): View
-    {
+    public function statement(
+        Request $request,
+        PublisherStatement $publisherStatement,
+        PublisherFinanceService $finance,
+    ): View {
         $this->authorizeStatement($request, $publisherStatement);
-        $publisherStatement->load(['publisher', 'period', 'payments']);
 
-        return view('publisher.finance.statement', ['statement' => $publisherStatement]);
+        return view('publisher.finance.statement', [
+            'statement' => $finance->statement($publisherStatement),
+        ]);
     }
 
     public function csv(

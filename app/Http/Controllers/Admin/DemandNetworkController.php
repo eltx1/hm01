@@ -271,7 +271,19 @@ class DemandNetworkController extends Controller
             'timezone' => ['required', 'timezone'],
             'is_enabled' => ['required', 'boolean'],
             'configuration_json' => ['nullable', 'json'],
+            'site_gam_included' => ['sometimes', 'boolean'],
+            'site_gam_inclusion_reason' => ['nullable', 'string', 'min:12', 'max:1000', 'required_if:site_gam_included,1'],
         ]);
+        $configuration = isset($data['configuration_json'])
+            ? (array) json_decode($data['configuration_json'], true, 512, JSON_THROW_ON_ERROR)
+            : [];
+        $configuration['site_gam_included'] = $request->boolean('site_gam_included');
+        if ($configuration['site_gam_included']) {
+            $configuration['site_gam_inclusion_reason'] = trim((string) $data['site_gam_inclusion_reason']);
+        } else {
+            unset($configuration['site_gam_inclusion_reason']);
+        }
+
         $bindings->bind(
             $demandAccount,
             ReportSource::query()->findOrFail($data['report_source_id']),
@@ -279,7 +291,7 @@ class DemandNetworkController extends Controller
             $data['currency'],
             $data['timezone'],
             $request->user(),
-            isset($data['configuration_json']) ? (array) json_decode($data['configuration_json'], true, 512, JSON_THROW_ON_ERROR) : [],
+            $configuration,
             (bool) $data['is_enabled'],
         );
 

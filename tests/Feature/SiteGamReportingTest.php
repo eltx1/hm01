@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
 use App\Enums\ReportFinality;
+use App\Enums\FinancialReportingMethod;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
@@ -26,6 +27,7 @@ use App\Services\Gam\GamSoapVersionResolver;
 use App\Services\Monetization\ReportingHealthService;
 use App\Services\Reporting\Connectors\GamAdUnitReportConnector;
 use App\Services\Reporting\FinancialPeriodService;
+use App\Services\Reporting\MonetizationFinancialBindingService;
 use App\Services\Reporting\MonetizationFinancialReadinessService;
 use App\Services\Reporting\ReportImportService;
 use App\Services\Reporting\ReportingBridge;
@@ -559,11 +561,132 @@ class SiteGamReportingTest extends TestCase
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
         $readiness = app(MonetizationFinancialReadinessService::class);
+        $this->assertCount(1, $readiness->blockersForPeriod($period), 'Site GAM must not silently cover independent provider revenue.');
+
+        $financialBinding = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider contract confirms revenue is included in the bound Site GAM unit.',
+            ],
+        );
         $this->assertCount(0, $readiness->blockersForPeriod($period));
+
+        try {
+            app(ReportImportService::class)->importRows(
+                $financialBinding->connection,
+                [[
+                    'date' => '2026-09-20',
+                    'publisher_id' => $publisher->id,
+                    'site_id' => $site->id,
+                    'gross_revenue_minor' => 9999,
+                    'currency' => 'USD',
+                ]],
+                ReportGranularity::Daily,
+                ReportFinality::Finalized,
+                CarbonImmutable::parse('2026-09-20'),
+                CarbonImmutable::parse('2026-09-20'),
+                $admin,
+                'must-not-double-count-provider-revenue',
+                importType: 'CSV',
+            );
+            $this->fail('Provider revenue must not be imported separately when Site GAM is declared canonical.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('source', $exception->errors());
+        }
+
         $other = $this->makeSiteFor($publisher, $user);
         $other->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
         DemandSite::withoutGlobalScopes()->create($mapping + ['site_id' => $other->id]);
         $this->assertCount(1, $readiness->blockersForPeriod($period));
+    }
+
+    public function test_declared_site_gam_coverage_is_exclusive_and_cannot_fallback_to_duplicate_provider_rows(): void
+    {
+        [$admin, $publisher, , $site] = $context = $this->context();
+        $this->seed(DemandNetworkSeeder::class);
+        $network = DemandNetwork::where('code', 'CUSTOM')->first() ?? DemandNetwork::firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id,
+            'demand_network_id' => $network->id,
+            'name' => 'Attested Site GAM demand',
+            'scope' => 'HORUS_MEDIA',
+            'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $site->id,
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+            'integration_mode' => 'DIRECT_JS',
+        ]);
+
+        $siteBinding = $this->bind($context);
+        $period = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $siteJob = $this->import($siteBinding, '2026-09-01', '2026-09-30');
+        $this->assertSame(ReportImportStatus::Completed, $siteJob->status, $siteJob->error_message ?? '');
+
+        $financial = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider settlement is contractually included in the bound Site GAM reporting unit.',
+            ],
+        );
+
+        $providerDay = CarbonImmutable::parse('2026-09-20');
+        try {
+            app(ReportImportService::class)->importRows(
+                $financial->connection,
+                [[
+                    'date' => $providerDay->toDateString(),
+                    'publisher_id' => $publisher->id,
+                    'site_id' => $site->id,
+                    'impressions' => 95,
+                    'gross_revenue_minor' => 99999,
+                    'currency' => 'USD',
+                ]],
+                ReportGranularity::Daily,
+                ReportFinality::Finalized,
+                $providerDay,
+                $providerDay,
+                $admin,
+                importType: 'CSV',
+                sourceTotals: ['impressions' => 95, 'gross_revenue_minor' => 99999],
+            );
+            $this->fail('Provider-specific revenue must not import while Site GAM is the declared canonical source.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('source', $exception->errors());
+            $this->assertStringContainsString('Site GAM', $exception->errors()['source'][0]);
+        }
+
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertCount(0, app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period));
+
+        DailyReport::withoutGlobalScopes()
+            ->where('report_source_connection_id', $siteBinding->report_source_connection_id)
+            ->whereDate('report_date', '2026-09-25')
+            ->delete();
+
+        $blockers = app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period);
+        $providerBlocker = $blockers->firstWhere('subject_id', $account->id);
+        $this->assertNotNull($providerBlocker);
+        $this->assertSame('SITE_GAM_DECLARED_COVERAGE_INCOMPLETE', $providerBlocker['reasons'][0]['code']);
     }
 
     public function test_full_network_import_cannot_duplicate_the_bound_google_unit_even_without_a_site_mapping(): void
@@ -579,6 +702,67 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(ReportImportStatus::Completed, $job->status);
         $this->assertSame(1, $job->row_count);
         $this->assertSame(2000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_site_gam_ownership_does_not_suppress_independent_provider_financial_rows(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $this->bind($context);
+        $this->seed(DemandNetworkSeeder::class);
+
+        $network = DemandNetwork::where('code', 'CUSTOM')->first() ?? DemandNetwork::firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id,
+            'demand_network_id' => $network->id,
+            'name' => 'Independent Direct Provider',
+            'scope' => 'HORUS_MEDIA',
+            'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $site->id,
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+            'integration_mode' => 'DIRECT_JS',
+        ]);
+        $financial = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+        );
+
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = app(ReportImportService::class)->importRows(
+            $financial->connection,
+            [[
+                'date' => $day->toDateString(),
+                'publisher_id' => $site->publisher_id,
+                'site_id' => $site->id,
+                'impressions' => 25,
+                'gross_revenue_minor' => 2500,
+                'currency' => 'USD',
+            ]],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $day,
+            $day,
+            $admin,
+            'independent-provider-row',
+            importType: 'CSV',
+        );
+
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertSame(1, $job->row_count);
+        $this->assertDatabaseHas('daily_reports', [
+            'report_source_connection_id' => $financial->report_source_connection_id,
+            'gross_revenue_minor' => 2500,
+        ]);
     }
 
     public function test_site_health_tracks_the_reporting_unit_independently_of_the_serving_engines(): void
@@ -612,15 +796,31 @@ class SiteGamReportingTest extends TestCase
             'approval_status' => 'APPROVED', 'integration_mode' => 'DIRECT_JS']);
         $this->google->currency = 'EGP';
         $binding = $this->bind($context);
+        app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'EGP',
+            'Africa/Cairo',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider settlement is explicitly included in this EGP Site GAM reporting unit.',
+            ],
+        );
+
         $usd = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
         $egp = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'EGP');
         $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
         $readiness = app(MonetizationFinancialReadinessService::class);
-        $this->assertCount(0, $readiness->blockersForPeriod($usd));
+        $this->assertCount(0, $readiness->blockersForPeriod($usd), 'An EGP financial binding must not block an unrelated USD period.');
         $this->assertCount(0, $readiness->blockersForPeriod($egp));
-        DailyReport::withoutGlobalScopes()->whereDate('report_date', '2026-09-25')->delete();
+        DailyReport::withoutGlobalScopes()
+            ->where('report_source_connection_id', $binding->report_source_connection_id)
+            ->whereDate('report_date', '2026-09-25')
+            ->delete();
         $this->assertCount(0, $readiness->blockersForPeriod($usd));
         $this->assertCount(1, $readiness->blockersForPeriod($egp));
     }

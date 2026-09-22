@@ -12,6 +12,7 @@ use App\Models\Publisher;
 use App\Models\Site;
 use App\Models\ThothSetting;
 use App\Services\ControlPlane\ActionCenter;
+use App\Services\Reporting\PublisherFinanceService;
 use App\Services\Reporting\UnifiedReportService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -63,9 +64,9 @@ class DashboardController extends Controller
             'contracts' => fn ($query) => $query->latest(),
             'paymentProfile',
         ])->firstOrFail();
-        $reporting = $request->user()->hasPermission('reporting.publisher.view')
-            ? $reports->publisherSummary($publisher)
-            : ['impressions' => 0, 'revenue_minor' => 0, 'payment_balance_minor' => 0, 'statements' => collect()];
+        $reporting = $request->user()->hasPermission('finance.publisher.view_own')
+            ? app(PublisherFinanceService::class)->dashboard($publisher)
+            : ['impressions' => 0, 'currencies' => collect(), 'statements' => collect()];
 
         return view('dashboards.publisher', [
             'publisher' => $publisher,

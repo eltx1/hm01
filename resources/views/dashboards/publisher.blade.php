@@ -28,9 +28,14 @@
 
 <section class="metric-grid" aria-label="Publisher summary">
     <article><p class="eyebrow">Websites</p><strong class="metric">{{ $publisher->sites->count() }}</strong><span class="muted">{{ $activeSites }} serving · {{ $pendingSites }} pending</span></article>
-    <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Finalized aggregated data</span></article>
-    <article><p class="eyebrow">Publisher earnings</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['revenue_minor']) }}</strong><span class="muted">Finalized contractual share in {{ $reporting['currency'] }}</span></article>
-    <article><p class="eyebrow">Payment balance</p><strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }}</strong><span class="muted">Latest finalized {{ $reporting['currency'] }} statement</span></article>
+    <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Current-month finalized aggregated data across currencies</span></article>
+    @forelse($reporting['currencies'] as $currency)
+        <article><p class="eyebrow">Publisher earnings · {{ $currency['currency'] }}</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['finalized_earnings_minor']) }}</strong><span class="muted">Current-month finalized contractual share</span></article>
+        <article><p class="eyebrow">Payment balance · {{ $currency['currency'] }}</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['statement_balance_due_minor']) }}</strong><span class="muted">Latest finalized statement balance</span></article>
+    @empty
+        <article><p class="eyebrow">Publisher earnings</p><strong class="metric">—</strong><span class="muted">No financial reporting data yet</span></article>
+        <article><p class="eyebrow">Payment balance</p><strong class="metric">—</strong><span class="muted">No finalized statement yet</span></article>
+    @endforelse
 </section>
 
 <section class="split-grid">
@@ -52,12 +57,12 @@
     </article>
 </section>
 
-@if(auth()->user()->hasPermission('reporting.publisher.view'))
+@if(auth()->user()->hasPermission('finance.publisher.view_own'))
 <article class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Finalized finance</p><h2>Latest statements</h2></div><a class="section-anchor" href="{{ route('publisher.reporting.index') }}">All reports</a></div>
+    <div class="workspace-heading"><div><p class="eyebrow">Finalized finance</p><h2>Latest statements</h2></div><a class="section-anchor" href="{{ route('publisher.finance.statements.index') }}">All statements</a></div>
     <div class="compact-list">
         @forelse($reporting['statements']->take(6) as $statement)
-            <a class="compact-row" href="{{ route('publisher.reporting.statements.show', $statement) }}"><div><strong>{{ $statement->statement_number }}</strong><p>{{ $statement->period->period_key }} · {{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }} {{ $statement->currency }} due</p></div><x-status-badge :status="$statement->status" /></a>
+            <a class="compact-row" href="{{ route('publisher.finance.statements.show', $statement['id']) }}"><div><strong>{{ $statement['statement_number'] }}</strong><p>{{ $statement['period_key'] }} · {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }} {{ $statement['currency'] }} due</p></div><x-status-badge :status="$statement['status']" /></a>
         @empty
             <p class="muted">Statements appear after a financial period is finalized.</p>
         @endforelse

@@ -23,19 +23,32 @@ final class SiteGamFinancialCoverage
         if ($from->gt($to)) {
             return true;
         }
-        $days = DailyReport::withoutGlobalScopes()->whereHas('dimension', fn ($q) => $q->where('site_id', $siteId))
-            ->where('currency', $period->currency)->where('finality', 'FINALIZED')->where('settlement_eligible', true)
-            ->whereDate('report_date', '>=', $from->toDateString())->whereDate('report_date', '<=', $to->toDateString())
-            ->get(['report_date'])->mapWithKeys(fn ($report) => [$report->report_date->toDateString() => true]);
+        $connectionIds = $bindings->pluck('report_source_connection_id')->unique()->values();
+        $days = DailyReport::withoutGlobalScopes()
+            ->whereIn('report_source_connection_id', $connectionIds)
+            ->whereHas('dimension', fn ($q) => $q->where('site_id', $siteId))
+            ->where('currency', $period->currency)
+            ->where('finality', 'FINALIZED')
+            ->where('settlement_eligible', true)
+            ->whereDate('report_date', '>=', $from->toDateString())
+            ->whereDate('report_date', '<=', $to->toDateString())
+            ->get(['report_source_connection_id', 'report_date'])
+            ->mapWithKeys(fn ($report) => [
+                $report->report_source_connection_id.'|'.$report->report_date->toDateString() => true,
+            ]);
+
         for ($day = $from; $day->lte($to); $day = $day->addDay()) {
             $date = $day->toDateString();
             $binding = $bindings->first(fn ($item) => $item->starts_on->toDateString() <= $date
                 && (! $item->ends_on || $item->ends_on->toDateString() >= $date));
-            // A source in EGP must not invent a missing USD liability (or an exchange rate).
-            if ($binding && $binding->connection->currency !== $period->currency) {
-                continue;
+
+            // Explicit Site GAM coverage means this exact website binding must own
+            // the date and currency. Another provider/source row can never fill a
+            // missing Site GAM day or fabricate a cross-currency liability.
+            if (! $binding || strtoupper((string) $binding->connection->currency) !== strtoupper((string) $period->currency)) {
+                return false;
             }
-            if (! $days->has($date)) {
+            if (! $days->has($binding->report_source_connection_id.'|'.$date)) {
                 return false;
             }
         }

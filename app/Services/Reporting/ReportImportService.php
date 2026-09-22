@@ -50,6 +50,7 @@ final class ReportImportService
         array $options = [],
     ): ReportImportJob {
         $connection->loadMissing('source');
+        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection);
         // This source needs all request metrics and total revenue (including
         // CPD). Google rejects that combination with HOUR. Refresh a daily
         // estimated snapshot instead; never invent an hourly distribution.
@@ -165,6 +166,7 @@ final class ReportImportService
         ?string $manualReason = null,
     ): ReportImportJob {
         $connection->loadMissing('source');
+        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection);
         if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $importType !== 'API') {
             throw ValidationException::withMessages(['source' => 'This website connection imports directly from Google. CSV and manual imports must use their own sources.']);
         }
@@ -463,6 +465,18 @@ final class ReportImportService
         );
     }
 
+    private function assertNoParallelProviderImportWhenSiteGamIsCanonical(ReportSourceConnection $connection): void
+    {
+        if (! in_array($connection->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true)
+            || ! (bool) data_get($connection->configuration, 'site_gam_included', false)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'source' => 'Provider-specific financial imports are disabled because this monetization account explicitly declares Site GAM as its canonical revenue coverage. Disable that attestation before importing provider revenue separately.',
+        ]);
+    }
+
     private function upsertHourly(
         ReportSourceConnection $connection,
         ReportImportJob $job,
@@ -483,6 +497,7 @@ final class ReportImportService
         ];
         $existing = HourlyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
             ->whereDate('report_date', $metrics['date'])->first();
+        $this->assertMonotonicFinality($existing, $finality);
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
@@ -525,6 +540,7 @@ final class ReportImportService
         ];
         $existing = DailyReport::withoutGlobalScopes()->where(collect($identity)->except('report_date')->all())
             ->whereDate('report_date', $metrics['date'])->first();
+        $this->assertMonotonicFinality($existing, $finality);
         if ($existing && hash_equals($existing->source_row_hash, $sourceRowHash)) {
             return [false, false];
         }
@@ -546,6 +562,20 @@ final class ReportImportService
         $existing ? $existing->update($attributes) : DailyReport::withoutGlobalScopes()->create($identity + $attributes);
 
         return [$existing === null, true];
+    }
+
+    private function assertMonotonicFinality(HourlyReport|DailyReport|null $existing, ReportFinality $incoming): void
+    {
+        if (! $existing
+            || $existing->finality !== ReportFinality::Finalized
+            || ! (bool) $existing->settlement_eligible
+            || $incoming === ReportFinality::Finalized) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'finality' => 'A settlement-eligible FINALIZED report row cannot be downgraded to ESTIMATED.',
+        ]);
     }
 
     private function upsertAdvertiserReport(

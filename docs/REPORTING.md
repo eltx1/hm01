@@ -17,9 +17,18 @@ monetization account -> financial source binding -> import -> reconciliation
 -> settlement-eligible finalized row -> revenue share -> statement -> payout
 ```
 
+Financial-source cutovers are non-destructive and exclusive. When an account is
+rebound to a different canonical report source, the previous connection is
+disabled for future polling/retry, pending or failed work on that retired
+connection is superseded, and historical imported rows remain immutable and
+traceable to the old connection. Only the current enabled binding may create
+future provider financial rows.
+
 **BID PRICE ≠ REALIZED REVENUE.** Browser auction CPM is diagnostic auction data, not proof that the provider realized or will pay that revenue.
 
 **ESTIMATED DATA ≠ PAYOUT-ELIGIBLE FINALIZED DATA.** `PREBID_ESTIMATES` is permanently estimate-only. A finalized label requested by a caller cannot make that source settlement eligible; the import boundary downgrades it to estimated and records a machine-readable reason.
+
+Site GAM reporting is **not** implicit financial coverage for Direct JS, VAST, or standalone Prebid. A provider/bidder binding may rely on Site GAM coverage only when its non-secret configuration explicitly sets `site_gam_included=true` with a specific evidence reason, and every mapped website has complete finalized Site GAM coverage for the period. That attestation is exclusive: while enabled, provider-specific financial rows are excluded from the ledger so the same realized revenue cannot be counted twice. If declared Site GAM coverage is incomplete, Finance close fails closed rather than falling back to provider rows. Without the attestation, provider-specific finalized reporting remains required.
 
 API finality requires a real configured connector. ExoClick may use the existing operator-configured demand report path only when the approved HTTPS base and report path exist. OneTag API remains not configured until a real supported connector is implemented. CSV data passes the existing private-file, checksum, normalization, idempotency, reconciliation, and close pipeline. Manual provider data requires Finance permission, a specific reason, an explicit manual-capable binding, and audit evidence; normal revenue adjustments remain a separate controlled workflow.
 
@@ -39,7 +48,7 @@ Supported aggregate metrics are ad requests, matched requests, unfilled requests
 4. CSV and manual imports pass through the same normalization pipeline.
 5. A checksum and deterministic idempotency key prevent duplicate imports.
 6. Each normalized row receives a deterministic source-row hash.
-7. Existing rows are unchanged when the hash matches, or revised when finalized source data changes while the period is open.
+7. Existing rows are unchanged when the hash matches, or revised when finalized source data changes while the period is open. A settlement-eligible `FINALIZED` row is monotonic and cannot be downgraded to `ESTIMATED`.
 8. Source totals are reconciled with stored totals and discrepancies above the configured threshold generate warnings.
 9. Failures are categorized, retained, and eligible for cron-compatible retry.
 10. A closed financial period rejects every automatic revision.
@@ -73,6 +82,8 @@ The three share percentages are stored as basis points and must total exactly 10
 ## Revenue rules and versions
 
 Rules may be global or scoped to a publisher, website, demand source, or campaign. The active rule with the highest specificity wins: campaign, demand source, website, publisher, then global. Priority resolves ties within the same scope.
+
+Website 360 revenue-share changes atomically create or version the canonical `WEBSITE` RevenueRule used by the ledger; serving metadata is not a second financial source of truth. Higher-specificity campaign/demand-source exceptions can still override the website default by design.
 
 Every percentage change creates a new `revenue_rule_versions` row. Existing versions are never overwritten. A new version cannot start within a closed financial period, and reports retain the version that calculated them.
 

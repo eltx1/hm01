@@ -3,12 +3,15 @@
 namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
+use App\Enums\RevenueRuleScope;
 use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
+use App\Models\RevenueRule;
 use App\Models\ServingModeChange;
 use App\Models\Site;
 use App\Models\User;
+use App\Services\Reporting\RevenueRuleService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\SupplyChain\HorusSellerIdentityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -230,6 +233,19 @@ class SiteManagementTest extends TestCase
         $site->refresh();
         $this->assertSame('75.50', $site->default_revenue_share_percent);
         $this->assertSame('75.50', $site->servingSettings->revenue_share_percent);
+        $websiteRule = RevenueRule::withoutGlobalScopes()
+            ->where('scope_type', RevenueRuleScope::Website->value)
+            ->where('scope_id', $site->id)
+            ->where('name', 'Website revenue share override')
+            ->firstOrFail();
+        $this->assertSame(7550, (int) $websiteRule->currentVersion->publisher_share_bp);
+        $this->assertSame(
+            $websiteRule->current_version_id,
+            app(RevenueRuleService::class)->resolve(now(), [
+                'publisher_id' => $site->publisher_id,
+                'site_id' => $site->id,
+            ], 'USD')->id,
+        );
         $this->assertSame(ServingMode::Paused, $site->serving_mode);
         $this->assertSame(SiteStatus::Suspended, $site->status);
         $this->assertDatabaseHas('audit_logs', ['event' => 'site.revenue_share.changed', 'auditable_id' => $site->id]);

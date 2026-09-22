@@ -302,7 +302,6 @@ final class PublisherStatementService
                     ['Opening balance', $statement->opening_balance_minor],
                     ['Publisher earnings', $statement->publisher_earnings_minor],
                     ['Affiliate earnings', $statement->affiliate_earnings_minor],
-                    ['Deductions', -((int) $statement->deductions_minor)],
                     ['Paid', $statement->paid_minor],
                     ['Balance due', $statement->balance_due_minor],
                     ['Carry-forward', $statement->carry_forward_minor],
