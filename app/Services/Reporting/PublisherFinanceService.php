@@ -150,7 +150,6 @@ final class PublisherFinanceService
         return [
             ...$this->publisherStatementSummary($statement),
             'opening_balance_minor' => (int) $statement->opening_balance_minor,
-            'deductions_minor' => (int) $statement->deductions_minor,
             'payment_threshold_minor' => (int) $statement->payment_threshold_minor,
             'has_publisher_invoice' => filled($statement->publisher_invoice_path),
             'publisher_invoice_number' => $statement->publisher_invoice_number,
