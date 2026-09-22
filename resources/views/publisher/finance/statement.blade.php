@@ -57,7 +57,7 @@
         <div><strong>Uploaded</strong><span>{{ $statement['publisher_invoice_uploaded_at']?->toDateString() ?: '—' }}</span></div>
     </div>
     @if($statement['publisher_invoice_review_reason'])<p class="muted">Finance response: {{ $statement['publisher_invoice_review_reason'] }}</p>@endif
-    @if($statement['publisher_invoice_path'])
+    @if($statement['has_publisher_invoice'])
         <a class="hm-button-secondary button-link" href="{{ route('publisher.finance.statements.invoice.download', $statement['id']) }}">Download my private invoice</a>
     @endif
     @if(in_array($statement['publisher_invoice_status'], ['REQUIRED', 'REJECTED'], true) && auth()->user()->hasPermission('finance.publisher.invoice.upload'))
