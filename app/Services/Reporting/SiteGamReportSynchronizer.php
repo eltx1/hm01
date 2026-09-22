@@ -12,10 +12,14 @@ use Carbon\CarbonImmutable;
 
 final class SiteGamReportSynchronizer
 {
-    public function __construct(private readonly ReportImportService $imports) {}
+    public function __construct(
+        private readonly ReportImportService $imports,
+        private readonly SiteGamCurrencyPolicy $currencyPolicy,
+    ) {}
 
     public function sync(SiteGamReportBinding $binding): array
     {
+        $binding = $this->currencyPolicy->enforce($binding);
         $binding->loadMissing('connection.source', 'gamConnection');
         $connection = $binding->connection;
         if (! $connection?->is_enabled || ! $connection->source->is_enabled || $connection->status->value === 'DISABLED'
