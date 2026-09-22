@@ -121,6 +121,15 @@ final class MonetizationFinancialReadinessService
             $siteIds = $subject instanceof DemandAccount
                 ? $subject->sites()->where('is_enabled', true)->pluck('site_id')
                 : $subject->siteMappings()->where('enabled', true)->pluck('site_id');
+            $configuredCurrency = strtoupper((string) (
+                $subject->financialBinding?->currency
+                ?? ($subject instanceof DemandAccount ? data_get($subject->configuration, 'currency') : null)
+                ?? config('reporting.default_currency', 'USD')
+            ));
+            if ($configuredCurrency !== strtoupper($period->currency)) {
+                return null;
+            }
+
             // Site-level GAM reporting may substitute for a provider-specific
             // financial source only after an explicit finance attestation on the
             // subject's binding. Presence of a Site GAM report alone never proves
@@ -134,14 +143,6 @@ final class MonetizationFinancialReadinessService
                 && $subject->financialBinding?->is_enabled
                 && $siteIds->isNotEmpty()
                 && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period))) {
-                return null;
-            }
-            $configuredCurrency = strtoupper((string) (
-                $subject->financialBinding?->currency
-                ?? ($subject instanceof DemandAccount ? data_get($subject->configuration, 'currency') : null)
-                ?? config('reporting.default_currency', 'USD')
-            ));
-            if ($configuredCurrency !== strtoupper($period->currency)) {
                 return null;
             }
             $result = $this->status($subject, $period->currency, $period);
