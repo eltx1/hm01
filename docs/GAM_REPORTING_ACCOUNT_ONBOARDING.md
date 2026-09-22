@@ -11,7 +11,9 @@ If no unit was entered, one or more networks may be saved together and the admin
 returns to the same website with its account selected to search for the unit.
 If unit verification fails, the account stays connected and the original input
 is preserved for correction without repeating Google consent. Repeated submission
-reuses the saved connection and existing identical site binding.
+reuses the saved connection and existing identical site binding. The discovered
+network currency is displayed as source metadata, while Horus requests all website
+GAM financial reports in USD regardless of that network currency.
 
 ## Platform provisioning (operations only)
 
