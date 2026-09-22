@@ -156,6 +156,47 @@ final class DirectDemandQuickMonetizeController extends Controller
             ->with('quick_placement_id', $placement->id);
     }
 
+    public function expandResponsiveBundle(
+        Request $request,
+        Site $site,
+        QuickMonetizeService $quick,
+        PlatformControlService $controls,
+    ): RedirectResponse {
+        $network = $this->network();
+        $problems = $this->readinessProblems($controls, $network);
+        if ($problems !== []) {
+            throw ValidationException::withMessages(['quick' => implode(' ', $problems)]);
+        }
+
+        $site = Site::withoutGlobalScopes()
+            ->with(['publisher', 'siteConfig'])
+            ->whereKey($site->id)
+            ->whereNull('deleted_at')
+            ->firstOrFail();
+
+        if ($site->status !== SiteStatus::Active) {
+            throw ValidationException::withMessages(['quick' => 'Only an active website can expand its Responsive Display bundle.']);
+        }
+        if ($site->serving_mode === ServingMode::Paused
+            || $site->siteConfig?->immediate_pause
+            || ($site->siteConfig && $site->siteConfig->status !== 'ACTIVE')) {
+            throw ValidationException::withMessages(['quick' => 'This website is operationally paused. Resume it before expanding Responsive Display.']);
+        }
+        if (! $site->publisher) {
+            throw ValidationException::withMessages(['quick' => 'The selected website is not attached to a Publisher.']);
+        }
+
+        $result = $quick->expandResponsiveBundle($site, $request->user());
+        $count = count($result['placements']);
+        $status = ($result['already_complete'] ?? false)
+            ? "Responsive Display already has {$count} placements for {$site->primary_domain}."
+            : "Responsive Display expanded from {$result['previous_count']} to {$count} placements for {$site->primary_domain}. Production configuration is queued for CDN delivery.";
+
+        return redirect()
+            ->route('admin.sites.show', $site)
+            ->with('status', $status);
+    }
+
     /** @param array<int, array<string, mixed>> $scripts
      *  @return array<int, string>
      */

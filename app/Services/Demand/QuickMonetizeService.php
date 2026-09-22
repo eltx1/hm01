@@ -40,6 +40,177 @@ final class QuickMonetizeService
         private readonly VastTagUrlParser $vastTags,
     ) {}
 
+    /**
+     * Expand an existing legacy Responsive Display Quick bundle using its
+     * already-reviewed canonical demand tag. This is intentionally explicit:
+     * GET requests never mutate inventory and operators do not need to re-paste
+     * provider code that Horus already owns.
+     *
+     * @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>,previous_count:int,already_complete:bool}
+     */
+    public function expandResponsiveBundle(Site $site, User $actor): array
+    {
+        return DB::transaction(function () use ($site, $actor): array {
+            $lockedSite = Site::withoutGlobalScopes()
+                ->whereKey($site->id)
+                ->where('organization_id', $site->organization_id)
+                ->whereNull('deleted_at')
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $members = Placement::withoutGlobalScopes()
+                ->where('site_id', $lockedSite->id)
+                ->where('organization_id', $lockedSite->organization_id)
+                ->whereNull('deleted_at')
+                ->where('status', 'ACTIVE')
+                ->get()
+                ->filter(fn (Placement $placement): bool => data_get($placement->metadata, 'responsive_bundle') === 'v1')
+                ->sortBy(fn (Placement $placement): int => (int) data_get($placement->metadata, 'responsive_bundle_index', 0))
+                ->values();
+
+            $previousCount = $members->count();
+            if ($previousCount === 0) {
+                throw ValidationException::withMessages([
+                    'quick' => 'This website has no active Quick Responsive Display bundle to expand.',
+                ]);
+            }
+
+            if ($previousCount >= PlacementPresetBuilder::RESPONSIVE_BUNDLE_SIZE) {
+                $first = $members->first();
+
+                return [
+                    'account' => DemandAccount::withoutGlobalScopes()
+                        ->whereHas('sites.placements', fn ($query) => $query->where('placement_id', $first->id))
+                        ->firstOrFail(),
+                    'placement' => $first,
+                    'placements' => $members->all(),
+                    'previous_count' => $previousCount,
+                    'already_complete' => true,
+                ];
+            }
+
+            $indexes = $members
+                ->map(fn (Placement $placement): int => (int) data_get($placement->metadata, 'responsive_bundle_index', 0))
+                ->all();
+            if ($indexes !== range(1, $previousCount)) {
+                throw ValidationException::withMessages([
+                    'quick' => 'Responsive bundle indexes are incomplete or duplicated. Repair the inventory before expanding it.',
+                ]);
+            }
+
+            $demandPlacements = DemandPlacement::withoutGlobalScopes()
+                ->with(['demandSite.account.network', 'widgets'])
+                ->whereIn('placement_id', $members->pluck('id'))
+                ->where('is_enabled', true)
+                ->where('approval_status', DemandApprovalStatus::Approved->value)
+                ->get();
+
+            $sources = [];
+            foreach ($members as $member) {
+                $mappings = $demandPlacements
+                    ->where('placement_id', $member->id)
+                    ->filter(fn (DemandPlacement $mapping): bool =>
+                        (bool) data_get($mapping->configuration, 'quick_monetize_managed', false)
+                        && $mapping->demandSite?->is_enabled
+                        && (bool) data_get($mapping->demandSite?->configuration, 'quick_monetize_managed', false)
+                        && $mapping->demandSite?->account?->is_enabled
+                        && (bool) data_get($mapping->demandSite?->account?->configuration, 'quick_monetize_managed', false)
+                    )
+                    ->values();
+
+                if ($mappings->count() !== 1) {
+                    throw ValidationException::withMessages([
+                        'quick' => "Responsive placement [{$member->code}] does not have exactly one active Quick Monetize demand mapping.",
+                    ]);
+                }
+
+                /** @var DemandPlacement $mapping */
+                $mapping = $mappings->first();
+                $widgets = $mapping->widgets
+                    ->filter(fn (DemandWidget $widget): bool =>
+                        $widget->is_enabled
+                        && $widget->approval_status === DemandApprovalStatus::Approved
+                        && (bool) data_get($widget->configuration, 'quick_monetize_managed', false)
+                        && trim((string) $widget->direct_tag_template) !== ''
+                    )
+                    ->sortByDesc('id')
+                    ->values();
+
+                if ($widgets->count() !== 1) {
+                    throw ValidationException::withMessages([
+                        'quick' => "Responsive placement [{$member->code}] does not have exactly one active Quick Monetize tag.",
+                    ]);
+                }
+
+                /** @var DemandWidget $widget */
+                $widget = $widgets->first();
+                $network = $mapping->demandSite?->account?->network;
+                if (! $network) {
+                    throw ValidationException::withMessages([
+                        'quick' => 'The Responsive bundle demand network is unavailable.',
+                    ]);
+                }
+
+                $sources[] = [
+                    'account_id' => $mapping->demandSite->account->id,
+                    'network_id' => $network->id,
+                    'tag' => trim((string) $widget->direct_tag_template),
+                    'input_kind' => strtoupper((string) data_get($widget->configuration, 'input_kind', 'AUTO')),
+                ];
+            }
+
+            foreach (['account_id', 'network_id', 'tag', 'input_kind'] as $key) {
+                if (collect($sources)->pluck($key)->unique()->count() !== 1) {
+                    throw ValidationException::withMessages([
+                        'quick' => 'The existing Responsive bundle does not share one canonical Quick Monetize source. No changes were made.',
+                    ]);
+                }
+            }
+
+            $source = $sources[0];
+            $inputKind = in_array($source['input_kind'], ['AUTO', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'], true)
+                ? $source['input_kind']
+                : 'AUTO';
+            $network = $demandPlacements->first()->demandSite->account->network;
+
+            $result = $this->activate(
+                $lockedSite->fresh(),
+                $network,
+                $actor,
+                $source['tag'],
+                $members->first(),
+                null,
+                null,
+                $inputKind,
+            );
+
+            $newCount = count($result['placements']);
+            if ($newCount !== PlacementPresetBuilder::RESPONSIVE_BUNDLE_SIZE) {
+                throw ValidationException::withMessages([
+                    'quick' => 'Responsive bundle expansion did not produce the required six placements. No changes were published.',
+                ]);
+            }
+
+            $this->audit->record(
+                'demand.quick.responsive_bundle.expanded',
+                $lockedSite->organization_id,
+                $actor,
+                $lockedSite,
+                ['placement_count' => $previousCount],
+                ['placement_count' => $newCount],
+                [
+                    'preserved_placement_ids' => $members->pluck('id')->all(),
+                    'source_input_kind' => $inputKind,
+                ],
+            );
+
+            return $result + [
+                'previous_count' => $previousCount,
+                'already_complete' => false,
+            ];
+        });
+    }
+
     /** @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>} */
     public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO'): array
     {

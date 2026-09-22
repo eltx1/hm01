@@ -13,6 +13,8 @@ Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix(
         ->middleware('permission:demand.manage')->name('admin.demand.quick.create');
     Route::post('/demand/quick', [DirectDemandQuickMonetizeController::class, 'store'])
         ->middleware('permission:demand.manage')->name('admin.demand.quick.store');
+    Route::post('/sites/{site}/demand/quick-responsive/expand', [DirectDemandQuickMonetizeController::class, 'expandResponsiveBundle'])
+        ->middleware(['permission:demand.manage', 'throttle:10,1'])->name('admin.sites.demand.quick-responsive.expand');
 
     Route::get('/demand/accounts/create', [DirectDemandAccountController::class, 'create'])
         ->middleware('permission:demand.manage')->name('admin.demand.accounts.create');
