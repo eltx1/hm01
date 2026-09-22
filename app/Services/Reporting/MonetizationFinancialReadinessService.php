@@ -119,7 +119,7 @@ final class MonetizationFinancialReadinessService
             ->get()
             ->each(fn (BidderAccount $account) => $subjects->push($account));
 
-        return $subjects->map(function (DemandAccount|BidderAccount $subject) use ($period): ?array {
+        $subjectBlockers = $subjects->map(function (DemandAccount|BidderAccount $subject) use ($period): ?array {
             $siteIds = $subject instanceof DemandAccount
                 ? $subject->sites()->where('is_enabled', true)->pluck('site_id')
                 : $subject->siteMappings()->where('enabled', true)->pluck('site_id');
@@ -184,7 +184,30 @@ final class MonetizationFinancialReadinessService
                 'status' => $result['status'],
                 'reasons' => $result['reasons'],
             ];
-        })->filter()->concat($this->siteReports->blockers($period))->values();
+        })->filter()->values();
+
+        // An attested provider and its Site GAM binding represent one canonical
+        // financial source. If that coverage is incomplete, surface the provider
+        // blocker once instead of counting the same missing Site GAM day twice.
+        $attestedSiteIds = $subjects->filter(function (DemandAccount|BidderAccount $subject) use ($period): bool {
+            $binding = $subject->financialBinding;
+            if (! $binding?->is_enabled
+                || ! (bool) data_get($binding->configuration, 'site_gam_included', false)
+                || strtoupper((string) $binding->currency) !== strtoupper((string) $period->currency)) {
+                return false;
+            }
+
+            return true;
+        })->flatMap(fn (DemandAccount|BidderAccount $subject) => $subject instanceof DemandAccount
+            ? $subject->sites()->where('is_enabled', true)->pluck('site_id')
+            : $subject->siteMappings()->where('enabled', true)->pluck('site_id')
+        )->filter()->unique()->values();
+
+        $siteBlockers = $this->siteReports->blockers($period)
+            ->reject(fn (array $blocker): bool => $attestedSiteIds->contains((string) ($blocker['subject_id'] ?? '')))
+            ->values();
+
+        return $subjectBlockers->concat($siteBlockers)->values();
     }
 
     private function hasCompletePeriodImportCoverage(
