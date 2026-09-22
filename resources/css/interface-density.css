@@ -724,3 +724,28 @@ th {
         font-size: 0.6rem;
     }
 }
+
+
+.navigation-finder {
+    display: block;
+    margin: 0.55rem 0 0.2rem;
+}
+
+.navigation-finder input {
+    width: 100%;
+    min-height: 2.2rem;
+    border: 1px solid var(--hm-line);
+    border-radius: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    background: var(--hm-bg-card);
+    color: var(--hm-white);
+    font: inherit;
+}
+
+.navigation-finder input::placeholder {
+    color: var(--hm-muted-2);
+}
+
+.navigation-finder input:focus-visible {
+    border-color: var(--hm-line-gold);
+}
