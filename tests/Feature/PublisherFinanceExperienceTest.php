@@ -228,6 +228,8 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $this->actingAs($publisherAdmin)->get(route('publisher.finance.statements.index'))
             ->assertOk()->assertSee('HM-OWN-STATEMENT')->assertDontSee('HM-OTHER-PRIVATE');
+        $this->get(route('publisher.finance.statements.show', $own))
+            ->assertOk()->assertSee('Publisher earnings')->assertDontSee('Gross Revenue')->assertDontSee('Net Revenue');
         $this->get(route('publisher.finance.statements.show', $other))->assertNotFound();
         $this->get(route('publisher.finance.statements.csv', $other))->assertNotFound();
         $this->get(route('publisher.finance.statements.invoice.download', $other))->assertNotFound();
