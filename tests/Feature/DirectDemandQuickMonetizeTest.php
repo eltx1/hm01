@@ -823,6 +823,94 @@ HTML;
         $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
     }
 
+    public function test_site_page_one_click_expand_reuses_existing_tag_preserves_four_ids_and_publishes_six(): void
+    {
+        $firstFour = $this->legacyFourMemberResponsiveBundle();
+        $firstFourIds = $firstFour->pluck('id')->all();
+        $firstFourCodes = $firstFour->pluck('code')->all();
+        $tag = DemandWidget::withoutGlobalScopes()->firstOrFail()->direct_tag_template;
+        $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+
+        $this->adminSession()
+            ->get(route('admin.sites.show', $this->site))
+            ->assertOk()
+            ->assertSee('Responsive Display · 4 placement codes')
+            ->assertSee('Expand to 6 placements')
+            ->assertSee('existing codes remain unchanged');
+
+        $this->adminSession()
+            ->post(route('admin.sites.demand.quick-responsive.expand', $this->site))
+            ->assertRedirect(route('admin.sites.show', $this->site))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('status', fn ($value) => str_contains((string) $value, 'expanded from 4 to 6 placements'));
+
+        $units = $this->responsiveUnits()
+            ->sortBy(fn ($unit) => (int) data_get($unit->metadata, 'responsive_bundle_index'))
+            ->values();
+        $this->assertCount(6, $units);
+        $this->assertSame($firstFourIds, $units->take(4)->pluck('id')->all());
+        $this->assertSame($firstFourCodes, $units->take(4)->pluck('code')->all());
+        $this->assertSame('quick_responsive_display_5', $units[4]->code);
+        $this->assertSame('quick_responsive_display_6', $units[5]->code);
+        $this->assertSame(6, DemandWidget::withoutGlobalScopes()->where('is_enabled', true)->count());
+        $this->assertSame([$tag], DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template')->unique()->values()->all());
+        $this->assertSame($beforeVersions + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+
+        $config = $this->publishedConfiguration();
+        foreach ($units as $unit) {
+            $this->assertNotEmpty(data_get($config, 'directDemand.placements.'.$unit->code.'.candidates', []));
+            $this->assertFalse((bool) data_get(
+                collect($config['placements'])->firstWhere('code', $unit->code),
+                'format.settings.autoMount',
+            ));
+        }
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'demand.quick.responsive_bundle.expanded',
+            'auditable_id' => $this->site->id,
+        ]);
+
+        $this->adminSession()
+            ->get(route('admin.sites.show', $this->site))
+            ->assertOk()
+            ->assertSee('Responsive Display · 6 placement codes')
+            ->assertDontSee('Expand to 6 placements');
+    }
+
+    public function test_one_click_expand_fails_closed_when_legacy_bundle_tags_disagree(): void
+    {
+        $this->legacyFourMemberResponsiveBundle();
+        $widget = DemandWidget::withoutGlobalScopes()->orderByDesc('id')->firstOrFail();
+        $widget->update(['direct_tag_template' => str_replace('lordai_header', 'conflicting_unit', $widget->direct_tag_template)]);
+        $beforeVersions = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $beforeIds = $this->responsiveUnits()->pluck('id')->all();
+
+        $this->adminSession()
+            ->post(route('admin.sites.demand.quick-responsive.expand', $this->site))
+            ->assertSessionHasErrors('quick');
+
+        $this->assertCount(4, $this->responsiveUnits());
+        $this->assertSame($beforeIds, $this->responsiveUnits()->pluck('id')->all());
+        $this->assertSame($beforeVersions, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_responsive_display_5']);
+        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_responsive_display_6']);
+    }
+
+    public function test_publisher_cannot_use_or_see_admin_responsive_expansion_action(): void
+    {
+        $this->legacyFourMemberResponsiveBundle();
+
+        $this->actingAs($this->publisherUser)
+            ->get(route('publisher.sites.show', $this->site))
+            ->assertOk()
+            ->assertDontSee('Expand to 6 placements');
+
+        $this->actingAs($this->publisherUser)
+            ->post(route('admin.sites.demand.quick-responsive.expand', $this->site))
+            ->assertNotFound();
+
+        $this->assertCount(4, $this->responsiveUnits());
+    }
+
     public function test_existing_four_member_responsive_bundle_expands_to_six_without_changing_the_first_four_ids(): void
     {
         $this->seed(AdFormatSeeder::class);
@@ -953,6 +1041,41 @@ HTML;
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
         $this->assertSame($legacy->id, $this->responsiveUnits()->first()->id);
         $this->assertCount(6, $this->responsiveUnits());
+    }
+
+    private function legacyFourMemberResponsiveBundle()
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()
+            ->post(route('admin.demand.quick.store'), $this->responsivePayload())
+            ->assertSessionHasNoErrors();
+
+        $units = $this->responsiveUnits()
+            ->sortBy(fn ($unit) => (int) data_get($unit->metadata, 'responsive_bundle_index'))
+            ->values();
+        $this->assertCount(6, $units);
+
+        foreach ($units->slice(4) as $unit) {
+            $demandPlacements = DemandPlacement::withoutGlobalScopes()
+                ->where('placement_id', $unit->id)
+                ->get();
+            DemandWidget::withoutGlobalScopes()
+                ->whereIn('demand_placement_id', $demandPlacements->pluck('id'))
+                ->delete();
+            DemandPlacement::withoutGlobalScopes()
+                ->whereIn('id', $demandPlacements->pluck('id'))
+                ->delete();
+            $unit->sizes()->delete();
+            $unit->targeting()->delete();
+            $unit->forceDelete();
+        }
+
+        $legacy = $this->responsiveUnits()
+            ->sortBy(fn ($unit) => (int) data_get($unit->metadata, 'responsive_bundle_index'))
+            ->values();
+        $this->assertCount(4, $legacy);
+
+        return $legacy;
     }
 
     private function responsiveUnits()
