@@ -92,7 +92,7 @@ final class ControlPlaneNavigation
             $this->group('Account', [
                 $this->item('Commercial terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
                 $this->item('Affiliate referrals', 'publisher.affiliate.index', 'finance.publisher.view_own', ['publisher.affiliate.*']),
-                $this->item('Team members', 'admin.invitations.create', 'users.invite', ['admin.invitations.*']),
+                $this->item('Invite team member', 'admin.invitations.create', 'users.invite', ['admin.invitations.*']),
             ]),
             $this->group('Help', [
                 $this->item('Support', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
