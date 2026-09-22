@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\RoleName;
 use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Enums\VerificationMethod;
@@ -121,6 +122,59 @@ class SiteController extends Controller
         $lifecycle->transition($site, SiteStatus::Active, $request->user(), $data['reason'] ?? 'Activated by Horus Media.');
 
         return back()->with('status', 'Website activated.');
+    }
+
+    public function forceActivate(
+        Request $request,
+        Site $site,
+        SiteLifecycleService $lifecycle,
+        AuditRecorder $audit,
+    ): RedirectResponse {
+        abort_unless($request->user()->hasRole(RoleName::SuperAdmin->value), 403);
+        abort_unless($site->status === SiteStatus::Draft, 422, 'Force activation is only available for draft websites.');
+
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:2000'],
+            'confirmation' => ['required', 'accepted'],
+        ]);
+        $actor = $request->user();
+        $reason = trim($data['reason']);
+        $overrideReason = 'Super Admin force activation override: '.$reason;
+
+        DB::transaction(function () use ($site, $request, $lifecycle, $audit, $actor, $reason, $overrideReason): void {
+            $lifecycle->transition($site, SiteStatus::PendingReview, $actor, $overrideReason, notify: false);
+            $lifecycle->transition($site->refresh(), SiteStatus::Approved, $actor, $overrideReason, notify: false);
+            $lifecycle->transition($site->refresh(), SiteStatus::Active, $actor, $overrideReason, notify: false);
+
+            $this->review($site->refresh(), $request, 'APPROVED', [
+                'publisher_message' => 'Website approved and activated by Horus Media administration.',
+                'internal_reason' => $reason,
+            ]);
+
+            $audit->record(
+                'site.force_approved_and_activated',
+                $site->organization_id,
+                $actor,
+                $site->refresh(),
+                ['status' => SiteStatus::Draft->value],
+                ['status' => SiteStatus::Active->value],
+                [
+                    'reason' => $reason,
+                    'ads_txt_activation_verification_bypassed' => true,
+                    'transition_path' => [
+                        SiteStatus::Draft->value,
+                        SiteStatus::PendingReview->value,
+                        SiteStatus::Approved->value,
+                        SiteStatus::Active->value,
+                    ],
+                ],
+            );
+        });
+
+        return back()->with(
+            'status',
+            'Website force-approved and activated. The ads.txt activation gate was bypassed by a Super Admin and Production configuration was published automatically.',
+        );
     }
 
     public function suspend(Request $request, Site $site, SiteLifecycleService $lifecycle): RedirectResponse
