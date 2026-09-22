@@ -311,7 +311,8 @@ final class DirectDemandQuickMonetizeTest extends TestCase
 
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
             'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '  '.$path.'  ',
-        ]))->assertSessionHasNoErrors()->assertRedirect();
+        ]))->assertSessionHasNoErrors()->assertRedirect()
+            ->assertSessionHas('status', fn ($value) => str_contains((string) $value, 'Responsive Display · 6 manual placements'));
 
         $units = $this->responsiveUnits();
         $this->assertCount(6, $units);
