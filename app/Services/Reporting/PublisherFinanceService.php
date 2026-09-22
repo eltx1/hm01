@@ -24,19 +24,32 @@ final class PublisherFinanceService
     public function overview(Publisher $publisher): array
     {
         $profile = $publisher->paymentProfile;
-        $statements = $this->statements($publisher);
+        $statementModels = $this->statementModels($publisher);
         $payments = $this->payments($publisher);
         $contract = $this->activeContract($publisher);
-        $currencyCodes = $this->currencies($publisher, $statements, $payments, $contract);
+        $currencyCodes = $this->currencies($publisher, $statementModels, $payments, $contract);
 
-        $currencies = $currencyCodes->map(function (string $currency) use ($publisher, $profile, $statements, $payments, $contract): array {
+        $currencies = $currencyCodes->map(function (string $currency) use ($publisher, $profile, $statementModels, $payments, $contract): array {
             $currentRows = DailyReport::withoutGlobalScopes()
                 ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
                 ->where('currency', $currency)
                 ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
                 ->whereDate('report_date', '<=', now()->toDateString())
                 ->get();
-            $currencyStatements = $statements->where('currency', $currency);
+            $todayCandidates = DailyReport::withoutGlobalScopes()
+                ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+                ->where('currency', $currency)
+                ->where('finality', ReportFinality::Estimated->value)
+                ->whereDate('report_date', '>=', now()->subDay()->toDateString())
+                ->whereDate('report_date', '<=', now()->addDay()->toDateString())
+                ->with('connection')
+                ->get();
+            $todayRows = $todayCandidates->filter(function (DailyReport $row): bool {
+                $timezone = $row->connection?->timezone ?: config('reporting.default_timezone', 'UTC');
+
+                return $row->report_date->toDateString() === now($timezone)->toDateString();
+            });
+            $currencyStatements = $statementModels->where('currency', $currency);
             $latest = $currencyStatements->first();
             $currencyPayments = $payments->where('currency', $currency);
             $pendingStatuses = [
@@ -55,6 +68,11 @@ final class PublisherFinanceService
 
             return [
                 'currency' => $currency,
+                'today_available' => $todayRows->isNotEmpty(),
+                'today_impressions' => (int) $todayRows->sum('impressions'),
+                'today_clicks' => (int) $todayRows->sum('clicks'),
+                'today_estimated_earnings_minor' => (int) $todayRows->sum('publisher_earnings_minor'),
+                'today_updated_at' => $todayRows->sortByDesc('updated_at')->first()?->updated_at,
                 'estimated_earnings_minor' => (int) $currentRows
                     ->where('finality', ReportFinality::Estimated)
                     ->sum('publisher_earnings_minor'),
@@ -88,17 +106,86 @@ final class PublisherFinanceService
             ];
         })->values();
 
+        $actions = $this->actions($profile?->verification_status, $currencies, $payments);
+        $publisherCurrencies = $currencies->map(fn (array $summary): array => $this->publisherCurrencySummary($summary))->values();
+
         return [
             'publisher' => $publisher,
             'profile' => $profile,
-            'currencies' => $currencies,
-            'statements' => $statements,
+            'currencies' => $publisherCurrencies,
+            'statements' => $statementModels->map(fn (PublisherStatement $statement): array => $this->publisherStatementSummary($statement))->values(),
             'payments' => $payments,
-            'actions' => $this->actions($profile?->verification_status, $currencies, $payments),
+            'actions' => $actions,
+        ];
+    }
+
+    public function dashboard(Publisher $publisher): array
+    {
+        $overview = $this->overview($publisher);
+        $impressions = DailyReport::withoutGlobalScopes()
+            ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('finality', ReportFinality::Finalized->value)
+            ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
+            ->whereDate('report_date', '<=', now()->toDateString())
+            ->sum('impressions');
+
+        return [
+            'impressions' => (int) $impressions,
+            'currencies' => $overview['currencies'],
+            'statements' => $overview['statements'],
         ];
     }
 
     public function statements(Publisher $publisher): Collection
+    {
+        return $this->statementModels($publisher)
+            ->map(fn (PublisherStatement $statement): array => $this->publisherStatementSummary($statement))
+            ->values();
+    }
+
+    public function statement(PublisherStatement $statement): array
+    {
+        $statement->loadMissing(['period', 'payments.settlements']);
+
+        return [
+            ...$this->publisherStatementSummary($statement),
+            'opening_balance_minor' => (int) $statement->opening_balance_minor,
+            'deductions_minor' => (int) $statement->deductions_minor,
+            'payment_threshold_minor' => (int) $statement->payment_threshold_minor,
+            'publisher_invoice_path' => $statement->publisher_invoice_path,
+            'publisher_invoice_number' => $statement->publisher_invoice_number,
+            'publisher_invoice_uploaded_at' => $statement->publisher_invoice_uploaded_at,
+            'publisher_invoice_review_reason' => $statement->publisher_invoice_review_reason,
+            'line_items' => collect($statement->line_items ?? [])->map(function (array $line): array {
+                $source = (string) ($line['source'] ?? '');
+                $isAffiliate = $source === 'AFFILIATE';
+
+                return [
+                    'kind' => $isAffiliate ? 'AFFILIATE' : ($source === 'ADJUSTMENT' ? 'ADJUSTMENT' : 'PUBLISHER_EARNINGS'),
+                    'site' => $line['site'] ?? null,
+                    'description' => $line['description'] ?? null,
+                    'impressions' => (int) ($line['impressions'] ?? 0),
+                    'amount_minor' => (int) ($isAffiliate
+                        ? ($line['affiliate_earnings_minor'] ?? 0)
+                        : ($line['publisher_earnings_minor'] ?? 0)),
+                    'affiliate_commission_rate_bp' => (int) ($line['affiliate_commission_rate_bp'] ?? 0),
+                    'referred_publisher' => $line['referred_publisher'] ?? null,
+                ];
+            })->values()->all(),
+            'payments' => $statement->payments->map(fn (PublisherPayment $payment): array => [
+                'payment_number' => $payment->payment_number,
+                'payment_method' => $payment->payment_method,
+                'scheduled_on' => $payment->scheduled_on,
+                'horus_payment_reference' => $payment->horus_payment_reference,
+                'currency' => $payment->currency,
+                'settled_amount_minor' => (int) $payment->settled_amount_minor,
+                'amount_minor' => (int) $payment->amount_minor,
+                'status' => $payment->status->value,
+            ])->values()->all(),
+        ];
+    }
+
+    private function statementModels(Publisher $publisher): Collection
     {
         return PublisherStatement::withoutGlobalScopes()
             ->where('publisher_id', $publisher->id)
@@ -108,6 +195,34 @@ final class PublisherFinanceService
                 ->whereColumn('financial_periods.id', 'publisher_statements.financial_period_id'))
             ->orderByDesc('created_at')
             ->get();
+    }
+
+    private function publisherCurrencySummary(array $summary): array
+    {
+        $latest = $summary['latest_statement'] ?? null;
+        unset($summary['latest_statement']);
+        $summary['latest_statement_id'] = $latest?->id;
+        $summary['statement_balance_due_minor'] = (int) ($latest?->balance_due_minor ?? 0);
+
+        return $summary;
+    }
+
+    private function publisherStatementSummary(PublisherStatement $statement): array
+    {
+        return [
+            'id' => $statement->id,
+            'statement_number' => $statement->statement_number,
+            'period_key' => $statement->period?->period_key,
+            'currency' => $statement->currency,
+            'status' => $statement->status->value,
+            'publisher_earnings_minor' => (int) $statement->publisher_earnings_minor,
+            'affiliate_earnings_minor' => (int) $statement->affiliate_earnings_minor,
+            'paid_minor' => (int) $statement->paid_minor,
+            'balance_due_minor' => (int) $statement->balance_due_minor,
+            'carry_forward_minor' => (int) $statement->carry_forward_minor,
+            'publisher_invoice_status' => $statement->publisher_invoice_status->value,
+            'finalized_at' => $statement->finalized_at,
+        ];
     }
 
     public function payments(Publisher $publisher): Collection
