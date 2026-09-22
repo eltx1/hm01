@@ -144,15 +144,19 @@ class PublisherFinanceExperienceTest extends TestCase
             'impressions' => 50, 'gross_revenue_minor' => 5000, 'currency' => 'EUR',
         ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'dashboard-eur');
 
+        $summary = app(PublisherFinanceService::class)->dashboard($publisher);
+        $this->assertSame('USD', $summary['canonical_currency']);
+        $this->assertSame(100, $summary['impressions']);
+        $this->assertSame(7000, $summary['primary']['finalized_earnings_minor']);
+        $this->assertSame(1, $summary['legacy_currency_count']);
+
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
             ->assertSee('Reports &amp; earnings', false)
             ->assertSee('This month · finalized')
             ->assertSee('USD 70.00')
-            ->assertSee('100')
             ->assertSee('standard reporting currency')
-            ->assertDontSee('EUR 35.00')
-            ->assertDontSee('150');
+            ->assertDontSee('EUR 35.00');
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
