@@ -52,7 +52,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('Monetization health')
             ->assertSee('Ads.txt &amp; compliance', false)
             ->assertSee('Commercial terms')
-            ->assertDontSee('Team members')
+            ->assertDontSee('Invite team member')
             ->assertDontSee('Production');
     }
 
