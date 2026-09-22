@@ -7,11 +7,13 @@ use App\Enums\FinancialReportingMethod;
 use App\Enums\ReconciliationStatus;
 use App\Enums\ReportConnectionStatus;
 use App\Enums\ReportFinality;
+use App\Enums\ReportImportStatus;
 use App\Models\BidderAccount;
 use App\Models\DemandAccount;
 use App\Models\FinancialPeriod;
 use App\Models\MonetizationFinancialBinding;
 use App\Models\ReconciliationRun;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
 final class MonetizationFinancialReadinessService
@@ -146,6 +148,17 @@ final class MonetizationFinancialReadinessService
                 return null;
             }
             $result = $this->status($subject, $period->currency, $period);
+            if ($result['ready'] && ! $this->hasCompletePeriodImportCoverage($subject, $result['binding'], $period)) {
+                $result = [
+                    ...$result,
+                    'status' => FinancialReadinessStatus::Stale->value,
+                    'ready' => false,
+                    'reasons' => [[
+                        'code' => 'INCOMPLETE_PERIOD_COVERAGE',
+                        'message' => 'The canonical provider financial source does not have finalized import coverage for every active day in this period.',
+                    ]],
+                ];
+            }
             if ($result['ready']) {
                 return null;
             }
@@ -158,6 +171,55 @@ final class MonetizationFinancialReadinessService
                 'reasons' => $result['reasons'],
             ];
         })->filter()->concat($this->siteReports->blockers($period))->values();
+    }
+
+    private function hasCompletePeriodImportCoverage(
+        DemandAccount|BidderAccount $subject,
+        MonetizationFinancialBinding $binding,
+        FinancialPeriod $period,
+    ): bool {
+        $from = CarbonImmutable::parse($period->starts_on)->startOfDay();
+        $to = CarbonImmutable::parse($period->ends_on)->endOfDay();
+
+        if ($subject->created_at) {
+            $from = $from->max(CarbonImmutable::parse($subject->created_at)->startOfDay());
+        }
+        $mappingStart = $subject instanceof DemandAccount
+            ? $subject->sites()->where('is_enabled', true)->min('created_at')
+            : $subject->siteMappings()->where('enabled', true)->min('created_at');
+        if ($mappingStart) {
+            $from = $from->max(CarbonImmutable::parse($mappingStart)->startOfDay());
+        }
+        if ($binding->effective_from) {
+            $from = $from->max(CarbonImmutable::parse($binding->effective_from)->startOfDay());
+        }
+        if ($binding->effective_to) {
+            $to = $to->min(CarbonImmutable::parse($binding->effective_to)->endOfDay());
+        }
+        if ($from->gt($to)) {
+            return true;
+        }
+
+        $imports = $binding->connection->imports()
+            ->where('status', ReportImportStatus::Completed->value)
+            ->where('finality', ReportFinality::Finalized->value)
+            ->where('settlement_eligible', true)
+            ->whereDate('period_start', '<=', $to->toDateString())
+            ->whereDate('period_end', '>=', $from->toDateString())
+            ->get(['period_start', 'period_end']);
+
+        for ($day = $from->startOfDay(); $day->lte($to); $day = $day->addDay()) {
+            $date = $day->toDateString();
+            $covered = $imports->contains(fn ($import) =>
+                $import->period_start->toDateString() <= $date
+                && $import->period_end->toDateString() >= $date
+            );
+            if (! $covered) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function result(FinancialReadinessStatus $status, string $code, string $message, ?MonetizationFinancialBinding $binding): array
