@@ -9,6 +9,14 @@
     @php($brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user()))
     @php($isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia)
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
+    @php($workspaceLabel = match ($brand?->type) {
+        \App\Enums\OrganizationType::Publisher => 'Publisher workspace',
+        \App\Enums\OrganizationType::Advertiser => 'Advertiser workspace',
+        \App\Enums\OrganizationType::Partner => 'Partner workspace',
+        default => 'Admin workspace',
+    })
+    @php($activeNavigationGroup = collect($navigationGroups)->first(fn ($group) => collect($group['items'])->contains(fn ($item) => collect($item['active'])->contains(fn ($pattern) => request()->routeIs($pattern)))))
+    @php($activeNavigationItem = collect($activeNavigationGroup['items'] ?? [])->first(fn ($item) => collect($item['active'])->contains(fn ($pattern) => request()->routeIs($pattern))))
     @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
     <title>@yield('title', 'Dashboard') · {{ $brandIdentity->name }}</title>
@@ -20,7 +28,7 @@
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
             <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
-            <p class="eyebrow">Ad Network Control Plane</p>
+            <p class="eyebrow">{{ $workspaceLabel }}</p>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
@@ -35,13 +43,17 @@
                 <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
                 <x-brand.product-lockup context="workspace" variant="header" :href="url('/')" :compact="true" class="mobile-product-lockup" />
                 <div class="topbar-title">
-                    <p class="eyebrow">app.horusmedia.net</p>
+                    <p class="eyebrow workspace-context">
+                        <span>{{ $workspaceLabel }}</span>
+                        @if($activeNavigationGroup)<span aria-hidden="true">/</span><span>{{ $activeNavigationGroup['label'] }}</span>@endif
+                        @if($activeNavigationItem)<span aria-hidden="true">/</span><span>{{ $activeNavigationItem['label'] }}</span>@endif
+                    </p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
                 @if(auth()->user()->hasPermission('notifications.view_own'))
                 <details class="notification-bell"><summary aria-label="Notifications">🔔 @if($unreadNotifications)<span aria-label="{{ $unreadNotifications }} unread notifications">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary><div class="notification-popover"><strong>Latest notifications</strong>@forelse($notificationPreview as $item)<a href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted">No notifications yet.</p>@endforelse<a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center</a></div></details>
                 @endif
-                <span class="status">Control Plane</span>
+                <span class="status">{{ $workspaceLabel }}</span>
             </header>
             @if(session()->has('impersonator_id'))
                 <form method="POST" action="{{ route('admin.impersonate.stop') }}" class="impersonation-banner">@csrf @method('DELETE') <span>Impersonating {{ auth()->user()->email }}</span> <button type="submit">Stop impersonation</button></form>
