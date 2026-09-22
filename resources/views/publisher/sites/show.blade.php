@@ -156,7 +156,7 @@
     ['label' => 'Ads.txt', 'href' => '#ads-txt-setup', 'visible' => auth()->user()->hasPermission('publisher.ads_txt.view')],
     ['label' => 'Installation', 'href' => '#site-installation'],
     ['label' => 'Privacy', 'href' => '#privacy-readiness'],
-    ['label' => 'Ad codes', 'href' => '#responsive-display-codes'],
+    ['label' => 'Ad codes', 'href' => '#responsive-display-codes', 'visible' => $site->placements->contains(fn ($placement) => data_get($placement->metadata, 'responsive_bundle') === 'v1')],
 ]" label="Website sections" />
 
 <section id="website-overview" class="hero workspace-section">
