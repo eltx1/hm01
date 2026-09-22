@@ -31,9 +31,13 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('Reports')
             ->assertSee('Finance')
             ->assertSee('Ads.txt &amp; supply chain', false)
-            ->assertDontSee('Production')
             ->assertDontSee('Access control')
             ->assertSee('data-nav-toggle', false);
+
+        $labels = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($admin))
+            ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        $this->assertFalse($labels->contains('Production'));
+        $this->assertFalse($labels->contains('Access control'));
     }
 
     public function test_publisher_navigation_is_role_aware_and_has_no_future_dead_links(): void
@@ -52,8 +56,12 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('Monetization health')
             ->assertSee('Ads.txt &amp; compliance', false)
             ->assertSee('Commercial terms')
-            ->assertDontSee('Invite team member')
-            ->assertDontSee('Production');
+            ->assertDontSee('Invite team member');
+
+        $labels = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($viewer))
+            ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        $this->assertFalse($labels->contains('Production'));
+        $this->assertFalse($labels->contains('Invite team member'));
     }
 
     public function test_navigation_uses_fewer_task_based_groups_and_workspace_context(): void
