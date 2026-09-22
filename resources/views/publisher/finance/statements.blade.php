@@ -10,16 +10,16 @@
         <tbody>
         @forelse($statements as $statement)
             <tr>
-                <td><strong>{{ $statement->statement_number }}</strong><span class="table-note">Finalized {{ $statement->finalized_at?->toDateString() ?: '—' }}</span></td>
-                <td>{{ $statement->period->period_key }}<span class="table-note">{{ $statement->currency }}</span></td>
-                <td><span class="pill">{{ $statement->status->value }}</span></td>
-                <td>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) $statement->publisher_earnings_minor) }}</td>
-                <td>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) $statement->affiliate_earnings_minor) }}</td>
-                <td>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) $statement->paid_minor) }}</td>
-                <td>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) $statement->balance_due_minor) }}</td>
-                <td>{{ $statement->currency }} {{ \App\Support\Money::formatMinor((int) $statement->carry_forward_minor) }}</td>
-                <td><span class="pill">{{ $statement->publisher_invoice_status->value }}</span></td>
-                <td><a href="{{ route('publisher.finance.statements.show', $statement) }}">Open</a></td>
+                <td><strong>{{ $statement['statement_number'] }}</strong><span class="table-note">Finalized {{ $statement['finalized_at']?->toDateString() ?: '—' }}</span></td>
+                <td>{{ $statement['period_key'] }}<span class="table-note">{{ $statement['currency'] }}</span></td>
+                <td><span class="pill">{{ $statement['status'] }}</span></td>
+                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['publisher_earnings_minor']) }}</td>
+                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['affiliate_earnings_minor']) }}</td>
+                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['paid_minor']) }}</td>
+                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }}</td>
+                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['carry_forward_minor']) }}</td>
+                <td><span class="pill">{{ $statement['publisher_invoice_status'] }}</span></td>
+                <td><a href="{{ route('publisher.finance.statements.show', $statement['id']) }}">Open</a></td>
             </tr>
         @empty
             <tr><td colspan="10">Statements appear after a financial period is finalized.</td></tr>
