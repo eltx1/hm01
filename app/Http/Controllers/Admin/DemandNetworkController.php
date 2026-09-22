@@ -271,7 +271,7 @@ class DemandNetworkController extends Controller
             'timezone' => ['required', 'timezone'],
             'is_enabled' => ['required', 'boolean'],
             'configuration_json' => ['nullable', 'json'],
-            'site_gam_included' => ['required', 'boolean'],
+            'site_gam_included' => ['sometimes', 'boolean'],
             'site_gam_inclusion_reason' => ['nullable', 'string', 'min:12', 'max:1000', 'required_if:site_gam_included,1'],
         ]);
         $configuration = isset($data['configuration_json'])
