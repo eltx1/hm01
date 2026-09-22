@@ -78,6 +78,10 @@ class ReportingFinancialSystemTest extends TestCase
         $publisherSummary = app(UnifiedReportService::class)->publisherSummary($publisher, $date, $date);
         $this->assertSame(1000, $publisherSummary['impressions']);
         $this->assertSame(8750, $publisherSummary['revenue_minor']);
+        $publisherPayload = json_encode($publisherSummary, JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('gross_revenue_minor', $publisherPayload);
+        $this->assertStringNotContainsString('net_revenue_minor', $publisherPayload);
+        $this->assertStringNotContainsString('horus_earnings_minor', $publisherPayload);
         $this->actingAs($publisherUser)->get(route('publisher.reporting.index'))->assertOk();
     }
 
