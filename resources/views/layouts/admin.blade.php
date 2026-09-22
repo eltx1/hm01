@@ -33,6 +33,7 @@
                 <span class="sr-only">Find a page</span>
                 <input type="search" placeholder="Find a page…" autocomplete="off" data-nav-filter aria-label="Find a page in navigation">
             </label>
+            <p class="navigation-empty muted" data-nav-empty hidden>No matching page.</p>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
