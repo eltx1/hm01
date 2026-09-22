@@ -30,6 +30,7 @@ final class CompactResponsiveInterfaceTest extends TestCase
             '.task-card',
             '.publisher-site-grid',
             '.workspace-context',
+            '.navigation-finder',
             '.hm-input',
             '.ai-provider-grid',
             '.table-wrap table',
