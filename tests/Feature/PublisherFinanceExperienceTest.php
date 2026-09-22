@@ -121,6 +121,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertStringNotContainsString('gross_revenue_minor', $payload);
         $this->assertStringNotContainsString('net_revenue_minor', $payload);
         $this->assertStringNotContainsString('horus_earnings_minor', $payload);
+        $this->assertStringNotContainsString('deductions_minor', $payload);
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
@@ -268,6 +269,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertStringNotContainsString('PRIVATE_SOURCE', $csv);
         $this->assertStringNotContainsString('Gross Revenue Minor', $csv);
         $this->assertStringNotContainsString('Net Revenue Minor', $csv);
+        $this->assertStringNotContainsString('Deductions', $csv);
     }
 
     public function test_partial_payout_history_uses_settled_amount_and_never_creation_as_payment(): void
