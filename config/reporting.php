@@ -2,6 +2,10 @@
 
 return [
     'default_currency' => env('REPORTING_DEFAULT_CURRENCY', 'USD'),
+    // Canonical monetary presentation/accounting currency for GAM reporting.
+    // GAM network currency remains source metadata; report queries explicitly
+    // request this currency from Google so Horus never relabels FX values.
+    'canonical_currency' => env('REPORTING_CANONICAL_CURRENCY', 'USD'),
     'default_timezone' => env('REPORTING_DEFAULT_TIMEZONE', 'UTC'),
     'default_publisher_share_bp' => (int) env('REPORTING_DEFAULT_PUBLISHER_SHARE_BP', 7000),
     'default_horus_share_bp' => (int) env('REPORTING_DEFAULT_HORUS_SHARE_BP', 3000),
