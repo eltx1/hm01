@@ -9,6 +9,7 @@ use App\Enums\FinancialReportingMethod;
 use App\Enums\OrganizationType;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
+use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
 use App\Enums\RoleName;
 use App\Models\BidderAccount;
@@ -19,6 +20,7 @@ use App\Models\DemandSite;
 use App\Models\FinancialPeriod;
 use App\Models\PrebidBidder;
 use App\Models\PublisherStatement;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Services\Demand\DemandAccountService;
@@ -315,6 +317,86 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         );
         $this->assertSame('COMPLETED', $full->status->value);
         $this->assertNull($readiness->blockersForPeriod($period)->firstWhere('subject_id', $account->id));
+    }
+
+    public function test_site_gam_attestation_supersedes_provider_retries_and_blocks_parallel_financial_imports(): void
+    {
+        $account = $this->oneTagAccount('OneTag Site GAM Canonical');
+        $bindings = app(MonetizationFinancialBindingService::class);
+        $source = ReportSource::query()->where('code', ReportSourceCode::OneTag->value)->firstOrFail();
+        $binding = $bindings->bind(
+            $account,
+            $source,
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $this->admin,
+        );
+        $date = now()->subMonthNoOverflow()->startOfMonth()->addDay()->toImmutable();
+
+        foreach ([ReportImportStatus::Pending, ReportImportStatus::Failed] as $offset => $status) {
+            ReportImportJob::withoutGlobalScopes()->create([
+                'organization_id' => $binding->connection->organization_id,
+                'report_source_connection_id' => $binding->connection->id,
+                'import_type' => 'CSV',
+                'granularity' => ReportGranularity::Daily,
+                'finality' => ReportFinality::Finalized,
+                'settlement_eligible' => true,
+                'status' => $status,
+                'period_start' => $date,
+                'period_end' => $date,
+                'idempotency_key' => hash('sha256', 'attested-provider-job-'.$offset),
+                'attempt_count' => 1,
+                'next_retry_at' => now()->subMinute(),
+                'created_by' => $this->admin->id,
+            ]);
+        }
+
+        $attested = $bindings->bind(
+            $account,
+            $source,
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $this->admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider contract confirms Site GAM is the exclusive realized-revenue source.',
+            ],
+        );
+
+        $this->assertSame(
+            2,
+            ReportImportJob::withoutGlobalScopes()
+                ->where('report_source_connection_id', $attested->connection->id)
+                ->where('status', ReportImportStatus::Duplicate->value)
+                ->count(),
+        );
+        $this->assertSame(
+            0,
+            ReportImportJob::withoutGlobalScopes()
+                ->where('report_source_connection_id', $attested->connection->id)
+                ->whereNotNull('next_retry_at')
+                ->count(),
+        );
+
+        try {
+            app(ReportImportService::class)->importRows(
+                $attested->connection->fresh(),
+                [$this->row($date)],
+                ReportGranularity::Daily,
+                ReportFinality::Finalized,
+                $date,
+                $date,
+                $this->admin,
+                'parallel-provider-import-after-attestation',
+                importType: 'CSV',
+            );
+            $this->fail('Provider import must fail closed while Site GAM is declared canonical.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('source', $exception->errors());
+            $this->assertStringContainsString('Site GAM', $exception->errors()['source'][0]);
+        }
     }
 
     public function test_readiness_surfaces_missing_currency_failed_and_stale_states(): void
