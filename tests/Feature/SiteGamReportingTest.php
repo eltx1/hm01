@@ -241,6 +241,30 @@ class SiteGamReportingTest extends TestCase
         $this->getJson(route('admin.sites.reporting.gam.units', $site).'?gam_connection_id='.$gam->id)->assertForbidden();
     }
 
+    public function test_existing_open_legacy_site_gam_connection_is_normalized_to_usd_without_replacing_binding(): void
+    {
+        [$admin] = $context = $this->context();
+        $binding = $this->bind($context);
+        $configuration = $binding->connection->configuration ?? [];
+        $configuration['google_jobs'] = ['stale' => ['id' => '77', 'requested_at' => now()->toIso8601String()]];
+        $configuration['sync_due'] = ['stale' => now()->addHour()->toIso8601String()];
+        $binding->connection->update(['currency' => 'AED', 'configuration' => $configuration]);
+        $this->google->currency = 'AED';
+
+        $same = app(SiteGamReportingService::class)->bind($context[3], $context[4]->id, '12345', $admin);
+
+        $this->assertSame($binding->id, $same->id);
+        $this->assertSame('USD', $same->connection->currency);
+        $this->assertSame('AED', data_get($same->connection->configuration, 'source_network_currency'));
+        $this->assertSame('USD', data_get($same->connection->configuration, 'report_currency'));
+        $this->assertArrayNotHasKey('google_jobs', $same->connection->configuration);
+        $this->assertArrayNotHasKey('sync_due', $same->connection->configuration);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'reporting.site_gam.currency_normalized',
+            'auditable_id' => $binding->id,
+        ]);
+    }
+
     public function test_ambiguous_unit_and_foreign_publisher_account_are_rejected_without_creating_a_binding(): void
     {
         [$admin, , $user, $site] = $context = $this->context();
