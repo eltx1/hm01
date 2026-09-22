@@ -31,17 +31,23 @@ navigationScrim?.addEventListener('click', () => setNavigation(false, { restoreF
 navigation?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setNavigation(false)));
 
 const navigationFilter = document.querySelector('[data-nav-filter]');
+const navigationEmpty = document.querySelector('[data-nav-empty]');
 navigationFilter?.addEventListener('input', () => {
     const query = navigationFilter.value.trim().toLocaleLowerCase();
+    let visibleLinks = 0;
     navigation?.querySelectorAll('.navigation-group').forEach((group) => {
         let visible = 0;
         group.querySelectorAll('.navigation-links a').forEach((link) => {
             const matches = query === '' || link.textContent.trim().toLocaleLowerCase().includes(query);
             link.hidden = !matches;
-            if (matches) visible += 1;
+            if (matches) {
+                visible += 1;
+                visibleLinks += 1;
+            }
         });
         group.hidden = visible === 0;
     });
+    if (navigationEmpty) navigationEmpty.hidden = visibleLinks !== 0;
 });
 
 document.addEventListener('keydown', (event) => {
