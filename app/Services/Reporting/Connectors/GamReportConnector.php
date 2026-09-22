@@ -62,15 +62,20 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             ?? data_get($data, 'data')
             ?? [];
 
+        $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $rows = is_array($rows)
+            ? array_map(fn ($row) => is_array($row) ? array_merge($row, ['currency' => $currency]) : $row, $rows)
+            : [];
+
         return [
             'external_report_id' => (string) (
                 data_get($data, 'report_id')
                 ?? data_get($data, 'id')
-                ?? hash('sha256', json_encode([$connection->id, $from->toDateString(), $to->toDateString(), $granularity->value], JSON_THROW_ON_ERROR))
+                ?? hash('sha256', json_encode([$connection->id, $from->toDateString(), $to->toDateString(), $granularity->value, $currency], JSON_THROW_ON_ERROR))
             ),
-            'rows' => is_array($rows) ? $rows : [],
+            'rows' => $rows,
             'totals' => (array) (data_get($data, 'totals') ?? []),
-            'metadata' => ['gam_connection_id' => $gam->id, 'network_code' => $gam->network_code],
+            'metadata' => ['gam_connection_id' => $gam->id, 'network_code' => $gam->network_code, 'reporting_currency' => $currency],
         ];
     }
 }
