@@ -319,6 +319,78 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertNull($readiness->blockersForPeriod($period)->firstWhere('subject_id', $account->id));
     }
 
+    public function test_switching_provider_financial_source_retires_old_connection_without_rewriting_history(): void
+    {
+        $account = $this->oneTagAccount('OneTag Source Cutover');
+        $bindings = app(MonetizationFinancialBindingService::class);
+        $oneTag = ReportSource::query()->where('code', ReportSourceCode::OneTag->value)->firstOrFail();
+        $custom = ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail();
+        $oldBinding = $bindings->bind(
+            $account,
+            $oneTag,
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $this->admin,
+        );
+        $oldConnection = $oldBinding->connection;
+        $date = now()->subMonthNoOverflow()->startOfMonth()->addDay()->toImmutable();
+
+        $historical = app(ReportImportService::class)->importRows(
+            $oldConnection,
+            [$this->row($date)],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $date,
+            $date,
+            $this->admin,
+            'provider-before-source-cutover',
+            importType: 'CSV',
+        );
+        $this->assertSame(ReportImportStatus::Completed, $historical->status);
+
+        ReportImportJob::withoutGlobalScopes()->create([
+            'organization_id' => $oldConnection->organization_id,
+            'report_source_connection_id' => $oldConnection->id,
+            'import_type' => 'CSV',
+            'granularity' => ReportGranularity::Daily,
+            'finality' => ReportFinality::Finalized,
+            'settlement_eligible' => true,
+            'status' => ReportImportStatus::Failed,
+            'period_start' => $date->addDay(),
+            'period_end' => $date->addDay(),
+            'idempotency_key' => hash('sha256', 'provider-old-source-failed-cutover'),
+            'attempt_count' => 1,
+            'next_retry_at' => now()->subMinute(),
+            'created_by' => $this->admin->id,
+        ]);
+
+        $newBinding = $bindings->bind(
+            $account,
+            $custom,
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $this->admin,
+        );
+
+        $this->assertNotSame($oldConnection->id, $newBinding->connection->id);
+        $this->assertFalse((bool) $oldConnection->fresh()->is_enabled);
+        $this->assertSame('DISABLED', $oldConnection->fresh()->status->value);
+        $this->assertTrue((bool) $newBinding->connection->is_enabled);
+        $this->assertSame(ReportImportStatus::Duplicate->value, ReportImportJob::withoutGlobalScopes()
+            ->where('idempotency_key', hash('sha256', 'provider-old-source-failed-cutover'))
+            ->value('status'));
+        $this->assertDatabaseHas('daily_reports', [
+            'report_import_job_id' => $historical->id,
+            'report_source_connection_id' => $oldConnection->id,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'finance.monetization_financial_source.connection_retired',
+            'auditable_id' => $oldConnection->id,
+        ]);
+    }
+
     public function test_site_gam_attestation_supersedes_provider_retries_and_blocks_parallel_financial_imports(): void
     {
         $account = $this->oneTagAccount('OneTag Site GAM Canonical');
