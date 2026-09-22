@@ -255,6 +255,7 @@ final class RevenueRuleService
             && (int) $current->horus_share_bp === $attributes['horus_share_bp']
             && (int) $current->mcm_partner_share_bp === 0
             && $current->currency === strtoupper((string) $contract->currency)
+            && $current->effective_from->toDateString() === $attributes['effective_from']
             && $current->effective_to?->toDateString() === $attributes['effective_to']) {
             return $rule->fresh(['currentVersion', 'versions']);
         }
