@@ -46,14 +46,17 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             || (string) $binding->gamConnection->network_code !== $binding->network_code) {
             throw new RuntimeException('The report dates or connection do not match this website reporting binding.');
         }
-        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString());
+        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.strtoupper((string) $connection->currency));
         $configuration = $connection->configuration ?? [];
         $jobId = data_get($configuration, 'google_jobs.'.$key.'.id');
         if (! $jobId) {
             $network = $this->google->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
             if ((string) ($network['networkCode'] ?? '') !== $binding->network_code
-                || ($network['currencyCode'] ?? '') !== $connection->currency || ($network['timeZone'] ?? '') !== $connection->timezone) {
-                throw new RuntimeException('The Google network currency or timezone changed. Reconnect the ad unit from the website Reports section.');
+                || ($network['timeZone'] ?? '') !== $connection->timezone) {
+                throw new RuntimeException('The Google network identity or timezone changed. Reconnect the ad unit from the website Reports section.');
+            }
+            if (strtoupper((string) $connection->currency) !== strtoupper((string) config('reporting.canonical_currency', 'USD'))) {
+                throw new RuntimeException('The website reporting connection is not normalized to the canonical USD reporting currency.');
             }
             $date = fn (CarbonInterface $day): array => ['year' => $day->year, 'month' => $day->month, 'day' => $day->day];
             $query = [
