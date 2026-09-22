@@ -180,6 +180,7 @@ class SiteLifecycleService
             // diagnostics/UI, while the RevenueRule remains authoritative for money.
             DemandSite::withoutGlobalScopes()
                 ->where('site_id', $site->id)
+                ->where('configuration->quick_monetize_managed', true)
                 ->update(['revenue_share_percent' => $percentage, 'updated_by' => $administrator->id]);
 
             $this->audit->record('site.revenue_share.changed', $site->organization_id, $administrator, $site, ['revenue_share_percent' => $previous], ['revenue_share_percent' => $percentage], ['reason' => $reason]);
