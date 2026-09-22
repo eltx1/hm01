@@ -583,6 +583,86 @@ class SiteGamReportingTest extends TestCase
         $this->assertCount(1, $readiness->blockersForPeriod($period));
     }
 
+    public function test_declared_site_gam_coverage_is_exclusive_and_cannot_fallback_to_duplicate_provider_rows(): void
+    {
+        [$admin, $publisher, , $site] = $context = $this->context();
+        $this->seed(DemandNetworkSeeder::class);
+        $network = DemandNetwork::where('code', 'CUSTOM')->first() ?? DemandNetwork::firstOrFail();
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id,
+            'demand_network_id' => $network->id,
+            'name' => 'Attested Site GAM demand',
+            'scope' => 'HORUS_MEDIA',
+            'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+        ]);
+        DemandSite::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id,
+            'demand_account_id' => $account->id,
+            'site_id' => $site->id,
+            'approval_status' => 'APPROVED',
+            'is_enabled' => true,
+            'integration_mode' => 'DIRECT_JS',
+        ]);
+
+        $siteBinding = $this->bind($context);
+        $period = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $siteJob = $this->import($siteBinding, '2026-09-01', '2026-09-30');
+        $this->assertSame(ReportImportStatus::Completed, $siteJob->status, $siteJob->error_message ?? '');
+
+        $financial = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $admin,
+            [
+                'site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider settlement is contractually included in the bound Site GAM reporting unit.',
+            ],
+        );
+
+        $providerDay = CarbonImmutable::parse('2026-09-20');
+        $providerJob = app(ReportImportService::class)->importRows(
+            $financial->connection,
+            [[
+                'date' => $providerDay->toDateString(),
+                'publisher_id' => $publisher->id,
+                'site_id' => $site->id,
+                'impressions' => 95,
+                'gross_revenue_minor' => 99999,
+                'currency' => 'USD',
+            ]],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $providerDay,
+            $providerDay,
+            $admin,
+            importType: 'CSV',
+            sourceTotals: ['impressions' => 95, 'gross_revenue_minor' => 99999],
+        );
+
+        $this->assertSame(ReportImportStatus::Completed, $providerJob->status, $providerJob->error_message ?? '');
+        $this->assertSame(0, $providerJob->row_count);
+        $this->assertSame('SITE_REPORTING_SOURCE_EXCLUDED_ROWS', $providerJob->warnings[0]['code']);
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertCount(0, app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period));
+
+        DailyReport::withoutGlobalScopes()
+            ->where('report_source_connection_id', $siteBinding->report_source_connection_id)
+            ->whereDate('report_date', '2026-09-25')
+            ->delete();
+
+        $blockers = app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period);
+        $providerBlocker = $blockers->firstWhere('subject_id', $account->id);
+        $this->assertNotNull($providerBlocker);
+        $this->assertSame('SITE_GAM_DECLARED_COVERAGE_INCOMPLETE', $providerBlocker['reasons'][0]['code']);
+    }
+
     public function test_full_network_import_cannot_duplicate_the_bound_google_unit_even_without_a_site_mapping(): void
     {
         [$admin, , , , $gam] = $context = $this->context();
