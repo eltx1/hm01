@@ -90,6 +90,13 @@ final class GamSoapConnector implements GamConnectorInterface
 
     public function runReport(array $reportQuery, array $options = []): GamResult
     {
+        // REST names this field currencyCode while the SOAP ReportQuery calls
+        // the same concept reportCurrency. Normalize before hydration.
+        if (isset($reportQuery['currencyCode']) && ! isset($reportQuery['reportCurrency'])) {
+            $reportQuery['reportCurrency'] = $reportQuery['currencyCode'];
+        }
+        unset($reportQuery['currencyCode']);
+
         return $this->write(__FUNCTION__, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $reportQuery]], $options);
     }
 
