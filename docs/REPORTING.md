@@ -17,6 +17,13 @@ monetization account -> financial source binding -> import -> reconciliation
 -> settlement-eligible finalized row -> revenue share -> statement -> payout
 ```
 
+Financial-source cutovers are non-destructive and exclusive. When an account is
+rebound to a different canonical report source, the previous connection is
+disabled for future polling/retry, pending or failed work on that retired
+connection is superseded, and historical imported rows remain immutable and
+traceable to the old connection. Only the current enabled binding may create
+future provider financial rows.
+
 **BID PRICE ≠ REALIZED REVENUE.** Browser auction CPM is diagnostic auction data, not proof that the provider realized or will pay that revenue.
 
 **ESTIMATED DATA ≠ PAYOUT-ELIGIBLE FINALIZED DATA.** `PREBID_ESTIMATES` is permanently estimate-only. A finalized label requested by a caller cannot make that source settlement eligible; the import boundary downgrades it to estimated and records a machine-readable reason.
