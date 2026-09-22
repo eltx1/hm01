@@ -4,10 +4,12 @@ namespace App\Services\Reporting;
 
 use App\Enums\FinancialReportingMethod;
 use App\Enums\MonetizationSubjectType;
+use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
 use App\Models\BidderAccount;
 use App\Models\DemandAccount;
 use App\Models\MonetizationFinancialBinding;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
@@ -100,6 +102,22 @@ final class MonetizationFinancialBindingService
                 ],
             );
 
+            $supersededImports = 0;
+            if ($siteGamIncluded) {
+                $supersededImports = ReportImportJob::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $connection->id)
+                    ->whereIn('status', [
+                        ReportImportStatus::Pending->value,
+                        ReportImportStatus::Failed->value,
+                    ])
+                    ->update([
+                        'status' => ReportImportStatus::Duplicate->value,
+                        'error_message' => null,
+                        'next_retry_at' => null,
+                        'completed_at' => now(),
+                    ]);
+            }
+
             $this->audit->record('finance.monetization_financial_source.bound', $subject->organization_id, $actor, $binding, newValues: [
                 'subject_type' => $type->value,
                 'subject_id' => $subject->id,
@@ -111,6 +129,7 @@ final class MonetizationFinancialBindingService
                 'is_finalized_capable' => $finalizedCapable,
                 'site_gam_included' => $siteGamIncluded,
                 'site_gam_inclusion_reason' => $siteGamIncluded ? data_get($configuration, 'site_gam_inclusion_reason') : null,
+                'superseded_provider_imports' => $supersededImports,
                 'configuration_keys' => array_keys($configuration),
             ]);
 
