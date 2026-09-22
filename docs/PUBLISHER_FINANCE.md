@@ -17,8 +17,9 @@ currency. Totals from different currencies are never combined.
 The role-aware navigation exposes four non-overlapping sections:
 
 - **Overview** separates current-period estimated earnings from finalized
-  earnings and shows payable, below-threshold, carry-forward, pending,
-  scheduled, and settled amounts per currency.
+  earnings and shows a Publisher-safe **Today so far** block (impressions,
+  clicks, and estimated Publisher earnings only), plus payable, below-threshold,
+  carry-forward, pending, scheduled, and settled amounts per currency.
 - **Statements** lists immutable finalized statements and provides a
   Publisher-safe detail and CSV projection.
 - **Payment Method** manages the Publisher's own encrypted payout destination.
@@ -37,7 +38,9 @@ canonical views. They do not maintain a duplicate finance product.
 - Statement amounts are finalized accounting records produced by
   `PublisherStatementService` when a financial period closes.
 
-Every overview card group is keyed by currency. The active contract's payment
+Every overview card group is keyed by currency. The Publisher dashboard uses the
+same currency-separated summaries; non-money metrics such as impressions may be
+summed across currencies, but monetary balances are never combined. The active contract's payment
 threshold is converted from its fixed two-decimal database value to integer
 minor units with `App\Support\Money`; no floating-point accounting conversion
 is used.
@@ -78,8 +81,10 @@ organization's Publisher and then compare both `publisher_id` and
 `organization_id`. A caller cannot select a Publisher identity through a query
 parameter or URL. Download responses are private and no-store.
 
-Publisher CSV exports omit Horus margin and provider-confidential gross/net
-economics. Text cells that begin with spreadsheet formula control characters
+Publisher HTML projections and CSV exports omit Horus margin, provider-confidential
+gross/net economics, and upstream provider deductions. Publisher-facing statement
+line items carry only the Publisher-impact amount needed to explain the balance.
+Private storage paths are also excluded from Publisher view models. Text cells that begin with spreadsheet formula control characters
 are prefixed safely. Admin CSV remains the existing internal projection.
 
 ## Payout presentation
