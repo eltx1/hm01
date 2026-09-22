@@ -572,3 +572,155 @@ th {
         max-width: 100%;
     }
 }
+
+
+/* Task-first workspace navigation and dashboard experience. */
+.workspace-context {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.12rem;
+}
+
+.workspace-context span:not(:first-child) {
+    color: var(--hm-muted-2);
+}
+
+.task-launcher {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr));
+    gap: 0.65rem;
+}
+
+.task-card {
+    display: grid;
+    gap: 0.42rem;
+    min-height: 8.25rem;
+    border: 1px solid var(--hm-line);
+    border-radius: 0.78rem;
+    padding: 0.82rem;
+    background: var(--hm-bg-card);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+
+.task-card:hover,
+.task-card:focus-visible {
+    border-color: var(--hm-line-gold);
+    background: var(--hm-glass);
+    transform: translateY(-1px);
+}
+
+.task-card strong {
+    color: var(--hm-white);
+    font-size: 0.98rem;
+}
+
+.task-card span {
+    color: var(--hm-muted);
+    line-height: 1.45;
+}
+
+.task-card b {
+    align-self: end;
+    color: var(--hm-gold-highlight);
+    font-size: 0.77rem;
+}
+
+.calm-state {
+    border-style: dashed;
+    background: color-mix(in srgb, var(--hm-bg-card) 76%, transparent);
+}
+
+.workspace-note {
+    margin: 0.6rem 0;
+    border-left: 2px solid var(--hm-line-gold);
+    padding: 0.55rem 0.7rem;
+}
+
+.row-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.publisher-site-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+    gap: 0.7rem;
+}
+
+.publisher-site-card {
+    display: grid;
+    align-content: start;
+    gap: 0.55rem;
+}
+
+.publisher-site-card .workspace-heading,
+.publisher-site-card p {
+    margin-bottom: 0;
+}
+
+.site-card-meta {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    color: var(--hm-muted);
+    font-size: 0.76rem;
+}
+
+.publisher-key-metrics .metric {
+    font-size: clamp(1.3rem, 2vw, 1.8rem);
+}
+
+.publisher-reporting-primary {
+    border-top: 2px solid var(--hm-line-gold);
+}
+
+.legacy-finance-records {
+    border: 1px solid var(--hm-line);
+    border-radius: 0.78rem;
+    padding: 0.75rem;
+    background: var(--hm-bg-card);
+}
+
+.legacy-finance-records > summary {
+    cursor: pointer;
+    color: var(--hm-muted);
+    font-weight: 700;
+}
+
+.navigation-group {
+    min-width: 0;
+}
+
+.navigation-label {
+    color: var(--hm-muted-2);
+}
+
+.navigation-links a.active {
+    font-weight: 750;
+}
+
+@media (max-width: 760px) {
+    .task-launcher,
+    .publisher-site-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .task-card {
+        min-height: 0;
+    }
+
+    .row-status {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .workspace-context {
+        font-size: 0.6rem;
+    }
+}
