@@ -65,6 +65,13 @@ final class MonetizationFinancialBindingService
             $subject, $source, $method, $currency, $timezone, $actor, $configuration,
             $enabled, $type, $finalizedCapable, $siteGamIncluded
         ): MonetizationFinancialBinding {
+            $previousBinding = MonetizationFinancialBinding::withoutGlobalScopes()
+                ->where('subject_type', $type->value)
+                ->where('subject_id', $subject->id)
+                ->lockForUpdate()
+                ->first();
+            $previousConnectionId = $previousBinding?->report_source_connection_id;
+
             $connection = ReportSourceConnection::withoutGlobalScopes()->updateOrCreate(
                 [
                     'report_source_id' => $source->id,
@@ -84,6 +91,45 @@ final class MonetizationFinancialBindingService
                     'updated_by' => $actor->id,
                 ],
             );
+
+            $retiredConnectionId = null;
+            $retiredPendingImports = 0;
+            if ($previousConnectionId && $previousConnectionId !== $connection->id) {
+                $previousConnection = ReportSourceConnection::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->find($previousConnectionId);
+                if ($previousConnection) {
+                    $retiredConnectionId = $previousConnection->id;
+                    $previousConnection->update([
+                        'is_enabled' => false,
+                        'status' => 'DISABLED',
+                        'last_error' => null,
+                        'updated_by' => $actor->id,
+                    ]);
+                    $retiredPendingImports = ReportImportJob::withoutGlobalScopes()
+                        ->where('report_source_connection_id', $previousConnection->id)
+                        ->whereIn('status', [
+                            ReportImportStatus::Pending->value,
+                            ReportImportStatus::Failed->value,
+                        ])
+                        ->update([
+                            'status' => ReportImportStatus::Duplicate->value,
+                            'error_message' => null,
+                            'next_retry_at' => null,
+                            'completed_at' => now(),
+                        ]);
+
+                    $this->audit->record(
+                        'finance.monetization_financial_source.connection_retired',
+                        $subject->organization_id,
+                        $actor,
+                        $previousConnection,
+                        ['is_enabled' => true],
+                        ['is_enabled' => false, 'status' => 'DISABLED'],
+                        ['replacement_connection_id' => $connection->id, 'superseded_imports' => $retiredPendingImports],
+                    );
+                }
+            }
 
             $binding = MonetizationFinancialBinding::withoutGlobalScopes()->updateOrCreate(
                 ['subject_type' => $type->value, 'subject_id' => $subject->id],
@@ -130,6 +176,8 @@ final class MonetizationFinancialBindingService
                 'site_gam_included' => $siteGamIncluded,
                 'site_gam_inclusion_reason' => $siteGamIncluded ? data_get($configuration, 'site_gam_inclusion_reason') : null,
                 'superseded_provider_imports' => $supersededImports,
+                'retired_connection_id' => $retiredConnectionId,
+                'retired_connection_pending_imports' => $retiredPendingImports,
                 'configuration_keys' => array_keys($configuration),
             ]);
 
