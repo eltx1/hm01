@@ -258,6 +258,65 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertSame(1, DailyReport::withoutGlobalScopes()->where('settlement_eligible', true)->count());
     }
 
+    public function test_financial_close_requires_complete_provider_import_range_not_one_overlapping_day(): void
+    {
+        $account = $this->oneTagAccount('OneTag Complete Coverage');
+        app(PrebidManager::class)->assignToSite($account, $this->site, [
+            'public_parameters' => ['pubId' => 'TEST_ONLY_PUB_ID'],
+            'enabled' => true,
+            'sequence' => 1,
+        ], $this->admin);
+
+        $periodStart = now()->subMonthNoOverflow()->startOfMonth()->startOfDay()->toImmutable();
+        $periodEnd = $periodStart->endOfMonth();
+        $date = $periodStart->addDay();
+        $account->forceFill(['created_at' => $periodStart])->save();
+        $account->siteMappings()->where('site_id', $this->site->id)->update(['created_at' => $periodStart]);
+
+        $binding = app(MonetizationFinancialBindingService::class)->bind(
+            $account,
+            ReportSource::query()->where('code', ReportSourceCode::OneTag->value)->firstOrFail(),
+            FinancialReportingMethod::Csv,
+            'USD',
+            'UTC',
+            $this->admin,
+        );
+
+        $imports = app(ReportImportService::class);
+        $first = $imports->importRows(
+            $binding->connection,
+            [$this->row($date)],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $date,
+            $date,
+            $this->admin,
+            'onetag-one-day-only',
+            importType: 'CSV',
+        );
+        $this->assertSame('COMPLETED', $first->status->value);
+
+        $period = FinancialPeriod::query()->where('period_key', $date->format('Y-m'))->where('currency', 'USD')->firstOrFail();
+        $readiness = app(MonetizationFinancialReadinessService::class);
+        $blocker = $readiness->blockersForPeriod($period)->firstWhere('subject_id', $account->id);
+        $this->assertSame('STALE', $blocker['status']);
+        $this->assertSame('INCOMPLETE_PERIOD_COVERAGE', data_get($blocker, 'reasons.0.code'));
+
+        $full = $imports->importRows(
+            $binding->connection,
+            [$this->row($date)],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $periodStart,
+            $periodEnd,
+            $this->admin,
+            'onetag-complete-month',
+            importType: 'CSV',
+        );
+        $this->assertSame('COMPLETED', $full->status->value);
+        $this->assertNull($readiness->blockersForPeriod($period)->firstWhere('subject_id', $account->id));
+    }
+
     public function test_readiness_surfaces_missing_currency_failed_and_stale_states(): void
     {
         $service = app(MonetizationFinancialReadinessService::class);
