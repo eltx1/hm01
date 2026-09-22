@@ -129,10 +129,16 @@
 
     <article>
         <div class="workspace-heading"><div><p class="eyebrow">Account setup</p><h2>Payments &amp; commercial terms</h2></div></div>
+        @if(auth()->user()->hasPermission('finance.publisher.view_own'))
         <a class="compact-row" href="{{ route('publisher.finance.payment-method.edit') }}">
             <div><strong>Payment method</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Add your payout details' }}</p></div>
             <x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" />
         </a>
+        @else
+        <div class="compact-row">
+            <div><strong>Payment method</strong><p>Payment details are not available to this role.</p></div>
+        </div>
+        @endif
         @if(auth()->user()->hasPermission('contracts.view'))
         <a class="compact-row" href="{{ route('publisher.contracts.index') }}">
             <div><strong>Commercial terms</strong><p>{{ $activeContract?->contract_reference ?: 'No active terms' }}</p></div>
