@@ -185,6 +185,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/sites/{site}/approve', [AdminSiteController::class, 'approve'])->middleware('permission:sites.review')->name('admin.sites.approve');
         Route::post('/admin/sites/{site}/reject', [AdminSiteController::class, 'reject'])->middleware('permission:sites.review')->name('admin.sites.reject');
         Route::post('/admin/sites/{site}/activate', [AdminSiteController::class, 'activate'])->middleware('permission:sites.review')->name('admin.sites.activate');
+        Route::post('/admin/sites/{site}/force-activate', [AdminSiteController::class, 'forceActivate'])->middleware(['permission:sites.review', 'throttle:sensitive'])->name('admin.sites.force-activate');
         Route::post('/admin/sites/{site}/suspend', [AdminSiteController::class, 'suspend'])->middleware('permission:sites.review')->name('admin.sites.suspend');
         Route::post('/admin/sites/{site}/reactivate', [AdminSiteController::class, 'reactivate'])->middleware('permission:sites.review')->name('admin.sites.reactivate');
         Route::post('/admin/sites/{site}/archive', [AdminSiteController::class, 'archive'])->middleware('permission:sites.review')->name('admin.sites.archive');
