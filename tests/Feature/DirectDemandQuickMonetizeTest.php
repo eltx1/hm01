@@ -906,7 +906,7 @@ HTML;
 
         $this->actingAs($this->publisherUser)
             ->post(route('admin.sites.demand.quick-responsive.expand', $this->site))
-            ->assertNotFound();
+            ->assertForbidden();
 
         $this->assertCount(4, $this->responsiveUnits());
     }
