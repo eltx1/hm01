@@ -35,7 +35,7 @@
     <div class="health-grid">
         @foreach($monetization['modules'] as $module)
             <div>
-                <span class="muted">{{ $module['title'] }} · {{ $module['dependency'] }}</span>
+                <span class="muted">{{ $module['title'] }}@if($internal) · {{ $module['dependency'] }}@endif</span>
                 <x-status-badge :status="$module['status']" />
                 <small>{{ $module['reason'] }}</small>
                 @if($module['action_required'])
