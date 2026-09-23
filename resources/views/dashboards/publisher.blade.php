@@ -113,10 +113,17 @@
 
     <article class="workspace-section">
         <div class="workspace-heading"><div><p class="eyebrow">Account readiness</p><h2>Payments & terms</h2></div></div>
-        <a class="compact-row compact-row-link" href="{{ route('publisher.finance.payment-method.edit') }}">
-            <div><strong>Payment method</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured yet' }}</p></div>
-            <x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" />
-        </a>
+        @if(auth()->user()->hasPermission('finance.publisher.payment_profile.manage'))
+            <a class="compact-row compact-row-link" href="{{ route('publisher.finance.payment-method.edit') }}">
+                <div><strong>Payment method</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured yet' }}</p></div>
+                <x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" />
+            </a>
+        @else
+            <div class="compact-row">
+                <div><strong>Payment method</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured yet' }}</p></div>
+                <x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" />
+            </div>
+        @endif
         @if(auth()->user()->hasPermission('contracts.view'))
             <a class="compact-row compact-row-link" href="{{ route('publisher.contracts.index') }}">
                 <div><strong>Commercial terms</strong><p>{{ $activeContract?->contract_reference ?: 'No active terms yet' }}</p></div>
