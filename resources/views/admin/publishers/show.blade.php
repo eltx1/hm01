@@ -10,7 +10,7 @@
         ['label' => 'Reports & Finance', 'href' => '#reporting', 'visible' => $reporting !== null],
         ['label' => 'Commercial Terms', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
         ['label' => 'Quality Review', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
-        ['label' => 'Access & Audit', 'href' => '#users', 'visible' => auth()->user()->hasPermission('users.view') || auth()->user()->hasPermission('audit.view')],
+        ['label' => 'Access & Audit', 'href' => auth()->user()->hasPermission('users.view') ? '#users' : '#audit', 'visible' => auth()->user()->hasPermission('users.view') || auth()->user()->hasPermission('audit.view')],
     ];
     $activeSites = $publisher->sites->where('status', \App\Enums\SiteStatus::Active)->count();
     $verifiedDomains = $publisher->sites->flatMap->domains->where('verification_status', 'VERIFIED')->count();
