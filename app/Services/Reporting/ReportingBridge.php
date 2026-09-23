@@ -5,6 +5,7 @@ namespace App\Services\Reporting;
 use App\Enums\GamConnectionType;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
+use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
 use App\Models\CampaignNetworkInstance;
 use App\Models\DemandAccount;
@@ -13,6 +14,7 @@ use App\Models\DemandSite;
 use App\Models\GamConnection;
 use App\Models\GamNetwork;
 use App\Models\HourlyReport;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
@@ -74,6 +76,18 @@ final class ReportingBridge
                 $legacyConfiguration['canonical_currency_cutover_to'] = $canonicalCurrency;
                 $legacyConfiguration['canonical_currency_cutover_at'] = now()->toIso8601String();
                 $legacyConfiguration['legacy_currency'] = strtoupper((string) $existing->currency);
+                $legacyConfiguration['canonical_currency_superseded_imports'] = ReportImportJob::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $existing->id)
+                    ->whereIn('status', [
+                        ReportImportStatus::Pending->value,
+                        ReportImportStatus::Failed->value,
+                    ])
+                    ->update([
+                        'status' => ReportImportStatus::Duplicate->value,
+                        'error_message' => null,
+                        'next_retry_at' => null,
+                        'completed_at' => now(),
+                    ]);
                 $existing->update([
                     'connection_type' => 'GAM_CONNECTION_LEGACY',
                     'status' => 'DISABLED',
@@ -117,9 +131,12 @@ final class ReportingBridge
             $configuration['source_network_currency'] = $sourceCurrency;
         }
         if ($legacyConnectionId !== null) {
+            $networkNow = CarbonImmutable::now($networkTimezone);
+            $rebackfillFrom = $networkNow->startOfMonth();
             $configuration['legacy_connection_id'] = $legacyConnectionId;
             $configuration['canonical_currency_cutover_at'] = now()->toIso8601String();
-            $configuration['canonical_currency_rebackfill_required'] = true;
+            $configuration['canonical_currency_rebackfill_from'] = $rebackfillFrom->toDateString();
+            $configuration['canonical_currency_rebackfill_required'] = $rebackfillFrom->lt($networkNow->startOfDay());
         }
         $connection->update([
             'configuration' => $configuration,
