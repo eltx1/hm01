@@ -289,38 +289,20 @@ final class GamReportConnector implements ReportSourceConnectorInterface
     private function moneyMicros(string $value, string $expectedCurrency): int
     {
         $value = trim($value);
+
         if (preg_match('/^(.+?)\\s+(-?\\d+)$/uD', $value, $matches) === 1) {
-            $prefix = trim($matches[1]);
+            $prefix = trim((string) $matches[1]);
             $allowedPrefixes = $expectedCurrency === 'USD'
-                ? ['USD', '
-
-    private function integer(string $value): int
-    {
-        if (! preg_match('/^-?\d+$/D', $value) || strlen(ltrim($value, '-0')) > 15) {
-            throw new RuntimeException('The Google GAM report contains an invalid or oversized integer metric.');
-        }
-
-        return (int) $value;
-    }
-}
-, 'US
-
-    private function integer(string $value): int
-    {
-        if (! preg_match('/^-?\d+$/D', $value) || strlen(ltrim($value, '-0')) > 15) {
-            throw new RuntimeException('The Google GAM report contains an invalid or oversized integer metric.');
-        }
-
-        return (int) $value;
-    }
-}
-]
+                ? ['USD', '$', 'US$']
                 : [$expectedCurrency];
 
             if (! in_array($prefix, $allowedPrefixes, true)) {
                 throw new RuntimeException('The Google GAM report returned a monetary value in an unexpected currency.');
             }
-            $value = $matches[2];
+
+            $value = (string) $matches[2];
+        } elseif (preg_match('/^-?\\d+$/D', $value) !== 1) {
+            throw new RuntimeException('The Google GAM report contains an invalid revenue value.');
         }
 
         return $this->integer($value);
