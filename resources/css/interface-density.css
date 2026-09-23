@@ -695,6 +695,32 @@ th {
 
 .navigation-group {
     min-width: 0;
+    border-radius: 0.62rem;
+}
+
+.navigation-group > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.navigation-group > summary::-webkit-details-marker {
+    display: none;
+}
+
+.navigation-group > summary::after {
+    content: '›';
+    float: right;
+    transform: rotate(90deg);
+    transition: transform .16s ease;
+}
+
+.navigation-group:not([open]) > summary::after {
+    transform: rotate(0deg);
+}
+
+.navigation-group[open] > .navigation-links {
+    margin-top: 0.3rem;
 }
 
 .navigation-label {
