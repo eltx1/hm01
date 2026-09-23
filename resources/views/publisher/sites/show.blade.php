@@ -7,16 +7,10 @@
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Monetization', 'href' => '#monetization-health'],
-        ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
-        ['label' => 'Serving', 'href' => '#serving'],
-        ['label' => 'GAM', 'href' => '#gam'],
         ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
-        ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
-        ['label' => 'Configuration', 'href' => '#configuration'],
-        ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Health', 'href' => '#health'],
-        ['label' => 'History', 'href' => '#history'],
+        ['label' => 'Inventory & Serving', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
+        ['label' => 'Compliance & Health', 'href' => '#compliance'],
+        ['label' => 'History & Review', 'href' => '#history'],
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();
     $latestProbe = $site->syntheticProbeResults->sortByDesc('observed_at')->first();
@@ -156,8 +150,23 @@
 
 @else
 <section class="hero">
-    <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
+    <div>
+        <p class="eyebrow">Website</p>
+        <h2>{{ $site->display_name }}</h2>
+        <p>{{ $site->primary_domain }}</p>
+        <div class="status-row">
+            <x-status-badge :status="$site->status" />
+            <x-status-badge :status="$monetization['overall']['status']" />
+            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif
+            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="text-link" href="{{ route('publisher.finance.overview') }}">View reports &amp; earnings</a>@endif
+        </div>
+    </div>
 </section>
+
+<article class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">Current status</p><h2>What should I do next?</h2></div><x-status-badge :status="$monetization['overall']['status']" /></div>
+    <p>{{ $monetization['overall']['reason'] }}</p>
+</article>
 
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')

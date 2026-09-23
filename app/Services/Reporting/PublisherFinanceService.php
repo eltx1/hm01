@@ -122,16 +122,32 @@ final class PublisherFinanceService
     public function dashboard(Publisher $publisher): array
     {
         $overview = $this->overview($publisher);
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $primary = $overview['currencies']->firstWhere('currency', $canonicalCurrency);
         $impressions = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $canonicalCurrency)
             ->where('finality', ReportFinality::Finalized->value)
             ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('report_date', '<=', now()->toDateString())
             ->sum('impressions');
 
         return [
+            'currency' => $canonicalCurrency,
             'impressions' => (int) $impressions,
-            'currencies' => $overview['currencies'],
+            'primary' => $primary ?: [
+                'currency' => $canonicalCurrency,
+                'today_available' => false,
+                'today_impressions' => 0,
+                'today_clicks' => 0,
+                'today_estimated_earnings_minor' => 0,
+                'estimated_earnings_minor' => 0,
+                'finalized_earnings_minor' => 0,
+                'statement_balance_due_minor' => 0,
+                'current_period_status' => 'NOT_OPENED',
+                'readiness' => ['ready' => false, 'code' => 'NO_DATA', 'label' => 'Awaiting reporting data'],
+            ],
+            'legacy_currency_count' => $overview['currencies']->where('currency', '!=', $canonicalCurrency)->count(),
             'statements' => $overview['statements'],
         ];
     }
@@ -245,14 +261,17 @@ final class PublisherFinanceService
             ->distinct()
             ->pluck('currency');
 
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+
         return collect([
             ...$reported,
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
             $contract?->currency,
-            $publisher->paymentProfile?->currency,
-        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()->sort()->values()
-            ->whenEmpty(fn (Collection $currencies) => $currencies->push(strtoupper((string) config('reporting.default_currency', 'USD'))));
+        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()
+            ->sortBy(fn (string $currency): string => ($currency === $canonical ? '0-' : '1-').$currency)
+            ->values()
+            ->whenEmpty(fn (Collection $currencies) => $currencies->push($canonical));
     }
 
     private function activeContract(Publisher $publisher): ?PublisherContract
