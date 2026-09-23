@@ -142,8 +142,13 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 $buckets[$key] = [];
                 foreach (self::COLUMNS as $column => $field) {
                     $rawValue = $row['Column.'.$column];
+                    $sourceCurrency = strtoupper((string) data_get($connection->configuration, 'source_network_currency', ''));
                     $value = $field === 'revenue_micros'
-                        ? $this->moneyMicros($rawValue, $this->canonicalCurrency())
+                        ? $this->moneyMicros(
+                            $rawValue,
+                            $this->canonicalCurrency(),
+                            $sourceCurrency !== '' && $sourceCurrency !== $this->canonicalCurrency(),
+                        )
                         : $this->integer($rawValue);
                     if ($field !== 'revenue_micros' && $value < 0) {
                         throw new RuntimeException('The Google report contains a negative delivery metric.');
@@ -183,7 +188,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
     }
 
-    private function moneyMicros(string $value, string $expectedCurrency): int
+    private function moneyMicros(string $value, string $expectedCurrency, bool $requireCurrencyMarker = false): int
     {
         $value = trim($value);
 
@@ -200,6 +205,8 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             $value = (string) $matches[2];
         } elseif (preg_match('/^-?\\d+$/D', $value) !== 1) {
             throw new RuntimeException('The Google report contains an invalid revenue value.');
+        } elseif ($requireCurrencyMarker) {
+            throw new RuntimeException('The Google GAM report did not prove that converted revenue is in the canonical currency.');
         }
 
         return $this->integer($value);
