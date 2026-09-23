@@ -268,17 +268,18 @@ final class PublisherFinanceService
         $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 
         return collect([
+            $canonical,
             ...$reported,
+            // A non-USD currency appears only when a real historical statement
+            // or payout obligation exists. Contract/payment-profile metadata
+            // alone must never create a fake reporting currency section.
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
-            $contract?->currency,
-            $publisher->paymentProfile?->currency,
         ])->filter()
             ->map(fn ($currency) => strtoupper((string) $currency))
             ->unique()
             ->sortBy(fn (string $currency): string => ($currency === $canonical ? '0' : '1').$currency)
-            ->values()
-            ->whenEmpty(fn (Collection $currencies) => $currencies->push($canonical));
+            ->values();
     }
 
     private function activeContract(Publisher $publisher): ?PublisherContract
