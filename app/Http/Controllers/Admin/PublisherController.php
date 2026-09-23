@@ -61,7 +61,12 @@ class PublisherController extends Controller
 
         return view('admin.publishers.show', [
             'publisher' => $publisher,
-            'reporting' => $canViewFinance ? $reports->publisherSummary($publisher) : null,
+            'reporting' => $canViewFinance
+                ? $reports->publisherSummary(
+                    $publisher,
+                    currency: strtoupper((string) config('reporting.canonical_currency', 'USD')),
+                )
+                : null,
             'statements' => $canViewFinance
                 ? PublisherStatement::withoutGlobalScopes()->where('publisher_id', $publisher->id)->with('period')->latest()->limit(12)->get()
                 : collect(),
