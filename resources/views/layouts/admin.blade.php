@@ -23,7 +23,7 @@
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
             <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
-            <p class="eyebrow">Ad Network Control Plane</p>
+            <p class="eyebrow">{{ $workspaceLabel }}</p>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
