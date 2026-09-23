@@ -31,6 +31,10 @@ class RunReportingImports extends Command
             return self::FAILURE;
         }
 
+        $selectedConnectionId = filled($this->option('connection'))
+            ? (string) $this->option('connection')
+            : null;
+
         // Upgrade any legacy full-network GAM source before retries or imports.
         // This guarantees an existing AED/EUR connection reaches Google as a
         // canonical USD reporting source instead of failing at the connector.
@@ -38,14 +42,21 @@ class RunReportingImports extends Command
             ->where('connection_type', 'GAM_CONNECTION')
             ->where('is_enabled', true)
             ->where('status', '!=', 'DISABLED')
-            ->when($this->option('connection'), fn ($query, $id) => $query->whereKey($id))
-            ->pluck('connection_id')
-            ->filter()
-            ->unique()
-            ->each(function (string $gamConnectionId) use ($bridge): void {
+            ->when($selectedConnectionId, fn ($query, $id) => $query->whereKey($id))
+            ->get(['id', 'connection_id'])
+            ->each(function (ReportSourceConnection $sourceConnection) use ($bridge, &$selectedConnectionId): void {
+                $gamConnectionId = (string) $sourceConnection->connection_id;
+                if ($gamConnectionId === '') {
+                    return;
+                }
                 $gam = GamConnection::withoutGlobalScopes()->find($gamConnectionId);
-                if ($gam?->is_enabled) {
-                    $bridge->connectionForGam($gam);
+                if (! $gam?->is_enabled) {
+                    return;
+                }
+
+                $canonical = $bridge->connectionForGam($gam);
+                if ($selectedConnectionId === $sourceConnection->id) {
+                    $selectedConnectionId = $canonical->id;
                 }
             });
 
@@ -100,7 +111,7 @@ class RunReportingImports extends Command
                         ->where('is_enabled', true)
                         ->where('reporting_method', 'API'));
             })
-            ->when($this->option('connection'), fn ($query, $id) => $query->whereKey($id))
+            ->when($selectedConnectionId, fn ($query, $id) => $query->whereKey($id))
             ->with('source')
             ->get();
 
