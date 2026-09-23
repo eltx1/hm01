@@ -115,6 +115,8 @@ dd { margin: 0; }
 .workspace-section { scroll-margin-top: 1rem; margin-top: .85rem; }
 .workspace-home-link { color: inherit; text-decoration: none; }
 .workspace-home-link:hover, .workspace-home-link:focus-visible { color: var(--hm-gold-highlight); }
+.navigation-group.is-current { border-left: 2px solid var(--hm-gold); padding-left: .65rem; }
+.navigation-group.is-current .navigation-label { color: var(--hm-gold-soft); }
 .shortcut-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem; }
 .shortcut-card { display: grid; gap: .35rem; min-height: 116px; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); padding: 1rem; background: var(--hm-glass); color: var(--hm-white); transition: transform .16s ease, border-color .16s ease, background .16s ease; }
 .shortcut-card:hover, .shortcut-card:focus-visible { transform: translateY(-2px); border-color: var(--hm-line-gold); background: rgba(241, 183, 51, .055); }
