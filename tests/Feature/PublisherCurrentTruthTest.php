@@ -34,6 +34,24 @@ class PublisherCurrentTruthTest extends TestCase
         $this->assertTrue($labels->contains('Ads.txt & Compliance'));
     }
 
+    public function test_publisher_home_and_navigation_are_task_first_and_role_specific(): void
+    {
+        $this->seedIdentity();
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher'), RoleName::PublisherAdmin);
+        $this->makePublisherFor($user);
+
+        $navigation = collect(app(ControlPlaneNavigation::class)->for($user));
+        $this->assertSame(['Home', 'Monetization', 'Earnings', 'Help & Team'], $navigation->pluck('label')->all());
+
+        $this->actingAs($user)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('Publisher Home')
+            ->assertSee('View earnings')
+            ->assertSee('Manage websites')
+            ->assertSee('Publisher Workspace')
+            ->assertDontSee('Ad Network Control Plane');
+    }
+
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
     {
         $this->seedIdentity();
