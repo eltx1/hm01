@@ -22,10 +22,10 @@
         @foreach($sites as $site)
             @php
                 $nextStep = match ($site->status) {
-                    AppEnumsSiteStatus::Draft, AppEnumsSiteStatus::PendingVerification => 'Finish setup and verification',
-                    AppEnumsSiteStatus::PendingReview => 'Horus review is in progress',
-                    AppEnumsSiteStatus::Approved, AppEnumsSiteStatus::Active => 'View monetization, reports and ad codes',
-                    AppEnumsSiteStatus::Suspended => 'Review the website status and required action',
+                    \App\Enums\SiteStatus::Draft, \App\Enums\SiteStatus::PendingVerification => 'Finish setup and verification',
+                    \App\Enums\SiteStatus::PendingReview => 'Horus review is in progress',
+                    \App\Enums\SiteStatus::Approved, \App\Enums\SiteStatus::Active => 'View monetization, reports and ad codes',
+                    \App\Enums\SiteStatus::Suspended => 'Review the website status and required action',
                     default => 'Open website details',
                 };
             @endphp
