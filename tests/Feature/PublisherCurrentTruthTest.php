@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
+use App\Models\Permission;
 use App\Models\PublisherApplication;
 use App\Services\ControlPlane\ActionCenter;
 use App\Services\ControlPlane\ControlPlaneNavigation;
@@ -67,6 +68,9 @@ class PublisherCurrentTruthTest extends TestCase
         $publisher = $this->makePublisherFor($admin);
         $this->makeSiteFor($publisher, $admin);
         $viewer = $this->makeUser($organization, RoleName::PublisherViewer);
+        $financePermission = Permission::query()->where('name', 'finance.publisher.view_own')->firstOrFail();
+        $viewer->roles->first()->permissions()->detach($financePermission->id);
+        $viewer->unsetRelation('roles');
 
         $this->actingAs($viewer)->get(route('dashboard'))
             ->assertOk()
