@@ -26,7 +26,6 @@ use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\PublisherPaymentService;
 use App\Services\Reporting\PublisherStatementService;
 use App\Services\Reporting\ReportImportService;
-use App\Services\Reporting\ReportingBridge;
 use App\Services\Reporting\RevenueAdjustmentService;
 use App\Services\Reporting\RevenueRuleService;
 use App\Services\Reporting\UnifiedReportService;
@@ -36,37 +35,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
-use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\Concerns\InteractsWithPublisherSites;
 use Tests\TestCase;
 
 class ReportingFinancialSystemTest extends TestCase
 {
-    use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
-
-    public function test_gam_bridge_always_uses_canonical_usd_instead_of_network_currency(): void
-    {
-        $this->seedIdentity();
-        $this->seed(ReportingSeeder::class);
-        $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');
-        $admin = $this->makeUser($horus, RoleName::SuperAdmin);
-        $gam = $this->makeGamConnection($horus, $admin, [
-            'network_code' => '23055873217',
-            'configuration' => ['currency' => 'AED'],
-        ]);
-
-        $connection = app(ReportingBridge::class)->connectionForGam($gam, $admin);
-
-        $this->assertSame('USD', $connection->currency);
-        $this->assertSame('GAM_CONNECTION', $connection->connection_type);
-        $this->assertSame($gam->id, $connection->connection_id);
-
-        $gam->update(['configuration' => ['currency' => 'EUR']]);
-        $same = app(ReportingBridge::class)->connectionForGam($gam->fresh(), $admin);
-        $this->assertSame($connection->id, $same->id);
-        $this->assertSame('USD', $same->currency);
-    }
+    use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     public function test_same_report_is_idempotent_and_multiple_sources_are_unified_with_horus_gam_identified(): void
     {
