@@ -130,6 +130,7 @@ class GamRestConnectorTest extends TestCase
 
         $this->assertSame('USD', data_get($result, 'metadata.report_currency'));
         $this->assertSame('AED', data_get($result, 'metadata.source_network_currency'));
+        $this->assertSame('Asia/Dubai', $reportConnection->fresh()->timezone);
         $this->assertSame(12345, data_get($result, 'rows.0.gross_revenue_minor'));
         $this->assertSame('USD', data_get($result, 'rows.0.currency'));
 
