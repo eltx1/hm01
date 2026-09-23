@@ -7,6 +7,7 @@ use App\Enums\ReportFinality;
 use App\Enums\ReportSourceCode;
 use App\Models\Advertiser;
 use App\Models\AdvertiserInvoice;
+use App\Models\AdvertiserReport;
 use App\Models\Campaign;
 use App\Models\CampaignDeliveryLog;
 use App\Models\DailyReport;
@@ -166,8 +167,21 @@ final class UnifiedReportService
 
     public function campaignCost(Campaign $campaign): array
     {
-        $rows = CampaignDeliveryLog::withoutGlobalScopes()->where('campaign_id', $campaign->id)->get();
-        if ($rows->isNotEmpty()) {
+        $deliveryRows = CampaignDeliveryLog::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->get();
+        $advertiserRows = AdvertiserReport::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->get();
+
+        $deliveryDays = $deliveryRows->map(
+            fn ($row): string => $row->report_date->toDateString()
+        )->unique()->flip();
+        $rows = $deliveryRows->concat($advertiserRows->reject(
+            fn ($row): bool => $deliveryDays->has($row->report_date->toDateString())
+        ));
+
+        if ($deliveryRows->isNotEmpty()) {
             $canonical = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
             $canonical = preg_match('/^[A-Z]{3}$/D', $canonical) === 1 ? $canonical : 'USD';
             if (strtoupper((string) $campaign->currency) !== $canonical) {
@@ -176,6 +190,7 @@ final class UnifiedReportService
                 );
             }
         }
+
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
         $spend = (int) $rows->sum('spend_minor');
