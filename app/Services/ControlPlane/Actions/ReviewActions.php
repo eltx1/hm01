@@ -15,6 +15,14 @@ final class ReviewActions implements ActionCenterProvider
 {
     public function actions(User $user): array
     {
+        // These counts are intentionally platform-wide and point to internal
+        // admin workspaces. Never expose them to publisher/advertiser/partner
+        // users even if a future role accidentally gains a similarly named
+        // permission.
+        if (! $user->isHorusAdministrator()) {
+            return [];
+        }
+
         $items = [];
 
         if ($user->hasPermission('sites.view')) {
