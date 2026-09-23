@@ -186,7 +186,7 @@ final class UnifiedReportService
 
     private function currency(?string $currency): string
     {
-        $currency = strtoupper(trim((string) ($currency ?: config('reporting.default_currency', 'USD'))));
+        $currency = strtoupper(trim((string) ($currency ?: config('reporting.canonical_currency', 'USD'))));
 
         return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
     }
