@@ -1,9 +1,9 @@
 <article id="privacy-readiness" class="workspace-section">
     <div class="workspace-heading">
         <div>
-            <p class="eyebrow">Privacy, CMP &amp; consent evidence</p>
-            <h2>Privacy Readiness</h2>
-            <p>Configuration readiness and live browser evidence are shown separately. Horus does not treat either as legal certification.</p>
+            <p class="eyebrow">{{ $internal ? 'Privacy, CMP & consent evidence' : 'Privacy & consent' }}</p>
+            <h2>{{ $internal ? 'Privacy Readiness' : 'Privacy readiness' }}</h2>
+            <p>{{ $internal ? 'Configuration readiness and live browser evidence are shown separately. Horus does not treat either as legal certification.' : 'See whether the website privacy setup is ready for monetization. Horus keeps protocol-level diagnostics in the internal control plane.' }}</p>
         </div>
         <x-status-badge :status="$privacyReadiness['overall']['status']" />
     </div>
@@ -13,8 +13,11 @@
         <span class="pill">Last verified {{ $privacyReadiness['last_verified'] ?: 'never' }}</span>
     </div>
 
+    @php($privacySections = $internal
+        ? ['configuration' => 'Configuration', 'live' => 'Live Test', 'tcf' => 'TCF', 'gpp' => 'GPP', 'gpc' => 'GPC', 'prebid' => 'Prebid', 'google' => 'Google CMP Evidence', 'providers' => 'Provider Privacy Findings']
+        : ['configuration' => 'Configuration', 'live' => 'Live test', 'google' => 'Google consent readiness'])
     <div class="health-grid" style="margin-top:1rem">
-        @foreach(['configuration' => 'Configuration', 'live' => 'Live Test', 'tcf' => 'TCF', 'gpp' => 'GPP', 'gpc' => 'GPC', 'prebid' => 'Prebid', 'google' => 'Google CMP Evidence', 'providers' => 'Provider Privacy Findings'] as $key => $label)
+        @foreach($privacySections as $key => $label)
         <div>
             <span class="muted">{{ $label }}</span>
             <x-status-badge :status="data_get($privacyReadiness, 'sections.'.$key.'.status', 'UNKNOWN')" />
