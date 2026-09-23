@@ -27,9 +27,16 @@ class PublisherCurrentTruthTest extends TestCase
         $labels = collect(app(ControlPlaneNavigation::class)->for($user))
             ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
 
+        $groups = collect(app(ControlPlaneNavigation::class)->for($user));
         $this->assertFalse($labels->contains('Onboarding'));
+        $this->assertTrue($labels->contains('Home'));
         $this->assertTrue($labels->contains('Websites'));
-        $this->assertTrue($labels->contains('Monetization Center'));
+        $this->assertTrue($labels->contains('Reports & Earnings'));
+        $this->assertTrue($labels->contains('Monetization & Health'));
+        $this->assertSame(['Start Here', 'Manage', 'Help & Account'], $groups->pluck('label')->all());
+
+        $quick = collect(app(ControlPlaneNavigation::class)->quickLinks($user))->pluck('label')->all();
+        $this->assertSame(['Home', 'Websites', 'Reports & Earnings', 'Monetization'], $quick);
     }
 
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
