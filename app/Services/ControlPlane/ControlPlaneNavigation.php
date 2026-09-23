@@ -90,8 +90,8 @@ final class ControlPlaneNavigation
                 $this->item('Monetization Status', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
                 $this->item('Ads.txt & Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),
-            $this->group('Earnings', [
-                $this->item('Earnings & Payments', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
+            $this->group('Reports & Earnings', [
+                $this->item('Reports & Earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
                 $this->item('Commercial Terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
                 $this->item('Affiliate Referrals', 'publisher.affiliate.index', 'finance.publisher.view_own', ['publisher.affiliate.*']),
             ]),
