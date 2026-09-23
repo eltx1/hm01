@@ -36,26 +36,32 @@
 </section>
 
 <section class="publisher-kpi-grid" aria-label="Publisher performance summary">
-    <a class="publisher-kpi-card" href="{{ route('publisher.finance.overview') }}">
-        <span>Today estimated</span>
-        <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($todayEarnings) }}</strong>
-        <small>Live estimate · may change</small>
-    </a>
-    <a class="publisher-kpi-card" href="{{ route('publisher.finance.overview') }}">
-        <span>This month finalized</span>
-        <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($monthFinalized) }}</strong>
-        <small>{{ number_format((int) $reporting['impressions']) }} finalized impressions</small>
-    </a>
-    <a class="publisher-kpi-card" href="{{ route('publisher.sites.index') }}">
-        <span>Websites</span>
-        <strong>{{ $activeSites }} live</strong>
-        <small>{{ $pendingSites }} pending · {{ $publisher->sites->count() }} total</small>
-    </a>
-    <a class="publisher-kpi-card" href="{{ route('publisher.finance.statements.index') }}">
-        <span>Balance due</span>
-        <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($balanceDue) }}</strong>
-        <small>Latest finalized statement</small>
-    </a>
+    @if(auth()->user()->hasPermission('finance.publisher.view_own'))
+        <a class="publisher-kpi-card" href="{{ route('publisher.finance.overview') }}">
+            <span>Today estimated</span>
+            <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($todayEarnings) }}</strong>
+            <small>Live estimate · may change</small>
+        </a>
+        <a class="publisher-kpi-card" href="{{ route('publisher.finance.overview') }}">
+            <span>This month finalized</span>
+            <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($monthFinalized) }}</strong>
+            <small>{{ number_format((int) $reporting['impressions']) }} finalized impressions</small>
+        </a>
+    @endif
+    @if(auth()->user()->hasPermission('sites.view'))
+        <a class="publisher-kpi-card" href="{{ route('publisher.sites.index') }}">
+            <span>Websites</span>
+            <strong>{{ $activeSites }} live</strong>
+            <small>{{ $pendingSites }} pending · {{ $publisher->sites->count() }} total</small>
+        </a>
+    @endif
+    @if(auth()->user()->hasPermission('finance.publisher.view_own'))
+        <a class="publisher-kpi-card" href="{{ route('publisher.finance.statements.index') }}">
+            <span>Balance due</span>
+            <strong>{{ $currencyCode }} {{ \App\Support\Money::formatMinor($balanceDue) }}</strong>
+            <small>Latest finalized statement</small>
+        </a>
+    @endif
 </section>
 
 @if($actionItems !== [])
@@ -113,10 +119,12 @@
 
     <article>
         <div class="workspace-heading"><div><p class="eyebrow">Account readiness</p><h2>Payments & terms</h2></div></div>
+        @if(auth()->user()->hasPermission('finance.publisher.view_own'))
         <a class="compact-row" href="{{ route('publisher.finance.payment-method.edit') }}">
             <div><strong>Payment method</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Not configured yet' }}</p></div>
             <x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" />
         </a>
+        @endif
         @if(auth()->user()->hasPermission('contracts.view'))
         <a class="compact-row" href="{{ route('publisher.contracts.index') }}">
             <div><strong>Commercial terms</strong><p>{{ $activeContract?->contract_reference ?: 'No active terms' }}</p></div>
