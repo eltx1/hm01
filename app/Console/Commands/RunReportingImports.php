@@ -165,7 +165,28 @@ class RunReportingImports extends Command
                 $connection->update(['configuration' => $configuration]);
             }
 
-            $job = $imports->runConnection($connection->refresh(), $from, $to, $granularity, $finality);
+            $runFrom = $from;
+            $runTo = $to;
+            if ($connection->connection_type === 'GAM_CONNECTION' && $cadence === 'daily') {
+                $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+                try {
+                    CarbonImmutable::now($timezone);
+                } catch (\Throwable) {
+                    $timezone = 'UTC';
+                }
+
+                // A daily finalized GAM window is defined by the network's
+                // local calendar. At 04:10 UTC, a US network can still be on
+                // the previous local date; using the server date would ask
+                // Google to finalize its current day and fail every night.
+                $networkDate = filled($this->option('date'))
+                    ? CarbonImmutable::parse((string) $this->option('date'), $timezone)
+                    : CarbonImmutable::now($timezone);
+                $runFrom = $networkDate->subDays($lookback)->startOfDay();
+                $runTo = $networkDate->subDay()->endOfDay();
+            }
+
+            $job = $imports->runConnection($connection->refresh(), $runFrom, $runTo, $granularity, $finality);
             $this->line("{$connection->name}: {$job->status->value} ({$job->row_count} rows)");
             if ($job->status === ReportImportStatus::Failed) {
                 $failed++;
