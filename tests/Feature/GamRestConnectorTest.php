@@ -9,6 +9,7 @@ use App\Enums\ReportSourceCode;
 use App\Enums\RoleName;
 use App\Services\Gam\GamConnectorManager;
 use App\Services\Gam\Contracts\GamSoapTransportInterface;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Services\Reporting\Connectors\GamReportConnector;
@@ -153,7 +154,11 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame(ReportGranularity::Daily, $job->granularity);
         $this->assertSame('2026-09-20', $job->period_start->toDateString());
         $this->assertSame('2026-09-20', $job->period_end->toDateString());
-        $this->assertSame('COMPLETED', $job->status->value);
+        $this->assertSame(
+            'COMPLETED',
+            $job->status->value,
+            'Intraday import failed: '.($job->error_message ?: ($job->settlement_ineligibility_reason ?: 'no diagnostic')),
+        );
         $intradayCall = collect($google->calls)->where('method', 'runReportJob')->last();
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($intradayCall, 'payload.reportJob.reportQuery.dimensions'));
     }
@@ -319,11 +324,15 @@ class GamRestConnectorTest extends TestCase
         fclose($stream);
         Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
 
-        $this->artisan('reporting:import', [
+        $exit = $this->artisan('reporting:import', [
             'cadence' => 'daily',
             '--date' => '2026-09-10',
             '--connection' => $legacy->id,
-        ])->assertExitCode(0);
+        ])->run();
+        $latestImportError = ReportImportJob::withoutGlobalScopes()
+            ->latest('created_at')
+            ->value('error_message');
+        $this->assertSame(0, $exit, 'Scheduler import failed: '.($latestImportError ?: 'no diagnostic'));
 
         $legacy->refresh();
         $this->assertSame('GAM_CONNECTION_LEGACY', $legacy->connection_type);
