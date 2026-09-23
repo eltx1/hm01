@@ -17,7 +17,6 @@ use App\Models\ReportSourceConnection;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 final class ReportingBridge
 {
@@ -38,6 +37,7 @@ final class ReportingBridge
             $canonicalCurrency = 'USD';
         }
 
+        $legacyConnectionId = null;
         $existing = ReportSourceConnection::withoutGlobalScopes()
             ->where('connection_type', 'GAM_CONNECTION')
             ->where('connection_id', $gam->id)
@@ -51,10 +51,23 @@ final class ReportingBridge
                     ->exists();
 
             if ($hasFinancialHistory) {
-                throw new RuntimeException(
-                    "Existing GAM financial history is denominated in {$existing->currency}. "
-                    ."Horus will not relabel historical money as {$canonicalCurrency}; perform a controlled source cutover and re-import."
-                );
+                // Preserve every historical amount in its original denomination.
+                // The active source gets a fresh identity so future Google reports
+                // can be requested in canonical USD without ever relabelling AED,
+                // EUR, or another network-currency row.
+                $legacyConfiguration = (array) ($existing->configuration ?? []);
+                $legacyConfiguration['currency_policy'] = 'LEGACY_SOURCE_CURRENCY';
+                $legacyConfiguration['canonical_currency_cutover_to'] = $canonicalCurrency;
+                $legacyConfiguration['canonical_currency_cutover_at'] = now()->toIso8601String();
+                $legacyConfiguration['legacy_currency'] = strtoupper((string) $existing->currency);
+                $existing->update([
+                    'connection_type' => 'GAM_CONNECTION_LEGACY',
+                    'status' => 'DISABLED',
+                    'is_enabled' => false,
+                    'configuration' => $legacyConfiguration,
+                    'updated_by' => $actor?->id,
+                ]);
+                $legacyConnectionId = $existing->id;
             }
         }
 
@@ -75,6 +88,11 @@ final class ReportingBridge
         $configuration['report_currency'] = $canonicalCurrency;
         if (preg_match('/^[A-Z]{3}$/D', $sourceCurrency) === 1) {
             $configuration['source_network_currency'] = $sourceCurrency;
+        }
+        if ($legacyConnectionId !== null) {
+            $configuration['legacy_connection_id'] = $legacyConnectionId;
+            $configuration['canonical_currency_cutover_at'] = now()->toIso8601String();
+            $configuration['canonical_currency_rebackfill_required'] = true;
         }
         $connection->update(['configuration' => $configuration]);
 
