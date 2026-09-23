@@ -723,6 +723,10 @@ th {
     margin-top: 0.3rem;
 }
 
+.navigation-group:not([open]) > .navigation-links {
+    display: none;
+}
+
 .navigation-label {
     color: var(--hm-muted-2);
 }
