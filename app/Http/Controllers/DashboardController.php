@@ -45,7 +45,9 @@ class DashboardController extends Controller
             'activeCampaigns' => $user->hasPermission('campaigns.view') || $user->hasPermission('campaigns.review')
                 ? Campaign::withoutGlobalScopes()->whereIn('status', [CampaignStatus::Scheduled->value, CampaignStatus::Active->value, CampaignStatus::Paused->value])->count()
                 : null,
-            'reporting' => $user->hasPermission('reporting.admin.view') ? $reports->adminSummary() : null,
+            'reporting' => $user->hasPermission('reporting.admin.view')
+                ? $reports->adminSummary(null, null, config('reporting.dashboard_currency', 'USD'))
+                : null,
             'showInternalMargin' => $user->hasPermission('finance.internal_margin.view'),
             'failedJobs' => $user->hasPermission('operations.view') ? DB::table('failed_jobs')->latest('failed_at')->limit(10)->get() : collect(),
             'auditEvents' => $user->hasPermission('audit.view') ? AuditLog::query()->latest()->limit(10)->get() : collect(),
