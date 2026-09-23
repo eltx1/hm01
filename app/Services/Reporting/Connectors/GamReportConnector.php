@@ -164,14 +164,23 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             throw new GamReportPending('Google is preparing the GAM financial report; synchronization will resume automatically.');
         }
 
-        $rows = $this->parse(
-            $this->google->download($gam, (string) $jobId),
-            $connection,
-            $gam,
-            $from,
-            $to,
-            $granularity,
-        );
+        try {
+            $rows = $this->parse(
+                $this->google->download($gam, (string) $jobId),
+                $connection,
+                $gam,
+                $from,
+                $to,
+                $granularity,
+            );
+        } catch (\Throwable $exception) {
+            // A completed Google job can still produce unusable output.
+            // Force the retry path to request a fresh report rather than
+            // repeatedly downloading the same terminal bad artifact.
+            unset($configuration['google_jobs'][$key]);
+            $connection->update(['configuration' => $configuration]);
+            throw $exception;
+        }
 
         unset($configuration['google_jobs'][$key]);
         $configuration['last_completed_report_currency'] = $canonicalCurrency;
