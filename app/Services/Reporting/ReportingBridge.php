@@ -37,7 +37,7 @@ final class ReportingBridge
             $gam->id,
             $gam->name,
             $gam->network_code,
-            data_get($gam->configuration, 'currency', config('reporting.default_currency', 'USD')),
+            config('reporting.canonical_currency', 'USD'),
             $actor,
         );
     }
