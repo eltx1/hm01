@@ -794,7 +794,7 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('USD', $binding->connection->currency);
         $this->assertSame('AED', data_get($binding->connection->configuration, 'network_currency'));
         $this->assertSame('USD', data_get($binding->connection->configuration, 'reporting_currency'));
-        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp)
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.sites.show', $site))
             ->assertOk()
             ->assertSee('Reporting currency')
