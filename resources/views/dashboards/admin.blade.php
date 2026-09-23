@@ -25,9 +25,6 @@
         @if(auth()->user()->hasPermission('finance.operations.view'))
         <a class="task-card" href="{{ route('admin.finance.overview') }}"><strong>Finance</strong><span>Statements, payouts, close readiness and reconciliation.</span><b>Open finance →</b></a>
         @endif
-        @if(auth()->user()->hasPermission('demand.view'))
-        <a class="task-card" href="{{ route('admin.demand.index') }}"><strong>Direct Demand</strong><span>Provider accounts, Quick Monetize and demand mappings.</span><b>Open monetization →</b></a>
-        @endif
         @if(auth()->user()->hasPermission('operations.view'))
         <a class="task-card" href="{{ route('admin.operations.index') }}"><strong>Production</strong><span>Delivery, runtime health and operational controls.</span><b>Open production →</b></a>
         @endif
