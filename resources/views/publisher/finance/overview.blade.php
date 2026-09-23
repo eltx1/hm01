@@ -1,6 +1,6 @@
 @extends('layouts.admin')
-@section('title', 'Earnings')
-@section('heading', 'Earnings')
+@section('title', 'Reports & Earnings')
+@section('heading', 'Reports & Earnings')
 @section('content')
 @include('publisher.finance._tabs')
 
@@ -9,7 +9,7 @@
 <section class="hero dashboard-hero">
     <div>
         <p class="eyebrow">{{ $publisher->display_name }}</p>
-        <h2>Your earnings, without accounting jargon.</h2>
+        <h2>Your reports and earnings, without accounting jargon.</h2>
         <p>Use this page for today’s estimate, month-to-date earnings, finalized statements and payout status. Horus reporting is standardized to US Dollar (USD).</p>
     </div>
     <div class="hero-stat"><span>Primary currency</span><strong>{{ $canonicalCurrency }}</strong><small>US Dollar</small></div>
