@@ -6,6 +6,12 @@ Horus GAM is the primary reporting source. Optional MCM partner GAM and publishe
 
 The Laravel control plane stores aggregated rows only. It never receives ad requests and never stores impression-level, bid-request, visitor, or browser telemetry. Transfer files are private, bounded, checksummed, and processed outside the public web root.
 
+## Canonical reporting currency
+
+Horus Media reporting dashboards use **USD** as the canonical reporting currency. For Google Ad Manager sources, Horus requests revenue from Google directly in USD (`ReportQuery.reportCurrency` for SOAP ad-unit reporting and `currencyCode` for REST reports) even when the GAM network billing currency is AED, EGP, EUR, or another supported currency. The source network currency is retained only as diagnostic metadata; Horus does not perform an independent FX conversion for these GAM reports.
+
+Existing Site GAM connections migrate safely on synchronization. Open-period rows are re-requested from Google in USD using the same source connection so they revise in place, while dates already belonging to locked financial periods are not rewritten.
+
 ### Monetization financial-source binding
 
 Every production `DemandAccount` and `BidderAccount` has an explicit, auditable binding to the canonical `ReportSource` and, when applicable, `ReportSourceConnection`. The binding declares the method (`API`, `CSV`, `MANUAL`, or `ESTIMATE`), currency, timezone, effective state, and whether that exact provider/method combination is capable of finalized settlement data. ExoClick and OneTag are first-class source codes. A future provider without an implemented source uses `CUSTOM_CSV`; operators must not guess API contracts.
@@ -119,9 +125,7 @@ Finance operations use an append-only settlement ledger. Creation, independent
 approval, scheduling, and external-processing state do not reduce a statement
 balance. Only an immutable settlement reference and positive minor-unit amount
 do. A settlement reference is globally unique and cannot be reused for another
-payout. General dashboard summaries show one explicit currency and the latest
-statement balance per Publisher/currency; the Finance dashboard shows all
-currencies separately. The Admin dashboard, readiness-gated close, payout workbench, verification
+payout. General reporting dashboards show the canonical USD reporting view and the latest USD statement balance. Finance history may still show a different currency when a historical statement or payout obligation was genuinely finalized in that currency; those liabilities are never silently converted or combined. The Admin dashboard, readiness-gated close, payout workbench, verification
 queue, adjustment lifecycle, and reconciliation remediation are documented in
 [`FINANCE_OPERATIONS.md`](FINANCE_OPERATIONS.md).
 
