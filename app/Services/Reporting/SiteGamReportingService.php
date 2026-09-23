@@ -23,7 +23,11 @@ use Illuminate\Validation\ValidationException;
 
 final class SiteGamReportingService
 {
-    public function __construct(private readonly GamAdUnitReportClient $google, private readonly AuditRecorder $audit) {}
+    public function __construct(
+        private readonly GamAdUnitReportClient $google,
+        private readonly AuditRecorder $audit,
+        private readonly SiteGamReportingCurrencyPolicy $currencyPolicy,
+    ) {}
 
     public function availableConnections(Site $site): Builder
     {
@@ -49,7 +53,7 @@ final class SiteGamReportingService
         }
         $unit = $units[0];
         $network = $this->google->call($gam, 'NetworkService', 'getCurrentNetwork');
-        $reportCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $reportCurrency = $this->currencyPolicy->canonical();
         if ((string) ($network['networkCode'] ?? '') !== (string) $gam->network_code
             || ! preg_match('/^\d+$/D', (string) ($unit['id'] ?? ''))
             || ! preg_match('/^[A-Z]{3}$/D', (string) ($network['currencyCode'] ?? ''))
@@ -60,20 +64,26 @@ final class SiteGamReportingService
         return DB::transaction(function () use ($site, $gam, $unit, $network, $reportCurrency, $actor): SiteGamReportBinding {
             GamConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($gam->id);
             Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
-            $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
-            if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']
-                && $current->connection->currency === $reportCurrency && $current->connection->timezone === $network['timeZone']) {
+            $current = SiteGamReportBinding::withoutGlobalScopes()
+                ->with('connection.source')
+                ->where('active_site_id', $site->id)
+                ->first();
+            if ($current
+                && $current->gam_connection_id === $gam->id
+                && $current->ad_unit_id === (string) $unit['id']
+                && $current->connection?->timezone === $network['timeZone']) {
                 $current->update(['ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
-                $configuration = (array) ($current->connection->configuration ?? []);
-                $configuration['network_currency'] = strtoupper((string) $network['currencyCode']);
-                $configuration['report_currency'] = $reportCurrency;
-                $current->connection->update(['configuration' => $configuration, 'updated_by' => $actor->id]);
-                if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
-                    $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
+                $connection = $this->currencyPolicy->normalize(
+                    $current->fresh(['connection.source']),
+                    (string) $network['currencyCode'],
+                    $actor,
+                );
+                if (! $connection?->is_enabled || $connection->status->value === 'DISABLED') {
+                    $connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
                     $this->audit->record('reporting.site_gam.reenabled', $site->organization_id, $actor, $current);
                 }
 
-                return $current;
+                return $current->fresh(['connection.source']);
             }
             $key = $gam->network_code.':'.$unit['id'];
             if (SiteGamReportBinding::withoutGlobalScopes()->where('active_unit_key', $key)->where('site_id', '!=', $site->id)->exists()) {
