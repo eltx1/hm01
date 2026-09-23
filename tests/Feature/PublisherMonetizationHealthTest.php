@@ -200,4 +200,27 @@ class PublisherMonetizationHealthTest extends TestCase
             ->assertSee('WHITE LABEL INTERNAL ACCOUNT')
             ->assertDontSee('provider-account-SECRET-9911');
     }
+    public function test_publisher_surfaces_use_clear_next_action_and_hide_technical_detail_behind_disclosure(): void
+    {
+        $this->actingAs($this->publisherUser)
+            ->get(route('publisher.monetization.index'))
+            ->assertOk()
+            ->assertSee('Know what is working and what needs action')
+            ->assertSee('Technical health details')
+            ->assertSee('Open website');
+
+        $this->get(route('publisher.sites.show', $this->site))
+            ->assertOk()
+            ->assertSee('What should I do next?')
+            ->assertSee('View reports & earnings');
+
+        $this->actingAs($this->admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $this->site))
+            ->assertOk()
+            ->assertSee('Inventory & Serving')
+            ->assertSee('Compliance & Health')
+            ->assertSee('History & Review')
+            ->assertDontSee('Direct Monetization</a>', false);
+    }
+
 }
