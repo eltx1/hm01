@@ -6,7 +6,22 @@
 @php
     $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
     $canonical = collect($currencies)->firstWhere('currency', $canonicalCurrency);
-    $historical = collect($currencies)->reject(fn ($item) => $item['currency'] === $canonicalCurrency)->values();
+    $historical = collect($currencies)
+        ->reject(fn ($item) => $item['currency'] === $canonicalCurrency)
+        ->filter(fn ($item) =>
+            (int) $item['estimated_earnings_minor']
+            + (int) $item['finalized_earnings_minor']
+            + (int) $item['affiliate_earnings_minor']
+            + (int) $item['current_payable_minor']
+            + (int) $item['below_threshold_minor']
+            + (int) $item['carry_forward_minor']
+            + (int) $item['pending_payout_minor']
+            + (int) $item['scheduled_payout_minor']
+            + (int) $item['paid_minor']
+            + (int) $item['opening_carry_forward_minor'] !== 0
+            || filled($item['last_finalized_period'])
+        )
+        ->values();
 @endphp
 
 <section class="hero">
