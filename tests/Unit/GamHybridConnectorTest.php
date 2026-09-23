@@ -52,6 +52,27 @@ class GamHybridConnectorTest extends TestCase
         $this->assertSame('77', $result->data['id']);
     }
 
+    public function test_routes_rest_report_definition_to_rest(): void
+    {
+        $connection = new GamConnection(['driver' => 'HYBRID']);
+        $rest = Mockery::mock(GamConnectorInterface::class);
+        $soap = Mockery::mock(GamConnectorInterface::class);
+        $rest->shouldReceive('connection')->andReturn($connection);
+        $rest->shouldReceive('runReport')->once()->with(
+            Mockery::on(fn (array $query): bool => isset($query['metrics']) && isset($query['dateRange'])),
+            Mockery::type('array'),
+        )->andReturn(GamResult::success(['name' => 'networks/1/reports/2']));
+        $soap->shouldNotReceive('runReport');
+
+        $result = (new GamHybridConnector($rest, $soap, new GamCapabilityRegistry))->runReport([
+            'metrics' => [['type' => 'IMPRESSIONS']],
+            'dateRange' => ['fixed' => ['startDate' => ['year' => 2026, 'month' => 9, 'day' => 1]]],
+            'currencyCode' => 'USD',
+        ]);
+
+        $this->assertTrue($result->success);
+    }
+
     public function test_does_not_replay_a_failed_rest_write_through_soap(): void
     {
         $connection = new GamConnection(['driver' => 'HYBRID']);
