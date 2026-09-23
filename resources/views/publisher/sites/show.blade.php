@@ -156,7 +156,7 @@
     ['label' => 'Ads.txt', 'href' => '#ads-txt-setup', 'visible' => auth()->user()->hasPermission('publisher.ads_txt.view')],
     ['label' => 'Installation', 'href' => '#site-installation'],
     ['label' => 'Privacy', 'href' => '#privacy-readiness'],
-    ['label' => 'Ad codes', 'href' => '#responsive-display-codes', 'visible' => $site->placements->contains(fn ($placement) => data_get($placement->metadata, 'responsive_bundle') === 'v1')],
+    ['label' => 'Ad codes', 'href' => '#responsive-display-codes'],
 ]" label="Website sections" />
 
 <section id="website-overview" class="hero workspace-section">
@@ -195,6 +195,12 @@
     @if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.store', $site) }}" class="inline-form">@csrf<input class="hm-input" name="domain" aria-label="Additional authorized domain" placeholder="additional.example.com" required><button class="hm-button-secondary">Add authorized domain</button></form>@endif
 </article>
 <article id="review-status" class="workspace-section"><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Waiting for successful ads.txt verification; submission is automatic.</p>@endforelse</article>
+@endif
+@if(! $site->placements->contains(fn ($placement) => data_get($placement->metadata, 'responsive_bundle') === 'v1'))
+    <section id="responsive-display-codes" class="workspace-section" aria-label="Responsive display installation codes">
+        <div class="workspace-heading"><div><p class="eyebrow">Ad codes</p><h2>Responsive Display codes</h2></div></div>
+        <x-empty-state title="No Responsive Display codes yet" description="When Horus enables Responsive Display for this website, the publisher-ready placement codes will appear here. Your permanent Horus Loader does not need to change." />
+    </section>
 @endif
 <x-responsive-bundle-codes :site="$site" />
 @endsection
