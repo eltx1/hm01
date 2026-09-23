@@ -8,6 +8,7 @@ use App\Enums\ReportGranularity;
 use App\Enums\ReportSourceCode;
 use App\Enums\RoleName;
 use App\Services\Gam\GamConnectorManager;
+use App\Services\Gam\Contracts\GamSoapTransportInterface;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Services\Reporting\Connectors\GamReportConnector;
@@ -63,16 +64,49 @@ class GamRestConnectorTest extends TestCase
             'dry_run_default' => false,
             'configuration' => ['currency' => 'AED'],
         ]);
-        $this->cacheToken($connection);
-        Http::fake([
-            'https://admanager.googleapis.com/v1/networks/123456789/reports' => Http::response([
-                'name' => 'networks/123456789/reports/77',
+
+        $google = new class implements GamSoapTransportInterface
+        {
+            public array $calls = [];
+
+            public function call(\App\Models\GamConnection $connection, string $service, string $method, array $payload = []): array
+            {
+                $this->calls[] = compact('service', 'method', 'payload');
+
+                return match ($method) {
+                    'getCurrentNetwork' => [
+                        'networkCode' => $connection->network_code,
+                        'currencyCode' => 'AED',
+                        'timeZone' => 'Asia/Dubai',
+                    ],
+                    'runReportJob' => ['id' => '77'],
+                    'getReportJobStatus' => ['value' => 'COMPLETED'],
+                    'getReportDownloadUrlWithOptions' => ['value' => 'https://storage.googleapis.com/report.csv?signature=private'],
+                    default => throw new \RuntimeException('Unexpected Google call: '.$method),
+                };
+            }
+        };
+        $this->app->instance(GamSoapTransportInterface::class, $google);
+
+        $headers = [
+            'Dimension.DATE',
+            ...array_map(fn ($dimension) => 'Dimension.'.$dimension, [
+                'AD_UNIT_ID', 'LINE_ITEM_ID', 'COUNTRY_CODE', 'DEVICE_CATEGORY_NAME',
+                'BROWSER_NAME', 'OPERATING_SYSTEM_NAME', 'CREATIVE_SIZE',
             ]),
-            'https://admanager.googleapis.com/v1/networks/123456789/reports/77:run' => Http::response([
-                'rows' => [],
-                'report_id' => '77',
-            ]),
-        ]);
+            ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
+        ];
+        $values = [
+            '2026-09-20', '1001', '2002', 'US', 'Desktop', 'Chrome', 'Macintosh', '300x250',
+            120, 100, 20, 95, 3, 123450000,
+        ];
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, $headers, escape: '');
+        fputcsv($stream, $values, escape: '');
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
 
         $reportConnection = app(ReportingBridge::class)->connectionForGam($connection, $actor);
         $this->assertSame('USD', $reportConnection->currency);
@@ -89,9 +123,14 @@ class GamRestConnectorTest extends TestCase
         );
 
         $this->assertSame('USD', data_get($result, 'metadata.report_currency'));
-        Http::assertSent(fn ($request) => $request->method() === 'POST'
-            && $request->url() === 'https://admanager.googleapis.com/v1/networks/123456789/reports'
-            && data_get($request->data(), 'currencyCode') === 'USD');
+        $this->assertSame('AED', data_get($result, 'metadata.source_network_currency'));
+        $this->assertSame(12345, data_get($result, 'rows.0.gross_revenue_minor'));
+        $this->assertSame('USD', data_get($result, 'rows.0.currency'));
+
+        $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
+        $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
+        $this->assertSame('CUSTOM_DATE', data_get($reportCall, 'payload.reportJob.reportQuery.dateRangeType'));
+        $this->assertSame('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', data_get($reportCall, 'payload.reportJob.reportQuery.columns.5'));
     }
 
     public function test_existing_non_usd_full_network_history_is_never_relabeled_as_usd(): void
