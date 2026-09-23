@@ -62,6 +62,10 @@ class ControlPlaneFoundationTest extends TestCase
             ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
         $this->assertFalse($labels->contains('Production'));
         $this->assertFalse($labels->contains('Invite team member'));
+        $this->assertFalse($labels->contains('Notifications'));
+        $this->assertFalse($labels->contains('Statements'));
+        $this->assertFalse($labels->contains('Payout history'));
+        $this->assertLessThanOrEqual(8, $labels->count());
     }
 
     public function test_navigation_uses_fewer_task_based_groups_and_workspace_context(): void
@@ -192,6 +196,13 @@ class ControlPlaneFoundationTest extends TestCase
         $this->assertNull(collect($items)->firstWhere('key', 'publisher-reviews'));
         $this->assertSame(1, collect($items)->firstWhere('key', 'site-reviews')['count']);
         $this->assertLessThanOrEqual(16, $queries, 'Action Center must remain aggregate-only; Task 19 adds one bounded monetization-health snapshot query.');
+
+        $publisherItems = app(ActionCenter::class)->items($publisherUser);
+        $this->assertNull(collect($publisherItems)->firstWhere('key', 'site-reviews'));
+        $this->assertNull(collect($publisherItems)->firstWhere('key', 'contract-actions'));
+        $this->assertFalse(collect($publisherItems)->contains(
+            fn (array $item): bool => str_starts_with((string) ($item['route'] ?? ''), 'admin.')
+        ), 'Customer Action Center must never expose an internal admin destination.');
     }
 
     public function test_control_plane_templates_include_mobile_and_accessibility_primitives(): void
