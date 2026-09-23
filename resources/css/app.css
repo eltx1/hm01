@@ -123,6 +123,41 @@ dd { margin: 0; }
 .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
 .health-grid > div { display: grid; gap: .35rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); padding: 1rem; }
 .section-anchor { color: var(--hm-gold-highlight); font-size: .85rem; }
+.dashboard-hero { margin-bottom: 1rem; }
+.dashboard-shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; margin: 1rem 0; }
+.dashboard-shortcuts > a { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "icon title" "icon note"; column-gap: .75rem; align-items: center; min-height: 94px; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); padding: .9rem 1rem; background: var(--hm-glass); transition: transform .16s ease, border-color .16s ease, background .16s ease; }
+.dashboard-shortcuts > a:hover, .dashboard-shortcuts > a:focus-visible { transform: translateY(-2px); border-color: var(--hm-line-gold); background: rgba(241, 183, 51, .045); }
+.dashboard-shortcuts strong { grid-area: title; color: var(--hm-white); }
+.dashboard-shortcuts small { grid-area: note; color: var(--hm-muted); line-height: 1.4; }
+.shortcut-icon { grid-area: icon; display: grid; place-items: center; width: 2.35rem; height: 2.35rem; border: 1px solid var(--hm-line-gold); border-radius: .7rem; color: var(--hm-gold-highlight); font-weight: 800; }
+.dashboard-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: .75rem; margin: 1rem 0; }
+.dashboard-metrics-admin { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.dashboard-metric-card { min-height: 128px; }
+.dashboard-metric-card.is-primary { border-color: var(--hm-line-gold); background: linear-gradient(145deg, rgba(241, 183, 51, .07), rgba(8, 18, 43, .78)); }
+.dashboard-metric-card .muted { display: block; margin-top: .45rem; font-size: .78rem; line-height: 1.45; }
+.dashboard-two-column { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 1rem; margin-top: 1rem; }
+.dashboard-empty-success { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border: 1px solid rgba(77, 214, 151, .28); border-radius: var(--hm-radius-md); padding: 1rem; background: rgba(29, 148, 96, .07); }
+.dashboard-empty-success span { color: var(--hm-muted); }
+.dashboard-metrics-compact { margin: .75rem 0 0; }
+.dashboard-metrics-compact > div { display: grid; gap: .25rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); padding: .85rem; }
+.dashboard-metrics-compact span { color: var(--hm-muted); font-size: .76rem; }
+.dashboard-metrics-compact strong { color: var(--hm-gold-highlight); font-size: 1.25rem; }
+.compact-row-link { border-radius: .65rem; padding-inline: .55rem; transition: background .16s ease, border-color .16s ease; }
+.compact-row-link:hover, .compact-row-link:focus-visible { background: rgba(255, 255, 255, .035); border-color: var(--hm-line-gold); }
+.form-readonly { display: grid; gap: .3rem; align-content: end; min-height: 2.7rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-sm); padding: .62rem .75rem; background: rgba(255, 255, 255, .025); }
+.form-readonly span, .form-readonly small { color: var(--hm-muted); }
+.form-readonly strong { color: var(--hm-gold-highlight); }
+.today-card { border-color: rgba(77, 214, 151, .26); background: linear-gradient(145deg, rgba(8, 42, 58, .38), rgba(5, 11, 30, .76)); }
+.finance-details, .legacy-finance-section { margin-top: 1rem; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); padding: 1rem; background: var(--hm-glass); }
+.finance-details summary, .legacy-finance-section summary { cursor: pointer; color: var(--hm-gold-highlight); font-weight: 700; }
+.finance-details[open] summary, .legacy-finance-section[open] summary { margin-bottom: .9rem; }
+.site-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.site-card { display: grid; gap: .85rem; min-width: 0; border: 1px solid var(--hm-line); border-radius: var(--hm-radius-md); padding: 1rem; background: var(--hm-glass); transition: transform .16s ease, border-color .16s ease, background .16s ease; }
+.site-card:hover, .site-card:focus-visible { transform: translateY(-2px); border-color: var(--hm-line-gold); background: rgba(255, 255, 255, .035); }
+.site-card h2 { margin: .2rem 0; }
+.site-card-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; }
+.site-card-meta span { display: grid; gap: .2rem; min-width: 0; color: var(--hm-muted); font-size: .78rem; }
+.site-card-meta strong { color: var(--hm-white); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
 .compliance-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
 .compliance-actions .button-link { margin-top: 0; }
 .compliance-code { max-height: 420px; overflow: auto; white-space: pre; border: 1px solid var(--hm-line-gold); border-radius: var(--hm-radius-sm); padding: 1rem; background: var(--hm-night); color: var(--hm-gold-soft); font: .82rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -215,7 +250,7 @@ dd { margin: 0; }
     .topbar .status { display: none; }
     .topbar h1 { margin-bottom: 1.25rem; }
     .cards { grid-template-columns: 1fr; }
-    .metric-grid, .split-grid, .detail-grid, .action-center-grid, .health-grid, .compliance-diff-grid, .selection-grid, .lifecycle-boundaries, .ai-provider-grid { grid-template-columns: 1fr; }
+    .metric-grid, .split-grid, .detail-grid, .action-center-grid, .health-grid, .compliance-diff-grid, .selection-grid, .lifecycle-boundaries, .ai-provider-grid, .dashboard-two-column { grid-template-columns: 1fr; }
     .ai-setup-progress { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .full { grid-column: auto; }
@@ -240,5 +275,6 @@ dd { margin: 0; }
     .import-options { align-items: flex-start; flex-direction: column; }
     .ai-dashboard-card { align-items: flex-start; flex-direction: column; }
     .ai-dashboard-status { justify-content: flex-start; }
-    .ai-provider-health { grid-template-columns: 1fr; }
+    .ai-provider-health, .site-card-meta { grid-template-columns: 1fr; }
+    .dashboard-empty-success { align-items: flex-start; flex-direction: column; }
 }

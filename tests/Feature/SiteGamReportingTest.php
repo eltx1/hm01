@@ -281,6 +281,7 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('FLAT', $query['adUnitView']);
         $this->assertSame('12345', $query['statement']['values'][0]['value']['value']);
         $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        $this->assertSame('USD', $query['reportCurrency']);
         $this->assertStringNotContainsString('private-download', GamApiOperation::query()->get()->toJson());
     }
 
@@ -782,46 +783,139 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('DEGRADED', $health->forSite($context[3])['status']);
     }
 
-    public function test_network_currency_drives_site_coverage_without_blocking_an_unrelated_currency_period(): void
+    public function test_google_network_currency_is_metadata_while_site_reporting_and_coverage_are_usd(): void
     {
         [$admin, , , $site] = $context = $this->context();
         $this->seed(DemandNetworkSeeder::class);
         $account = DemandAccount::withoutGlobalScopes()->create([
             'organization_id' => $admin->organization_id, 'demand_network_id' => DemandNetwork::firstOrFail()->id,
-            'name' => 'Demand account with default USD reporting', 'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS',
+            'name' => 'Demand account with canonical USD reporting', 'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS',
             'approval_status' => 'APPROVED', 'is_enabled' => true,
         ]);
         DemandSite::withoutGlobalScopes()->create(['organization_id' => $site->organization_id,
             'demand_account_id' => $account->id, 'site_id' => $site->id, 'is_enabled' => true,
             'approval_status' => 'APPROVED', 'integration_mode' => 'DIRECT_JS']);
-        $this->google->currency = 'EGP';
+
+        $this->google->currency = 'AED';
         $binding = $this->bind($context);
+        $this->assertSame('USD', $binding->connection->currency);
+        $this->assertSame('AED', data_get($binding->connection->configuration, 'network_currency'));
+        $this->assertSame('USD', data_get($binding->connection->configuration, 'canonical_report_currency'));
+
         app(MonetizationFinancialBindingService::class)->bind(
             $account,
             ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(),
             FinancialReportingMethod::Csv,
-            'EGP',
+            'USD',
             'Africa/Cairo',
             $admin,
             [
                 'site_gam_included' => true,
-                'site_gam_inclusion_reason' => 'Provider settlement is explicitly included in this EGP Site GAM reporting unit.',
+                'site_gam_inclusion_reason' => 'Provider settlement is explicitly included in this canonical USD Site GAM reporting unit.',
             ],
         );
 
         $usd = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'USD');
-        $egp = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'EGP');
+        $aed = app(FinancialPeriodService::class)->periodFor('2026-09-01', 'AED');
         $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding, '2026-09-01', '2026-09-30')->status);
+
+        $query = collect($this->google->calls)->firstWhere('method', 'runReportJob')['payload']['reportJob']['reportQuery'];
+        $this->assertSame('USD', $query['reportCurrency']);
+        $this->assertTrue(DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->report_source_connection_id)
+            ->where('currency', 'USD')->exists());
+        $this->assertFalse(DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->report_source_connection_id)
+            ->where('currency', 'AED')->exists());
+
         $readiness = app(MonetizationFinancialReadinessService::class);
-        $this->assertCount(0, $readiness->blockersForPeriod($usd), 'An EGP financial binding must not block an unrelated USD period.');
-        $this->assertCount(0, $readiness->blockersForPeriod($egp));
+        $this->assertCount(0, $readiness->blockersForPeriod($usd));
+        $this->assertCount(0, $readiness->blockersForPeriod($aed), 'Network currency metadata must not create AED Site GAM liabilities.');
+
         DailyReport::withoutGlobalScopes()
             ->where('report_source_connection_id', $binding->report_source_connection_id)
             ->whereDate('report_date', '2026-09-25')
             ->delete();
-        $this->assertCount(0, $readiness->blockersForPeriod($usd));
-        $this->assertCount(1, $readiness->blockersForPeriod($egp));
+        $this->assertCount(1, $readiness->blockersForPeriod($usd));
+        $this->assertCount(0, $readiness->blockersForPeriod($aed));
+    }
+
+    public function test_legacy_open_aed_site_gam_connection_is_rebased_and_reimported_in_usd(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $binding = $this->bind($context);
+        $binding->update(['starts_on' => '2026-09-20']);
+        $connection = $binding->connection;
+        $connection->update(['currency' => 'AED', 'configuration' => ['network_currency' => 'AED']]);
+
+        $day = CarbonImmutable::parse('2026-09-20');
+        $legacy = app(ReportImportService::class)->importRows($connection->fresh('source'), [[
+            'date' => '2026-09-20',
+            'organization_id' => $site->organization_id,
+            'publisher_id' => $site->publisher_id,
+            'site_id' => $site->id,
+            'gam_connection_id' => $binding->gam_connection_id,
+            'gam_ad_unit_id' => $binding->ad_unit_id,
+            'impressions' => 95,
+            'gross_revenue_minor' => 12345,
+            'currency' => 'AED',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, 'legacy-aed-site-gam', importType: 'API');
+        $this->assertSame(ReportImportStatus::Completed, $legacy->status);
+        $this->assertDatabaseHas('daily_reports', ['report_source_connection_id' => $connection->id, 'currency' => 'AED']);
+
+        $this->google->currency = 'AED';
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv())
+            ->push($this->csv([['2026-09-21', '12345', 180, 150, 30, 125, 5, 456780000]]))]);
+        app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+
+        $binding->refresh();
+        $connection->refresh();
+        $this->assertSame('USD', $connection->currency);
+        $this->assertSame('AED', data_get($connection->configuration, 'network_currency'));
+        $this->assertSame('USD', data_get($connection->configuration, 'canonical_report_currency'));
+        $this->assertFalse(DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)->where('currency', 'AED')->exists());
+        $this->assertTrue(DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)->where('currency', 'USD')->exists());
+        $this->assertDatabaseHas('audit_logs', ['event' => 'reporting.site_gam.currency_rebased', 'auditable_id' => $binding->id]);
+    }
+
+    public function test_locked_aed_history_is_preserved_and_active_site_cuts_over_to_new_usd_connection(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $binding = $this->bind($context);
+        $binding->update(['starts_on' => '2026-09-20']);
+        $oldConnection = $binding->connection;
+        $oldConnection->update(['currency' => 'AED', 'configuration' => ['network_currency' => 'AED']]);
+
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = app(ReportImportService::class)->importRows($oldConnection->fresh('source'), [[
+            'date' => '2026-09-20',
+            'organization_id' => $site->organization_id,
+            'publisher_id' => $site->publisher_id,
+            'site_id' => $site->id,
+            'gam_connection_id' => $binding->gam_connection_id,
+            'gam_ad_unit_id' => $binding->ad_unit_id,
+            'impressions' => 95,
+            'gross_revenue_minor' => 12345,
+            'currency' => 'AED',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, 'locked-aed-site-gam', importType: 'API');
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $row->period->update(['status' => 'CLOSED']);
+
+        $newBinding = app(\App\Services\Reporting\SiteGamCurrencyPolicy::class)->enforce($binding->fresh(), $admin);
+
+        $this->assertNotSame($binding->id, $newBinding->id);
+        $this->assertSame('USD', $newBinding->connection->currency);
+        $this->assertSame('2026-10-01', $newBinding->starts_on->toDateString());
+        $this->assertSame('2026-09-30', $binding->fresh()->ends_on->toDateString());
+        $this->assertFalse((bool) $oldConnection->fresh()->is_enabled);
+        $this->assertDatabaseHas('daily_reports', [
+            'id' => $row->id,
+            'report_source_connection_id' => $oldConnection->id,
+            'currency' => 'AED',
+            'gross_revenue_minor' => 12345,
+        ]);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'reporting.site_gam.currency_cutover', 'auditable_id' => $newBinding->id]);
     }
 }

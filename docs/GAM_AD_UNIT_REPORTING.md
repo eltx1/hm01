@@ -5,7 +5,7 @@ Manager account, searches for an ad unit by name/code/ID, and selects **Connect
 reports**. The exact name, code or numeric ID also works without search or
 JavaScript. When only one account is available it is selected automatically.
 Ambiguous names require selection of the intended ID. Account access, unit ID,
-network currency and timezone are verified before the binding is saved.
+network identity, native currency, and timezone are verified before the binding is saved. The native network currency is retained as provenance only; Horus requests report revenue from Google in canonical USD.
 
 If no account has been connected, select **Connect your first Ad Manager
 account** in the same section. Google sign-in discovers one or several networks
@@ -48,9 +48,11 @@ blocking the administrator's save request. Requests have bounded SOAP timeouts;
 failures back off and expired preparation jobs are retried.
 
 Reports request total impressions, clicks, requests, responses, unmatched requests
-and total CPM/CPC/CPD revenue, including dynamic allocation. CSV_DUMP revenue is
-integer micros of the network currency and is converted to the platform's minor
-units once per aggregate using integer rounding. Dates and the returned unit ID
+and total CPM/CPC/CPD revenue, including dynamic allocation. Horus explicitly sets
+Google Ad Manager `ReportQuery.reportCurrency=USD`, so CSV_DUMP revenue is integer
+micros of USD even when the network's native currency is AED, EGP, EUR, GBP, or
+another supported currency. Micros are converted to platform minor units once per
+aggregate using integer rounding; Horus does not perform a second FX conversion. Dates and the returned unit ID
 must match the binding. Malformed, oversized and failed downloads never create
 zero-revenue reports. A completed, valid report fills omitted dates/hours with zero
 to correctly apply downward corrections. Download URLs are Google HTTPS URLs;
@@ -73,3 +75,14 @@ References: [Google reporting workflow](https://developers.google.com/ad-manager
 [report columns](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.Column),
 [CSV download options](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.ReportDownloadOptions).
 Runtime API versions are resolved from the installed SDK, never these documentation URLs.
+
+
+## Canonical currency migration
+
+Active legacy Site GAM connections whose ledger rows belong only to OPEN financial
+periods are rebased in place to USD: open rows/import state are discarded and
+re-requested from Google using the same verified network/ad-unit binding. If a
+legacy currency has CLOSED or CLOSING financial history, those rows are immutable.
+Horus retires the old connection after the locked period boundary and creates a new
+USD connection for subsequent dates. Closed statements are never rewritten merely
+to normalize dashboard currency.

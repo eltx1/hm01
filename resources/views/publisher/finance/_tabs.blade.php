@@ -1,6 +1,6 @@
 <x-control-plane.workspace-tabs :items="[
-    ['label' => 'Overview', 'href' => route('publisher.finance.overview')],
+    ['label' => 'Reports & earnings', 'href' => route('publisher.finance.overview')],
     ['label' => 'Statements', 'href' => route('publisher.finance.statements.index')],
-    ['label' => 'Payment Method', 'href' => route('publisher.finance.payment-method.edit')],
-    ['label' => 'Payout History', 'href' => route('publisher.finance.payouts.index')],
-]" label="Earnings and Payments sections" />
+    ['label' => 'Payment method', 'href' => route('publisher.finance.payment-method.edit')],
+    ['label' => 'Payouts', 'href' => route('publisher.finance.payouts.index')],
+]" label="Earnings and payout sections" />

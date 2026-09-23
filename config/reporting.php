@@ -2,6 +2,10 @@
 
 return [
     'default_currency' => env('REPORTING_DEFAULT_CURRENCY', 'USD'),
+    // Revenue requested from Google Ad Manager is normalized at source.
+    // Keep this USD unless Finance deliberately introduces a new canonical ledger currency.
+    'gam_report_currency' => env('REPORTING_GAM_CURRENCY', 'USD'),
+    'dashboard_currency' => env('REPORTING_DASHBOARD_CURRENCY', 'USD'),
     'default_timezone' => env('REPORTING_DEFAULT_TIMEZONE', 'UTC'),
     'default_publisher_share_bp' => (int) env('REPORTING_DEFAULT_PUBLISHER_SHARE_BP', 7000),
     'default_horus_share_bp' => (int) env('REPORTING_DEFAULT_HORUS_SHARE_BP', 3000),
