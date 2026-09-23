@@ -104,7 +104,7 @@
 <article class="workspace-section ai-dashboard-card" aria-labelledby="ai-control-center-heading">
     <div>
         <p class="eyebrow">AI & Automation</p>
-        <h2 id="ai-control-center-heading">THOTH AI</h2>
+        <h2 id="ai-control-center-heading">THOTH AI Control Center</h2>
         <p>Publisher quality advisories remain secondary to the human review workflow.</p>
     </div>
     <div class="ai-dashboard-status">
