@@ -80,6 +80,20 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(10, $summary['clicks']);
         $this->assertSame(700, $summary['spend_minor']);
         $this->assertDatabaseHas('advertiser_invoices', ['campaign_id' => $campaign->id, 'status' => 'ISSUED']);
+
+        // Publisher-finance deduplication may intentionally exclude the
+        // campaign bridge when Site GAM already owns revenue. Advertiser cost
+        // and invoices must still come from the delivery log.
+        \App\Models\AdvertiserReport::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->delete();
+        $invoice = $campaign->invoices()->firstOrFail();
+        app(\App\Services\Reporting\AdvertiserFinancialService::class)->synchronizeInvoice($invoice);
+        $this->assertSame(700, $invoice->fresh()->subtotal_minor);
+        $advertiserSummary = app(\App\Services\Reporting\UnifiedReportService::class)
+            ->advertiserSummary($campaign->advertiser, now()->startOfMonth(), now());
+        $this->assertSame(700, $advertiserSummary['spend_minor']);
+        $this->assertSame(300, $advertiserSummary['impressions']);
     }
 
     public function test_direct_campaign_completes_over_rest_first_hybrid_connections(): void
