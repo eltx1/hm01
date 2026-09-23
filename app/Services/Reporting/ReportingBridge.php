@@ -204,7 +204,10 @@ final class ReportingBridge
                 'gross_revenue_minor' => (int) ($row['spend_minor'] ?? 0),
                 'spend_minor' => (int) ($row['spend_minor'] ?? 0),
                 'video_starts' => (int) ($row['views'] ?? 0),
-                'currency' => $instance->campaign->currency,
+                // Campaign GAM reports are requested from Google in the
+                // canonical reporting denomination. Never relabel that money
+                // with the advertiser campaign's display/budget currency.
+                'currency' => $connection->currency,
             ]);
         }
         if ($normalized === []) {
