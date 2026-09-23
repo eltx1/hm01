@@ -145,7 +145,14 @@ class RunReportingImports extends Command
                         $failed++;
                         continue;
                     }
-                    if ($backfill->status === ReportImportStatus::Pending) {
+                    if (! in_array($backfill->status, [
+                        ReportImportStatus::Completed,
+                        ReportImportStatus::Duplicate,
+                    ], true)) {
+                        // Keep the rebackfill marker until a source run has
+                        // actually completed. A closed-period block or any
+                        // other non-terminal-success state must not silently
+                        // disable the repair path.
                         continue;
                     }
                 }
