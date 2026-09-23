@@ -352,6 +352,117 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($reportCall, 'payload.reportJob.reportQuery.dimensions'));
     }
 
+    public function test_targeted_scheduler_import_follows_legacy_connection_to_canonical_usd_source(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 12:00:00', 'UTC'));
+        $this->seedIdentity();
+        $this->seed(ReportingSeeder::class);
+        $organization = $this->makeOrganization(OrganizationType::HorusMedia);
+        $actor = $this->makeUser($organization, RoleName::SuperAdmin);
+        $gam = $this->makeGamConnection($organization, $actor, [
+            'driver' => 'REST',
+            'network_code' => '323456789',
+            'dry_run_default' => false,
+            'configuration' => ['currency' => 'AED'],
+        ]);
+        $source = ReportSource::query()->where('code', ReportSourceCode::HorusGam->value)->firstOrFail();
+        $legacy = ReportSourceConnection::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'report_source_id' => $source->id,
+            'name' => 'Scheduler legacy AED GAM',
+            'connection_type' => 'GAM_CONNECTION',
+            'connection_id' => $gam->id,
+            'account_identifier' => $gam->network_code,
+            'currency' => 'AED',
+            'timezone' => 'UTC',
+            'status' => 'ACTIVE',
+            'is_enabled' => true,
+            'created_by' => $actor->id,
+            'updated_by' => $actor->id,
+        ]);
+
+        $historicalDay = CarbonImmutable::parse('2026-09-18');
+        $historical = app(ReportImportService::class)->importRows(
+            $legacy,
+            [['date' => $historicalDay->toDateString(), 'gross_revenue_minor' => 10000, 'currency' => 'AED']],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $historicalDay,
+            $historicalDay,
+            $actor,
+            'scheduler-legacy-aed-history',
+            importType: 'API',
+        );
+        $this->assertSame('COMPLETED', $historical->status->value);
+
+        $google = new class implements GamSoapTransportInterface
+        {
+            public array $calls = [];
+
+            public function call(\App\Models\GamConnection $connection, string $service, string $method, array $payload = []): array
+            {
+                $this->calls[] = compact('service', 'method', 'payload');
+
+                return match ($method) {
+                    'getCurrentNetwork' => [
+                        'networkCode' => $connection->network_code,
+                        'currencyCode' => 'AED',
+                        'timeZone' => 'UTC',
+                    ],
+                    'runReportJob' => ['id' => '88'],
+                    'getReportJobStatus' => ['value' => 'COMPLETED'],
+                    'getReportDownloadUrlWithOptions' => ['value' => 'https://storage.googleapis.com/scheduler-report.csv?signature=private'],
+                    default => throw new \RuntimeException('Unexpected Google call: '.$method),
+                };
+            }
+        };
+        $this->app->instance(GamSoapTransportInterface::class, $google);
+
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, [
+            'Dimension.DATE',
+            'Dimension.AD_UNIT_ID',
+            ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
+        ], escape: '');
+        fputcsv($stream, ['2026-09-20', '1001', 120, 100, 20, 95, 3, 123450000], escape: '');
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
+
+        $this->artisan('reporting:import', [
+            'cadence' => 'daily',
+            '--date' => '2026-09-21',
+            '--connection' => $legacy->id,
+        ])->assertExitCode(0);
+
+        $legacy->refresh();
+        $canonical = ReportSourceConnection::withoutGlobalScopes()
+            ->where('connection_type', 'GAM_CONNECTION')
+            ->where('connection_id', $gam->id)
+            ->sole();
+
+        $this->assertSame('AED', $legacy->currency);
+        $this->assertFalse($legacy->is_enabled);
+        $this->assertSame('GAM_CONNECTION_LEGACY', $legacy->connection_type);
+        $this->assertSame('USD', $canonical->currency);
+        $this->assertTrue($canonical->is_enabled);
+        $this->assertNotSame($legacy->id, $canonical->id);
+        $this->assertDatabaseHas('daily_reports', [
+            'report_source_connection_id' => $legacy->id,
+            'currency' => 'AED',
+            'gross_revenue_minor' => 10000,
+        ]);
+        $this->assertDatabaseHas('daily_reports', [
+            'report_source_connection_id' => $canonical->id,
+            'currency' => 'USD',
+            'gross_revenue_minor' => 12345,
+        ]);
+
+        $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
+        $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
+    }
+
     public function test_rest_dry_run_is_audited_without_external_request(): void
     {
         $this->seedIdentity();
