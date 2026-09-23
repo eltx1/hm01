@@ -115,6 +115,18 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(2, collect($soap->calls)->where('method', 'createLineItemCreativeAssociations')->count());
         $this->assertSame(2, collect($soap->calls)->where('method', 'performLineItemAction')->count());
         Http::assertSentCount(2);
+
+        // Campaign reporting uses the legacy SOAP ReportQuery schema and must
+        // ask Google to convert monetary metrics to Horus' canonical USD.
+        $reports = app(CampaignReportingService::class)->requestDeliveryReports(
+            $campaign->fresh()->load('networkInstances.connection')
+        );
+        $this->assertCount(2, $reports);
+        $reportCalls = collect($soap->calls)->where('method', 'runReportJob');
+        $this->assertCount(2, $reportCalls);
+        $this->assertTrue($reportCalls->every(
+            fn (array $call): bool => data_get($call, 'payload.reportJob.reportQuery.reportCurrency') === 'USD'
+        ));
     }
 
     public function test_one_network_failure_is_isolated_and_retry_does_not_duplicate_horus_objects(): void
@@ -135,6 +147,32 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertTrue($retry['success']);
         $this->assertSame($horusCount, GamRemoteObject::withoutGlobalScopes()->where('gam_connection_id', $horus->id)->count());
         $this->assertDatabaseHas('campaign_network_instances', ['id' => $partnerInstance->id, 'status' => CampaignNetworkStatus::Active->value]);
+    }
+
+    public function test_campaign_reporting_refuses_non_usd_spend_instead_of_relabeling_it(): void
+    {
+        [$campaign] = $this->campaignAcrossTwoNetworks('MOCK');
+        $campaign->update(['currency' => 'AED']);
+        $instance = $campaign->networkInstances()->firstOrFail();
+
+        try {
+            app(CampaignReportingService::class)->recordAggregated($instance, [[
+                'report_date' => now()->toDateString(),
+                'external_report_id' => 'non-usd-report',
+                'impressions' => 100,
+                'clicks' => 2,
+                'views' => 1,
+                'spend_minor' => 250,
+            ]]);
+            $this->fail('Non-USD campaign reporting must fail closed without an FX ledger.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('denominated in USD', $exception->getMessage());
+        }
+
+        $this->assertDatabaseMissing('campaign_delivery_logs', [
+            'campaign_id' => $campaign->id,
+            'spend_minor' => 250,
+        ]);
     }
 
     public function test_creative_validation_rejects_unsafe_html_missing_assets_and_duplicate_files(): void
