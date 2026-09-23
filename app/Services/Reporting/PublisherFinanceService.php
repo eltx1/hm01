@@ -27,7 +27,7 @@ final class PublisherFinanceService
         $statementModels = $this->statementModels($publisher);
         $payments = $this->payments($publisher);
         $contract = $this->activeContract($publisher);
-        $currencyCodes = $this->currencies($publisher, $statementModels, $payments, $contract);
+        $currencyCodes = $this->currencies($publisher, $statementModels, $payments);
 
         $currencies = $currencyCodes->map(function (string $currency) use ($publisher, $profile, $statementModels, $payments, $contract): array {
             $currentRows = DailyReport::withoutGlobalScopes()
@@ -260,7 +260,6 @@ final class PublisherFinanceService
         Publisher $publisher,
         Collection $statements,
         Collection $payments,
-        ?PublisherContract $contract,
     ): Collection {
         $reported = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
