@@ -103,7 +103,7 @@ class GamRestConnectorTest extends TestCase
         ];
         $values = [
             '2026-09-20', '1001',
-            120, 100, 20, 95, 3, 'USD 123450000',
+            120, 100, 20, 95, 3, '$ 123450000',
         ];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
