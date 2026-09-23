@@ -1,8 +1,9 @@
 @props(['groups' => []])
 
-<nav class="control-navigation" aria-label="Control plane navigation">
+<nav class="control-navigation" aria-label="Primary workspace navigation">
     @foreach($groups as $group)
-        <section class="navigation-group" aria-labelledby="navigation-{{ \Illuminate\Support\Str::slug($group['label']) }}">
+        @php($groupActive = collect($group['items'])->contains(fn ($item) => collect($item['active'])->contains(fn ($pattern) => request()->routeIs($pattern))))
+        <section @class(['navigation-group', 'is-current' => $groupActive]) aria-labelledby="navigation-{{ \Illuminate\Support\Str::slug($group['label']) }}">
             <p id="navigation-{{ \Illuminate\Support\Str::slug($group['label']) }}" class="navigation-label">{{ $group['label'] }}</p>
             <div class="navigation-links">
                 @foreach($group['items'] as $item)

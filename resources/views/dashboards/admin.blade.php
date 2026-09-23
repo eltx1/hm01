@@ -10,6 +10,29 @@
     </div>
 </section>
 
+<section class="workspace-section">
+    <div class="workspace-heading">
+        <div><p class="eyebrow">Go straight to the work</p><h2>Common admin tasks</h2></div>
+    </div>
+    <div class="shortcut-grid">
+        @if(auth()->user()->hasPermission('publishers.view'))
+            <a class="shortcut-card" href="{{ route('admin.publishers.index') }}"><strong>Publishers</strong><span>Review accounts, terms and publisher status</span></a>
+        @endif
+        @if(auth()->user()->hasPermission('sites.view'))
+            <a class="shortcut-card" href="{{ route('admin.sites.index') }}"><strong>Websites</strong><span>Open Site 360, reporting and serving controls</span></a>
+        @endif
+        @if(auth()->user()->hasPermission('demand.manage'))
+            <a class="shortcut-card" href="{{ route('admin.demand.quick.create') }}"><strong>Quick Monetize</strong><span>Connect and publish ad formats quickly</span></a>
+        @endif
+        @if(auth()->user()->hasPermission('reporting.admin.view'))
+            <a class="shortcut-card" href="{{ route('admin.reporting.index') }}"><strong>Reporting</strong><span>Performance, sources and data health</span></a>
+        @endif
+        @if(auth()->user()->hasPermission('finance.operations.view'))
+            <a class="shortcut-card" href="{{ route('admin.finance.overview') }}"><strong>Finance</strong><span>Statements, balances and payout readiness</span></a>
+        @endif
+    </div>
+</section>
+
 @if($aiSettings)
 @php
     $aiConnection = $aiConnections->get($aiSettings->active_provider);

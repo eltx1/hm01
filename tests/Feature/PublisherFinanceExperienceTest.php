@@ -59,12 +59,14 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $response = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
         $response->assertOk()
-            ->assertSee('Estimated earnings')
-            ->assertSee('Finalized earnings')
+            ->assertSee('Your earnings in one place')
+            ->assertSee('Today estimated')
+            ->assertSee('This month estimated')
+            ->assertSee('This month finalized')
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
             ->assertSee('EUR 35.00')
-            ->assertSee('Every currency is shown separately');
+            ->assertSee('More finance details');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
@@ -89,11 +91,11 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
         $page->assertOk()
-            ->assertSee('Today so far')
+            ->assertSee('Today estimated')
             ->assertSee('321')
             ->assertSee('7')
             ->assertSee('USD 70.00')
-            ->assertSee('Your contractual share only');
+            ->assertSee('may change');
 
         $summary = app(PublisherFinanceService::class)->overview($publisher);
         $usd = $summary['currencies']->firstWhere('currency', 'USD');
@@ -125,7 +127,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
-    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    public function test_publisher_dashboard_is_task_first_and_prioritizes_canonical_usd(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
@@ -143,10 +145,13 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
-            ->assertSee('Publisher earnings · USD')
-            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('Today so far')
+            ->assertSee('This month finalized')
+            ->assertSee('Common tasks')
+            ->assertSee('Earnings')
+            ->assertSee('Websites')
+            ->assertSee('Monetization')
             ->assertSee('USD 70.00')
-            ->assertSee('EUR 35.00')
             ->assertSee('150');
     }
 
