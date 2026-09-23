@@ -11,6 +11,7 @@ use App\Models\DemandAccount;
 use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\GamConnection;
+use App\Models\GamNetwork;
 use App\Models\HourlyReport;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
@@ -96,7 +97,20 @@ final class ReportingBridge
         );
 
         $configuration = (array) ($connection->configuration ?? []);
-        $sourceCurrency = strtoupper(trim((string) data_get($gam->configuration, 'currency', '')));
+        $network = GamNetwork::withoutGlobalScopes()
+            ->where('gam_connection_id', $gam->id)
+            ->where('network_code', $gam->network_code)
+            ->orderByDesc('is_current')
+            ->orderByDesc('last_seen_at')
+            ->first();
+        $sourceCurrency = strtoupper(trim((string) ($network?->currency_code ?: data_get($gam->configuration, 'currency', ''))));
+        $networkTimezone = trim((string) ($network?->time_zone ?: $connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+        try {
+            CarbonImmutable::now($networkTimezone);
+        } catch (\Throwable) {
+            $networkTimezone = (string) config('reporting.default_timezone', 'UTC');
+        }
+
         $configuration['currency_policy'] = 'CANONICAL_REPORTING_CURRENCY';
         $configuration['report_currency'] = $canonicalCurrency;
         if (preg_match('/^[A-Z]{3}$/D', $sourceCurrency) === 1) {
@@ -107,7 +121,10 @@ final class ReportingBridge
             $configuration['canonical_currency_cutover_at'] = now()->toIso8601String();
             $configuration['canonical_currency_rebackfill_required'] = true;
         }
-        $connection->update(['configuration' => $configuration]);
+        $connection->update([
+            'configuration' => $configuration,
+            'timezone' => $networkTimezone,
+        ]);
 
         return $connection;
     }
