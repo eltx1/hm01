@@ -787,13 +787,20 @@ class SiteGamReportingTest extends TestCase
 
     public function test_non_usd_gam_network_is_reported_and_financed_in_canonical_usd(): void
     {
-        [, , , $site] = $context = $this->context();
+        [$admin, , , $site] = $context = $this->context();
         $this->google->currency = 'AED';
         $binding = $this->bind($context);
 
         $this->assertSame('USD', $binding->connection->currency);
         $this->assertSame('AED', data_get($binding->connection->configuration, 'network_currency'));
         $this->assertSame('USD', data_get($binding->connection->configuration, 'reporting_currency'));
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp)
+            ->get(route('admin.sites.show', $site))
+            ->assertOk()
+            ->assertSee('Reporting currency')
+            ->assertSee('USD · Horus platform standard')
+            ->assertSee('Google network currency')
+            ->assertSee('AED · source metadata only');
 
         $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00'));
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
