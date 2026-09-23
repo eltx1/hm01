@@ -1,6 +1,6 @@
 @extends('layouts.admin')
-@section('title', 'Monetization Center')
-@section('heading', 'Monetization Center')
+@section('title', 'Monetization Health')
+@section('heading', 'Monetization Health')
 @section('content')
 <section class="hero">
     <div>
@@ -8,6 +8,10 @@
         <h2>Website monetization health</h2>
         <p>See whether monetization is working for each website and exactly what action is required when it is not.</p>
         <p class="muted">Optional products never make an otherwise healthy website look broken. Health is based on persisted Horus state; this page does not call Google or demand/reporting providers while rendering.</p>
+        <div class="status-row">
+            <a class="hm-button-primary button-link" href="{{ route('publisher.sites.index') }}">My websites</a>
+            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-secondary button-link" href="{{ route('publisher.finance.overview') }}">Reports &amp; earnings</a>@endif
+        </div>
     </div>
 </section>
 
