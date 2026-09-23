@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-    @php($brand = auth()->user()?->organization)
-    @php($brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user()))
-    @php($isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia)
     @php
+        $brand = auth()->user()?->organization;
+        $brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user());
+        $isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia;
         $workspaceLabel = match($brand?->type) {
             \App\Enums\OrganizationType::HorusMedia => 'Horus Admin',
             \App\Enums\OrganizationType::Publisher => 'Publisher Workspace',
@@ -16,10 +16,17 @@
             \App\Enums\OrganizationType::Partner => 'Partner Workspace',
             default => 'Workspace',
         };
+        $navigationGroups = auth()->check()
+            ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user())
+            : [];
+        $notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own')
+            ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get()
+            : collect();
+        $unreadNotifications = $notificationPreview->whereNull('read_at')->count()
+            + (auth()->check() && auth()->user()->hasPermission('notifications.view_own')
+                ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count()
+                : 0);
     @endphp
-    @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
-    @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
-    @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
     <title>@yield('title', 'Dashboard') · {{ $brandIdentity->name }}</title>
     <x-brand.favicons />
     @vite(['resources/css/app.css', 'resources/js/app.js'])
