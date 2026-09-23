@@ -111,7 +111,7 @@ class GamRestConnectorTest extends TestCase
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
-        Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
+        Http::fake(['https://storage.googleapis.com/*' => Http::sequence()->push($csv)->push($csv)]);
 
         $reportConnection = app(ReportingBridge::class)->connectionForGam($connection, $actor);
         $this->assertSame('USD', $reportConnection->currency);
@@ -322,7 +322,7 @@ class GamRestConnectorTest extends TestCase
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
-        Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
+        Http::fake(['https://storage.googleapis.com/*' => Http::sequence()->push($csv)->push($csv)]);
 
         $exit = $this->artisan('reporting:import', [
             'cadence' => 'daily',
