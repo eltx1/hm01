@@ -45,7 +45,7 @@ final class ControlPlaneNavigation
                 $this->item('Finance', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
             ]),
             $this->group('Monetization', [
-                $this->item('Demand partners', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
+                $this->item('Demand partners', 'admin.demand.index', 'demand.view', ['admin.demand.index', 'admin.demand.accounts.*', 'admin.demand.networks.*', 'admin.demand.tags.*', 'admin.demand.credentials.*', 'admin.demand.reports.*', 'admin.sites.demand.*']),
                 $this->item('Direct campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
             ]),
             $this->group('More tools', [
