@@ -121,10 +121,12 @@ class RunReportingImports extends Command
                 && (bool) data_get($connection->configuration, 'canonical_currency_rebackfill_required', false)) {
                 $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));
                 try {
-                    $referenceNow = CarbonImmutable::parse($this->option('date') ?: now())->setTimezone($timezone);
+                    // Currency repair follows the real source-local clock, not
+                    // an operator's optional historical --date selection.
+                    $referenceNow = CarbonImmutable::now($timezone);
                 } catch (\Throwable) {
                     $timezone = 'UTC';
-                    $referenceNow = CarbonImmutable::parse($this->option('date') ?: now())->setTimezone($timezone);
+                    $referenceNow = CarbonImmutable::now($timezone);
                 }
                 $backfillFromValue = (string) data_get($connection->configuration, 'canonical_currency_rebackfill_from', '');
                 $backfillFrom = $backfillFromValue !== ''
