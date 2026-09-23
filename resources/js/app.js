@@ -35,7 +35,7 @@ const navigationEmpty = document.querySelector('[data-nav-empty]');
 navigationFilter?.addEventListener('input', () => {
     const query = navigationFilter.value.trim().toLocaleLowerCase();
     let visibleLinks = 0;
-    navigation?.querySelectorAll('.navigation-group').forEach((group) => {
+    navigation?.querySelectorAll('[data-nav-group]').forEach((group) => {
         let visible = 0;
         group.querySelectorAll('.navigation-links a').forEach((link) => {
             const matches = query === '' || link.textContent.trim().toLocaleLowerCase().includes(query);
@@ -46,6 +46,11 @@ navigationFilter?.addEventListener('input', () => {
             }
         });
         group.hidden = visible === 0;
+        if (group instanceof HTMLDetailsElement) {
+            group.open = query !== ''
+                ? visible > 0
+                : group.dataset.defaultOpen === 'true';
+        }
     });
     if (navigationEmpty) navigationEmpty.hidden = visibleLinks !== 0;
 });
