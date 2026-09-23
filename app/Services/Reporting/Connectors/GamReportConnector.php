@@ -31,15 +31,17 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE' => 'revenue_micros',
     ];
 
-    /** @var array<string, string> */
+    /**
+     * Keep the financial source at inventory level. Request metrics exist
+     * before a line item or creative is selected, so adding line-item/creative
+     * dimensions can make Google reject an otherwise valid revenue report.
+     * Website-level reporting has already proven DATE + AD_UNIT_ID with this
+     * metric set in production.
+     *
+     * @var array<string, string>
+     */
     private const DIMENSIONS = [
         'AD_UNIT_ID' => 'gam_ad_unit_id',
-        'LINE_ITEM_ID' => 'gam_line_item_id',
-        'COUNTRY_CODE' => 'country_code',
-        'DEVICE_CATEGORY_NAME' => 'device',
-        'BROWSER_NAME' => 'browser',
-        'OPERATING_SYSTEM_NAME' => 'operating_system',
-        'CREATIVE_SIZE' => 'ad_size',
     ];
 
     public function __construct(private readonly GamAdUnitReportClient $google)
@@ -57,6 +59,9 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         $gam = GamConnection::withoutGlobalScopes()->findOrFail($connection->connection_id);
         $canonicalCurrency = $this->canonicalCurrency();
 
+        if ($granularity !== ReportGranularity::Daily) {
+            throw new RuntimeException('Full-network GAM financial reports use daily totals. Refresh daily estimates for intraday updates.');
+        }
         if (strtoupper((string) $connection->currency) !== $canonicalCurrency) {
             throw new RuntimeException('GAM financial reporting must use the canonical Horus reporting currency.');
         }
@@ -103,11 +108,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                 'month' => $day->month,
                 'day' => $day->day,
             ];
-            $dimensions = ['DATE'];
-            if ($granularity === ReportGranularity::Hourly) {
-                $dimensions[] = 'HOUR';
-            }
-            $dimensions = array_merge($dimensions, array_keys(self::DIMENSIONS));
+            $dimensions = array_merge(['DATE'], array_keys(self::DIMENSIONS));
 
             $query = [
                 'dimensions' => $dimensions,
@@ -212,12 +213,8 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             }
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
 
-            $required = ['Dimension.DATE'];
-            if ($granularity === ReportGranularity::Hourly) {
-                $required[] = 'Dimension.HOUR';
-            }
             $required = array_merge(
-                $required,
+                ['Dimension.DATE'],
                 array_map(fn (string $dimension): string => 'Dimension.'.$dimension, array_keys(self::DIMENSIONS)),
                 array_map(fn (string $column): string => 'Column.'.$column, array_keys(self::COLUMNS)),
             );
@@ -236,9 +233,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
 
                 $source = array_combine($headers, $values);
                 $day = (string) $source['Dimension.DATE'];
-                $hour = $granularity === ReportGranularity::Hourly
-                    ? $this->integer((string) $source['Dimension.HOUR'])
-                    : 0;
+                $hour = 0;
                 if (! preg_match('/^\d{4}-\d{2}-\d{2}$/D', $day)
                     || $day < $from->toDateString()
                     || $day > $to->toDateString()
