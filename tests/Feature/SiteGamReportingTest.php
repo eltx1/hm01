@@ -858,6 +858,28 @@ class SiteGamReportingTest extends TestCase
         $this->assertCount(0, $readiness->blockersForPeriod($egp));
     }
 
+    public function test_canonical_currency_cutover_boundary_cannot_rewrite_earlier_history(): void
+    {
+        $context = $this->context();
+        $binding = $this->bind($context);
+        $configuration = (array) ($binding->connection->configuration ?? []);
+        $configuration['canonical_currency_start_on'] = '2026-09-15';
+        $binding->connection->update(['configuration' => $configuration]);
+
+        $day = CarbonImmutable::parse('2026-09-14');
+        $job = app(ReportImportService::class)->runConnection(
+            $binding->connection->fresh(),
+            $day,
+            $day,
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+        );
+
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertStringContainsString('report dates or connection', (string) $job->error_message);
+        $this->assertDatabaseCount('daily_reports', 0);
+    }
+
     public function test_existing_non_usd_site_gam_connection_self_heals_before_the_next_sync(): void
     {
         [$admin, , , , ] = $context = $this->context();
