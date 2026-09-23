@@ -139,10 +139,27 @@ final class SiteGamCurrencyPolicy
             // locked reporting day. Open rows at/after the cutover are discarded
             // and safely re-requested from Google in the canonical currency.
             if (! $lockedBinding->active_site_id || $lockedBinding->ends_on) {
-                $configuration['canonical_currency_pending'] = true;
-                $lockedConnection->update(['configuration' => $configuration]);
+                $configuration['canonical_currency_locked_history'] = true;
+                unset($configuration['canonical_currency_pending']);
+                $lockedConnection->update([
+                    'configuration' => $configuration,
+                    'status' => 'DISABLED',
+                    'is_enabled' => false,
+                    'last_error' => null,
+                    'updated_by' => $actor?->id ?? $lockedConnection->updated_by,
+                ]);
 
-                return $lockedBinding;
+                $this->audit->record(
+                    'reporting.site_gam.currency_history_preserved',
+                    $lockedBinding->organization_id,
+                    $actor,
+                    $lockedBinding,
+                    ['currency' => $oldCurrency],
+                    ['currency' => $oldCurrency],
+                    ['canonical_currency' => $canonical, 'locked_history_preserved' => true],
+                );
+
+                return $lockedBinding->fresh(['connection', 'site', 'gamConnection']);
             }
 
             $cutover = CarbonImmutable::parse($lastLockedPeriodEnd, $lockedConnection->timezone)->addDay()->startOfDay();
