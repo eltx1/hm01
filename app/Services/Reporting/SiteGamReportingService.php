@@ -72,10 +72,31 @@ final class SiteGamReportingService
             $configuration['currency_normalized_from'] = $oldCurrency;
             unset($configuration['google_jobs'], $configuration['sync_due']);
 
+            // Never relabel old money. Open-period rows must be fetched again
+            // from Google with reportCurrency=USD so Google's own daily FX
+            // conversion supplies the replacement monetary values. Invalidate
+            // only the source hash to guarantee the next sync cannot mistake a
+            // legacy row for an unchanged canonical-USD row.
+            $invalidatedRows = 0;
+            foreach ([DailyReport::class, HourlyReport::class] as $model) {
+                $model::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $lockedConnection->id)
+                    ->whereNotIn('financial_period_id', FinancialPeriod::query()->where('status', '!=', 'OPEN')->select('id'))
+                    ->get(['id'])
+                    ->each(function ($report) use ($model, $canonical, &$invalidatedRows): void {
+                        $model::withoutGlobalScopes()->whereKey($report->id)->update([
+                            'source_row_hash' => hash('sha256', 'currency-reimport-required|'.$report->id.'|'.$canonical),
+                        ]);
+                        $invalidatedRows++;
+                    });
+            }
+
             $lockedConnection->update([
                 'currency' => $canonical,
                 'timezone' => (string) $network['timeZone'],
                 'configuration' => $configuration,
+                'last_successful_import_at' => null,
+                'last_finalized_import_at' => null,
                 'updated_by' => $actor?->id ?? $lockedConnection->updated_by,
             ]);
 
@@ -96,7 +117,10 @@ final class SiteGamReportingService
                 $lockedBinding,
                 ['reporting_currency' => $oldCurrency],
                 ['reporting_currency' => $canonical],
-                ['network_currency' => strtoupper((string) $network['currencyCode'])],
+                [
+                    'network_currency' => strtoupper((string) $network['currencyCode']),
+                    'open_rows_marked_for_google_usd_reimport' => $invalidatedRows,
+                ],
             );
 
             return $lockedBinding->fresh(['connection', 'gamConnection', 'site']);
