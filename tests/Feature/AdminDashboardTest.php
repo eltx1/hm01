@@ -19,7 +19,12 @@ class AdminDashboardTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get('/')
             ->assertOk()
-            ->assertSee('Total publishers')
-            ->assertSee('Recent audit events');
+            ->assertSee('Run the network from one place.')
+            ->assertSee('Publishers')
+            ->assertSee('Websites')
+            ->assertSee('Quick Monetize')
+            ->assertSee('Reporting currency')
+            ->assertSee('USD')
+            ->assertSee('Recent activity');
     }
 }
