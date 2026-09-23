@@ -31,7 +31,6 @@ class GamRestConnectorTest extends TestCase
     public function test_rest_connector_reads_network_and_writes_ad_unit_without_dated_version(): void
     {
         $this->seedIdentity();
-        $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $actor = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $actor, [
@@ -57,6 +56,7 @@ class GamRestConnectorTest extends TestCase
     public function test_full_network_gam_reporting_requests_usd_even_when_network_metadata_is_aed(): void
     {
         $this->seedIdentity();
+        $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $actor = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $actor, [
