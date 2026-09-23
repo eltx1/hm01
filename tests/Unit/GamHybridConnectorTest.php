@@ -27,6 +27,31 @@ class GamHybridConnectorTest extends TestCase
         $this->assertSame('8', $connector->createLineItem(['name' => 'Line'])->data['id']);
     }
 
+    public function test_routes_legacy_report_query_to_soap_without_rest_schema_mismatch(): void
+    {
+        $connection = new GamConnection(['driver' => 'HYBRID']);
+        $rest = Mockery::mock(GamConnectorInterface::class);
+        $soap = Mockery::mock(GamConnectorInterface::class);
+        $rest->shouldReceive('connection')->andReturn($connection);
+        $rest->shouldNotReceive('runReport');
+        $soap->shouldReceive('runReport')->once()->with(
+            Mockery::on(fn (array $query): bool => ($query['reportCurrency'] ?? null) === 'USD'
+                && isset($query['columns'])
+                && ! isset($query['metrics'])),
+            Mockery::type('array'),
+        )->andReturn(GamResult::success(['id' => '77']));
+
+        $result = (new GamHybridConnector($rest, $soap, new GamCapabilityRegistry))->runReport([
+            'dimensions' => ['DATE', 'LINE_ITEM_ID'],
+            'columns' => ['AD_SERVER_IMPRESSIONS'],
+            'dateRangeType' => 'CUSTOM_DATE',
+            'reportCurrency' => 'USD',
+        ]);
+
+        $this->assertTrue($result->success);
+        $this->assertSame('77', $result->data['id']);
+    }
+
     public function test_does_not_replay_a_failed_rest_write_through_soap(): void
     {
         $connection = new GamConnection(['driver' => 'HYBRID']);
