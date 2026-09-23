@@ -315,7 +315,7 @@ class GamRestConnectorTest extends TestCase
             'Dimension.AD_UNIT_ID',
             ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
         ];
-        $values = ['2026-09-09', '1001', 120, 100, 20, 95, 3, 25000000];
+        $values = ['2026-09-09', '1001', 120, 100, 20, 95, 3, '$ 25000000'];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
         fputcsv($stream, $values, escape: '');
