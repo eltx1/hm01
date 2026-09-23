@@ -8,13 +8,15 @@
     @php($brand = auth()->user()?->organization)
     @php($brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user()))
     @php($isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia)
-    @php($workspaceLabel = match($brand?->type) {
-        \App\Enums\OrganizationType::HorusMedia => 'Horus Admin',
-        \App\Enums\OrganizationType::Publisher => 'Publisher Workspace',
-        \App\Enums\OrganizationType::Advertiser => 'Advertiser Workspace',
-        \App\Enums\OrganizationType::Partner => 'Partner Workspace',
-        default => 'Workspace',
-    })
+    @php
+        $workspaceLabel = match($brand?->type) {
+            \App\Enums\OrganizationType::HorusMedia => 'Horus Admin',
+            \App\Enums\OrganizationType::Publisher => 'Publisher Workspace',
+            \App\Enums\OrganizationType::Advertiser => 'Advertiser Workspace',
+            \App\Enums\OrganizationType::Partner => 'Partner Workspace',
+            default => 'Workspace',
+        };
+    @endphp
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
     @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
