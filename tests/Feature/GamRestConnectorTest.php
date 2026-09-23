@@ -139,7 +139,7 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', data_get($reportCall, 'payload.reportJob.reportQuery.columns.5'));
     }
 
-    public function test_existing_non_usd_full_network_history_is_never_relabeled_as_usd(): void
+    public function test_existing_non_usd_full_network_history_is_preserved_while_future_reporting_cuts_over_to_usd(): void
     {
         $this->seedIdentity();
         $this->seed(ReportingSeeder::class);
@@ -180,9 +180,39 @@ class GamRestConnectorTest extends TestCase
         );
         $this->assertSame('COMPLETED', $job->status->value);
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('will not relabel historical money');
-        app(ReportingBridge::class)->connectionForGam($gam, $actor);
+        $canonical = app(ReportingBridge::class)->connectionForGam($gam, $actor);
+
+        $this->assertNotSame($legacy->id, $canonical->id);
+        $this->assertSame('USD', $canonical->currency);
+        $this->assertTrue($canonical->is_enabled);
+        $this->assertSame('ACTIVE', $canonical->status->value);
+        $this->assertSame($legacy->id, data_get($canonical->configuration, 'legacy_connection_id'));
+        $this->assertTrue((bool) data_get($canonical->configuration, 'canonical_currency_rebackfill_required'));
+
+        $legacy->refresh();
+        $this->assertSame('AED', $legacy->currency);
+        $this->assertSame('GAM_CONNECTION_LEGACY', $legacy->connection_type);
+        $this->assertFalse($legacy->is_enabled);
+        $this->assertSame('DISABLED', $legacy->status->value);
+        $this->assertSame('LEGACY_SOURCE_CURRENCY', data_get($legacy->configuration, 'currency_policy'));
+        $this->assertSame('USD', data_get($legacy->configuration, 'canonical_currency_cutover_to'));
+
+        $this->assertDatabaseHas('daily_reports', [
+            'report_source_connection_id' => $legacy->id,
+            'currency' => 'AED',
+            'gross_revenue_minor' => 10000,
+        ]);
+        $this->assertDatabaseMissing('daily_reports', [
+            'report_source_connection_id' => $canonical->id,
+            'currency' => 'AED',
+        ]);
+
+        $sameCanonical = app(ReportingBridge::class)->connectionForGam($gam, $actor);
+        $this->assertSame($canonical->id, $sameCanonical->id);
+        $this->assertSame(2, ReportSourceConnection::withoutGlobalScopes()
+            ->where('report_source_id', $source->id)
+            ->where('connection_id', $gam->id)
+            ->count());
     }
 
     public function test_rest_dry_run_is_audited_without_external_request(): void
