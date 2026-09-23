@@ -5,7 +5,10 @@ Manager account, searches for an ad unit by name/code/ID, and selects **Connect
 reports**. The exact name, code or numeric ID also works without search or
 JavaScript. When only one account is available it is selected automatically.
 Ambiguous names require selection of the intended ID. Account access, unit ID,
-network currency and timezone are verified before the binding is saved.
+network currency and timezone are verified before the binding is saved. The GAM
+network currency is retained only as source metadata: Horus requests all GAM
+revenue metrics directly from Google in **USD**, the canonical platform reporting
+currency, using the report currency field supported by Ad Manager.
 
 If no account has been connected, select **Connect your first Ad Manager
 account** in the same section. Google sign-in discovers one or several networks
@@ -48,9 +51,11 @@ blocking the administrator's save request. Requests have bounded SOAP timeouts;
 failures back off and expired preparation jobs are retried.
 
 Reports request total impressions, clicks, requests, responses, unmatched requests
-and total CPM/CPC/CPD revenue, including dynamic allocation. CSV_DUMP revenue is
-integer micros of the network currency and is converted to the platform's minor
-units once per aggregate using integer rounding. Dates and the returned unit ID
+and total CPM/CPC/CPD revenue, including dynamic allocation. Every GAM query sets
+`reportCurrency=USD`; Google performs the source exchange-rate conversion. CSV_DUMP
+revenue is therefore USD micros and is converted to Horus USD minor units once per
+aggregate using integer rounding. Horus never performs a second AED/EUR/GBP→USD
+conversion for GAM revenue. Dates and the returned unit ID
 must match the binding. Malformed, oversized and failed downloads never create
 zero-revenue reports. A completed, valid report fills omitted dates/hours with zero
 to correctly apply downward corrections. Download URLs are Google HTTPS URLs;
@@ -73,3 +78,15 @@ References: [Google reporting workflow](https://developers.google.com/ad-manager
 [report columns](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.Column),
 [CSV download options](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.ReportDownloadOptions).
 Runtime API versions are resolved from the installed SDK, never these documentation URLs.
+
+
+## Legacy non-USD Site GAM connections
+
+The five-minute Site GAM synchronizer self-heals active legacy connections whose
+reporting currency was previously copied from the GAM network currency. When all
+related finance periods are still open, it clears cached Google report jobs,
+changes the canonical connection currency to USD, records the network currency as
+metadata, and reimports the open rows from Google in USD. If any related non-USD
+financial period is already closed, automatic conversion fails closed rather than
+rewriting immutable statements/history; Finance must perform an explicit reviewed
+historical migration instead.

@@ -42,6 +42,37 @@ class GamRestConnectorTest extends TestCase
             && ! str_contains($request->url(), 'v202'));
     }
 
+    public function test_rest_report_translates_canonical_report_currency_to_currency_code(): void
+    {
+        $this->seedIdentity();
+        $organization = $this->makeOrganization(OrganizationType::HorusMedia);
+        $actor = $this->makeUser($organization, RoleName::SuperAdmin);
+        $connection = $this->makeGamConnection($organization, $actor, [
+            'driver' => 'REST', 'network_code' => '123456789', 'dry_run_default' => false,
+        ]);
+        $this->cacheToken($connection);
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/123456789/reports' => Http::response([
+                'name' => 'networks/123456789/reports/55',
+            ]),
+            'https://admanager.googleapis.com/v1/networks/123456789/reports/55:run' => Http::response([
+                'name' => 'networks/123456789/reports/55',
+                'rows' => [],
+            ]),
+        ]);
+
+        $result = app(GamConnectorManager::class)->for($connection)->runReport([
+            'dimensions' => ['DATE'],
+            'columns' => ['AD_SERVER_IMPRESSIONS'],
+            'reportCurrency' => 'USD',
+        ], ['dry_run' => false]);
+
+        $this->assertTrue($result->success);
+        Http::assertSent(fn ($request) => $request->url() === 'https://admanager.googleapis.com/v1/networks/123456789/reports'
+            && data_get($request->data(), 'currencyCode') === 'USD'
+            && ! array_key_exists('reportCurrency', $request->data()));
+    }
+
     public function test_rest_dry_run_is_audited_without_external_request(): void
     {
         $this->seedIdentity();

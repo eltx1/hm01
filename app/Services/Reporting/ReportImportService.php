@@ -285,6 +285,7 @@ final class ReportImportService
                         'dimension' => $dimension->dimension_hash,
                         'finality' => $effectiveFinality->value,
                         'settlement_eligible' => $settlement['eligible'],
+                        'currency' => strtoupper((string) $row['currency']),
                         'metrics' => $this->metricPayload($metrics),
                     ], JSON_THROW_ON_ERROR));
 

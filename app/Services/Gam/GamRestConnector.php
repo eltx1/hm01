@@ -120,6 +120,14 @@ final class GamRestConnector implements GamConnectorInterface
 
     public function runReport(array $reportQuery, array $options = []): GamResult
     {
+        // The internal reporting contract uses the SOAP field name because the
+        // rest of Horus is transport-neutral. REST v1 names the same concept
+        // currencyCode. Translate it at the transport boundary.
+        if (isset($reportQuery['reportCurrency']) && ! isset($reportQuery['currencyCode'])) {
+            $reportQuery['currencyCode'] = strtoupper((string) $reportQuery['reportCurrency']);
+        }
+        unset($reportQuery['reportCurrency']);
+
         $name = (string) ($reportQuery['name'] ?? '');
         if ($name !== '') {
             return $this->write('runReport', 'reports', 'run', '/'.ltrim($this->canonicalName($name, 'reports'), '/').':run', [], array_merge($options, ['write' => false, 'dry_run' => false]));

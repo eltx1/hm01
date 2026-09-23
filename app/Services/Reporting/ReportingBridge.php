@@ -7,14 +7,18 @@ use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportSourceCode;
 use App\Models\CampaignNetworkInstance;
+use App\Models\DailyReport;
 use App\Models\DemandAccount;
 use App\Models\DemandSite;
+use App\Models\FinancialPeriod;
 use App\Models\GamConnection;
+use App\Models\HourlyReport;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 final class ReportingBridge
 {
@@ -30,16 +34,43 @@ final class ReportingBridge
             GamConnectionType::PublisherGam => ReportSourceCode::PublisherGam,
         };
 
-        return $this->connection(
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $existing = ReportSourceConnection::withoutGlobalScopes()
+            ->where('connection_type', 'GAM_CONNECTION')
+            ->where('connection_id', $gam->id)
+            ->first();
+
+        if ($existing && strtoupper((string) $existing->currency) !== $canonical) {
+            $hasLockedHistory = collect([DailyReport::class, HourlyReport::class])->contains(
+                fn (string $model): bool => $model::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $existing->id)
+                    ->whereIn('financial_period_id', FinancialPeriod::query()->where('status', '!=', 'OPEN')->select('id'))
+                    ->exists()
+            );
+            if ($hasLockedHistory) {
+                throw new RuntimeException('This GAM reporting source has closed non-USD financial history. Automatic USD normalization is blocked to preserve immutable finance history.');
+            }
+        }
+
+        $connection = $this->connection(
             $sourceCode,
             $gam->organization_id,
             'GAM_CONNECTION',
             $gam->id,
             $gam->name,
             $gam->network_code,
-            data_get($gam->configuration, 'currency', config('reporting.default_currency', 'USD')),
+            $canonical,
             $actor,
         );
+
+        $configuration = (array) ($connection->configuration ?? []);
+        $configuration['reporting_currency'] = $canonical;
+        if ($networkCurrency = strtoupper((string) data_get($gam->configuration, 'currency'))) {
+            $configuration['network_currency'] = $networkCurrency;
+        }
+        $connection->update(['configuration' => $configuration ?: null]);
+
+        return $connection;
     }
 
     public function connectionForDemand(DemandAccount $account, ?User $actor = null): ReportSourceConnection

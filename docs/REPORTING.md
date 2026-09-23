@@ -32,6 +32,22 @@ Site GAM reporting is **not** implicit financial coverage for Direct JS, VAST, o
 
 API finality requires a real configured connector. ExoClick may use the existing operator-configured demand report path only when the approved HTTPS base and report path exist. OneTag API remains not configured until a real supported connector is implemented. CSV data passes the existing private-file, checksum, normalization, idempotency, reconciliation, and close pipeline. Manual provider data requires Finance permission, a specific reason, an explicit manual-capable binding, and audit evidence; normal revenue adjustments remain a separate controlled workflow.
 
+## Canonical GAM currency
+
+Horus Media's canonical GAM reporting currency is **USD**. A Google Ad Manager
+network may have AED, EUR, GBP, EGP, or another supported network currency; that
+network currency is source metadata only. Horus explicitly requests GAM reports
+in USD at Google (`reportCurrency` for SOAP, translated to `currencyCode` at the
+REST transport boundary). This keeps platform dashboards, Site GAM finance rows,
+revenue-share calculations, and future statements on one reporting currency
+without applying a second Horus-side FX conversion.
+
+Active legacy Site GAM connections are normalized automatically only while their
+financial history is still open. Horus never relabels previously stored AED/EUR/GBP
+money as USD: open-period rows are marked for a fresh Google report request and are
+replaced only by Google's own USD report values. Closed non-USD history is immutable
+and blocks automatic normalization.
+
 ## Reporting grain
 
 The unified ledger supports hourly estimates, finalized daily rows, and immutable monthly closing snapshots. Rows are keyed by source connection, date or hour, normalized dimension hash, and revision.
