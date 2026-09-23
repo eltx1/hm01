@@ -117,7 +117,46 @@ class RunReportingImports extends Command
 
         $failed = 0;
         foreach ($connections as $connection) {
-            $job = $imports->runConnection($connection, $from, $to, $granularity, $finality);
+            if ($connection->connection_type === 'GAM_CONNECTION'
+                && (bool) data_get($connection->configuration, 'canonical_currency_rebackfill_required', false)) {
+                $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+                try {
+                    $referenceNow = CarbonImmutable::parse($this->option('date') ?: now())->setTimezone($timezone);
+                } catch (\Throwable) {
+                    $timezone = 'UTC';
+                    $referenceNow = CarbonImmutable::parse($this->option('date') ?: now())->setTimezone($timezone);
+                }
+                $backfillFromValue = (string) data_get($connection->configuration, 'canonical_currency_rebackfill_from', '');
+                $backfillFrom = $backfillFromValue !== ''
+                    ? CarbonImmutable::parse($backfillFromValue, $timezone)->startOfDay()
+                    : $referenceNow->startOfMonth();
+                $backfillTo = $referenceNow->subDay()->endOfDay();
+
+                if ($backfillFrom->lte($backfillTo)) {
+                    $backfill = $imports->runConnection(
+                        $connection,
+                        $backfillFrom,
+                        $backfillTo,
+                        ReportGranularity::Daily,
+                        ReportFinality::Finalized,
+                    );
+                    $this->line("{$connection->name}: USD rebackfill {$backfill->status->value} ({$backfill->row_count} rows)");
+                    if ($backfill->status === ReportImportStatus::Failed) {
+                        $failed++;
+                        continue;
+                    }
+                    if ($backfill->status === ReportImportStatus::Pending) {
+                        continue;
+                    }
+                }
+
+                $configuration = (array) ($connection->refresh()->configuration ?? []);
+                $configuration['canonical_currency_rebackfill_required'] = false;
+                $configuration['canonical_currency_rebackfill_completed_at'] = now()->toIso8601String();
+                $connection->update(['configuration' => $configuration]);
+            }
+
+            $job = $imports->runConnection($connection->refresh(), $from, $to, $granularity, $finality);
             $this->line("{$connection->name}: {$job->status->value} ({$job->row_count} rows)");
             if ($job->status === ReportImportStatus::Failed) {
                 $failed++;
