@@ -862,6 +862,7 @@ class SiteGamReportingTest extends TestCase
     {
         [$admin, , , , ] = $context = $this->context();
         $binding = $this->bind($context);
+        $this->google->currency = 'AED';
         $binding->connection->update([
             'currency' => 'AED',
             'configuration' => [
