@@ -31,6 +31,7 @@ class GamRestConnectorTest extends TestCase
     public function test_rest_connector_reads_network_and_writes_ad_unit_without_dated_version(): void
     {
         $this->seedIdentity();
+        $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
         $actor = $this->makeUser($organization, RoleName::SuperAdmin);
         $connection = $this->makeGamConnection($organization, $actor, [
@@ -96,14 +97,11 @@ class GamRestConnectorTest extends TestCase
 
         $headers = [
             'Dimension.DATE',
-            ...array_map(fn ($dimension) => 'Dimension.'.$dimension, [
-                'AD_UNIT_ID', 'LINE_ITEM_ID', 'COUNTRY_CODE', 'DEVICE_CATEGORY_NAME',
-                'BROWSER_NAME', 'OPERATING_SYSTEM_NAME', 'CREATIVE_SIZE',
-            ]),
+            'Dimension.AD_UNIT_ID',
             ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
         ];
         $values = [
-            '2026-09-20', '1001', '2002', 'US', 'Desktop', 'Chrome', 'Macintosh', '300x250',
+            '2026-09-20', '1001',
             120, 100, 20, 95, 3, 123450000,
         ];
         $stream = fopen('php://temp', 'w+');
@@ -137,7 +135,24 @@ class GamRestConnectorTest extends TestCase
         $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
         $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
         $this->assertSame('CUSTOM_DATE', data_get($reportCall, 'payload.reportJob.reportQuery.dateRangeType'));
+        $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($reportCall, 'payload.reportJob.reportQuery.dimensions'));
         $this->assertSame('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', data_get($reportCall, 'payload.reportJob.reportQuery.columns.5'));
+
+        // The scheduler may run every hour, but this metric set is not a valid
+        // HOUR report in GAM. The financial import pipeline must refresh a
+        // DAILY estimated snapshot instead of inventing hourly attribution.
+        $job = app(ReportImportService::class)->runConnection(
+            $reportConnection->fresh(),
+            $day,
+            $day,
+            ReportGranularity::Hourly,
+            ReportFinality::Estimated,
+            $actor,
+        );
+        $this->assertSame(ReportGranularity::Daily, $job->granularity);
+        $this->assertSame('COMPLETED', $job->status->value);
+        $intradayCall = collect($google->calls)->where('method', 'runReportJob')->last();
+        $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($intradayCall, 'payload.reportJob.reportQuery.dimensions'));
     }
 
     public function test_existing_non_usd_full_network_history_is_preserved_while_future_reporting_cuts_over_to_usd(): void
