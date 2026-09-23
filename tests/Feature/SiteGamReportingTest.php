@@ -361,6 +361,14 @@ class SiteGamReportingTest extends TestCase
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response('<html>Error</html>')]);
         $this->assertSame(ReportImportStatus::Failed, $this->import($binding)->status);
         $this->assertDatabaseCount('daily_reports', 0);
+
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response(
+            $this->csv([['2026-09-20', '12345', 1, 1, 0, 1, 0, 'AED 10000']])
+        )]);
+        $wrongCurrency = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $wrongCurrency->status);
+        $this->assertStringContainsString('unexpected currency', strtolower((string) $wrongCurrency->error_message));
+        $this->assertDatabaseCount('daily_reports', 0);
     }
 
     public function test_download_url_is_restricted_to_google_without_exposing_temporary_credentials(): void
