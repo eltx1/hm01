@@ -43,8 +43,10 @@ revenue-share calculations, and future statements on one reporting currency
 without applying a second Horus-side FX conversion.
 
 Active legacy Site GAM connections are normalized automatically only while their
-financial history is still open. Closed non-USD history is immutable and blocks
-automatic normalization.
+financial history is still open. Horus never relabels previously stored AED/EUR/GBP
+money as USD: open-period rows are marked for a fresh Google report request and are
+replaced only by Google's own USD report values. Closed non-USD history is immutable
+and blocks automatic normalization.
 
 ## Reporting grain
 
