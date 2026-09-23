@@ -122,17 +122,38 @@ final class PublisherFinanceService
     public function dashboard(Publisher $publisher): array
     {
         $overview = $this->overview($publisher);
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $canonicalSummary = $overview['currencies']->firstWhere('currency', $canonical) ?? [
+            'currency' => $canonical,
+            'today_available' => false,
+            'today_impressions' => 0,
+            'today_clicks' => 0,
+            'today_estimated_earnings_minor' => 0,
+            'estimated_earnings_minor' => 0,
+            'finalized_earnings_minor' => 0,
+            'statement_balance_due_minor' => 0,
+        ];
         $impressions = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $canonical)
             ->where('finality', ReportFinality::Finalized->value)
             ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('report_date', '<=', now()->toDateString())
             ->sum('impressions');
 
         return [
+            'currency' => $canonical,
             'impressions' => (int) $impressions,
-            'currencies' => $overview['currencies'],
-            'statements' => $overview['statements'],
+            'today_available' => (bool) $canonicalSummary['today_available'],
+            'today_impressions' => (int) $canonicalSummary['today_impressions'],
+            'today_clicks' => (int) $canonicalSummary['today_clicks'],
+            'today_estimated_earnings_minor' => (int) $canonicalSummary['today_estimated_earnings_minor'],
+            'estimated_earnings_minor' => (int) $canonicalSummary['estimated_earnings_minor'],
+            'finalized_earnings_minor' => (int) $canonicalSummary['finalized_earnings_minor'],
+            'payment_balance_minor' => (int) $canonicalSummary['statement_balance_due_minor'],
+            'statements' => collect($overview['statements'])
+                ->where('currency', $canonical)
+                ->values(),
         ];
     }
 

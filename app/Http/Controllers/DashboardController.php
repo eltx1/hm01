@@ -66,7 +66,18 @@ class DashboardController extends Controller
         ])->firstOrFail();
         $reporting = $request->user()->hasPermission('finance.publisher.view_own')
             ? app(PublisherFinanceService::class)->dashboard($publisher)
-            : ['impressions' => 0, 'currencies' => collect(), 'statements' => collect()];
+            : [
+                'currency' => strtoupper((string) config('reporting.canonical_currency', 'USD')),
+                'impressions' => 0,
+                'today_available' => false,
+                'today_impressions' => 0,
+                'today_clicks' => 0,
+                'today_estimated_earnings_minor' => 0,
+                'estimated_earnings_minor' => 0,
+                'finalized_earnings_minor' => 0,
+                'payment_balance_minor' => 0,
+                'statements' => collect(),
+            ];
 
         return view('dashboards.publisher', [
             'publisher' => $publisher,

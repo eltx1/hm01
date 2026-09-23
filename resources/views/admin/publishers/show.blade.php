@@ -6,14 +6,11 @@
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Websites', 'href' => '#websites'],
-        ['label' => 'Commercial terms', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
+        ['label' => 'Commercial', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
         ['label' => 'Monetization', 'href' => '#monetization'],
-        ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Quality Review', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
-        ['label' => 'Reporting', 'href' => '#reporting', 'visible' => $reporting !== null],
-        ['label' => 'Finance', 'href' => '#finance', 'visible' => $reporting !== null],
-        ['label' => 'Users', 'href' => '#users', 'visible' => auth()->user()->hasPermission('users.view')],
-        ['label' => 'Audit', 'href' => '#audit', 'visible' => auth()->user()->hasPermission('audit.view')],
+        ['label' => 'Reports & Finance', 'href' => '#reporting', 'visible' => $reporting !== null],
+        ['label' => 'Quality', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
+        ['label' => 'Administration', 'href' => '#users', 'visible' => auth()->user()->hasPermission('users.view')],
     ];
     $activeSites = $publisher->sites->where('status', \App\Enums\SiteStatus::Active)->count();
     $verifiedDomains = $publisher->sites->flatMap->domains->where('verification_status', 'VERIFIED')->count();
@@ -27,7 +24,11 @@
         <p>{{ $publisher->legal_name }} · {{ $publisher->organization->name }}</p>
         <p class="muted">Horus Publisher ID: <code>{{ $publisher->id }}</code></p>
         <div class="status-row"><x-status-badge :status="$publisher->status" /><span class="status">Websites reviewed separately</span></div>
-        @if(auth()->user()->hasPermission('publishers.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.edit', $publisher) }}">Edit publisher</a>@endif
+        <div class="status-row">
+            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.sites.create', $publisher) }}">Add website</a>@endif
+            @if($reporting)<a class="hm-button-secondary button-link" href="#reporting">View reporting</a>@endif
+            @if(auth()->user()->hasPermission('publishers.manage'))<a class="hm-button-secondary button-link" href="{{ route('admin.publishers.edit', $publisher) }}">Edit publisher</a>@endif
+        </div>
     </div>
 </section>
 

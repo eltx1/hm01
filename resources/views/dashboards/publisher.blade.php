@@ -3,70 +3,129 @@
 @section('heading', 'Publisher overview')
 @section('content')
 @php
-    $activeContract = $publisher->contracts->first(fn ($contract) => $contract->status === \App\Enums\ContractStatus::Active);
     $activeSites = $publisher->sites->where('status', \App\Enums\SiteStatus::Active)->count();
     $pendingSites = $publisher->sites->whereIn('status', [\App\Enums\SiteStatus::PendingVerification, \App\Enums\SiteStatus::PendingReview])->count();
 @endphp
+
 <section class="hero">
     <div>
         <p class="eyebrow">Publisher workspace</p>
         <h2>{{ $publisher->display_name }}</h2>
-        <p>Add and manage websites, complete ads.txt verification, configure monetization, and review finalized earnings and payment balances.</p>
+        <p>Start here: check your earnings, fix anything that needs attention, and manage your websites.</p>
         <div class="status-row">
             <x-status-badge :status="$publisher->status" />
-            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.create') }}">Add website</a>@endif
+            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-primary button-link" href="{{ route('publisher.finance.overview') }}">View reports &amp; earnings</a>@endif
             @if(auth()->user()->hasPermission('sites.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.index') }}">Manage websites</a>@endif
-            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-secondary button-link" href="{{ route('publisher.finance.overview') }}">Earnings &amp; Payments</a>@endif
+            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.create') }}">Add website</a>@endif
         </div>
     </div>
+    <span class="canonical-currency-note">Reporting currency · {{ $reporting['currency'] }}</span>
 </section>
 
+<section class="dashboard-primary" aria-label="Publisher summary">
+    <article>
+        <p class="eyebrow">Today so far</p>
+        <strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['today_estimated_earnings_minor']) }}</strong>
+        <span class="muted">{{ $reporting['today_available'] ? number_format($reporting['today_impressions']).' impressions · estimated' : 'Waiting for today’s reporting data' }}</span>
+    </article>
+    <article>
+        <p class="eyebrow">This month</p>
+        <strong class="metric">{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['finalized_earnings_minor']) }}</strong>
+        <span class="muted">Finalized publisher earnings</span>
+    </article>
+    <article>
+        <p class="eyebrow">Impressions</p>
+        <strong class="metric">{{ number_format($reporting['impressions']) }}</strong>
+        <span class="muted">Finalized this month</span>
+    </article>
+    <article>
+        <p class="eyebrow">Websites</p>
+        <strong class="metric">{{ $activeSites }}</strong>
+        <span class="muted">{{ $pendingSites }} pending · {{ $publisher->sites->count() }} total</span>
+    </article>
+</section>
+
+@if($actionItems !== [])
 <section class="action-center" aria-labelledby="publisher-action-center-heading">
-    <div class="workspace-heading"><div><p class="eyebrow">Next actions</p><h2 id="publisher-action-center-heading">Action Center</h2></div><x-status-badge :status="$actionItems === [] ? 'HEALTHY' : 'PENDING'" /></div>
-    @if($actionItems === [])<article><h3>No current action items</h3><p class="muted">Your unresolved Publisher workflows require no action.</p></article>@else<div class="action-center-grid">@foreach($actionItems as $item)<a href="{{ route($item['route'], $item['parameters']) }}" class="action-card action-card-{{ $item['severity'] }}"><span class="action-count">{{ $item['count'] }}</span><div><h3>{{ $item['label'] }}</h3><p>{{ $item['description'] }}</p><span class="section-anchor">Open remediation →</span></div></a>@endforeach</div>@endif
+    <div class="workspace-heading">
+        <div><p class="eyebrow">Needs your attention</p><h2 id="publisher-action-center-heading">Next actions</h2></div>
+        <x-status-badge status="PENDING" />
+    </div>
+    <div class="action-center-grid">
+        @foreach($actionItems as $item)
+            <a href="{{ route($item['route'], $item['parameters']) }}" class="action-card action-card-{{ $item['severity'] }}">
+                <span class="action-count">{{ $item['count'] }}</span>
+                <div><h3>{{ $item['label'] }}</h3><p>{{ $item['description'] }}</p><span class="section-anchor">Open →</span></div>
+            </a>
+        @endforeach
+    </div>
 </section>
+@else
+<div class="notice" role="status">No action is required from you right now.</div>
+@endif
 
-<section class="metric-grid" aria-label="Publisher summary">
-    <article><p class="eyebrow">Websites</p><strong class="metric">{{ $publisher->sites->count() }}</strong><span class="muted">{{ $activeSites }} serving · {{ $pendingSites }} pending</span></article>
-    <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format($reporting['impressions']) }}</strong><span class="muted">Current-month finalized aggregated data across currencies</span></article>
-    @forelse($reporting['currencies'] as $currency)
-        <article><p class="eyebrow">Publisher earnings · {{ $currency['currency'] }}</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['finalized_earnings_minor']) }}</strong><span class="muted">Current-month finalized contractual share</span></article>
-        <article><p class="eyebrow">Payment balance · {{ $currency['currency'] }}</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['statement_balance_due_minor']) }}</strong><span class="muted">Latest finalized statement balance</span></article>
-    @empty
-        <article><p class="eyebrow">Publisher earnings</p><strong class="metric">—</strong><span class="muted">No financial reporting data yet</span></article>
-        <article><p class="eyebrow">Payment balance</p><strong class="metric">—</strong><span class="muted">No finalized statement yet</span></article>
-    @endforelse
+<div class="dashboard-section-title"><p class="eyebrow">Quick navigation</p><h2>Where do you want to go?</h2></div>
+<section class="destination-grid" aria-label="Publisher destinations">
+    @if(auth()->user()->hasPermission('finance.publisher.view_own'))
+    <a class="destination-card" href="{{ route('publisher.finance.overview') }}">
+        <strong>Reports &amp; earnings</strong>
+        <span>See today’s estimate, finalized monthly earnings, statements, and payout status.</span>
+        <span class="section-anchor">Open reports →</span>
+    </a>
+    @endif
+    @if(auth()->user()->hasPermission('sites.view'))
+    <a class="destination-card" href="{{ route('publisher.sites.index') }}">
+        <strong>Websites</strong>
+        <span>Check status, verification, installation, and site-specific setup.</span>
+        <span class="section-anchor">Manage websites →</span>
+    </a>
+    <a class="destination-card" href="{{ route('publisher.monetization.index') }}">
+        <strong>Monetization health</strong>
+        <span>See whether monetization is healthy and what action is required when it is not.</span>
+        <span class="section-anchor">Check monetization →</span>
+    </a>
+    @endif
 </section>
 
 <section class="split-grid">
     <article>
-        <div class="workspace-heading"><div><p class="eyebrow">Serving readiness</p><h2>Websites</h2></div>@if(auth()->user()->hasPermission('sites.view'))<a class="section-anchor" href="{{ route('publisher.sites.index') }}">View all</a>@endif</div>
+        <div class="workspace-heading">
+            <div><p class="eyebrow">Your websites</p><h2>Recent sites</h2></div>
+            @if(auth()->user()->hasPermission('sites.view'))<a class="section-anchor" href="{{ route('publisher.sites.index') }}">View all</a>@endif
+        </div>
         <div class="compact-list">
-            @forelse($publisher->sites->take(6) as $site)
-                <div class="compact-row"><div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }} · {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</p></div><x-status-badge :status="$site->status" /></div>
+            @forelse($publisher->sites->take(5) as $site)
+                <a class="compact-row" href="{{ route('publisher.sites.show', $site) }}">
+                    <div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }}</p></div>
+                    <x-status-badge :status="$site->status" />
+                </a>
             @empty
-                <p class="muted">No websites yet. Add your first website to begin monetization setup.</p>
+                <p class="muted">No websites yet. Add your first website to begin.</p>
             @endforelse
         </div>
     </article>
-    <article>
-        <p class="eyebrow">Commercial readiness</p><h2>Terms and payment profile</h2>
-        <div class="compact-row"><div><strong>Payment profile</strong><p>{{ $publisher->paymentProfile ? $publisher->paymentProfile->payment_method.' · '.$publisher->paymentProfile->currency : 'Configure when you are ready to receive payouts' }}</p></div><x-status-badge :status="$publisher->paymentProfile?->verification_status?->value ?? 'INCOMPLETE'" /></div>
-        <div class="compact-row"><div><strong>Commercial terms</strong><p>{{ $activeContract?->contract_reference ?: 'No active terms' }}</p></div><x-status-badge :status="$activeContract?->status?->value ?: 'PENDING'" /></div>
-        @if(auth()->user()->hasPermission('contracts.view'))<a class="hm-button-secondary button-link" href="{{ route('publisher.contracts.index') }}">View commercial terms</a>@endif
-    </article>
-</section>
 
-@if(auth()->user()->hasPermission('finance.publisher.view_own'))
-<article class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Finalized finance</p><h2>Latest statements</h2></div><a class="section-anchor" href="{{ route('publisher.finance.statements.index') }}">All statements</a></div>
-    <div class="compact-list">
-        @forelse($reporting['statements']->take(6) as $statement)
-            <a class="compact-row" href="{{ route('publisher.finance.statements.show', $statement['id']) }}"><div><strong>{{ $statement['statement_number'] }}</strong><p>{{ $statement['period_key'] }} · {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }} {{ $statement['currency'] }} due</p></div><x-status-badge :status="$statement['status']" /></a>
-        @empty
-            <p class="muted">Statements appear after a financial period is finalized.</p>
-        @endforelse
-    </div>
-</article>
-@endif
+    @if(auth()->user()->hasPermission('finance.publisher.view_own'))
+    <article>
+        <div class="workspace-heading">
+            <div><p class="eyebrow">Payments</p><h2>Latest statements</h2></div>
+            <a class="section-anchor" href="{{ route('publisher.finance.statements.index') }}">View all</a>
+        </div>
+        <div class="compact-list">
+            @forelse($reporting['statements']->take(5) as $statement)
+                <a class="compact-row" href="{{ route('publisher.finance.statements.show', $statement['id']) }}">
+                    <div><strong>{{ $statement['statement_number'] }}</strong><p>{{ $statement['period_key'] }} · {{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }} due</p></div>
+                    <x-status-badge :status="$statement['status']" />
+                </a>
+            @empty
+                <p class="muted">Statements appear after a financial period is finalized.</p>
+            @endforelse
+        </div>
+        <div class="status-row">
+            <span class="muted">Current USD balance</span>
+            <strong>{{ $reporting['currency'] }} {{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }}</strong>
+        </div>
+    </article>
+    @endif
+</section>
 @endsection
