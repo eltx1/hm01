@@ -269,13 +269,14 @@ final class PublisherFinanceService
 
         $canonical = strtoupper((string) config('reporting.dashboard_currency', 'USD'));
 
+        // Currency navigation represents real financial records, not profile
+        // preferences. A bank/profile or contract currency alone must not create
+        // an empty "historical currency" section on the Publisher dashboard.
         return collect([
             $canonical,
             ...$reported,
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
-            $contract?->currency,
-            $publisher->paymentProfile?->currency,
         ])->filter()
             ->map(fn ($currency) => strtoupper((string) $currency))
             ->unique()
