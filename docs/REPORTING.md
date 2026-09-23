@@ -4,6 +4,10 @@
 
 Horus GAM is the primary reporting source. Optional MCM partner GAM and publisher GAM connections, Prebid estimates, MGID, Taboola, Speakol, Outbrain, custom CSV files, and approved manual adjustments remain separately identifiable while being normalized into one Horus Media reporting ledger.
 
+### Canonical reporting currency
+
+Horus Media uses **USD as the canonical GAM reporting currency**. Google Ad Manager network currency (for example AED, EGP, EUR, or GBP) is source metadata, not the dashboard currency. Website GAM report queries explicitly request USD from Google, so FX is performed by Ad Manager's reporting system before Horus receives monetary values. Horus never converts an AED amount by merely relabeling it as USD. Open legacy Site GAM connections can be re-fetched in USD; closed financial history remains immutable and requires an explicit Finance-approved cutover rather than silent rewriting.
+
 The Laravel control plane stores aggregated rows only. It never receives ad requests and never stores impression-level, bid-request, visitor, or browser telemetry. Transfer files are private, bounded, checksummed, and processed outside the public web root.
 
 ### Monetization financial-source binding
