@@ -8,13 +8,16 @@ use App\Enums\ReportGranularity;
 use App\Enums\ReportSourceCode;
 use App\Models\CampaignNetworkInstance;
 use App\Models\DemandAccount;
+use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\GamConnection;
+use App\Models\HourlyReport;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 final class ReportingBridge
 {
@@ -33,6 +36,26 @@ final class ReportingBridge
         $canonicalCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
         if (! preg_match('/^[A-Z]{3}$/D', $canonicalCurrency)) {
             $canonicalCurrency = 'USD';
+        }
+
+        $existing = ReportSourceConnection::withoutGlobalScopes()
+            ->where('connection_type', 'GAM_CONNECTION')
+            ->where('connection_id', $gam->id)
+            ->first();
+        if ($existing && strtoupper((string) $existing->currency) !== $canonicalCurrency) {
+            $hasFinancialHistory = DailyReport::withoutGlobalScopes()
+                ->where('report_source_connection_id', $existing->id)
+                ->exists()
+                || HourlyReport::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $existing->id)
+                    ->exists();
+
+            if ($hasFinancialHistory) {
+                throw new RuntimeException(
+                    "Existing GAM financial history is denominated in {$existing->currency}. "
+                    ."Horus will not relabel historical money as {$canonicalCurrency}; perform a controlled source cutover and re-import."
+                );
+            }
         }
 
         $connection = $this->connection(
