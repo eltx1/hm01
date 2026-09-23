@@ -27,13 +27,17 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher accounts')
-            ->assertSee('Reporting sources')
-            ->assertSee('Finance Operations')
-            ->assertSee('Ads.txt')
-            ->assertDontSee('Production operations')
+            ->assertSee('Publishers')
+            ->assertSee('Reports')
+            ->assertSee('Finance')
+            ->assertSee('Ads.txt &amp; supply chain', false)
             ->assertDontSee('Access control')
             ->assertSee('data-nav-toggle', false);
+
+        $labels = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($admin))
+            ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        $this->assertFalse($labels->contains('Production'));
+        $this->assertFalse($labels->contains('Access control'));
     }
 
     public function test_publisher_navigation_is_role_aware_and_has_no_future_dead_links(): void
@@ -45,13 +49,41 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($viewer)->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher overview')
+            ->assertSee('Dashboard')
+            ->assertSee('Reports &amp; earnings', false)
+            ->assertSee('Statements')
             ->assertSee('Websites')
-            ->assertSee('Earnings &amp; Payments', false)
+            ->assertSee('Monetization health')
+            ->assertSee('Ads.txt &amp; compliance', false)
             ->assertSee('Commercial terms')
-            ->assertDontSee('Invite a team member')
-            ->assertSee('Supply Chain Compliance')
-            ->assertDontSee('Production operations');
+            ->assertDontSee('Invite team member');
+
+        $labels = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($viewer))
+            ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        $this->assertFalse($labels->contains('Production'));
+        $this->assertFalse($labels->contains('Invite team member'));
+    }
+
+    public function test_navigation_uses_fewer_task_based_groups_and_workspace_context(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $this->makePublisherFor($publisherUser);
+
+        $service = app(\App\Services\ControlPlane\ControlPlaneNavigation::class);
+        $adminNavigation = $service->for($admin);
+        $publisherNavigation = $service->for($publisherUser);
+
+        $this->assertLessThanOrEqual(6, count($adminNavigation));
+        $this->assertSame(['Home', 'Publishers & Sites', 'Revenue & Reporting', 'Delivery & Compliance', 'Platform', 'Support & Access'], array_column($adminNavigation, 'label'));
+        $this->assertSame(['Home', 'Reports & Money', 'Monetization', 'Account', 'Help'], array_column($publisherNavigation, 'label'));
+
+        $this->actingAs($publisherUser)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('Publisher workspace')
+            ->assertSee('What do you want to do?')
+            ->assertSee('Reports &amp; earnings', false);
     }
 
     public function test_dashboard_permission_is_required_even_for_an_active_user(): void
@@ -89,6 +121,32 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($publisherUser)->get(route('admin.publishers.show', $publisher))->assertForbidden();
         $this->get(route('admin.sites.show', $site))->assertForbidden();
+    }
+
+    public function test_publisher_websites_have_clear_task_navigation_and_direct_actions(): void
+    {
+        $this->seedIdentity();
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($publisherUser);
+        $site = $this->makeSiteFor($publisher, $publisherUser, [
+            'display_name' => 'Publisher UX Site',
+            'primary_domain' => 'publisher-ux.example',
+        ]);
+
+        $this->actingAs($publisherUser)->get(route('publisher.sites.index'))
+            ->assertOk()
+            ->assertSee('Your websites')
+            ->assertSee('Open website')
+            ->assertSee('Publisher UX Site');
+
+        $this->get(route('publisher.sites.show', $site))
+            ->assertOk()
+            ->assertSee('aria-label="Website sections"', false)
+            ->assertSee('Monetization')
+            ->assertSee('Ads.txt')
+            ->assertSee('Installation')
+            ->assertSee('Privacy')
+            ->assertSee('Ad codes');
     }
 
     public function test_publisher_isolation_and_internal_information_are_preserved_in_the_new_surfaces(): void
@@ -146,6 +204,8 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('aria-controls="control-navigation"', false)
             ->assertSee('aria-expanded="false"', false)
             ->assertSee('aria-label="Control plane navigation"', false)
+            ->assertSee('data-nav-filter', false)
+            ->assertSee('Find a page')
             ->assertSee('Action Center');
     }
 }
