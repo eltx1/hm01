@@ -236,6 +236,12 @@ class SiteGamReportingTest extends TestCase
         $call = end($this->google->calls);
         $this->assertStringNotContainsString($query, $call['payload']['filterStatement']['query']);
         $this->assertSame('%'.$query.'%', $call['payload']['filterStatement']['values'][0]['value']['value']);
+        $this->actingAs($admin)->get(route('admin.reporting.index', ['currency' => 'EGP']))
+            ->assertOk()
+            ->assertSee('Reporting currency')
+            ->assertSee('USD')
+            ->assertDontSee('name="currency"', false);
+
         $this->actingAs($user)->post(route('admin.sites.reporting.gam.store', $site), ['gam_connection_id' => $gam->id, 'ad_unit' => '12345'])->assertForbidden();
         $this->getJson(route('admin.sites.reporting.gam.units', $site).'?gam_connection_id='.$gam->id)->assertForbidden();
     }
@@ -782,6 +788,18 @@ class SiteGamReportingTest extends TestCase
         $this->assertNull($context[3]->fresh()->gam_connection_id);
         $binding->connection->update(['status' => 'ERROR']);
         $this->assertSame('DEGRADED', $health->forSite($context[3])['status']);
+    }
+
+    public function test_reporting_bridge_uses_usd_even_when_gam_network_metadata_is_non_usd(): void
+    {
+        [$admin, , , , $gam] = $this->context();
+        $configuration = (array) ($gam->configuration ?? []);
+        $configuration['currency'] = 'AED';
+        $gam->update(['configuration' => $configuration]);
+
+        $connection = app(ReportingBridge::class)->connectionForGam($gam->fresh(), $admin);
+
+        $this->assertSame('USD', $connection->currency);
     }
 
     public function test_network_currency_is_metadata_only_and_site_gam_finance_is_canonical_usd(): void
