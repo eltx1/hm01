@@ -369,6 +369,77 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($reportCall, 'payload.reportJob.reportQuery.dimensions'));
     }
 
+    public function test_daily_full_network_scheduler_uses_the_gam_network_local_calendar(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-09-24 04:10:00', 'UTC'));
+        $this->seedIdentity();
+        $this->seed(ReportingSeeder::class);
+        $organization = $this->makeOrganization(OrganizationType::HorusMedia);
+        $actor = $this->makeUser($organization, RoleName::SuperAdmin);
+        $gam = $this->makeGamConnection($organization, $actor, [
+            'driver' => 'REST',
+            'network_code' => '423456789',
+            'dry_run_default' => false,
+            'configuration' => ['currency' => 'USD'],
+        ]);
+        $reportConnection = app(ReportingBridge::class)->connectionForGam($gam, $actor);
+        $reportConnection->update(['timezone' => 'America/Los_Angeles']);
+
+        $google = new class implements GamSoapTransportInterface
+        {
+            public array $calls = [];
+
+            public function call(\App\Models\GamConnection $connection, string $service, string $method, array $payload = []): array
+            {
+                $this->calls[] = compact('service', 'method', 'payload');
+
+                $versions = app(\App\Services\Gam\GamSoapVersionResolver::class);
+                $namespace = $versions->namespaceFor($versions->resolve());
+                $reflection = new \ReflectionClass($namespace.'\\'.$service);
+                app(\App\Services\Gam\GamSoapPayloadHydrator::class)
+                    ->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
+
+                return match ($method) {
+                    'getCurrentNetwork' => [
+                        'networkCode' => $connection->network_code,
+                        'currencyCode' => 'USD',
+                        'timeZone' => 'America/Los_Angeles',
+                    ],
+                    'runReportJob' => ['id' => '99'],
+                    'getReportJobStatus' => ['value' => 'COMPLETED'],
+                    'getReportDownloadUrlWithOptions' => ['value' => 'https://storage.googleapis.com/timezone-report.csv?signature=private'],
+                    default => throw new \RuntimeException('Unexpected Google call: '.$method),
+                };
+            }
+        };
+        $this->app->instance(GamSoapTransportInterface::class, $google);
+
+        $headers = [
+            'Dimension.DATE',
+            'Dimension.AD_UNIT_ID',
+            ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
+        ];
+        $values = ['2026-09-21', '1001', 120, 100, 20, 95, 3, 25000000];
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, $headers, escape: '');
+        fputcsv($stream, $values, escape: '');
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
+
+        $exit = $this->artisan('reporting:import', [
+            'cadence' => 'daily',
+            '--connection' => $reportConnection->id,
+        ])->run();
+
+        $this->assertSame(0, $exit);
+        $call = collect($google->calls)->firstWhere('method', 'runReportJob');
+        $this->assertSame(21, data_get($call, 'payload.reportJob.reportQuery.startDate.day'));
+        $this->assertSame(22, data_get($call, 'payload.reportJob.reportQuery.endDate.day'));
+        $this->assertSame('USD', data_get($call, 'payload.reportJob.reportQuery.reportCurrency'));
+    }
+
     public function test_rest_dry_run_is_audited_without_external_request(): void
     {
         $this->seedIdentity();
