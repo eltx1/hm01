@@ -1,6 +1,10 @@
 <?php
 
 return [
+    // Horus financial/reporting ledger is USD-denominated. Source/network
+    // currencies are retained only as provenance metadata and must never
+    // silently change the dashboard accounting currency.
+    'canonical_currency' => 'USD',
     'default_currency' => env('REPORTING_DEFAULT_CURRENCY', 'USD'),
     // Canonical monetary presentation/accounting currency for GAM reporting.
     // GAM network currency remains source metadata; report queries explicitly
