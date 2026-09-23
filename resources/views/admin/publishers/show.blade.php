@@ -6,14 +6,12 @@
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Websites', 'href' => '#websites'],
-        ['label' => 'Commercial terms', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
-        ['label' => 'Monetization', 'href' => '#monetization'],
+        ['label' => 'Commercial', 'href' => '#contracts', 'visible' => auth()->user()->hasPermission('contracts.view')],
+        ['label' => 'Reporting & Finance', 'href' => '#reporting', 'visible' => $reporting !== null],
         ['label' => 'Compliance', 'href' => '#compliance'],
         ['label' => 'Quality Review', 'href' => '#quality-review', 'visible' => auth()->user()->hasPermission('publisher_quality.review')],
-        ['label' => 'Reporting', 'href' => '#reporting', 'visible' => $reporting !== null],
-        ['label' => 'Finance', 'href' => '#finance', 'visible' => $reporting !== null],
-        ['label' => 'Users', 'href' => '#users', 'visible' => auth()->user()->hasPermission('users.view')],
-        ['label' => 'Audit', 'href' => '#audit', 'visible' => auth()->user()->hasPermission('audit.view')],
+        ['label' => 'Account', 'href' => auth()->user()->hasPermission('users.view') ? '#users' : '#audit',
+            'visible' => auth()->user()->hasPermission('users.view') || auth()->user()->hasPermission('audit.view')],
     ];
     $activeSites = $publisher->sites->where('status', \App\Enums\SiteStatus::Active)->count();
     $verifiedDomains = $publisher->sites->flatMap->domains->where('verification_status', 'VERIFIED')->count();
