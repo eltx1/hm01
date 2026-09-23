@@ -91,7 +91,22 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             }
             throw new GamReportPending('Google is preparing the ad-unit report; synchronization will resume automatically.');
         }
-        $rows = $this->parse($this->google->download($binding->gamConnection, (string) $jobId), $binding, $connection, $from, $to, $granularity);
+        try {
+            $rows = $this->parse(
+                $this->google->download($binding->gamConnection, (string) $jobId),
+                $binding,
+                $connection,
+                $from,
+                $to,
+                $granularity,
+            );
+        } catch (\Throwable $exception) {
+            // A completed Google job can still yield an invalid, stale, or
+            // unexpected CSV. Do not pin retries to that same completed job.
+            unset($configuration['google_jobs'][$key]);
+            $connection->update(['configuration' => $configuration]);
+            throw $exception;
+        }
 
         return [
             'rows' => $rows, 'external_report_id' => 'gam-unit:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
