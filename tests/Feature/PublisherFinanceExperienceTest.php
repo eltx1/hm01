@@ -34,7 +34,7 @@ class PublisherFinanceExperienceTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
-    public function test_publisher_finance_pages_separate_estimated_finalized_and_currencies(): void
+    public function test_publisher_finance_pages_keep_reporting_canonical_in_usd(): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10));
 
@@ -63,8 +63,8 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertSee('Finalized earnings')
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('Every currency is shown separately');
+            ->assertDontSee('EUR 35.00')
+            ->assertSee('Horus reporting is standardized to USD');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
@@ -125,7 +125,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
-    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    public function test_publisher_dashboard_is_usd_only_even_if_legacy_non_usd_rows_exist(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
@@ -143,11 +143,11 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
-            ->assertSee('Publisher earnings · USD')
-            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('Performance · USD')
             ->assertSee('USD 70.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('150');
+            ->assertDontSee('EUR 35.00')
+            ->assertSee('100 finalized impressions')
+            ->assertSee('Reporting revenue is standardized to USD');
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
