@@ -19,7 +19,7 @@ const setNavigation = (open, { restoreFocus = false } = {}) => {
 
     if (open) {
         returnFocusToNavigationToggle = true;
-        window.requestAnimationFrame(() => navigation.querySelector('a, button, summary')?.focus());
+        window.requestAnimationFrame(() => navigation.querySelector('[data-nav-filter], a, button, summary')?.focus());
     } else if (restoreFocus && returnFocusToNavigationToggle) {
         returnFocusToNavigationToggle = false;
         navigationToggle.focus();
@@ -29,6 +29,27 @@ const setNavigation = (open, { restoreFocus = false } = {}) => {
 navigationToggle?.addEventListener('click', () => setNavigation(!navigation?.classList.contains('is-open')));
 navigationScrim?.addEventListener('click', () => setNavigation(false, { restoreFocus: true }));
 navigation?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setNavigation(false)));
+
+const navigationFilter = document.querySelector('[data-nav-filter]');
+const navigationEmpty = document.querySelector('[data-nav-empty]');
+navigationFilter?.addEventListener('input', () => {
+    const query = navigationFilter.value.trim().toLocaleLowerCase();
+    let visibleLinks = 0;
+    navigation?.querySelectorAll('.navigation-group').forEach((group) => {
+        let visible = 0;
+        group.querySelectorAll('.navigation-links a').forEach((link) => {
+            const matches = query === '' || link.textContent.trim().toLocaleLowerCase().includes(query);
+            link.hidden = !matches;
+            if (matches) {
+                visible += 1;
+                visibleLinks += 1;
+            }
+        });
+        group.hidden = visible === 0;
+    });
+    if (navigationEmpty) navigationEmpty.hidden = visibleLinks !== 0;
+});
+
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && navigation?.classList.contains('is-open')) {
         setNavigation(false, { restoreFocus: true });
