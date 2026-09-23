@@ -71,16 +71,21 @@ final class SiteGamCurrencyPolicy
                 ->where('status', '!=', 'OPEN')
                 ->pluck('id');
 
-            $lastLocked = collect([
-                DailyReport::withoutGlobalScopes()
+            $lockedRowPeriodIds = collect([
+                ...DailyReport::withoutGlobalScopes()
                     ->where('report_source_connection_id', $lockedConnection->id)
                     ->whereIn('financial_period_id', $lockedPeriodIds)
-                    ->max('report_date'),
-                HourlyReport::withoutGlobalScopes()
+                    ->pluck('financial_period_id')
+                    ->all(),
+                ...HourlyReport::withoutGlobalScopes()
                     ->where('report_source_connection_id', $lockedConnection->id)
                     ->whereIn('financial_period_id', $lockedPeriodIds)
-                    ->max('report_date'),
-            ])->filter()->max();
+                    ->pluck('financial_period_id')
+                    ->all(),
+            ])->filter()->unique()->values();
+            $lastLockedPeriodEnd = $lockedRowPeriodIds->isEmpty()
+                ? null
+                : FinancialPeriod::query()->whereIn('id', $lockedRowPeriodIds)->max('ends_on');
 
             $configuration = (array) ($lockedConnection->configuration ?? []);
             $configuration['network_currency'] ??= $oldCurrency;
@@ -90,7 +95,7 @@ final class SiteGamCurrencyPolicy
             // No immutable financial history exists for this connection. Rebase
             // the connection in place and let the next scheduler pass re-request
             // the exact same dates from Google in USD.
-            if (! $lastLocked) {
+            if (! $lastLockedPeriodEnd) {
                 ReconciliationRun::withoutGlobalScopes()
                     ->where('report_source_connection_id', $lockedConnection->id)
                     ->delete();
@@ -140,7 +145,7 @@ final class SiteGamCurrencyPolicy
                 return $lockedBinding;
             }
 
-            $cutover = CarbonImmutable::parse($lastLocked, $lockedConnection->timezone)->addDay()->startOfDay();
+            $cutover = CarbonImmutable::parse($lastLockedPeriodEnd, $lockedConnection->timezone)->addDay()->startOfDay();
             $this->purgeOpenCutoverData($lockedConnection, $cutover);
 
             $newId = (string) Str::ulid();
