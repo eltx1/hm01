@@ -13,9 +13,19 @@ use Illuminate\View\View;
 
 class InvitationController extends Controller
 {
-    public function create(): View
+    public function create(Request $request, InvitationService $service): View
     {
-        return view('admin.invitations.create', ['roles' => Role::where('is_system', true)->orderBy('name')->get()]);
+        $user = $request->user();
+        $organization = $user->isHorusAdministrator() ? null : $user->organization;
+        $roles = Role::where('is_system', true)
+            ->when($organization, fn ($query) => $query->whereIn('name', $service->allowedRoles($organization->type)))
+            ->orderBy('name')
+            ->get();
+
+        return view('admin.invitations.create', [
+            'roles' => $roles,
+            'organization' => $organization,
+        ]);
     }
 
     public function store(Request $request, InvitationService $service): RedirectResponse
