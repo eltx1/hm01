@@ -135,6 +135,7 @@ class GamRestConnectorTest extends TestCase
         $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
         $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
         $this->assertSame('CUSTOM_DATE', data_get($reportCall, 'payload.reportJob.reportQuery.dateRangeType'));
+        $this->assertSame('FLAT', data_get($reportCall, 'payload.reportJob.reportQuery.adUnitView'));
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($reportCall, 'payload.reportJob.reportQuery.dimensions'));
         $this->assertSame('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', data_get($reportCall, 'payload.reportJob.reportQuery.columns.5'));
 
