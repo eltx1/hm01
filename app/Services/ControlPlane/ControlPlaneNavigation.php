@@ -77,12 +77,14 @@ final class ControlPlaneNavigation
         return [
             $this->group('Home', [
                 $this->item('Dashboard', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
-                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Reports & Money', [
-                $this->item('Reports & earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.overview', 'publisher.finance.payment-method.*', 'publisher.reporting.*']),
-                $this->item('Statements', 'publisher.finance.statements.index', 'finance.publisher.view_own', ['publisher.finance.statements.*']),
-                $this->item('Payout history', 'publisher.finance.payouts.index', 'finance.publisher.view_own', ['publisher.finance.payouts.*']),
+                // Statements, payout history, and payment details remain one
+                // click away as workspace tabs inside this destination. Avoid
+                // duplicating the same finance workspace in the sidebar.
+                $this->item('Reports & earnings', 'publisher.finance.overview', 'finance.publisher.view_own', [
+                    'publisher.finance.*', 'publisher.reporting.*',
+                ]),
             ]),
             $this->group('Monetization', [
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
