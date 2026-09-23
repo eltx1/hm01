@@ -113,6 +113,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             $query = [
                 'dimensions' => $dimensions,
                 'columns' => array_keys(self::COLUMNS),
+                'adUnitView' => 'FLAT',
                 'dateRangeType' => 'CUSTOM_DATE',
                 'startDate' => $date($from),
                 'endDate' => $date($to),
