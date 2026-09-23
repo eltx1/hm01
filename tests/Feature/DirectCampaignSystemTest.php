@@ -81,6 +81,15 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(700, $summary['spend_minor']);
         $this->assertDatabaseHas('advertiser_invoices', ['campaign_id' => $campaign->id, 'status' => 'ISSUED']);
 
+        // The bridge can also materialize AdvertiserReport rows for the same
+        // campaign/day. Unified reporting and invoicing must prefer the
+        // delivery log rather than counting both stores.
+        $beforeFallbackRemoval = app(\App\Services\Reporting\UnifiedReportService::class)
+            ->advertiserSummary($campaign->advertiser, now()->startOfMonth(), now());
+        $this->assertSame(700, $beforeFallbackRemoval['spend_minor']);
+        $this->assertSame(300, $beforeFallbackRemoval['impressions']);
+        $this->assertSame(700, $campaign->invoices()->firstOrFail()->subtotal_minor);
+
         // Publisher-finance deduplication may intentionally exclude the
         // campaign bridge when Site GAM already owns revenue. Advertiser cost
         // and invoices must still come from the delivery log.
