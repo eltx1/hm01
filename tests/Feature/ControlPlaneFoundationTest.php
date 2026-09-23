@@ -47,7 +47,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertOk()
             ->assertSee('Home')
             ->assertSee('Websites')
-            ->assertSee('Earnings &amp; Payments', false)
+            ->assertSee('Reports &amp; Earnings', false)
             ->assertSee('Commercial Terms')
             ->assertDontSee('Invite Teammate')
             ->assertSee('Ads.txt &amp; Compliance', false)
@@ -64,8 +64,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->get(route('publisher.finance.overview'))
             ->assertOk()
             ->assertSee('Publisher Workspace')
-            ->assertSee('Earnings')
-            ->assertSee('Earnings &amp; Payments', false);
+            ->assertSee('Reports &amp; Earnings', false);
 
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
         $this->actingAs($admin)
