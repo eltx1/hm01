@@ -47,6 +47,16 @@ final class CampaignDeliveryCapabilityService
             );
         }
 
+        $reportCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        $reportCurrency = preg_match('/^[A-Z]{3}$/D', $reportCurrency) === 1 ? $reportCurrency : 'USD';
+        if (strtoupper((string) $campaign->currency) !== $reportCurrency) {
+            return $this->blocked(
+                CampaignDeliveryCapabilityStatus::ConfigurationIncomplete,
+                'CAMPAIGN_CURRENCY_UNSUPPORTED_FOR_GAM_REPORTING',
+                "GAM-backed campaign delivery is currently reported and invoiced in {$reportCurrency}. An explicit FX ledger is required before a {$campaign->currency} campaign can be delivered.",
+            );
+        }
+
         // Capability answers what can be delivered RIGHT NOW. Force-refresh all
         // delivery-critical relationships rather than trusting an earlier loaded
         // relation on a long-lived model instance after an operational change.
