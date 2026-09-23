@@ -312,6 +312,11 @@ class ReportingFinancialSystemTest extends TestCase
         $this->assertSame(5000, $summary['spend_minor']);
         $this->assertSame(45000, $summary['remaining_budget_minor']);
 
+        $campaignCost = app(UnifiedReportService::class)->campaignCost($campaign);
+        $this->assertSame(1000, $campaignCost['impressions']);
+        $this->assertSame(20, $campaignCost['clicks']);
+        $this->assertSame(5000, $campaignCost['spend_minor']);
+
         $otherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Other Publisher');
         $otherUser = $this->makeUser($otherOrg, RoleName::PublisherAdmin);
         $otherPublisher = $this->makePublisherFor($otherUser, ['display_name' => 'Other Publisher']);
