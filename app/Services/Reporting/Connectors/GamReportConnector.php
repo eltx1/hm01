@@ -44,9 +44,6 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             'dateRangeType' => 'CUSTOM_DATE',
             'startDate' => $from->toDateString(),
             'endDate' => $to->toDateString(),
-            // GAM REST reporting accepts an explicit report currency; never
-            // inherit the network's billing currency into the Horus ledger.
-            'currencyCode' => strtoupper((string) $connection->currency),
             'statement' => $options['statement'] ?? null,
         ], [
             'dry_run' => false,
