@@ -73,6 +73,12 @@ class GamRestConnectorTest extends TestCase
             {
                 $this->calls[] = compact('service', 'method', 'payload');
 
+                $versions = app(\App\Services\Gam\GamSoapVersionResolver::class);
+                $namespace = $versions->namespaceFor($versions->resolve());
+                $reflection = new \ReflectionClass($namespace.'\\\\'.$service);
+                app(\App\Services\Gam\GamSoapPayloadHydrator::class)
+                    ->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
+
                 return match ($method) {
                     'getCurrentNetwork' => [
                         'networkCode' => $connection->network_code,
