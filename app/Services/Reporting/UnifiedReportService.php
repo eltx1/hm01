@@ -9,6 +9,7 @@ use App\Models\Advertiser;
 use App\Models\AdvertiserInvoice;
 use App\Models\AdvertiserReport;
 use App\Models\Campaign;
+use App\Models\CampaignDeliveryLog;
 use App\Models\DailyReport;
 use App\Models\Publisher;
 use App\Models\PublisherPayment;
@@ -105,11 +106,18 @@ final class UnifiedReportService
         CarbonInterface|string|null $to = null,
     ): array {
         [$from, $to] = $this->range($from, $to);
-        $rows = AdvertiserReport::withoutGlobalScopes()
+        // Advertiser delivery is sourced from the campaign delivery log, not
+        // from the publisher revenue ledger. A Site GAM binding may correctly
+        // exclude a campaign bridge row from publisher finance to prevent
+        // double counting; that must never erase advertiser delivery/cost.
+        $campaigns = Campaign::withoutGlobalScopes()
             ->where('advertiser_id', $advertiser->id)
+            ->get(['id', 'name', 'total_budget_minor', 'currency']);
+        $rows = CampaignDeliveryLog::withoutGlobalScopes()
+            ->whereIn('campaign_id', $campaigns->pluck('id'))
             ->whereDate('report_date', '>=', $from->toDateString())
             ->whereDate('report_date', '<=', $to->toDateString())
-            ->with(['campaign', 'connection.source'])
+            ->with('campaign')
             ->get();
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
@@ -120,8 +128,7 @@ final class UnifiedReportService
             'clicks' => $clicks,
             'ctr_bp' => $impressions > 0 ? (int) round($clicks * 10000 / $impressions) : 0,
             'spend_minor' => (int) $rows->sum('spend_minor'),
-            'remaining_budget_minor' => max(0, (int) Campaign::withoutGlobalScopes()
-                ->where('advertiser_id', $advertiser->id)->sum('total_budget_minor') - (int) $rows->sum('spend_minor')),
+            'remaining_budget_minor' => max(0, (int) $campaigns->sum('total_budget_minor') - (int) $rows->sum('spend_minor')),
             'campaigns' => $rows->groupBy('campaign_id')->map(function (Collection $group): array {
                 $campaign = $group->first()->campaign;
                 $impressions = (int) $group->sum('impressions');
@@ -143,7 +150,16 @@ final class UnifiedReportService
 
     public function campaignCost(Campaign $campaign): array
     {
-        $rows = AdvertiserReport::withoutGlobalScopes()->where('campaign_id', $campaign->id)->get();
+        $rows = CampaignDeliveryLog::withoutGlobalScopes()->where('campaign_id', $campaign->id)->get();
+        if ($rows->isNotEmpty()) {
+            $canonical = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+            $canonical = preg_match('/^[A-Z]{3}$/D', $canonical) === 1 ? $canonical : 'USD';
+            if (strtoupper((string) $campaign->currency) !== $canonical) {
+                throw new \RuntimeException(
+                    "Campaign delivery is denominated in {$canonical}; invoice synchronization requires an explicit FX ledger for {$campaign->currency}."
+                );
+            }
+        }
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
         $spend = (int) $rows->sum('spend_minor');
