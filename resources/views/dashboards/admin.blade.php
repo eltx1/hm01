@@ -98,7 +98,7 @@
 <section class="ai-dashboard-card" aria-labelledby="ai-control-center-heading">
     <div>
         <p class="eyebrow">AI &amp; Automation</p>
-        <h2 id="ai-control-center-heading">THOTH AI</h2>
+        <h2 id="ai-control-center-heading">THOTH AI Control Center</h2>
         <p>AI quality advisories are a supporting workflow, not the starting point for day-to-day operations.</p>
     </div>
     <div class="ai-dashboard-status">
