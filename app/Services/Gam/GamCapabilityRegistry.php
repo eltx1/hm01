@@ -21,13 +21,18 @@ final class GamCapabilityRegistry
     private const REST_OPERATIONS = [
         'testConnection', 'getCurrentNetwork', 'listAccessibleNetworks', 'getNetworkByCode',
         'createAdUnit', 'updateAdUnit', 'createPlacement', 'createCustomTargetingKey',
-        'createCustomTargetingValue', 'createOrder', 'updateOrder', 'runReport',
+        'createCustomTargetingValue', 'createOrder', 'updateOrder',
     ];
 
     /** @var list<string> */
     private const SOAP_FALLBACK_OPERATIONS = [
         'createCompany', 'updateCompany', 'createLineItem', 'updateLineItem',
         'createCreative', 'associateCreative', 'pauseLineItem', 'activateLineItem', 'resumeLineItem',
+        // Campaign reporting still builds the legacy ReportQuery schema
+        // (columns/dateRangeType/reportCurrency). The REST beta uses
+        // ReportDefinition metrics/dateRange/currencyCode instead, so routing
+        // this payload to REST would silently send the wrong schema.
+        'runReport',
     ];
 
     public function transportFor(string $operation, array $context = []): string
