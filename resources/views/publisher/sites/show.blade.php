@@ -6,16 +6,11 @@
 @php
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
-        ['label' => 'Monetization', 'href' => '#monetization-health'],
-        ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
-        ['label' => 'Serving', 'href' => '#serving'],
-        ['label' => 'GAM', 'href' => '#gam'],
+        ['label' => 'Monetization health', 'href' => '#monetization-health'],
+        ['label' => 'Inventory & serving', 'href' => auth()->user()->hasPermission('inventory.view') ? '#inventory' : '#serving'],
         ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
-        ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
-        ['label' => 'Configuration', 'href' => '#configuration'],
-        ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Health', 'href' => '#health'],
+        ['label' => 'Demand', 'href' => '#prebid'],
+        ['label' => 'Compliance & health', 'href' => '#compliance'],
         ['label' => 'History', 'href' => '#history'],
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();
@@ -155,7 +150,16 @@
 @endif
 
 @else
-<section class="hero">
+<x-control-plane.workspace-tabs :items="[
+    ['label' => 'Overview', 'href' => '#website-overview'],
+    ['label' => 'Monetization', 'href' => '#monetization-health'],
+    ['label' => 'Ads.txt', 'href' => '#ads-txt-setup', 'visible' => auth()->user()->hasPermission('publisher.ads_txt.view')],
+    ['label' => 'Installation', 'href' => '#site-installation'],
+    ['label' => 'Privacy', 'href' => '#privacy-readiness'],
+    ['label' => 'Ad codes', 'href' => '#responsive-display-codes', 'visible' => $site->placements->contains(fn ($placement) => data_get($placement->metadata, 'responsive_bundle') === 'v1')],
+]" label="Website sections" />
+
+<section id="website-overview" class="hero workspace-section">
     <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
 </section>
 
@@ -163,7 +167,7 @@
 @include('publisher.privacy-readiness')
 
 @if(auth()->user()->hasPermission('publisher.ads_txt.view'))
-<article class="workspace-section publisher-ads-installation">
+<article id="ads-txt-setup" class="workspace-section publisher-ads-installation">
     <div class="workspace-heading">
         <div><p class="eyebrow">One-time installation</p><h2>Copy the complete ads.txt block</h2></div>
         <div class="status-row"><span class="status">{{ count($adsTxtInstallation['records']) }} records</span><button class="hm-button-primary" type="button" data-copy-target="site-ads-txt-installation">Copy all</button></div>
@@ -182,15 +186,15 @@
     <a class="text-link" href="{{ route('publisher.ads-txt.index') }}">Open detailed compliance</a>
 </article>
 @endif
-<section class="detail-grid">
+<section id="site-installation" class="detail-grid workspace-section">
     <article><p class="eyebrow">Website</p><h2>Account details</h2><dl><dt>Language / country</dt><dd>{{ $site->language }} / {{ $site->country }}</dd><dt>Category</dt><dd>{{ $site->content_category }}</dd><dt>Monthly pageviews / users</dt><dd>{{ number_format($site->estimated_monthly_pageviews) }} / {{ number_format($site->estimated_monthly_users) }}</dd></dl></article>
     <article><p class="eyebrow">Permanent installation</p><h2>One loader</h2><p class="muted">This code never changes when serving mode or demand configuration changes. Install it once in the global/site-wide page template so it loads on every page you want Horus to monetize; a homepage-only or page-builder-only insertion will not cover other URLs.</p><code class="installation-code">{{ $site->installationCode() }}</code><p>Installation status: <strong>{{ $site->status === \App\Enums\SiteStatus::Active ? 'Active' : 'Configuration pending' }}</strong></p></article>
 </section>
-<article><div class="section-heading"><div><p class="eyebrow">Authorized domains</p><h2>Ownership verification</h2></div></div>
+<article id="domain-verification" class="workspace-section"><div class="section-heading"><div><p class="eyebrow">Authorized domains</p><h2>Ownership verification</h2></div></div>
     @foreach($site->domains as $domain)<div class="domain-card"><div class="compact-row"><div><strong>{{ $domain->domain }}</strong><p>{{ $domain->is_primary ? 'Primary authorized domain' : 'Authorized domain' }}</p></div><x-status-badge :status="$domain->verification_status" /></div><p class="muted">Ownership is verified from the two Horus DIRECT records in this domain's live ads.txt file.</p>@if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.verify', [$site, $domain]) }}" class="inline-form">@csrf<input type="hidden" name="method" value="ADS_TXT"><button class="hm-button-secondary">Verify ads.txt</button></form>@endif</div>@endforeach
     @if(auth()->user()->hasPermission('sites.manage'))<form method="POST" action="{{ route('publisher.sites.domains.store', $site) }}" class="inline-form">@csrf<input class="hm-input" name="domain" aria-label="Additional authorized domain" placeholder="additional.example.com" required><button class="hm-button-secondary">Add authorized domain</button></form>@endif
 </article>
-<article><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Waiting for successful ads.txt verification; submission is automatic.</p>@endforelse</article>
+<article id="review-status" class="workspace-section"><p class="eyebrow">Review</p><h2>Submission status</h2>@forelse($site->reviews->sortByDesc('created_at') as $review)<div class="event"><div><strong>{{ $review->decision }}</strong><p>{{ $review->publisher_message }}</p></div><span>{{ $review->created_at }}</span></div>@empty<p class="muted">Waiting for successful ads.txt verification; submission is automatic.</p>@endforelse</article>
 @endif
 <x-responsive-bundle-codes :site="$site" />
 @endsection
