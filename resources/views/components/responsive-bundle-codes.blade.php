@@ -6,7 +6,7 @@
         ->sortBy(fn ($placement) => (int) data_get($placement->metadata, 'responsive_bundle_index'));
 @endphp
 @if($units->isNotEmpty())
-<section class="workspace-section" aria-label="Responsive display installation codes">
+<section id="responsive-display-codes" class="workspace-section" aria-label="Responsive display installation codes">
     <div class="workspace-heading">
         <div><p class="eyebrow">{{ $site->primary_domain }} · Manual placement</p><h2>Responsive Display · {{ $units->count() }} placement codes</h2></div>
         @if(auth()->user()?->isHorusAdministrator() && auth()->user()?->hasPermission('demand.manage') && $units->count() < $targetCount)
