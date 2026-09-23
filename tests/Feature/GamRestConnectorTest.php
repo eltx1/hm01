@@ -3,8 +3,13 @@
 namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
+use App\Enums\ReportFinality;
+use App\Enums\ReportGranularity;
 use App\Enums\RoleName;
 use App\Services\Gam\GamConnectorManager;
+use App\Services\Reporting\Connectors\GamReportConnector;
+use App\Services\Reporting\ReportingBridge;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -40,6 +45,48 @@ class GamRestConnectorTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'POST'
             && $request->url() === 'https://admanager.googleapis.com/v1/networks/123456789/adUnits'
             && ! str_contains($request->url(), 'v202'));
+    }
+
+    public function test_full_network_gam_reporting_requests_usd_even_when_network_metadata_is_aed(): void
+    {
+        $this->seedIdentity();
+        $organization = $this->makeOrganization(OrganizationType::HorusMedia);
+        $actor = $this->makeUser($organization, RoleName::SuperAdmin);
+        $connection = $this->makeGamConnection($organization, $actor, [
+            'driver' => 'REST',
+            'network_code' => '123456789',
+            'dry_run_default' => false,
+            'configuration' => ['currency' => 'AED'],
+        ]);
+        $this->cacheToken($connection);
+        Http::fake([
+            'https://admanager.googleapis.com/v1/networks/123456789/reports' => Http::response([
+                'name' => 'networks/123456789/reports/77',
+            ]),
+            'https://admanager.googleapis.com/v1/networks/123456789/reports/77:run' => Http::response([
+                'rows' => [],
+                'report_id' => '77',
+            ]),
+        ]);
+
+        $reportConnection = app(ReportingBridge::class)->connectionForGam($connection, $actor);
+        $this->assertSame('USD', $reportConnection->currency);
+        $this->assertSame('AED', data_get($reportConnection->configuration, 'source_network_currency'));
+        $this->assertSame('USD', data_get($reportConnection->configuration, 'report_currency'));
+
+        $day = CarbonImmutable::parse('2026-09-20');
+        $result = app(GamReportConnector::class)->fetch(
+            $reportConnection,
+            $day,
+            $day,
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+        );
+
+        $this->assertSame('USD', data_get($result, 'metadata.report_currency'));
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && $request->url() === 'https://admanager.googleapis.com/v1/networks/123456789/reports'
+            && data_get($request->data(), 'currencyCode') === 'USD');
     }
 
     public function test_rest_dry_run_is_audited_without_external_request(): void
