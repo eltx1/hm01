@@ -907,8 +907,8 @@ class SiteGamReportingTest extends TestCase
 
         $this->assertNotSame($binding->id, $newBinding->id);
         $this->assertSame('USD', $newBinding->connection->currency);
-        $this->assertSame('2026-09-21', $newBinding->starts_on->toDateString());
-        $this->assertSame('2026-09-20', $binding->fresh()->ends_on->toDateString());
+        $this->assertSame('2026-10-01', $newBinding->starts_on->toDateString());
+        $this->assertSame('2026-09-30', $binding->fresh()->ends_on->toDateString());
         $this->assertFalse((bool) $oldConnection->fresh()->is_enabled);
         $this->assertDatabaseHas('daily_reports', [
             'id' => $row->id,
