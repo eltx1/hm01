@@ -7,6 +7,7 @@
     $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
     $primary = $currencies->firstWhere('currency', $canonicalCurrency);
     $legacyCurrencies = $currencies->where('currency', '!=', $canonicalCurrency);
+    $realActions = collect($actions)->reject(fn ($action) => ($action['code'] ?? null) === 'NONE')->values();
 @endphp
 
 <section class="hero">
@@ -27,14 +28,14 @@
     </div>
 </article>
 
-@if($actions !== [])
 <article class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Action Center</p><h2>What you need to do</h2></div></div>
-    @foreach($actions as $action)
+    @forelse($realActions as $action)
         <div class="compact-row"><div><strong>{{ $action['label'] }}</strong></div><span class="pill">{{ str($action['code'])->replace('_', ' ')->headline() }}</span></div>
-    @endforeach
+    @empty
+        <p class="muted">Nothing needs your attention right now.</p>
+    @endforelse
 </article>
-@endif
 
 @if($primary)
 <section class="workspace-section">
