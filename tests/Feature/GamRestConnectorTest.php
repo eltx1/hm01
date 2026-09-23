@@ -5,11 +5,16 @@ namespace Tests\Feature;
 use App\Enums\OrganizationType;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
+use App\Enums\ReportSourceCode;
 use App\Enums\RoleName;
 use App\Services\Gam\GamConnectorManager;
+use App\Models\ReportSource;
+use App\Models\ReportSourceConnection;
 use App\Services\Reporting\Connectors\GamReportConnector;
+use App\Services\Reporting\ReportImportService;
 use App\Services\Reporting\ReportingBridge;
 use Carbon\CarbonImmutable;
+use Database\Seeders\ReportingSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -87,6 +92,52 @@ class GamRestConnectorTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'POST'
             && $request->url() === 'https://admanager.googleapis.com/v1/networks/123456789/reports'
             && data_get($request->data(), 'currencyCode') === 'USD');
+    }
+
+    public function test_existing_non_usd_full_network_history_is_never_relabeled_as_usd(): void
+    {
+        $this->seedIdentity();
+        $this->seed(ReportingSeeder::class);
+        $organization = $this->makeOrganization(OrganizationType::HorusMedia);
+        $actor = $this->makeUser($organization, RoleName::SuperAdmin);
+        $gam = $this->makeGamConnection($organization, $actor, [
+            'driver' => 'REST',
+            'network_code' => '223456789',
+            'dry_run_default' => false,
+            'configuration' => ['currency' => 'AED'],
+        ]);
+        $source = ReportSource::query()->where('code', ReportSourceCode::HorusGam->value)->firstOrFail();
+        $legacy = ReportSourceConnection::withoutGlobalScopes()->create([
+            'organization_id' => $organization->id,
+            'report_source_id' => $source->id,
+            'name' => 'Legacy AED GAM',
+            'connection_type' => 'GAM_CONNECTION',
+            'connection_id' => $gam->id,
+            'account_identifier' => $gam->network_code,
+            'currency' => 'AED',
+            'timezone' => 'UTC',
+            'status' => 'ACTIVE',
+            'is_enabled' => true,
+            'created_by' => $actor->id,
+            'updated_by' => $actor->id,
+        ]);
+        $day = CarbonImmutable::parse('2026-09-20');
+        $job = app(ReportImportService::class)->importRows(
+            $legacy,
+            [['date' => $day->toDateString(), 'gross_revenue_minor' => 10000, 'currency' => 'AED']],
+            ReportGranularity::Daily,
+            ReportFinality::Finalized,
+            $day,
+            $day,
+            $actor,
+            'legacy-aed-financial-history',
+            importType: 'API',
+        );
+        $this->assertSame('COMPLETED', $job->status->value);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('will not relabel historical money');
+        app(ReportingBridge::class)->connectionForGam($gam, $actor);
     }
 
     public function test_rest_dry_run_is_audited_without_external_request(): void
