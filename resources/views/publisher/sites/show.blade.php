@@ -155,7 +155,16 @@
 
 @else
 <section class="hero">
-    <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
+    <div>
+        <p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p>
+        <div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>
+        <div class="status-row">
+            <a class="hm-button-primary button-link" href="{{ route('publisher.sites.index') }}">All websites</a>
+            <a class="hm-button-secondary button-link" href="{{ route('publisher.monetization.index') }}">Monetization health</a>
+            @if(auth()->user()->hasPermission('finance.publisher.view_own'))<a class="hm-button-secondary button-link" href="{{ route('publisher.finance.overview') }}">Reports &amp; earnings</a>@endif
+            @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif
+        </div>
+    </div>
 </section>
 
 @include('publisher.monetization.site-health')
