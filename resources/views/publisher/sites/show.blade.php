@@ -8,14 +8,9 @@
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Monetization', 'href' => '#monetization-health'],
         ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
-        ['label' => 'Serving', 'href' => '#serving'],
-        ['label' => 'GAM', 'href' => '#gam'],
         ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
-        ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
-        ['label' => 'Configuration', 'href' => '#configuration'],
         ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Health', 'href' => '#health'],
+        ['label' => 'Operations', 'href' => '#serving'],
         ['label' => 'History', 'href' => '#history'],
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();
@@ -29,7 +24,11 @@
         <p class="eyebrow">{{ $site->publisher->display_name }} · Website</p><h2>{{ $site->display_name }}</h2>
         <p>{{ $site->primary_domain }} · {{ $site->language }}/{{ $site->country }} · {{ $site->content_category }}</p>
         <div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /><x-status-badge :status="$monetization['overall']['status']" /></div>
-        <a class="hm-button-secondary button-link" href="{{ route('admin.publishers.show', $site->publisher) }}">Open Publisher 360</a>
+        <div class="status-row">
+            <a class="hm-button-secondary button-link" href="{{ route('admin.publishers.show', $site->publisher) }}">Publisher 360</a>
+            @if(auth()->user()->hasPermission('demand.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.create', ['site' => $site->id]) }}">Quick Monetize</a>@endif
+            @if(auth()->user()->hasPermission('reporting.sources.manage'))<a class="hm-button-secondary button-link" href="#reporting">Reports</a>@endif
+        </div>
     </div>
 </section>
 
