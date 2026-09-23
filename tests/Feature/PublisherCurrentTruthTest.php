@@ -30,7 +30,7 @@ class PublisherCurrentTruthTest extends TestCase
         $this->assertFalse($labels->contains('Onboarding'));
         $this->assertTrue($labels->contains('Websites'));
         $this->assertTrue($labels->contains('Monetization Status'));
-        $this->assertTrue($labels->contains('Earnings & Payments'));
+        $this->assertTrue($labels->contains('Reports & Earnings'));
         $this->assertTrue($labels->contains('Ads.txt & Compliance'));
     }
 
@@ -41,12 +41,12 @@ class PublisherCurrentTruthTest extends TestCase
         $this->makePublisherFor($user);
 
         $navigation = collect(app(ControlPlaneNavigation::class)->for($user));
-        $this->assertSame(['Home', 'Monetization', 'Earnings', 'Help & Team'], $navigation->pluck('label')->all());
+        $this->assertSame(['Home', 'Monetization', 'Reports & Earnings', 'Help & Team'], $navigation->pluck('label')->all());
 
         $this->actingAs($user)->get(route('dashboard'))
             ->assertOk()
             ->assertSee('Publisher Home')
-            ->assertSee('View earnings')
+            ->assertSee('View reports &amp; earnings', false)
             ->assertSee('Manage websites')
             ->assertSee('Publisher Workspace')
             ->assertDontSee('Ad Network Control Plane');
