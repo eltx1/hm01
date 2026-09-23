@@ -5,9 +5,11 @@ namespace App\Console\Commands;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportImportStatus;
+use App\Models\GamConnection;
 use App\Models\ReportImportJob;
 use App\Models\ReportSourceConnection;
 use App\Services\Reporting\ReportImportService;
+use App\Services\Reporting\ReportingBridge;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 
@@ -21,7 +23,7 @@ class RunReportingImports extends Command
 
     protected $description = 'Import aggregated reporting data from active GAM, native, and configured report sources.';
 
-    public function handle(ReportImportService $imports): int
+    public function handle(ReportImportService $imports, ReportingBridge $bridge): int
     {
         $cadence = strtolower((string) $this->argument('cadence'));
         if (! in_array($cadence, ['hourly', 'daily'], true)) {
@@ -29,10 +31,30 @@ class RunReportingImports extends Command
             return self::FAILURE;
         }
 
+        // Upgrade any legacy full-network GAM source before retries or imports.
+        // This guarantees an existing AED/EUR connection reaches Google as a
+        // canonical USD reporting source instead of failing at the connector.
+        ReportSourceConnection::withoutGlobalScopes()
+            ->where('connection_type', 'GAM_CONNECTION')
+            ->where('is_enabled', true)
+            ->where('status', '!=', 'DISABLED')
+            ->when($this->option('connection'), fn ($query, $id) => $query->whereKey($id))
+            ->pluck('connection_id')
+            ->filter()
+            ->unique()
+            ->each(function (string $gamConnectionId) use ($bridge): void {
+                $gam = GamConnection::withoutGlobalScopes()->find($gamConnectionId);
+                if ($gam?->is_enabled) {
+                    $bridge->connectionForGam($gam);
+                }
+            });
+
         if ($this->option('retry-failed')) {
             ReportImportJob::withoutGlobalScopes()
                 ->where('status', ReportImportStatus::Failed->value)
                 ->whereHas('connection', fn ($q) => $q
+                    ->where('is_enabled', true)
+                    ->where('status', '!=', 'DISABLED')
                     ->where('connection_type', '!=', 'SITE_GAM_AD_UNIT')
                     ->where(function ($connectionQuery): void {
                         $connectionQuery->whereNotIn('connection_type', ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'])
