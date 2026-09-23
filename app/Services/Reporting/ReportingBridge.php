@@ -16,6 +16,7 @@ use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class ReportingBridge
@@ -25,6 +26,18 @@ final class ReportingBridge
     }
 
     public function connectionForGam(GamConnection $gam, ?User $actor = null): ReportSourceConnection
+    {
+        return DB::transaction(function () use ($gam, $actor): ReportSourceConnection {
+            $locked = GamConnection::withoutGlobalScopes()
+                ->whereKey($gam->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            return $this->connectionForGamLocked($locked, $actor);
+        });
+    }
+
+    private function connectionForGamLocked(GamConnection $gam, ?User $actor = null): ReportSourceConnection
     {
         $sourceCode = match ($gam->type) {
             GamConnectionType::HorusGam => ReportSourceCode::HorusGam,
