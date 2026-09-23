@@ -29,7 +29,9 @@ class PublisherCurrentTruthTest extends TestCase
 
         $this->assertFalse($labels->contains('Onboarding'));
         $this->assertTrue($labels->contains('Websites'));
-        $this->assertTrue($labels->contains('Monetization Center'));
+        $this->assertTrue($labels->contains('Monetization Status'));
+        $this->assertTrue($labels->contains('Earnings & Payments'));
+        $this->assertTrue($labels->contains('Ads.txt & Compliance'));
     }
 
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
