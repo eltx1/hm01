@@ -32,6 +32,18 @@ Site GAM reporting is **not** implicit financial coverage for Direct JS, VAST, o
 
 API finality requires a real configured connector. ExoClick may use the existing operator-configured demand report path only when the approved HTTPS base and report path exist. OneTag API remains not configured until a real supported connector is implemented. CSV data passes the existing private-file, checksum, normalization, idempotency, reconciliation, and close pipeline. Manual provider data requires Finance permission, a specific reason, an explicit manual-capable binding, and audit evidence; normal revenue adjustments remain a separate controlled workflow.
 
+## Canonical Google Ad Manager currency
+
+Website-level Google Ad Manager reporting is normalized at the source to **USD**.
+Horus sends Google's report-currency field instead of assuming the GAM network's
+native currency. Network currency remains source metadata and the network timezone
+continues to define the reporting day. This avoids a Horus-side FX layer and keeps
+Admin/Publisher dashboard revenue on one USD basis.
+
+Legacy non-USD Site GAM data is automatically re-requested in USD while its
+financial period is still open. Closed or closing financial history remains
+immutable and is cut over to a new USD connection only after the locked period.
+
 ## Reporting grain
 
 The unified ledger supports hourly estimates, finalized daily rows, and immutable monthly closing snapshots. Rows are keyed by source connection, date or hour, normalized dimension hash, and revision.
@@ -119,9 +131,9 @@ Finance operations use an append-only settlement ledger. Creation, independent
 approval, scheduling, and external-processing state do not reduce a statement
 balance. Only an immutable settlement reference and positive minor-unit amount
 do. A settlement reference is globally unique and cannot be reused for another
-payout. General dashboard summaries show one explicit currency and the latest
-statement balance per Publisher/currency; the Finance dashboard shows all
-currencies separately. The Admin dashboard, readiness-gated close, payout workbench, verification
+payout. General Admin and Publisher home dashboards use canonical USD. Publisher Finance
+keeps historical/non-canonical statement currencies separately for audit and payout
+history; currencies are never arithmetically combined. The Admin dashboard, readiness-gated close, payout workbench, verification
 queue, adjustment lifecycle, and reconciliation remediation are documented in
 [`FINANCE_OPERATIONS.md`](FINANCE_OPERATIONS.md).
 
