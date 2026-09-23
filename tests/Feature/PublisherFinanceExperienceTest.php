@@ -59,12 +59,13 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $response = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
         $response->assertOk()
-            ->assertSee('Estimated earnings')
-            ->assertSee('Finalized earnings')
+            ->assertSee('Estimated this month')
+            ->assertSee('Finalized this month')
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
+            ->assertSee('Historical EUR activity')
             ->assertSee('EUR 35.00')
-            ->assertSee('Every currency is shown separately');
+            ->assertSee('Horus reporting is standardized to US Dollar (USD)');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
@@ -125,7 +126,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
-    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    public function test_publisher_dashboard_is_usd_first_and_keeps_legacy_currency_out_of_primary_metrics(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
@@ -143,11 +144,17 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
-            ->assertSee('Publisher earnings · USD')
-            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('Publisher Home')
+            ->assertSee('Reporting currency')
             ->assertSee('USD 70.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('150');
+            ->assertDontSee('EUR 35.00')
+            ->assertSee('Historical statements created in another currency remain available')
+            ->assertViewHas('reporting', fn (array $reporting): bool =>
+                $reporting['currency'] === 'USD'
+                && $reporting['impressions'] === 100
+                && $reporting['finalized_earnings_minor'] === 7000
+                && $reporting['has_legacy_currencies'] === true
+            );
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
