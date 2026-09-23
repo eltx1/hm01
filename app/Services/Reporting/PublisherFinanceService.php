@@ -122,17 +122,35 @@ final class PublisherFinanceService
     public function dashboard(Publisher $publisher): array
     {
         $overview = $this->overview($publisher);
+        $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $summary = $overview['currencies']->firstWhere('currency', $currency) ?? [
+            'today_available' => false,
+            'today_impressions' => 0,
+            'today_clicks' => 0,
+            'today_estimated_earnings_minor' => 0,
+            'estimated_earnings_minor' => 0,
+            'finalized_earnings_minor' => 0,
+            'statement_balance_due_minor' => 0,
+        ];
         $impressions = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $currency)
             ->where('finality', ReportFinality::Finalized->value)
             ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('report_date', '<=', now()->toDateString())
             ->sum('impressions');
 
         return [
+            'currency' => $currency,
             'impressions' => (int) $impressions,
-            'currencies' => $overview['currencies'],
-            'statements' => $overview['statements'],
+            'today_available' => (bool) $summary['today_available'],
+            'today_impressions' => (int) $summary['today_impressions'],
+            'today_clicks' => (int) $summary['today_clicks'],
+            'today_estimated_earnings_minor' => (int) $summary['today_estimated_earnings_minor'],
+            'estimated_earnings_minor' => (int) $summary['estimated_earnings_minor'],
+            'finalized_earnings_minor' => (int) $summary['finalized_earnings_minor'],
+            'payment_balance_minor' => (int) $summary['statement_balance_due_minor'],
+            'statements' => $overview['statements']->where('currency', $currency)->values(),
         ];
     }
 
@@ -240,19 +258,28 @@ final class PublisherFinanceService
         Collection $payments,
         ?PublisherContract $contract,
     ): Collection {
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
         $reported = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $canonical)
             ->distinct()
             ->pluck('currency');
 
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+
         return collect([
+            $canonical,
             ...$reported,
+            // A non-USD currency appears only when a real historical statement
+            // or payout obligation exists. Contract/payment-profile metadata
+            // alone must never create a fake reporting currency section.
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
-            $contract?->currency,
-            $publisher->paymentProfile?->currency,
-        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()->sort()->values()
-            ->whenEmpty(fn (Collection $currencies) => $currencies->push(strtoupper((string) config('reporting.default_currency', 'USD'))));
+        ])->filter()
+            ->map(fn ($currency) => strtoupper((string) $currency))
+            ->unique()
+            ->sortBy(fn (string $currency): string => ($currency === $canonical ? '0' : '1').$currency)
+            ->values();
     }
 
     private function activeContract(Publisher $publisher): ?PublisherContract

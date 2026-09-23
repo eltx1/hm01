@@ -1,13 +1,12 @@
 @extends('layouts.admin')
-@section('title', 'Monetization Center')
-@section('heading', 'Monetization Center')
+@section('title', 'Monetization')
+@section('heading', 'Monetization')
 @section('content')
 <section class="hero">
     <div>
         <p class="eyebrow">Publisher workspace</p>
-        <h2>Website monetization health</h2>
-        <p>See whether monetization is working for each website and exactly what action is required when it is not.</p>
-        <p class="muted">Optional products never make an otherwise healthy website look broken. Health is based on persisted Horus state; this page does not call Google or demand/reporting providers while rendering.</p>
+        <h2>Is monetization working?</h2>
+        <p>Each website shows one overall answer first. Open a site only when you need the detailed setup or troubleshooting steps.</p>
     </div>
 </section>
 
@@ -22,13 +21,13 @@
             </div>
             <div>
                 <x-status-badge :status="$state['overall']['status']" />
-                <a class="hm-button-secondary button-link" href="{{ route('publisher.sites.show', $site) }}">Open site health</a>
+                <a class="hm-button-secondary button-link" href="{{ route('publisher.sites.show', $site) }}">Open website</a>
             </div>
         </div>
         <div class="health-grid">
             @foreach($state['modules'] as $module)
                 <div>
-                    <span class="muted">{{ $module['title'] }} · {{ $module['dependency'] }}</span>
+                    <span class="muted">{{ $module['title'] }}</span>
                     <x-status-badge :status="$module['status']" />
                     <small>{{ $module['reason'] }}</small>
                     @if($module['action_required'])

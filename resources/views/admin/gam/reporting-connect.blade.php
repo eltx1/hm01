@@ -13,7 +13,7 @@
         @foreach($networks as $network)
         <label class="compact-row"><span><input type="{{ $adUnit !== '' ? 'radio' : 'checkbox' }}" name="networks[]" value="{{ $network['code'] }}" @checked(in_array($network['code'], old('networks', [])))> <strong>{{ $network['name'] }}</strong></span><span>{{ $network['code'] }} · {{ $network['currency'] }} · {{ $network['timezone'] }}</span></label>
         @endforeach
-        <small>{{ $adUnit !== '' ? 'Select the network for this website.' : 'Select one or more. Each network stays available in the account picker for your websites.' }}</small>
+        <small>{{ $adUnit !== '' ? 'Select the network for this website.' : 'Select one or more. Each network stays available in the account picker for your websites.' }} Horus imports revenue in USD even when the network billing currency shown above is different.</small>
         <button class="hm-button-primary">{{ $adUnit !== '' ? 'Connect reports' : 'Add selected networks and continue' }}</button>
     </form>
 </article>

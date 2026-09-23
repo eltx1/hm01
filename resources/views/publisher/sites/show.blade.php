@@ -7,15 +7,9 @@
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Monetization', 'href' => '#monetization-health'],
-        ['label' => 'Inventory', 'href' => '#inventory', 'visible' => auth()->user()->hasPermission('inventory.view')],
-        ['label' => 'Serving', 'href' => '#serving'],
-        ['label' => 'GAM', 'href' => '#gam'],
         ['label' => 'Reports', 'href' => '#reporting', 'visible' => auth()->user()->hasPermission('reporting.sources.manage')],
-        ['label' => 'Prebid', 'href' => '#prebid'],
-        ['label' => 'Direct Monetization', 'href' => '#native-demand'],
-        ['label' => 'Configuration', 'href' => '#configuration'],
         ['label' => 'Compliance', 'href' => '#compliance'],
-        ['label' => 'Health', 'href' => '#health'],
+        ['label' => 'Operations', 'href' => '#serving'],
         ['label' => 'History', 'href' => '#history'],
     ];
     $productionVersion = $site->siteConfig?->versions?->where('environment', \App\Enums\ConfigEnvironment::Production)->sortByDesc('version')->first();

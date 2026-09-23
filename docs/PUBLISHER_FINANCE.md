@@ -14,16 +14,18 @@ currency. Totals from different currencies are never combined.
 
 ## Publisher workspace
 
-The role-aware navigation exposes four non-overlapping sections:
+The role-aware Publisher workspace keeps the primary sidebar intentionally short: Home, Websites, Monetization, Earnings & Payments, and Support. Compliance, affiliate referrals, commercial terms, and team management remain available under **More** or contextual links so routine users are not forced through control-plane complexity.
 
-- **Overview** separates current-period estimated earnings from finalized
+The Earnings & Payments workspace exposes four non-overlapping sections:
+
+- **Earnings overview** separates current-period estimated earnings from finalized
   earnings and shows a Publisher-safe **Today so far** block (impressions,
   clicks, and estimated Publisher earnings only), plus payable, below-threshold,
   carry-forward, pending, scheduled, and settled amounts per currency.
-- **Statements** lists immutable finalized statements and provides a
+- **Monthly statements** lists immutable finalized statements and provides a
   Publisher-safe detail and CSV projection.
-- **Payment Method** manages the Publisher's own encrypted payout destination.
-- **Payout History** distinguishes requested, scheduled, and actually settled
+- **Payment details** manages the Publisher's own encrypted payout destination.
+- **Payouts** distinguishes requested, scheduled, and actually settled
   amounts, including partial settlement and safe references.
 
 Legacy `/publisher/reporting` URLs remain compatibility aliases to the same
@@ -38,9 +40,7 @@ canonical views. They do not maintain a duplicate finance product.
 - Statement amounts are finalized accounting records produced by
   `PublisherStatementService` when a financial period closes.
 
-Every overview card group is keyed by currency. The Publisher dashboard uses the
-same currency-separated summaries; non-money metrics such as impressions may be
-summed across currencies, but monetary balances are never combined. The active contract's payment
+Current reporting performance is presented in canonical USD. Legacy finalized statements or payout obligations in another currency remain separately identifiable in Finance history and are never mixed into USD totals. The active contract's payment
 threshold is converted from its fixed two-decimal database value to integer
 minor units with `App\Support\Money`; no floating-point accounting conversion
 is used.

@@ -2,6 +2,10 @@
 
 return [
     'default_currency' => env('REPORTING_DEFAULT_CURRENCY', 'USD'),
+    // Horus reporting dashboards and GAM imports use one canonical currency.
+    // Do not bind this to the GAM network billing currency; Google can return
+    // report revenue directly in USD via ReportQuery.reportCurrency / REST currencyCode.
+    'canonical_currency' => 'USD',
     'default_timezone' => env('REPORTING_DEFAULT_TIMEZONE', 'UTC'),
     'default_publisher_share_bp' => (int) env('REPORTING_DEFAULT_PUBLISHER_SHARE_BP', 7000),
     'default_horus_share_bp' => (int) env('REPORTING_DEFAULT_HORUS_SHARE_BP', 3000),

@@ -34,10 +34,12 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         }
         $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['gamConnection', 'site'])
             ->where('report_source_connection_id', $connection->id)->findOrFail($connection->connection_id);
+        $currencyCutover = data_get($connection->configuration, 'canonical_currency_start_on');
         if (! $connection->is_enabled || ! $binding->gamConnection?->is_enabled || ! $binding->site
             || $binding->organization_id !== $connection->organization_id
             || $binding->site->organization_id !== $binding->organization_id
             || $from->toDateString() < $binding->starts_on->toDateString()
+            || ($currencyCutover && $from->toDateString() < (string) $currencyCutover)
             || ($binding->ends_on && $to->toDateString() > $binding->ends_on->toDateString())
             || $to->lt($from) || $from->diffInDays($to) > 32
             || $to->toDateString() > CarbonImmutable::now($connection->timezone)->toDateString()
@@ -52,9 +54,16 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         if (! $jobId) {
             $network = $this->google->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
             if ((string) ($network['networkCode'] ?? '') !== $binding->network_code
-                || ($network['currencyCode'] ?? '') !== $connection->currency || ($network['timeZone'] ?? '') !== $connection->timezone) {
-                throw new RuntimeException('The Google network currency or timezone changed. Reconnect the ad unit from the website Reports section.');
+                || ! preg_match('/^[A-Z]{3}$/D', (string) ($network['currencyCode'] ?? ''))
+                || ($network['timeZone'] ?? '') !== $connection->timezone) {
+                throw new RuntimeException('The Google network identity or timezone changed. Reconnect the ad unit from the website Reports section.');
             }
+            $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+            if ($connection->currency !== $canonical) {
+                throw new RuntimeException('This GAM reporting connection has not completed canonical USD migration yet.');
+            }
+            $configuration['network_currency'] = strtoupper((string) $network['currencyCode']);
+            $configuration['report_currency'] = $canonical;
             $date = fn (CarbonInterface $day): array => ['year' => $day->year, 'month' => $day->month, 'day' => $day->day];
             $query = [
                 'dimensions' => $granularity === ReportGranularity::Hourly ? ['DATE', 'HOUR', 'AD_UNIT_ID'] : ['DATE', 'AD_UNIT_ID'],
@@ -69,7 +78,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             if (! ctype_digit($jobId)) {
                 throw new RuntimeException('Google did not return a valid report job ID.');
             }
-            $configuration['google_jobs'][$key] = ['id' => $jobId, 'requested_at' => now()->toIso8601String()];
+            $configuration['google_jobs'][$key] = ['id' => $jobId, 'requested_at' => now()->toIso8601String(), 'report_currency' => $connection->currency];
             $connection->update(['configuration' => $configuration]);
         }
         $status = $this->google->call($binding->gamConnection, 'ReportService', 'getReportJobStatus', ['reportJobId' => $jobId]);

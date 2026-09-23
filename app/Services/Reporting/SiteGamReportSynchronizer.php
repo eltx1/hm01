@@ -12,17 +12,24 @@ use Carbon\CarbonImmutable;
 
 final class SiteGamReportSynchronizer
 {
-    public function __construct(private readonly ReportImportService $imports) {}
+    public function __construct(
+        private readonly ReportImportService $imports,
+        private readonly SiteGamReportingCurrencyPolicy $currencyPolicy,
+    ) {}
 
     public function sync(SiteGamReportBinding $binding): array
     {
         $binding->loadMissing('connection.source', 'gamConnection');
-        $connection = $binding->connection;
+        $connection = $this->currencyPolicy->normalize($binding);
         if (! $connection?->is_enabled || ! $connection->source->is_enabled || $connection->status->value === 'DISABLED'
             || ! $binding->gamConnection?->is_enabled) {
             return [];
         }
         $now = CarbonImmutable::now($connection->timezone);
+        $first = CarbonImmutable::parse($binding->starts_on->toDateString(), $connection->timezone);
+        if ($cutover = data_get($connection->configuration, 'canonical_currency_start_on')) {
+            $first = $first->max(CarbonImmutable::parse((string) $cutover, $connection->timezone));
+        }
         $results = [];
         // Finish yesterday's in-flight request even when the calendar range has moved on.
         $pending = $connection->imports()->whereIn('status', ['PENDING', 'FAILED'])
@@ -32,20 +39,37 @@ final class SiteGamReportSynchronizer
             if (! in_array($job->fresh()->status, [ReportImportStatus::Pending, ReportImportStatus::Failed], true)) {
                 continue;
             }
-            if (! $this->open($job->period_start->toDateString(), $connection->currency)) {
+
+            $retryFrom = CarbonImmutable::parse($job->period_start, $connection->timezone)->max($first);
+            $retryTo = CarbonImmutable::parse($job->period_end, $connection->timezone);
+            if ($retryTo->lt($first)) {
+                $job->update([
+                    'status' => ReportImportStatus::Duplicate,
+                    'next_retry_at' => null,
+                    'completed_at' => now(),
+                    'error_message' => null,
+                ]);
                 continue;
             }
-            $intraday = $job->period_end->toDateString() >= $now->toDateString();
+            if (! $this->open($retryFrom->toDateString(), $connection->currency)) {
+                continue;
+            }
+
+            $intraday = $retryTo->toDateString() >= $now->toDateString();
             $finality = $job->granularity === ReportGranularity::Hourly
                 ? ($intraday ? ReportFinality::Estimated : ReportFinality::Finalized) : $job->finality;
-            $result = $this->imports->runConnection($connection,
-                CarbonImmutable::parse($job->period_start), CarbonImmutable::parse($job->period_end), ReportGranularity::Daily, $finality);
-            $key = $intraday ? 'intraday_'.$job->period_start->toDateString()
-                : 'daily_'.$job->period_start->toDateString().'_'.$job->period_end->toDateString();
+            $result = $this->imports->runConnection(
+                $connection,
+                $retryFrom,
+                $retryTo,
+                ReportGranularity::Daily,
+                $finality,
+            );
+            $key = $intraday ? 'intraday_'.$retryFrom->toDateString()
+                : 'daily_'.$retryFrom->toDateString().'_'.$retryTo->toDateString();
             $this->next($connection, $key, $result, $intraday ? 60 : 360);
             $results[] = $result;
         }
-        $first = CarbonImmutable::parse($binding->starts_on->toDateString(), $connection->timezone);
         $last = $binding->ends_on ? $now->subDay()->min(CarbonImmutable::parse($binding->ends_on->toDateString(), $connection->timezone)) : $now->subDay();
         for ($month = $first->startOfMonth(); $month->lte($last); $month = $month->addMonth()) {
             if (! $this->open($month->toDateString(), $connection->currency)) {
