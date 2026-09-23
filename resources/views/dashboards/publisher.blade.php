@@ -41,7 +41,7 @@
                 <p>Estimated earnings today · {{ number_format((int) $primary['today_impressions']) }} impressions</p>
             @else
                 <span class="workspace-launch-value">{{ $currency }} {{ \App\Support\Money::formatMinor((int) $primary['finalized_earnings_minor']) }}</span>
-                <p>Finalized earnings this month. Today's estimate will appear when reporting arrives.</p>
+                <p>{{ number_format((int) $reporting['impressions']) }} finalized impressions this month. Today's estimate will appear when reporting arrives.</p>
             @endif
         </div>
         <span class="workspace-launch-action">Open reports &amp; earnings →</span>
