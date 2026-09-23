@@ -30,16 +30,32 @@ final class ReportingBridge
             GamConnectionType::PublisherGam => ReportSourceCode::PublisherGam,
         };
 
-        return $this->connection(
+        $canonicalCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        if (! preg_match('/^[A-Z]{3}$/D', $canonicalCurrency)) {
+            $canonicalCurrency = 'USD';
+        }
+
+        $connection = $this->connection(
             $sourceCode,
             $gam->organization_id,
             'GAM_CONNECTION',
             $gam->id,
             $gam->name,
             $gam->network_code,
-            data_get($gam->configuration, 'currency', config('reporting.default_currency', 'USD')),
+            $canonicalCurrency,
             $actor,
         );
+
+        $configuration = (array) ($connection->configuration ?? []);
+        $sourceCurrency = strtoupper(trim((string) data_get($gam->configuration, 'currency', '')));
+        $configuration['currency_policy'] = 'CANONICAL_REPORTING_CURRENCY';
+        $configuration['report_currency'] = $canonicalCurrency;
+        if (preg_match('/^[A-Z]{3}$/D', $sourceCurrency) === 1) {
+            $configuration['source_network_currency'] = $sourceCurrency;
+        }
+        $connection->update(['configuration' => $configuration]);
+
+        return $connection;
     }
 
     public function connectionForDemand(DemandAccount $account, ?User $actor = null): ReportSourceConnection
