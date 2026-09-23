@@ -34,10 +34,12 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         }
         $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['gamConnection', 'site'])
             ->where('report_source_connection_id', $connection->id)->findOrFail($connection->connection_id);
+        $currencyCutover = data_get($connection->configuration, 'canonical_currency_start_on');
         if (! $connection->is_enabled || ! $binding->gamConnection?->is_enabled || ! $binding->site
             || $binding->organization_id !== $connection->organization_id
             || $binding->site->organization_id !== $binding->organization_id
             || $from->toDateString() < $binding->starts_on->toDateString()
+            || ($currencyCutover && $from->toDateString() < (string) $currencyCutover)
             || ($binding->ends_on && $to->toDateString() > $binding->ends_on->toDateString())
             || $to->lt($from) || $from->diffInDays($to) > 32
             || $to->toDateString() > CarbonImmutable::now($connection->timezone)->toDateString()
