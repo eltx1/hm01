@@ -63,11 +63,6 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         if (! $connection->is_enabled || ! $gam->is_enabled || $to->lt($from) || $from->diffInDays($to) > 32) {
             throw new RuntimeException('The GAM report dates or connection are not valid for automatic financial reporting.');
         }
-        if ($finality === ReportFinality::Finalized
-            && $to->toDateString() >= CarbonImmutable::now($connection->timezone)->toDateString()) {
-            throw new RuntimeException('A finalized GAM report cannot include the current reporting day.');
-        }
-
         $key = hash('sha256', implode('|', [
             'full-network', $granularity->value, $from->toDateString(), $to->toDateString(), $canonicalCurrency,
             hash('sha256', json_encode($options['statement'] ?? null, JSON_THROW_ON_ERROR)),
@@ -85,8 +80,23 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             if (preg_match('/^[A-Z]{3}$/D', $sourceCurrency) === 1) {
                 $configuration['source_network_currency'] = $sourceCurrency;
             }
+
+            $networkTimezone = trim((string) ($network['timeZone'] ?? ''));
+            if ($networkTimezone !== '') {
+                try {
+                    CarbonImmutable::now($networkTimezone);
+                    $connection->timezone = $networkTimezone;
+                } catch (\Throwable) {
+                    throw new RuntimeException('Google returned an invalid GAM network timezone.');
+                }
+            }
             $configuration['currency_policy'] = 'CANONICAL_REPORTING_CURRENCY';
             $configuration['report_currency'] = $canonicalCurrency;
+
+            if ($finality === ReportFinality::Finalized
+                && $to->toDateString() >= CarbonImmutable::now($connection->timezone)->toDateString()) {
+                throw new RuntimeException('A finalized GAM report cannot include the current reporting day.');
+            }
 
             $date = fn (CarbonInterface $day): array => [
                 'year' => $day->year,
@@ -126,7 +136,13 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                 'requested_at' => now()->toIso8601String(),
                 'currency' => $canonicalCurrency,
             ];
-            $connection->update(['configuration' => $configuration]);
+            $connection->update([
+                'configuration' => $configuration,
+                'timezone' => $connection->timezone,
+            ]);
+        } elseif ($finality === ReportFinality::Finalized
+            && $to->toDateString() >= CarbonImmutable::now($connection->timezone)->toDateString()) {
+            throw new RuntimeException('A finalized GAM report cannot include the current reporting day.');
         }
 
         $status = $this->google->call($gam, 'ReportService', 'getReportJobStatus', ['reportJobId' => $jobId]);
