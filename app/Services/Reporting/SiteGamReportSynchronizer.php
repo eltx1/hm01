@@ -41,16 +41,34 @@ final class SiteGamReportSynchronizer
             if (! in_array($job->fresh()->status, [ReportImportStatus::Pending, ReportImportStatus::Failed], true)) {
                 continue;
             }
-            if (! $this->open($job->period_start->toDateString(), $connection->currency)) {
+
+            $retryFrom = CarbonImmutable::parse($job->period_start, $connection->timezone)->max($first);
+            $retryTo = CarbonImmutable::parse($job->period_end, $connection->timezone);
+            if ($retryTo->lt($first)) {
+                $job->update([
+                    'status' => ReportImportStatus::Duplicate,
+                    'next_retry_at' => null,
+                    'completed_at' => now(),
+                    'error_message' => null,
+                ]);
                 continue;
             }
-            $intraday = $job->period_end->toDateString() >= $now->toDateString();
+            if (! $this->open($retryFrom->toDateString(), $connection->currency)) {
+                continue;
+            }
+
+            $intraday = $retryTo->toDateString() >= $now->toDateString();
             $finality = $job->granularity === ReportGranularity::Hourly
                 ? ($intraday ? ReportFinality::Estimated : ReportFinality::Finalized) : $job->finality;
-            $result = $this->imports->runConnection($connection,
-                CarbonImmutable::parse($job->period_start), CarbonImmutable::parse($job->period_end), ReportGranularity::Daily, $finality);
-            $key = $intraday ? 'intraday_'.$job->period_start->toDateString()
-                : 'daily_'.$job->period_start->toDateString().'_'.$job->period_end->toDateString();
+            $result = $this->imports->runConnection(
+                $connection,
+                $retryFrom,
+                $retryTo,
+                ReportGranularity::Daily,
+                $finality,
+            );
+            $key = $intraday ? 'intraday_'.$retryFrom->toDateString()
+                : 'daily_'.$retryFrom->toDateString().'_'.$retryTo->toDateString();
             $this->next($connection, $key, $result, $intraday ? 60 : 360);
             $results[] = $result;
         }
