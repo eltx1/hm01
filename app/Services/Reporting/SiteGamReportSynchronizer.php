@@ -5,24 +5,22 @@ namespace App\Services\Reporting;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
 use App\Enums\ReportImportStatus;
-use App\Models\DailyReport;
 use App\Models\FinancialPeriod;
 use App\Models\ReportImportJob;
 use App\Models\SiteGamReportBinding;
-use App\Services\Audit\AuditRecorder;
 use Carbon\CarbonImmutable;
 
 final class SiteGamReportSynchronizer
 {
     public function __construct(
         private readonly ReportImportService $imports,
-        private readonly AuditRecorder $audit,
+        private readonly SiteGamReportingCurrencyPolicy $currencyPolicy,
     ) {}
 
     public function sync(SiteGamReportBinding $binding): array
     {
         $binding->loadMissing('connection.source', 'gamConnection');
-        $connection = $this->ensureCanonicalCurrency($binding);
+        $connection = $this->currencyPolicy->normalize($binding);
         if (! $connection?->is_enabled || ! $connection->source->is_enabled || $connection->status->value === 'DISABLED'
             || ! $binding->gamConnection?->is_enabled) {
             return [];
@@ -100,52 +98,6 @@ final class SiteGamReportSynchronizer
         }
 
         return $results;
-    }
-
-    private function ensureCanonicalCurrency(SiteGamReportBinding $binding)
-    {
-        $connection = $binding->connection;
-        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
-        if (! $connection || $connection->currency === $canonical) {
-            return $connection;
-        }
-
-        $networkCurrency = strtoupper((string) $connection->currency);
-        $closedThrough = DailyReport::withoutGlobalScopes()
-            ->where('report_source_connection_id', $connection->id)
-            ->whereHas('period', fn ($query) => $query->where('status', '!=', 'OPEN'))
-            ->max('report_date');
-
-        $cutover = CarbonImmutable::parse($binding->starts_on->toDateString(), $connection->timezone);
-        if ($closedThrough) {
-            $cutover = $cutover->max(CarbonImmutable::parse($closedThrough, $connection->timezone)->addDay());
-        }
-
-        $configuration = (array) ($connection->configuration ?? []);
-        $configuration['network_currency'] = (string) data_get($configuration, 'network_currency', $networkCurrency);
-        $configuration['report_currency'] = $canonical;
-        $configuration['canonical_currency_start_on'] = $cutover->toDateString();
-        unset($configuration['google_jobs'], $configuration['sync_due']);
-
-        $connection->update([
-            'currency' => $canonical,
-            'configuration' => $configuration,
-            'last_successful_import_at' => null,
-            'last_finalized_import_at' => null,
-            'last_error' => null,
-        ]);
-
-        $this->audit->record(
-            'reporting.site_gam.currency_normalized',
-            $binding->organization_id,
-            null,
-            $binding,
-            ['report_currency' => $networkCurrency],
-            ['report_currency' => $canonical],
-            ['network_currency' => $networkCurrency, 'cutover_start_on' => $cutover->toDateString()],
-        );
-
-        return $connection->fresh(['source']);
     }
 
     private function open(string $day, string $currency): bool
