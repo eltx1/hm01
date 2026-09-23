@@ -144,13 +144,15 @@ class GamRestConnectorTest extends TestCase
         // DAILY estimated snapshot instead of inventing hourly attribution.
         $job = app(ReportImportService::class)->runConnection(
             $reportConnection->fresh(),
-            $day,
-            $day,
+            CarbonImmutable::parse('2026-09-19 21:30:00', 'UTC'),
+            CarbonImmutable::parse('2026-09-19 22:30:00', 'UTC'),
             ReportGranularity::Hourly,
             ReportFinality::Estimated,
             $actor,
         );
         $this->assertSame(ReportGranularity::Daily, $job->granularity);
+        $this->assertSame('2026-09-20', $job->period_start->toDateString());
+        $this->assertSame('2026-09-20', $job->period_end->toDateString());
         $this->assertSame('COMPLETED', $job->status->value);
         $intradayCall = collect($google->calls)->where('method', 'runReportJob')->last();
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($intradayCall, 'payload.reportJob.reportQuery.dimensions'));
