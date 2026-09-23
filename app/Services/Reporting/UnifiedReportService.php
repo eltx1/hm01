@@ -105,29 +105,46 @@ final class UnifiedReportService
         CarbonInterface|string|null $to = null,
     ): array {
         [$from, $to] = $this->range($from, $to);
-        // Advertiser delivery is sourced from the campaign delivery log, not
-        // from the publisher revenue ledger. A Site GAM binding may correctly
-        // exclude a campaign bridge row from publisher finance to prevent
-        // double counting; that must never erase advertiser delivery/cost.
         $campaigns = Campaign::withoutGlobalScopes()
             ->where('advertiser_id', $advertiser->id)
             ->get(['id', 'name', 'total_budget_minor', 'currency']);
-        $rows = CampaignDeliveryLog::withoutGlobalScopes()
+
+        // CampaignDeliveryLog is authoritative when the campaign sync path has
+        // recorded a given campaign/day. AdvertiserReport remains a valid
+        // fallback for imported reporting sources that do not pass through the
+        // campaign sync service. Prefer per campaign/day so the two stores are
+        // never summed twice.
+        $deliveryRows = CampaignDeliveryLog::withoutGlobalScopes()
             ->whereIn('campaign_id', $campaigns->pluck('id'))
             ->whereDate('report_date', '>=', $from->toDateString())
             ->whereDate('report_date', '<=', $to->toDateString())
             ->with('campaign')
             ->get();
+        $advertiserRows = AdvertiserReport::withoutGlobalScopes()
+            ->where('advertiser_id', $advertiser->id)
+            ->whereDate('report_date', '>=', $from->toDateString())
+            ->whereDate('report_date', '<=', $to->toDateString())
+            ->with('campaign')
+            ->get();
+
+        $deliveryDays = $deliveryRows->map(
+            fn ($row): string => $row->campaign_id.'|'.$row->report_date->toDateString()
+        )->unique()->flip();
+        $rows = $deliveryRows->concat($advertiserRows->reject(
+            fn ($row): bool => $deliveryDays->has($row->campaign_id.'|'.$row->report_date->toDateString())
+        ));
+
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
+        $spend = (int) $rows->sum('spend_minor');
 
         return [
             'from' => $from, 'to' => $to,
             'impressions' => $impressions,
             'clicks' => $clicks,
             'ctr_bp' => $impressions > 0 ? (int) round($clicks * 10000 / $impressions) : 0,
-            'spend_minor' => (int) $rows->sum('spend_minor'),
-            'remaining_budget_minor' => max(0, (int) $campaigns->sum('total_budget_minor') - (int) $rows->sum('spend_minor')),
+            'spend_minor' => $spend,
+            'remaining_budget_minor' => max(0, (int) $campaigns->sum('total_budget_minor') - $spend),
             'campaigns' => $rows->groupBy('campaign_id')->map(function (Collection $group): array {
                 $campaign = $group->first()->campaign;
                 $impressions = (int) $group->sum('impressions');
