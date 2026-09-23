@@ -55,7 +55,7 @@
                 <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
                 <x-brand.product-lockup context="workspace" variant="header" :href="url('/')" :compact="true" class="mobile-product-lockup" />
                 <div class="topbar-title">
-                    <p class="eyebrow">app.horusmedia.net</p>
+                    <p class="eyebrow"><a class="topbar-home-link" href="{{ route('dashboard') }}">Home</a> <span aria-hidden="true">/</span> {{ $workspaceLabel }}</p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
                 @if(auth()->user()->hasPermission('notifications.view_own'))
