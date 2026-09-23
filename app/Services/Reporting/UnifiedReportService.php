@@ -7,7 +7,6 @@ use App\Enums\ReportFinality;
 use App\Enums\ReportSourceCode;
 use App\Models\Advertiser;
 use App\Models\AdvertiserInvoice;
-use App\Models\AdvertiserReport;
 use App\Models\Campaign;
 use App\Models\CampaignDeliveryLog;
 use App\Models\DailyReport;
