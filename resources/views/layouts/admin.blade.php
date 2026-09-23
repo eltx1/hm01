@@ -16,6 +16,15 @@
         default => 'Workspace',
     })
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
+    @php
+        $navigationContext = collect($navigationGroups)->map(function (array $group): ?array {
+            $item = collect($group['items'])->first(function (array $item): bool {
+                return collect($item['active'])->contains(fn (string $pattern): bool => request()->routeIs($pattern));
+            });
+
+            return $item ? ['group' => $group['label'], 'item' => $item['label']] : null;
+        })->filter()->first();
+    @endphp
     @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
     <title>@yield('title', 'Dashboard') · {{ $brandIdentity->name }}</title>
@@ -42,7 +51,12 @@
                 <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
                 <x-brand.product-lockup context="workspace" variant="header" :href="url('/')" :compact="true" class="mobile-product-lockup" />
                 <div class="topbar-title">
-                    <p class="eyebrow">app.horusmedia.net</p>
+                    <p class="eyebrow">
+                        {{ $workspaceLabel }}
+                        @if($navigationContext)
+                            · {{ $navigationContext['group'] }} · {{ $navigationContext['item'] }}
+                        @endif
+                    </p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
                 @if(auth()->user()->hasPermission('notifications.view_own'))
