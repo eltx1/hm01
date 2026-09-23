@@ -17,7 +17,7 @@
         <div class="status-row">
             <x-status-badge :status="$publisher->status" />
             @if(auth()->user()->hasPermission('finance.publisher.view_own'))
-                <a class="hm-button-primary button-link" href="{{ route('publisher.finance.overview') }}">View earnings</a>
+                <a class="hm-button-primary button-link" href="{{ route('publisher.finance.overview') }}">View reports &amp; earnings</a>
             @endif
             @if(auth()->user()->hasPermission('sites.view'))
                 <a class="hm-button-secondary button-link" href="{{ route('publisher.sites.index') }}">Manage websites</a>
@@ -36,7 +36,7 @@
 
 <nav class="dashboard-shortcuts" aria-label="Publisher quick actions">
     @if(auth()->user()->hasPermission('finance.publisher.view_own'))
-        <a href="{{ route('publisher.finance.overview') }}"><span class="shortcut-icon" aria-hidden="true">$</span><strong>Earnings</strong><small>Today, month-to-date, statements and payouts</small></a>
+        <a href="{{ route('publisher.finance.overview') }}"><span class="shortcut-icon" aria-hidden="true">$</span><strong>Reports &amp; Earnings</strong><small>Today, month-to-date, statements and payouts</small></a>
     @endif
     @if(auth()->user()->hasPermission('sites.view'))
         <a href="{{ route('publisher.sites.index') }}"><span class="shortcut-icon" aria-hidden="true">◎</span><strong>Websites</strong><small>Status, setup, ads.txt and installation codes</small></a>
