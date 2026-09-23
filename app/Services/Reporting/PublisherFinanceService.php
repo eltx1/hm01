@@ -122,17 +122,39 @@ final class PublisherFinanceService
     public function dashboard(Publisher $publisher): array
     {
         $overview = $this->overview($publisher);
+        $currency = strtoupper((string) config('reporting.dashboard_currency', 'USD'));
+        $primary = $overview['currencies']->firstWhere('currency', $currency) ?? [
+            'currency' => $currency,
+            'today_available' => false,
+            'today_impressions' => 0,
+            'today_clicks' => 0,
+            'today_estimated_earnings_minor' => 0,
+            'estimated_earnings_minor' => 0,
+            'finalized_earnings_minor' => 0,
+            'statement_balance_due_minor' => 0,
+            'paid_minor' => 0,
+        ];
         $impressions = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $currency)
             ->where('finality', ReportFinality::Finalized->value)
             ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('report_date', '<=', now()->toDateString())
             ->sum('impressions');
 
         return [
+            'currency' => $currency,
             'impressions' => (int) $impressions,
-            'currencies' => $overview['currencies'],
-            'statements' => $overview['statements'],
+            'today_available' => (bool) ($primary['today_available'] ?? false),
+            'today_impressions' => (int) ($primary['today_impressions'] ?? 0),
+            'today_clicks' => (int) ($primary['today_clicks'] ?? 0),
+            'today_estimated_earnings_minor' => (int) ($primary['today_estimated_earnings_minor'] ?? 0),
+            'estimated_earnings_minor' => (int) ($primary['estimated_earnings_minor'] ?? 0),
+            'finalized_earnings_minor' => (int) ($primary['finalized_earnings_minor'] ?? 0),
+            'payment_balance_minor' => (int) ($primary['statement_balance_due_minor'] ?? 0),
+            'paid_minor' => (int) ($primary['paid_minor'] ?? 0),
+            'has_legacy_currencies' => $overview['currencies']->contains(fn (array $summary): bool => $summary['currency'] !== $currency),
+            'statements' => collect($overview['statements'])->where('currency', $currency)->values(),
         ];
     }
 
