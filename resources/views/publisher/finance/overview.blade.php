@@ -1,75 +1,91 @@
 @extends('layouts.admin')
-@section('title', 'Earnings & Payments')
-@section('heading', 'Earnings & Payments')
+@section('title', 'Earnings')
+@section('heading', 'Earnings')
 @section('content')
 @include('publisher.finance._tabs')
 
-<section class="hero">
+@php($canonicalCurrency = strtoupper((string) config('reporting.dashboard_currency', 'USD')))
+
+<section class="hero dashboard-hero">
     <div>
         <p class="eyebrow">{{ $publisher->display_name }}</p>
-        <h2>Your financial position, without estimated/finalized mixing</h2>
-        <p>Every currency is shown separately. Estimated reporting can change; finalized earnings and statement balances are the accounting record.</p>
+        <h2>Your earnings, without accounting jargon.</h2>
+        <p>Use this page for today’s estimate, month-to-date earnings, finalized statements and payout status. Horus reporting is standardized to US Dollar (USD).</p>
     </div>
-    <x-status-badge :status="$profile?->verification_status ?? 'INCOMPLETE'" />
+    <div class="hero-stat"><span>Primary currency</span><strong>{{ $canonicalCurrency }}</strong><small>US Dollar</small></div>
 </section>
 
-<article>
-    <p class="eyebrow">Action Center</p>
-    <h2>What you need to do</h2>
-    @forelse($actions as $action)
-        <div class="event"><strong>{{ $action['label'] }}</strong><span class="pill">{{ str($action['code'])->replace('_', ' ')->headline() }}</span></div>
-    @empty
-        <x-empty-state title="No finance actions required" description="Your current payment and statement setup has no outstanding Publisher action." />
-    @endforelse
+@if($actions !== [] && ! (count($actions) === 1 && ($actions[0]['code'] ?? null) === 'NONE'))
+<article class="workspace-section">
+    <div class="workspace-heading"><div><p class="eyebrow">Needs attention</p><h2>Payment actions</h2></div></div>
+    <div class="compact-list">
+        @foreach($actions as $action)
+            <div class="compact-row"><div><strong>{{ $action['label'] }}</strong><p>{{ str($action['code'])->replace('_', ' ')->headline() }}</p></div><x-status-badge status="PENDING" /></div>
+        @endforeach
+    </div>
 </article>
+@endif
 
 @forelse($currencies as $currency)
-    <section class="workspace-section">
-        <div class="workspace-heading">
-            <div><p class="eyebrow">{{ $currency['currency'] }}</p><h2>{{ $currency['current_period'] }} financial position</h2></div>
-            <span class="pill">{{ $currency['readiness']['label'] }}</span>
-        </div>
-        <article class="domain-card">
+    @php($isCanonical = $currency['currency'] === $canonicalCurrency)
+    @if($isCanonical)
+        <section class="workspace-section finance-primary-section">
             <div class="workspace-heading">
-                <div><p class="eyebrow">Today so far</p><h3>Publisher-safe live estimate</h3></div>
-                <span class="pill">{{ $currency['today_available'] ? 'ESTIMATED' : 'WAITING' }}</span>
+                <div><p class="eyebrow">US Dollar · primary reporting</p><h2>{{ $currency['current_period'] }} earnings</h2></div>
+                <span class="pill">{{ $currency['readiness']['label'] }}</span>
             </div>
-            @if($currency['today_available'])
-                <section class="metric-grid">
-                    <article><p class="eyebrow">Impressions</p><strong class="metric-small">{{ number_format((int) $currency['today_impressions']) }}</strong><span class="table-note">Source-local reporting day</span></article>
-                    <article><p class="eyebrow">Clicks</p><strong class="metric-small">{{ number_format((int) $currency['today_clicks']) }}</strong><span class="table-note">Source-local reporting day</span></article>
-                    <article><p class="eyebrow">Estimated earnings</p><strong class="metric-small money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['today_estimated_earnings_minor']) }}</strong><span class="table-note">Your contractual share only</span></article>
-                </section>
-                <p class="muted">Today so far is estimated and may change before finalization. Internal platform economics are not Publisher-visible. @if($currency['today_updated_at']) Last ledger update: {{ $currency['today_updated_at']->format('Y-m-d H:i:s') }}.@endif</p>
-            @else
-                <p class="muted">No current-day estimated rows are available yet for this currency. Finalized accounting remains unchanged.</p>
-            @endif
-        </article>
-        <section class="metric-grid">
-            @foreach([
-                ['Estimated earnings', $currency['estimated_earnings_minor'], 'Not finalized'],
-                ['Finalized earnings', $currency['finalized_earnings_minor'], 'Current period finalized ad earnings'],
-                ['Affiliate earnings', $currency['affiliate_earnings_minor'], 'Latest finalized statement'],
-                ['Current payable', $currency['current_payable_minor'], 'Finalized statement liability'],
-                ['Below threshold', $currency['below_threshold_minor'], 'Not yet payable'],
-                ['Carry-forward', $currency['carry_forward_minor'], 'Remaining statement balance'],
-                ['Pending payout', $currency['pending_payout_minor'], 'Created or approved'],
-                ['Scheduled payout', $currency['scheduled_payout_minor'], 'Has a scheduled date'],
-                ['Paid', $currency['paid_minor'], 'Settled amount only'],
-            ] as [$label, $minor, $note])
-                <article><p class="eyebrow">{{ $label }}</p><strong class="metric-small money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $minor) }}</strong><span class="table-note">{{ $note }}</span></article>
-            @endforeach
+
+            <article class="today-card">
+                <div class="workspace-heading">
+                    <div><p class="eyebrow">Today so far</p><h3>Estimated earnings</h3></div>
+                    <span class="pill">{{ $currency['today_available'] ? 'ESTIMATED' : 'WAITING' }}</span>
+                </div>
+                @if($currency['today_available'])
+                    <div class="dashboard-metrics dashboard-metrics-compact">
+                        <div><span>Estimated earnings</span><strong>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['today_estimated_earnings_minor']) }}</strong></div>
+                        <div><span>Impressions</span><strong>{{ number_format((int) $currency['today_impressions']) }}</strong></div>
+                        <div><span>Clicks</span><strong>{{ number_format((int) $currency['today_clicks']) }}</strong></div>
+                    </div>
+                    <p class="muted">Today is estimated and can change before Google finalizes the reporting day.@if($currency['today_updated_at']) Last imported {{ $currency['today_updated_at']->diffForHumans() }}.@endif</p>
+                @else
+                    <p class="muted">Today’s first report has not arrived yet. This updates automatically.</p>
+                @endif
+            </article>
+
+            <section class="dashboard-metrics">
+                <article class="dashboard-metric-card is-primary"><p class="eyebrow">Estimated this month</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['estimated_earnings_minor']) }}</strong><span class="muted">Not finalized yet</span></article>
+                <article class="dashboard-metric-card"><p class="eyebrow">Finalized this month</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['finalized_earnings_minor']) }}</strong><span class="muted">Accounting record</span></article>
+                <article class="dashboard-metric-card"><p class="eyebrow">Current balance</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['statement_balance_due_minor']) }}</strong><span class="muted">Latest finalized statement</span></article>
+                <article class="dashboard-metric-card"><p class="eyebrow">Paid</p><strong class="metric">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['paid_minor']) }}</strong><span class="muted">Settled payouts</span></article>
+            </section>
+
+            <details class="finance-details">
+                <summary>More financial details</summary>
+                <div class="summary-grid">
+                    <div><strong>Affiliate earnings</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['affiliate_earnings_minor']) }}</span></div>
+                    <div><strong>Payment threshold</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['payment_threshold_minor']) }}</span></div>
+                    <div><strong>Below threshold</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['below_threshold_minor']) }}</span></div>
+                    <div><strong>Carry-forward</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['carry_forward_minor']) }}</span></div>
+                    <div><strong>Pending payout</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['pending_payout_minor']) }}</span></div>
+                    <div><strong>Scheduled payout</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['scheduled_payout_minor']) }}</span></div>
+                    <div><strong>Current period</strong><span>{{ $currency['current_period_status'] }}</span></div>
+                    <div><strong>Last statement</strong><span>{{ $currency['last_finalized_period'] ?: 'Not finalized yet' }}</span></div>
+                </div>
+            </details>
         </section>
-        <article>
+    @else
+        <details class="workspace-section legacy-finance-section">
+            <summary><strong>Historical {{ $currency['currency'] }} activity</strong> · preserved for audit and prior payouts</summary>
+            <p class="muted">This currency is historical or belongs to a non-canonical financial record. New Google Ad Manager website reporting is requested in USD.</p>
             <div class="summary-grid">
-                <div><strong>Payment threshold</strong><span class="money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['payment_threshold_minor']) }}</span></div>
-                <div><strong>Opening carry-forward</strong><span class="money">{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['opening_carry_forward_minor']) }}</span></div>
-                <div><strong>Current period state</strong><x-status-badge :status="$currency['current_period_status']" /></div>
-                <div><strong>Last finalized period</strong><span>{{ $currency['last_finalized_period'] ?: 'No finalized statement' }}</span></div>
+                <div><strong>Finalized earnings</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['finalized_earnings_minor']) }}</span></div>
+                <div><strong>Balance</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['statement_balance_due_minor']) }}</span></div>
+                <div><strong>Paid</strong><span>{{ $currency['currency'] }} {{ \App\Support\Money::formatMinor((int) $currency['paid_minor']) }}</span></div>
+                <div><strong>Last statement</strong><span>{{ $currency['last_finalized_period'] ?: 'None' }}</span></div>
             </div>
-        </article>
-    </section>
+        </details>
+    @endif
 @empty
-    <x-empty-state title="No earnings data yet" description="Estimated and finalized earnings will appear here after reporting data is available for your Publisher account." />
+    <x-empty-state title="No earnings data yet" description="Earnings appear here automatically after your first reporting import." />
 @endforelse
 @endsection
