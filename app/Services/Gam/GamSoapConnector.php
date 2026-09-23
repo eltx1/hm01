@@ -90,13 +90,6 @@ final class GamSoapConnector implements GamConnectorInterface
 
     public function runReport(array $reportQuery, array $options = []): GamResult
     {
-        // Horus uses the REST field name internally. Translate it when the
-        // capability router sends a report through the SOAP fallback.
-        if (isset($reportQuery['currencyCode']) && ! isset($reportQuery['reportCurrency'])) {
-            $reportQuery['reportCurrency'] = strtoupper((string) $reportQuery['currencyCode']);
-            unset($reportQuery['currencyCode']);
-        }
-
         return $this->write(__FUNCTION__, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $reportQuery]], $options);
     }
 
