@@ -159,6 +159,22 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertDontSee('EUR 35.00');
     }
 
+    public function test_publisher_finance_always_exposes_canonical_usd_even_with_only_legacy_currency_context(): void
+    {
+        [, $publisher, $publisherAdmin] = $this->context();
+        PublisherContract::withoutGlobalScopes()
+            ->where('publisher_id', $publisher->id)
+            ->update(['currency' => 'EUR']);
+
+        $overview = app(PublisherFinanceService::class)->overview($publisher);
+        $this->assertNotNull($overview['currencies']->firstWhere('currency', 'USD'));
+        $this->assertNotNull($overview['currencies']->firstWhere('currency', 'EUR'));
+
+        $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'))
+            ->assertOk()
+            ->assertSee('Reporting currency · USD');
+    }
+
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
     {
         [$finance, $publisher, $publisherAdmin] = $this->context();
