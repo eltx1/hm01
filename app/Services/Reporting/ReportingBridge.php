@@ -58,6 +58,10 @@ final class ReportingBridge
             ->where('connection_type', 'GAM_CONNECTION')
             ->where('connection_id', $gam->id)
             ->first();
+        // Preserve the source-local reporting clock before connection()
+        // refreshes generic fields. Resetting an existing GAM source to UTC
+        // here would shift finalized daily windows for non-UTC networks.
+        $existingTimezone = trim((string) ($existing?->timezone ?? ''));
         if ($existing && strtoupper((string) $existing->currency) !== $canonicalCurrency) {
             $hasFinancialHistory = DailyReport::withoutGlobalScopes()
                 ->where('report_source_connection_id', $existing->id)
@@ -118,7 +122,7 @@ final class ReportingBridge
             ->orderByDesc('last_seen_at')
             ->first();
         $sourceCurrency = strtoupper(trim((string) ($network?->currency_code ?: data_get($gam->configuration, 'currency', ''))));
-        $networkTimezone = trim((string) ($network?->time_zone ?: $connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+        $networkTimezone = trim((string) ($network?->time_zone ?: $existingTimezone ?: $connection->timezone ?: config('reporting.default_timezone', 'UTC')));
         try {
             CarbonImmutable::now($networkTimezone);
         } catch (\Throwable) {
