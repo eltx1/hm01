@@ -14,12 +14,12 @@ currency. Totals from different currencies are never combined.
 
 ## Publisher workspace
 
-The role-aware navigation exposes four non-overlapping sections:
+The role-aware Publisher navigation is task-first. Earnings is one primary destination with four local tabs:
 
-- **Overview** separates current-period estimated earnings from finalized
-  earnings and shows a Publisher-safe **Today so far** block (impressions,
-  clicks, and estimated Publisher earnings only), plus payable, below-threshold,
-  carry-forward, pending, scheduled, and settled amounts per currency.
+- **Earnings** leads with canonical USD Today-so-far, estimated month-to-date,
+  finalized month-to-date, current statement balance, and paid amount. Secondary
+  accounting detail is collapsed so the first screen answers the Publisher's
+  normal questions without exposing internal economics.
 - **Statements** lists immutable finalized statements and provides a
   Publisher-safe detail and CSV projection.
 - **Payment Method** manages the Publisher's own encrypted payout destination.
@@ -38,9 +38,10 @@ canonical views. They do not maintain a duplicate finance product.
 - Statement amounts are finalized accounting records produced by
   `PublisherStatementService` when a financial period closes.
 
-Every overview card group is keyed by currency. The Publisher dashboard uses the
-same currency-separated summaries; non-money metrics such as impressions may be
-summed across currencies, but monetary balances are never combined. The active contract's payment
+The Publisher Home dashboard is canonical-USD-first. Historical statement or payout
+currencies remain available inside Earnings as separate audit records and are never
+combined with USD. Google Ad Manager website revenue is requested directly from
+Google in USD rather than converted by Horus. The active contract's payment
 threshold is converted from its fixed two-decimal database value to integer
 minor units with `App\Support\Money`; no floating-point accounting conversion
 is used.
