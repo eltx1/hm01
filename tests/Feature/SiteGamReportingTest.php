@@ -117,7 +117,7 @@ class SiteGamReportingTest extends TestCase
         return app(SiteGamReportingService::class)->bind($context[3], $context[4]->id, 'Publisher unit', $context[0]);
     }
 
-    private function csv(array $rows = [['2026-09-20', '12345', 120, 100, 20, 95, 3, 123450000]], bool $hourly = false): string
+    private function csv(array $rows = [['2026-09-20', '12345', 120, 100, 20, 95, 3, 'USD 123450000']], bool $hourly = false): string
     {
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, ['Dimension.DATE', ...($hourly ? ['Dimension.HOUR'] : []), 'Dimension.AD_UNIT_ID',
