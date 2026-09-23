@@ -8,6 +8,13 @@
     @php($brand = auth()->user()?->organization)
     @php($brandIdentity = app(\App\Support\Branding\BrandIdentityResolver::class)->forWorkspace(auth()->user()))
     @php($isHorusWorkspace = $brand?->type === \App\Enums\OrganizationType::HorusMedia)
+    @php($workspaceLabel = match($brand?->type) {
+        \App\Enums\OrganizationType::HorusMedia => 'Horus Admin',
+        \App\Enums\OrganizationType::Publisher => 'Publisher Workspace',
+        \App\Enums\OrganizationType::Advertiser => 'Advertiser Workspace',
+        \App\Enums\OrganizationType::Partner => 'Partner Workspace',
+        default => 'Workspace',
+    })
     @php($navigationGroups = auth()->check() ? app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for(auth()->user()) : [])
     @php($notificationPreview = auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get() : collect())
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
@@ -20,7 +27,7 @@
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
             <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
-            <p class="eyebrow">Ad Network Control Plane</p>
+            <p class="eyebrow">{{ $workspaceLabel }}</p>
             <x-control-plane.navigation :groups="$navigationGroups" />
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
@@ -41,7 +48,7 @@
                 @if(auth()->user()->hasPermission('notifications.view_own'))
                 <details class="notification-bell"><summary aria-label="Notifications">🔔 @if($unreadNotifications)<span aria-label="{{ $unreadNotifications }} unread notifications">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary><div class="notification-popover"><strong>Latest notifications</strong>@forelse($notificationPreview as $item)<a href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted">No notifications yet.</p>@endforelse<a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center</a></div></details>
                 @endif
-                <span class="status">Control Plane</span>
+                <span class="status">{{ $workspaceLabel }}</span>
             </header>
             @if(session()->has('impersonator_id'))
                 <form method="POST" action="{{ route('admin.impersonate.stop') }}" class="impersonation-banner">@csrf @method('DELETE') <span>Impersonating {{ auth()->user()->email }}</span> <button type="submit">Stop impersonation</button></form>
