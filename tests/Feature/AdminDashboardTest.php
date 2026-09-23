@@ -17,9 +17,20 @@ class AdminDashboardTest extends TestCase
         $this->seedIdentity();
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
 
-        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get('/')
-            ->assertOk()
-            ->assertSee('Total publishers')
-            ->assertSee('Recent audit events');
+        $response = $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get('/');
+        $response->assertOk()
+            ->assertSee('See what needs attention, then act.')
+            ->assertSee('Common workflows')
+            ->assertSee('Publishers')
+            ->assertSee('Websites')
+            ->assertSee('Reporting & Revenue')
+            ->assertSee('Recent audit activity');
+
+        $groups = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($admin));
+        $this->assertSame(
+            ['Home', 'Publishers & Sites', 'Monetization', 'Reporting & Finance', 'Trust & Operations', 'Platform'],
+            $groups->pluck('label')->all(),
+        );
+        $this->assertLessThanOrEqual(6, $groups->count());
     }
 }
