@@ -54,6 +54,29 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertDontSee('Production Operations');
     }
 
+    public function test_workspace_topbar_keeps_users_oriented_in_admin_and_publisher_flows(): void
+    {
+        $this->seedIdentity();
+
+        $publisherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $this->makePublisherFor($publisherUser);
+        $this->actingAs($publisherUser)
+            ->get(route('publisher.finance.overview'))
+            ->assertOk()
+            ->assertSee('Publisher Workspace')
+            ->assertSee('Earnings')
+            ->assertSee('Earnings &amp; Payments', false);
+
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $this->actingAs($admin)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.demand.quick.create'))
+            ->assertOk()
+            ->assertSee('Horus Admin')
+            ->assertSee('Monetization')
+            ->assertSee('Quick Monetize');
+    }
+
     public function test_dashboard_permission_is_required_even_for_an_active_user(): void
     {
         $this->seedIdentity();
