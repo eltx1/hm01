@@ -38,12 +38,21 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             'VIDEO_VIEWERSHIP_COMPLETE',
         ];
 
+        $canonicalCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        if (! preg_match('/^[A-Z]{3}$/D', $canonicalCurrency)) {
+            $canonicalCurrency = 'USD';
+        }
+        if (strtoupper((string) $connection->currency) !== $canonicalCurrency) {
+            throw new RuntimeException('GAM financial reporting must use the canonical Horus reporting currency.');
+        }
+
         $result = $this->connectors->for($gam)->runReport([
             'dimensions' => $dimensions,
             'columns' => $columns,
             'dateRangeType' => 'CUSTOM_DATE',
             'startDate' => $from->toDateString(),
             'endDate' => $to->toDateString(),
+            'currencyCode' => $canonicalCurrency,
             'statement' => $options['statement'] ?? null,
         ], [
             'dry_run' => false,
@@ -69,7 +78,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             ),
             'rows' => is_array($rows) ? $rows : [],
             'totals' => (array) (data_get($data, 'totals') ?? []),
-            'metadata' => ['gam_connection_id' => $gam->id, 'network_code' => $gam->network_code],
+            'metadata' => ['gam_connection_id' => $gam->id, 'network_code' => $gam->network_code, 'report_currency' => $canonicalCurrency],
         ];
     }
 }
