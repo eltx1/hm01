@@ -265,14 +265,20 @@ final class PublisherFinanceService
             ->distinct()
             ->pluck('currency');
 
+        $canonical = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+
         return collect([
             ...$reported,
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
             $contract?->currency,
             $publisher->paymentProfile?->currency,
-        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()->sort()->values()
-            ->whenEmpty(fn (Collection $currencies) => $currencies->push(strtoupper((string) config('reporting.default_currency', 'USD'))));
+        ])->filter()
+            ->map(fn ($currency) => strtoupper((string) $currency))
+            ->unique()
+            ->sortBy(fn (string $currency): string => ($currency === $canonical ? '0' : '1').$currency)
+            ->values()
+            ->whenEmpty(fn (Collection $currencies) => $currencies->push($canonical));
     }
 
     private function activeContract(Publisher $publisher): ?PublisherContract
