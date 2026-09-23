@@ -19,7 +19,10 @@ class AdminDashboardTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get('/')
             ->assertOk()
-            ->assertSee('Total publishers')
-            ->assertSee('Recent audit events');
+            ->assertSee('Publishers')
+            ->assertSee('Quick Monetize')
+            ->assertSee('What needs attention')
+            ->assertSee('Recent activity')
+            ->assertSee('Horus Admin');
     }
 }
