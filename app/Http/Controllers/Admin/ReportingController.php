@@ -37,7 +37,7 @@ class ReportingController extends Controller
         $to = $request->date('to') ?: now();
 
         return view('admin.reporting.index', [
-            'summary' => $reports->adminSummary($from, $to, $request->string('currency')->value() ?: null),
+            'summary' => $reports->adminSummary($from, $to, (string) config('reporting.canonical_currency', 'USD')),
             'sources' => ReportSource::query()->withCount('connections')->orderByDesc('is_primary')->orderBy('name')->get(),
             'connections' => ReportSourceConnection::withoutGlobalScopes()->with('source')->latest()->limit(100)->get(),
             'imports' => ReportImportJob::withoutGlobalScopes()->with('connection.source')->latest()->limit(100)->get(),
