@@ -34,7 +34,7 @@ class PublisherFinanceExperienceTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
-    public function test_publisher_finance_pages_separate_estimated_finalized_and_currencies(): void
+    public function test_publisher_finance_pages_prioritize_canonical_usd_and_preserve_legacy_currency_history(): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10));
 
@@ -59,12 +59,15 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $response = $this->actingAs($publisherAdmin)->get(route('publisher.finance.overview'));
         $response->assertOk()
+            ->assertSee('Reports & Earnings')
+            ->assertSee('Horus reports new ad revenue in')
             ->assertSee('Estimated earnings')
             ->assertSee('Finalized earnings')
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('Every currency is shown separately');
+            ->assertSee('Historical non-USD accounting')
+            ->assertSee('EUR historical record')
+            ->assertDontSee('EUR 35.00');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
         $this->get(route('publisher.finance.payouts.index'))->assertOk();
@@ -93,7 +96,7 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertSee('321')
             ->assertSee('7')
             ->assertSee('USD 70.00')
-            ->assertSee('Your contractual share only');
+            ->assertSee('Your contractual share');
 
         $summary = app(PublisherFinanceService::class)->overview($publisher);
         $usd = $summary['currencies']->firstWhere('currency', 'USD');
@@ -125,7 +128,7 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->assertSame(5000, $projection['line_items'][0]['amount_minor']);
     }
 
-    public function test_publisher_dashboard_separates_currencies_and_sums_non_money_metrics_across_them(): void
+    public function test_publisher_dashboard_uses_canonical_usd_and_keeps_legacy_currency_off_the_primary_home(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
@@ -143,11 +146,17 @@ class PublisherFinanceExperienceTest extends TestCase
 
         $page = $this->actingAs($publisherAdmin)->get(route('dashboard'));
         $page->assertOk()
-            ->assertSee('Publisher earnings · USD')
-            ->assertSee('Publisher earnings · EUR')
+            ->assertSee('See your money first')
+            ->assertSee('Reports & Earnings')
             ->assertSee('USD 70.00')
-            ->assertSee('EUR 35.00')
-            ->assertSee('150');
+            ->assertDontSee('EUR 35.00')
+            ->assertSee('100');
+
+        $dashboard = app(PublisherFinanceService::class)->dashboard($publisher);
+        $this->assertSame('USD', $dashboard['currency']);
+        $this->assertSame(100, $dashboard['impressions']);
+        $this->assertSame(7000, $dashboard['primary']['finalized_earnings_minor']);
+        $this->assertSame(1, $dashboard['legacy_currency_count']);
     }
 
     public function test_payment_profile_is_encrypted_masked_audited_and_reverification_is_automatic(): void
