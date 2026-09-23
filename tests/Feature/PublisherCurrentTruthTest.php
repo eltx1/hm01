@@ -24,14 +24,16 @@ class PublisherCurrentTruthTest extends TestCase
         $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher'), RoleName::PublisherAdmin);
         $this->makePublisherFor($user);
 
-        $labels = collect(app(ControlPlaneNavigation::class)->for($user))
-            ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        $navigation = collect(app(ControlPlaneNavigation::class)->for($user));
+        $labels = $navigation->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
 
         $this->assertFalse($labels->contains('Onboarding'));
-        $this->assertTrue($labels->contains('Websites'));
-        $this->assertTrue($labels->contains('Monetization'));
-        $this->assertTrue($labels->contains('Earnings & Payments'));
-        $this->assertTrue($labels->contains('Support'));
+        $this->assertSame(['Publisher', 'More'], $navigation->pluck('label')->all());
+        $this->assertSame(
+            ['Home', 'Websites', 'Monetization', 'Earnings & Payments', 'Support'],
+            collect($navigation->firstWhere('label', 'Publisher')['items'])->pluck('label')->all(),
+        );
+        $this->assertTrue((bool) $navigation->firstWhere('label', 'More')['collapsible']);
         $this->assertFalse($labels->contains('Notifications'));
     }
 
