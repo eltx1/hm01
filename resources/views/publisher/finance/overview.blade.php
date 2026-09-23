@@ -7,15 +7,15 @@
 <section class="hero">
     <div>
         <p class="eyebrow">{{ $publisher->display_name }}</p>
-        <h2>Your financial position, without estimated/finalized mixing</h2>
-        <p>Every currency is shown separately. Estimated reporting can change; finalized earnings and statement balances are the accounting record.</p>
+        <h2>Earnings, statements and payouts in one place</h2>
+        <p>Horus reporting is standardized to USD. Today's figures are estimates; finalized statements remain the accounting record. Historical payout obligations in another currency, if any, stay visible separately.</p>
     </div>
     <x-status-badge :status="$profile?->verification_status ?? 'INCOMPLETE'" />
 </section>
 
 <article>
-    <p class="eyebrow">Action Center</p>
-    <h2>What you need to do</h2>
+    <p class="eyebrow">Start here</p>
+    <h2>What needs your attention</h2>
     @forelse($actions as $action)
         <div class="event"><strong>{{ $action['label'] }}</strong><span class="pill">{{ str($action['code'])->replace('_', ' ')->headline() }}</span></div>
     @empty
