@@ -8,7 +8,7 @@ The Laravel control plane stores aggregated rows only. It never receives ad requ
 
 ## Canonical reporting currency
 
-Horus Media reporting dashboards use **USD** as the canonical reporting currency. For Google Ad Manager sources, Horus requests revenue from Google directly in USD (`ReportQuery.reportCurrency` for SOAP ad-unit reporting and `currencyCode` for REST reports) even when the GAM network billing currency is AED, EGP, EUR, or another supported currency. The source network currency is retained only as diagnostic metadata; Horus does not perform an independent FX conversion for these GAM reports.
+Horus Media reporting dashboards use **USD** as the canonical reporting currency. For website-level Google Ad Manager reporting bindings (`SITE_GAM_AD_UNIT`), Horus requests revenue from Google directly in USD through `ReportQuery.reportCurrency` even when the GAM network billing currency is AED, EGP, EUR, or another supported currency. The source network currency is retained only as diagnostic metadata; Horus does not perform an independent FX conversion for these website reports. Other legacy/advanced reporting connectors keep their existing transport contract until they explicitly support the same canonical-currency guarantee.
 
 Existing Site GAM connections migrate safely on synchronization. Open-period rows are re-requested from Google in USD using the same source connection so they revise in place, while dates already belonging to locked financial periods are not rewritten.
 
