@@ -46,7 +46,7 @@
                         <div><span>Impressions</span><strong>{{ number_format((int) $currency['today_impressions']) }}</strong></div>
                         <div><span>Clicks</span><strong>{{ number_format((int) $currency['today_clicks']) }}</strong></div>
                     </div>
-                    <p class="muted">Today is estimated and can change before Google finalizes the reporting day.@if($currency['today_updated_at']) Last imported {{ $currency['today_updated_at']->diffForHumans() }}.@endif</p>
+                    <p class="muted">Today is estimated and can change before Google finalizes the reporting day. Your contractual share only is shown here.@if($currency['today_updated_at']) Last imported {{ $currency['today_updated_at']->diffForHumans() }}.@endif</p>
                 @else
                     <p class="muted">Today’s first report has not arrived yet. This updates automatically.</p>
                 @endif
