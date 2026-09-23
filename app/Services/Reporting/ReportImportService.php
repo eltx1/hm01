@@ -58,6 +58,14 @@ final class ReportImportService
         if (in_array($connection->connection_type, ['SITE_GAM_AD_UNIT', 'GAM_CONNECTION'], true)
             && $granularity === ReportGranularity::Hourly && $finality === ReportFinality::Estimated) {
             $granularity = ReportGranularity::Daily;
+            $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+            try {
+                $reportingDay = CarbonImmutable::parse($to)->setTimezone($timezone)->startOfDay();
+            } catch (\Throwable) {
+                $reportingDay = CarbonImmutable::parse($to)->setTimezone('UTC')->startOfDay();
+            }
+            $from = $reportingDay;
+            $to = $reportingDay->endOfDay();
         }
         if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && ! ($options['_site_lock'] ?? false)) {
             return Cache::lock('site-gam-report:'.$connection->id, 300)->block(3,
