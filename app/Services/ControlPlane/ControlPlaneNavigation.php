@@ -46,7 +46,10 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Monetization', [
                 $this->item('Quick Monetize', 'admin.demand.quick.create', 'demand.manage', ['admin.demand.quick.*']),
-                $this->item('Direct Demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
+                $this->item('Direct Demand', 'admin.demand.index', 'demand.view', [
+                    'admin.demand.index', 'admin.demand.master', 'admin.demand.accounts.*', 'admin.demand.networks.*',
+                    'admin.demand.tags.*', 'admin.demand.credentials.*', 'admin.demand.reports.*',
+                ]),
                 $this->item('Direct Campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
                 $this->item('GAM Connections', 'admin.gam.connections.index', 'gam.connections.view', ['admin.gam.*']),
             ]),
