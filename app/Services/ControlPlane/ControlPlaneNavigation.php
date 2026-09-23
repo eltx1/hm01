@@ -31,57 +31,71 @@ final class ControlPlaneNavigation
         }, $groups), fn (array $group): bool => $group['items'] !== []));
     }
 
+    public function quickLinks(User $user): array
+    {
+        $user->loadMissing('roles.permissions');
+        $permissions = $user->roles->flatMap->permissions->pluck('name')->unique();
+
+        $links = match ($user->organization?->type) {
+            OrganizationType::HorusMedia => [
+                $this->item('Home', 'dashboard', 'dashboard.admin.view', ['dashboard']),
+                $this->item('Publishers', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
+                $this->item('Websites', 'admin.sites.index', 'sites.view', ['admin.sites.*']),
+                $this->item('Reporting', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
+                $this->item('Finance', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
+            ],
+            OrganizationType::Publisher => [
+                $this->item('Home', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
+                $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
+                $this->item('Reports & Earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
+                $this->item('Monetization', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
+            ],
+            default => [],
+        };
+
+        return array_values(array_filter(
+            $links,
+            fn (array $item): bool => $permissions->contains($item['permission']),
+        ));
+    }
+
     private function administrator(Collection $permissions): array
     {
         return [
-            $this->group('Overview', [
+            $this->group('Home', [
                 $this->item('Action Center', 'dashboard', 'dashboard.admin.view', ['dashboard']),
                 $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
-            $this->group('Publishers', [
-                $this->item('Publisher accounts', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
-                $this->item('Publisher Affiliates', 'admin.publisher-affiliates.index', 'publishers.view', ['admin.publisher-affiliates.*']),
-                $this->item('Organizations', 'admin.organizations.index', 'organizations.view', ['admin.organizations.*']),
-            ]),
-            $this->group('Sites & Inventory', [
+            $this->group('Publishers & Sites', [
+                $this->item('Publishers', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
                 $this->item('Websites', 'admin.sites.index', 'sites.view', ['admin.sites.*']),
-                $this->item('Click Protection', 'admin.click-protection.index', 'settings.view', ['admin.click-protection.*']),
-                $this->item('GAM connections', 'admin.gam.connections.index', 'gam.connections.view', ['admin.gam.*']),
+                $this->item('Organizations', 'admin.organizations.index', 'organizations.view', ['admin.organizations.*']),
+                $this->item('Publisher Affiliates', 'admin.publisher-affiliates.index', 'publishers.view', ['admin.publisher-affiliates.*']),
             ]),
             $this->group('Monetization', [
-                $this->item('Direct campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
                 $this->item('Direct Demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
+                $this->item('Direct Campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),
+                $this->item('GAM Connections', 'admin.gam.connections.index', 'gam.connections.view', ['admin.gam.*']),
+                $this->item('Advertisers', 'admin.advertisers.index', 'advertisers.view', ['admin.advertisers.*']),
             ]),
-            $this->group('Supply Chain & Compliance', [
-                $this->item('Supply Chain / Ads.txt', 'admin.compliance.supply-chain.overview', 'supply_chain.ads_txt.view', [
-                    'admin.compliance.supply-chain.*', 'admin.compliance.ads-txt.*', 'admin.compliance.sellers.*', 'admin.prebid.ads-txt.*',
-                ]),
-            ]),
-            $this->group('Reporting', [
-                $this->item('Reporting sources', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
-            ]),
-            $this->group('Finance', [
+            $this->group('Reporting & Finance', [
+                $this->item('Reporting & Revenue', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
                 $this->item('Finance Operations', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
             ]),
-            $this->group('Support', [
+            $this->group('Trust & Operations', [
+                $this->item('Supply Chain & Ads.txt', 'admin.compliance.supply-chain.overview', 'supply_chain.ads_txt.view', [
+                    'admin.compliance.supply-chain.*', 'admin.compliance.ads-txt.*', 'admin.compliance.sellers.*', 'admin.prebid.ads-txt.*',
+                ]),
+                $this->item('Traffic Quality', 'admin.operations.traffic-quality', 'traffic_gate.manage', ['admin.operations.traffic-quality*']),
+                $this->item('Click Protection', 'admin.click-protection.index', 'settings.view', ['admin.click-protection.*']),
+                $this->item('Production Operations', 'admin.operations.index', 'operations.view', ['admin.operations.index', 'admin.operations.controls', 'admin.operations.static-delivery.*', 'admin.operations.loader.*']),
                 $this->item('Support Tickets', 'admin.support.tickets.index', 'support.admin.view', ['admin.support.*']),
             ]),
-            $this->group('Advertisers', [
-                $this->item('Advertiser accounts', 'admin.advertisers.index', 'advertisers.view', ['admin.advertisers.*']),
-            ]),
-            $this->group('Operations', [
-                $this->item('Production operations', 'admin.operations.index', 'operations.view', ['admin.operations.index', 'admin.operations.controls', 'admin.operations.static-delivery.*', 'admin.operations.loader.*']),
-                $this->item('Traffic Quality', 'admin.operations.traffic-quality', 'traffic_gate.manage', ['admin.operations.traffic-quality*']),
-            ]),
-            $this->group('AI & Automation', [
+            $this->group('Platform', [
                 $this->item('AI Control Center', 'admin.thoth.settings', 'thoth.settings.view', ['admin.thoth.*']),
-            ]),
-            $this->group('Settings', [
-                $this->item('Global settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
-            ]),
-            $this->group('Security & Audit', [
+                $this->item('Global Settings', 'admin.settings.index', 'settings.view', ['admin.settings.*']),
                 $this->item('Audit Log', 'admin.audit.index', 'audit.view', ['admin.audit.*']),
-                $this->item('Access control', 'admin.roles.index', 'roles.view', ['admin.roles.*']),
+                $this->item('Access Control', 'admin.roles.index', 'roles.view', ['admin.roles.*']),
             ]),
         ];
     }
@@ -89,27 +103,21 @@ final class ControlPlaneNavigation
     private function publisher(Collection $permissions): array
     {
         return [
-            $this->group('Overview', [
-                $this->item('Publisher overview', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
-                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
-            ]),
-            $this->group('Websites', [
-                $this->item('Monetization Center', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
+            $this->group('Start Here', [
+                $this->item('Home', 'dashboard', 'dashboard.publisher.view', ['dashboard']),
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
-                $this->item('Supply Chain Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
+                $this->item('Reports & Earnings', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
             ]),
-            $this->group('Reports & Earnings', [
-                $this->item('Earnings & Payments', 'publisher.finance.overview', 'finance.publisher.view_own', ['publisher.finance.*', 'publisher.reporting.*']),
-                $this->item('Affiliate referrals', 'publisher.affiliate.index', 'finance.publisher.view_own', ['publisher.affiliate.*']),
+            $this->group('Manage', [
+                $this->item('Monetization & Health', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
+                $this->item('Ads.txt & Compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
+                $this->item('Commercial Terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
+                $this->item('Affiliate Referrals', 'publisher.affiliate.index', 'finance.publisher.view_own', ['publisher.affiliate.*']),
             ]),
-            $this->group('Commercial', [
-                $this->item('Commercial terms', 'publisher.contracts.index', 'contracts.view', ['publisher.contracts.*']),
-            ]),
-            $this->group('Support', [
-                $this->item('Support Tickets', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
-            ]),
-            $this->group('Team', [
-                $this->item('Invite a team member', 'admin.invitations.create', 'users.invite', ['admin.invitations.*']),
+            $this->group('Help & Account', [
+                $this->item('Support', 'support.tickets.index', 'support.tickets.view_own', ['support.*']),
+                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
+                $this->item('Invite Team Member', 'admin.invitations.create', 'users.invite', ['admin.invitations.*']),
             ]),
         ];
     }
