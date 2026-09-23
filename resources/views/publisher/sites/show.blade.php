@@ -157,7 +157,7 @@
     ['label' => 'Setup', 'href' => '#publisher-site-setup'],
     ['label' => 'Ads.txt', 'href' => '#publisher-ads-txt', 'visible' => auth()->user()->hasPermission('publisher.ads_txt.view')],
     ['label' => 'Verification', 'href' => '#publisher-domain-verification'],
-    ['label' => 'Ad codes', 'href' => '#responsive-display-codes'],
+    ['label' => 'Ad codes', 'href' => '#responsive-display-codes', 'visible' => $site->placements->contains(fn ($placement) => data_get($placement->metadata, 'responsive_bundle') === 'v1')],
 ]" label="Website sections" />
 <section id="publisher-site-overview" class="hero">
     <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
