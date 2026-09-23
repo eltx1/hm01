@@ -1,32 +1,46 @@
 @extends('layouts.admin')
 @section('title', 'Websites')
-@section('heading', 'Publisher websites')
+@section('heading', 'Websites')
 @section('content')
-<div class="section-heading">
-    <div><p class="muted">Manage websites connected to your Horus Media publisher workspace.</p></div>
-    @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary" href="{{ route('publisher.sites.create') }}">Add website</a>@endif
-</div>
+<section class="hero">
+    <div>
+        <p class="eyebrow">Monetization</p>
+        <h2>Your websites</h2>
+        <p>Open a website to see its setup, ads.txt status, monetization health and ad codes. You do not need to navigate through separate technical areas.</p>
+    </div>
+    @if(auth()->user()->hasPermission('sites.manage'))
+        <a class="hm-button-primary button-link" href="{{ route('publisher.sites.create') }}">Add website</a>
+    @endif
+</section>
 
 @if($sites->count() === 0)
-    <x-empty-state title="No websites yet" description="Add your first website to begin domain verification, onboarding, and monetization setup.">
-        @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary" href="{{ route('publisher.sites.create') }}">Add your first website</a>@endif
+    <x-empty-state title="No websites yet" description="Add your first website to begin verification and monetization setup.">
+        @if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('publisher.sites.create') }}">Add your first website</a>@endif
     </x-empty-state>
 @else
-    <div class="table-wrap" role="region" aria-label="Publisher websites" tabindex="0">
-        <table>
-            <thead><tr><th scope="col">Website</th><th scope="col">Domain</th><th scope="col">Status</th><th scope="col">Serving mode</th><th scope="col">Action</th></tr></thead>
-            <tbody>
-            @foreach($sites as $site)
-                <tr>
-                    <td>{{ $site->display_name }}</td>
-                    <td>{{ $site->primary_domain }}</td>
-                    <td><x-status-badge :status="$site->status" /></td>
-                    <td>{{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</td>
-                    <td><a class="section-anchor" href="{{ route('publisher.sites.show', $site) }}">View website</a></td>
-                </tr>
-            @endforeach
-            </tbody>
-        </table>
+    <div class="publisher-site-grid">
+        @foreach($sites as $site)
+            @php
+                $nextStep = match ($site->status) {
+                    \App\Enums\SiteStatus::Draft, \App\Enums\SiteStatus::PendingVerification => 'Finish setup and verification',
+                    \App\Enums\SiteStatus::PendingReview => 'Horus review is in progress',
+                    \App\Enums\SiteStatus::Approved, \App\Enums\SiteStatus::Active => 'View monetization, reports and ad codes',
+                    \App\Enums\SiteStatus::Suspended => 'Review the website status and required action',
+                    default => 'Open website details',
+                };
+            @endphp
+            <article class="publisher-site-card">
+                <div class="workspace-heading">
+                    <div><p class="eyebrow">{{ $site->primary_domain }}</p><h2>{{ $site->display_name }}</h2></div>
+                    <x-status-badge :status="$site->status" />
+                </div>
+                <p>{{ $nextStep }}</p>
+                <div class="site-card-meta">
+                    <span>Serving: {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</span>
+                </div>
+                <a class="hm-button-secondary button-link" href="{{ route('publisher.sites.show', $site) }}">Open website →</a>
+            </article>
+        @endforeach
     </div>
     {{ $sites->links() }}
 @endif
