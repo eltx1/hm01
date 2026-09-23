@@ -27,12 +27,12 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher accounts')
-            ->assertSee('Reporting sources')
-            ->assertSee('Finance Operations')
-            ->assertSee('Ads.txt')
-            ->assertDontSee('Production operations')
-            ->assertDontSee('Access control')
+            ->assertSee('Publishers')
+            ->assertSee('Reporting')
+            ->assertSee('Finance')
+            ->assertSee('Ads.txt &amp; Supply Chain', false)
+            ->assertDontSee('Production Operations')
+            ->assertDontSee('Access Control')
             ->assertSee('data-nav-toggle', false);
     }
 
@@ -45,13 +45,13 @@ class ControlPlaneFoundationTest extends TestCase
 
         $this->actingAs($viewer)->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Publisher overview')
+            ->assertSee('Home')
             ->assertSee('Websites')
             ->assertSee('Earnings &amp; Payments', false)
-            ->assertSee('Commercial terms')
-            ->assertDontSee('Invite a team member')
-            ->assertSee('Supply Chain Compliance')
-            ->assertDontSee('Production operations');
+            ->assertSee('Commercial Terms')
+            ->assertDontSee('Invite Teammate')
+            ->assertSee('Ads.txt &amp; Compliance', false)
+            ->assertDontSee('Production Operations');
     }
 
     public function test_dashboard_permission_is_required_even_for_an_active_user(): void
