@@ -790,18 +790,6 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('DEGRADED', $health->forSite($context[3])['status']);
     }
 
-    public function test_reporting_bridge_uses_usd_even_when_gam_network_metadata_is_non_usd(): void
-    {
-        [$admin, , , , $gam] = $this->context();
-        $configuration = (array) ($gam->configuration ?? []);
-        $configuration['currency'] = 'AED';
-        $gam->update(['configuration' => $configuration]);
-
-        $connection = app(ReportingBridge::class)->connectionForGam($gam->fresh(), $admin);
-
-        $this->assertSame('USD', $connection->currency);
-    }
-
     public function test_network_currency_is_metadata_only_and_site_gam_finance_is_canonical_usd(): void
     {
         [$admin, , , $site] = $context = $this->context();
