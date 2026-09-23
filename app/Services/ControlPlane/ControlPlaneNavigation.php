@@ -36,7 +36,6 @@ final class ControlPlaneNavigation
         return [
             $this->group('Home', [
                 $this->item('Dashboard', 'dashboard', 'dashboard.admin.view', ['dashboard']),
-                $this->item('Notifications', 'notifications.index', 'notifications.view_own', ['notifications.*']),
             ]),
             $this->group('Publishers & Sites', [
                 $this->item('Publishers', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
