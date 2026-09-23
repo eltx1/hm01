@@ -244,7 +244,10 @@ final class GamReportConnector implements ReportSourceConnectorInterface
 
                 $metrics = [];
                 foreach (self::COLUMNS as $column => $field) {
-                    $value = $this->integer((string) $source['Column.'.$column]);
+                    $rawValue = (string) $source['Column.'.$column];
+                    $value = $field === 'revenue_micros'
+                        ? $this->moneyMicros($rawValue, $this->canonicalCurrency())
+                        : $this->integer($rawValue);
                     if ($field !== 'revenue_micros' && $value < 0) {
                         throw new RuntimeException('The Google GAM report contains a negative delivery metric.');
                     }
@@ -281,6 +284,19 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
 
         return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
+    }
+
+    private function moneyMicros(string $value, string $expectedCurrency): int
+    {
+        $value = trim($value);
+        if (preg_match('/^([A-Z]{3})\\s+(-?\\d+)$/D', $value, $matches) === 1) {
+            if ($matches[1] !== $expectedCurrency) {
+                throw new RuntimeException('The Google GAM report returned a monetary value in an unexpected currency.');
+            }
+            $value = $matches[2];
+        }
+
+        return $this->integer($value);
     }
 
     private function integer(string $value): int
