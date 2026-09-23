@@ -28,11 +28,6 @@ final class GamCapabilityRegistry
     private const SOAP_FALLBACK_OPERATIONS = [
         'createCompany', 'updateCompany', 'createLineItem', 'updateLineItem',
         'createCreative', 'associateCreative', 'pauseLineItem', 'activateLineItem', 'resumeLineItem',
-        // Campaign reporting still builds the legacy ReportQuery schema
-        // (columns/dateRangeType/reportCurrency). The REST beta uses
-        // ReportDefinition metrics/dateRange/currencyCode instead, so routing
-        // this payload to REST would silently send the wrong schema.
-        'runReport',
     ];
 
     public function transportFor(string $operation, array $context = []): string
@@ -43,6 +38,16 @@ final class GamCapabilityRegistry
 
         if ($operation === 'getObjectByRemoteId') {
             return $this->restReadableService((string) ($context['service'] ?? '')) ? self::REST : self::SOAP;
+        }
+
+        if ($operation === 'runReport') {
+            // REST ReportDefinition uses metrics/dateRange/currencyCode.
+            // Legacy SOAP ReportQuery uses columns/dateRangeType/reportCurrency.
+            // Prefer SOAP for ambiguous payloads so a legacy query is never
+            // posted to the REST resource with the wrong schema.
+            return array_key_exists('metrics', $context) || array_key_exists('dateRange', $context)
+                ? self::REST
+                : self::SOAP;
         }
 
         if (in_array($operation, self::REST_OPERATIONS, true)) {
@@ -64,6 +69,7 @@ final class GamCapabilityRegistry
         foreach (self::SOAP_FALLBACK_OPERATIONS as $operation) $matrix[$operation] = self::SOAP;
         $matrix['archiveObject'] = 'CONTEXTUAL';
         $matrix['getObjectByRemoteId'] = 'CONTEXTUAL';
+        $matrix['runReport'] = 'CONTEXTUAL';
         ksort($matrix);
 
         return $matrix;
