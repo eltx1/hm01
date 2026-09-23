@@ -28,8 +28,35 @@ class PublisherCurrentTruthTest extends TestCase
             ->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
 
         $this->assertFalse($labels->contains('Onboarding'));
-        $this->assertTrue($labels->contains('Websites'));
-        $this->assertTrue($labels->contains('Monetization Center'));
+        $this->assertTrue($labels->contains('My Websites'));
+        $this->assertTrue($labels->contains('Monetization Health'));
+        $this->assertTrue($labels->contains('Reports & Earnings'));
+        $this->assertTrue($labels->contains('Statements'));
+        $this->assertTrue($labels->contains('Payouts'));
+
+        $groups = collect(app(ControlPlaneNavigation::class)->for($user))->pluck('label')->all();
+        $this->assertSame(['Home', 'Websites', 'Reports & Money', 'Account & Help'], $groups);
+    }
+
+    public function test_publisher_websites_page_uses_task_oriented_cards_and_direct_destinations(): void
+    {
+        $this->seedIdentity();
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher'), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($user);
+        $site = $this->makeSiteFor($publisher, $user, [
+            'display_name' => 'Publisher News',
+            'primary_domain' => 'publisher-news.example',
+        ]);
+
+        $this->actingAs($user)->get(route('publisher.sites.index'))
+            ->assertOk()
+            ->assertSee('Manage each website from one place.')
+            ->assertSee('Publisher News')
+            ->assertSee('publisher-news.example')
+            ->assertSee('Open website')
+            ->assertSee('Monetization health')
+            ->assertSee('Reports & earnings')
+            ->assertSee(route('publisher.sites.show', $site), false);
     }
 
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
