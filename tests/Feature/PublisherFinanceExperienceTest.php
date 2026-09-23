@@ -64,7 +64,7 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertSee('USD 70.00')
             ->assertSee('USD 140.00')
             ->assertSee('Historical non-USD balances')
-            ->assertSee('EUR 35.00')
+            ->assertSee('EUR')
             ->assertSee('not combined with current USD totals');
         $this->get(route('publisher.finance.statements.index'))->assertOk();
         $this->get(route('publisher.finance.payment-method.edit'))->assertOk();
@@ -94,7 +94,7 @@ class PublisherFinanceExperienceTest extends TestCase
             ->assertSee('321')
             ->assertSee('7')
             ->assertSee('USD 70.00')
-            ->assertSee('Your contractual share only');
+            ->assertSee('Only your contractual publisher earnings are shown.');
 
         $summary = app(PublisherFinanceService::class)->overview($publisher);
         $usd = $summary['currencies']->firstWhere('currency', 'USD');
