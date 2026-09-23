@@ -44,6 +44,10 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             'dateRangeType' => 'CUSTOM_DATE',
             'startDate' => $from->toDateString(),
             'endDate' => $to->toDateString(),
+            // GAM REST reports accept an explicit ISO-4217 report currency.
+            // Horus keeps GAM reporting canonical in USD regardless of the
+            // network billing currency.
+            'currencyCode' => $connection->currency,
             'statement' => $options['statement'] ?? null,
         ], [
             'dry_run' => false,
