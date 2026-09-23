@@ -59,6 +59,22 @@ class PublisherCurrentTruthTest extends TestCase
             ->assertSee(route('publisher.sites.show', $site), false);
     }
 
+    public function test_publisher_dashboard_remains_safe_for_role_without_finance_permission(): void
+    {
+        $this->seedIdentity();
+        $organization = $this->makeOrganization(OrganizationType::Publisher, 'Publisher');
+        $admin = $this->makeUser($organization, RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($admin);
+        $this->makeSiteFor($publisher, $admin);
+        $viewer = $this->makeUser($organization, RoleName::PublisherViewer);
+
+        $this->actingAs($viewer)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('Reporting currency · USD')
+            ->assertSee('Manage websites')
+            ->assertDontSee('View reports &amp; earnings', false);
+    }
+
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void
     {
         $this->seedIdentity();
