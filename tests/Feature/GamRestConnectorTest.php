@@ -236,6 +236,7 @@ class GamRestConnectorTest extends TestCase
 
     public function test_reporting_scheduler_cuts_over_a_targeted_legacy_gam_source_and_imports_usd(): void
     {
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 12:00:00', 'UTC'));
         $this->seedIdentity();
         $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
@@ -319,8 +320,8 @@ class GamRestConnectorTest extends TestCase
         Http::fake(['https://storage.googleapis.com/*' => Http::response($csv)]);
 
         $this->artisan('reporting:import', [
-            'cadence' => 'hourly',
-            '--date' => '2026-09-20',
+            'cadence' => 'daily',
+            '--date' => '2026-09-21',
             '--connection' => $legacy->id,
         ])->assertExitCode(0);
 
@@ -337,6 +338,9 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame('USD', $canonical->currency);
         $this->assertTrue($canonical->is_enabled);
         $this->assertSame($legacy->id, data_get($canonical->configuration, 'legacy_connection_id'));
+        $this->assertSame('2026-09-01', data_get($canonical->configuration, 'canonical_currency_rebackfill_from'));
+        $this->assertFalse((bool) data_get($canonical->configuration, 'canonical_currency_rebackfill_required', true));
+        $this->assertNotNull(data_get($canonical->configuration, 'canonical_currency_rebackfill_completed_at'));
         $this->assertDatabaseHas('daily_reports', [
             'report_source_connection_id' => $canonical->id,
             'currency' => 'USD',
