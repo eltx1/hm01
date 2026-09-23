@@ -75,7 +75,7 @@ class GamRestConnectorTest extends TestCase
 
                 $versions = app(\App\Services\Gam\GamSoapVersionResolver::class);
                 $namespace = $versions->namespaceFor($versions->resolve());
-                $reflection = new \ReflectionClass($namespace.'\\\\'.$service);
+                $reflection = new \ReflectionClass($namespace.'\\'.$service);
                 app(\App\Services\Gam\GamSoapPayloadHydrator::class)
                     ->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
 
