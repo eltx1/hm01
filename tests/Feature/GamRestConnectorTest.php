@@ -310,7 +310,7 @@ class GamRestConnectorTest extends TestCase
             'Dimension.AD_UNIT_ID',
             ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamReportConnector::COLUMNS)),
         ];
-        $values = ['2026-09-20', '1001', 120, 100, 20, 95, 3, 25000000];
+        $values = ['2026-09-09', '1001', 120, 100, 20, 95, 3, 25000000];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
         fputcsv($stream, $values, escape: '');
@@ -321,7 +321,7 @@ class GamRestConnectorTest extends TestCase
 
         $this->artisan('reporting:import', [
             'cadence' => 'daily',
-            '--date' => '2026-09-21',
+            '--date' => '2026-09-10',
             '--connection' => $legacy->id,
         ])->assertExitCode(0);
 
@@ -353,6 +353,8 @@ class GamRestConnectorTest extends TestCase
         ]);
 
         $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
+        $this->assertSame(1, data_get($reportCall, 'payload.reportJob.reportQuery.startDate.day'));
+        $this->assertSame(20, data_get($reportCall, 'payload.reportJob.reportQuery.endDate.day'));
         $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
         $this->assertSame('FLAT', data_get($reportCall, 'payload.reportJob.reportQuery.adUnitView'));
         $this->assertSame(['DATE', 'AD_UNIT_ID'], data_get($reportCall, 'payload.reportJob.reportQuery.dimensions'));
