@@ -33,7 +33,7 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $runtimeStep = strstr($runtimeStep, '- name: Verify representative ads.txt artifacts on exact Pages deployment', true);
         $this->assertIsString($runtimeStep);
         $this->assertStringNotContainsString('HORUS_ALLOW_CLOUDFLARE_WAF_403_FALLBACK', $runtimeStep);
-        $this->assertStringNotContainsString("status" == '403'", $runtimeStep);
+        $this->assertStringNotContainsString("status\" == '403'", $runtimeStep);
     }
 
     public function test_lordai_live_contract_proves_global_controls_and_executable_direct_candidate(): void
