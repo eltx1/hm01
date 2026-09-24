@@ -49,7 +49,8 @@ jobs:
           foreach (App\Models\Site::withoutGlobalScopes()->where('status', 'ACTIVE')->limit(3)->get() as $site) {
               $result = app(App\Services\Compliance\AdsTxtFetcher::class)->fetch($site);
               $code = $result['error_code'] ?: 'FETCH_OK';
-              $live[] = ['code' => $code, 'http_status' => $result['http_status'], 'duration_ms' => $result['duration_ms'], 'redirect_hops' => count($result['redirects'])];
+              $gate = app(App\Services\TrafficGate\TrafficGateConfigurationResolver::class)->resolve($site);
+              $live[] = ['code' => $code, 'http_status' => $result['http_status'], 'duration_ms' => $result['duration_ms'], 'redirect_hops' => count($result['redirects']), 'traffic_gate_enabled' => $gate->enabled, 'traffic_gate_max_wait_ms' => $gate->maxWaitMs];
           }
           echo json_encode(['active_site_live_fetches' => $live], JSON_THROW_ON_ERROR).PHP_EOL;
           PHP
