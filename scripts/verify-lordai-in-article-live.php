@@ -83,6 +83,94 @@ if ($renderer !== 'DIRECT_JS') {
     exit(1);
 }
 
+$globalControlPath = $root.'/configs/_global/control.json';
+if (! is_file($globalControlPath)) {
+    fwrite(STDERR, "Production global control artifact is missing.\n");
+    exit(1);
+}
+
+try {
+    $globalControl = json_decode((string) file_get_contents($globalControlPath), true, 512, JSON_THROW_ON_ERROR);
+} catch (Throwable $error) {
+    fwrite(STDERR, 'Unable to parse production global control artifact: '.$error->getMessage()."\n");
+    exit(1);
+}
+
+$globalControls = (array) ($globalControl['controls'] ?? []);
+foreach (['adServingDisabled', 'directJsDisabled', 'nativeDemandDisabled'] as $key) {
+    if (! array_key_exists($key, $globalControls) || $globalControls[$key] !== false) {
+        fwrite(STDERR, 'Production global control blocks or does not explicitly allow ad serving: '.$key."\n");
+        exit(1);
+    }
+}
+
+$siteControls = (array) ($config['controls'] ?? []);
+foreach (['adServingDisabled', 'directJsDisabled', 'nativeDemandDisabled'] as $key) {
+    if (! array_key_exists($key, $siteControls) || $siteControls[$key] !== false) {
+        fwrite(STDERR, 'LordAI production config blocks or does not explicitly allow Direct JS: '.$key."\n");
+        exit(1);
+    }
+}
+
+if (($config['directDemandEnabled'] ?? false) !== true || ($config['directDemand']['enabled'] ?? false) !== true) {
+    fwrite(STDERR, "LordAI Direct Demand is not enabled in the production config.\n");
+    exit(1);
+}
+
+$directPlacement = (array) (($config['directDemand']['placements'] ?? [])['quick_in_article_display'] ?? []);
+$candidates = array_values((array) ($directPlacement['candidates'] ?? []));
+if (($directPlacement['enabled'] ?? false) !== true || $candidates === []) {
+    fwrite(STDERR, "LordAI quick_in_article_display has no enabled Direct Demand candidate.\n");
+    exit(1);
+}
+
+$directCandidateCount = 0;
+$horusRuntimeScriptCount = 0;
+foreach ($candidates as $index => $candidate) {
+    $candidate = (array) $candidate;
+    if (($candidate['gamManaged'] ?? false) === true) {
+        continue;
+    }
+
+    $tag = (array) ($candidate['tag'] ?? []);
+    $executionMode = strtoupper((string) ($tag['executionMode'] ?? 'STRUCTURED'));
+    if (! in_array($executionMode, ['STRUCTURED', 'ISOLATED_IFRAME'], true)) {
+        fwrite(STDERR, 'LordAI Direct Demand candidate '.$index.' has an invalid execution mode.'."\n");
+        exit(1);
+    }
+
+    if ($executionMode === 'STRUCTURED') {
+        $scripts = array_values((array) ($tag['scripts'] ?? []));
+        if ($scripts === []) {
+            fwrite(STDERR, 'LordAI structured Direct Demand candidate '.$index.' has no scripts.'."\n");
+            exit(1);
+        }
+        foreach ($scripts as $script) {
+            $url = trim((string) ((array) $script)['url'] ?? '');
+            if (! filter_var($url, FILTER_VALIDATE_URL) || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+                fwrite(STDERR, 'LordAI Direct Demand candidate '.$index.' contains a non-HTTPS runtime script.'."\n");
+                exit(1);
+            }
+            if (strtolower((string) parse_url($url, PHP_URL_HOST)) === 'cdn.horusmedia.net') {
+                $horusRuntimeScriptCount++;
+            }
+        }
+    } else {
+        $isolation = (array) ($tag['isolation'] ?? []);
+        if (trim((string) ($isolation['html'] ?? '')) === '' || trim((string) ($isolation['csp'] ?? '')) === '') {
+            fwrite(STDERR, 'LordAI isolated Direct Demand candidate '.$index.' is missing its public HTML/CSP contract.'."\n");
+            exit(1);
+        }
+    }
+
+    $directCandidateCount++;
+}
+
+if ($directCandidateCount < 1) {
+    fwrite(STDERR, "LordAI quick_in_article_display has no executable Direct JS candidate.\n");
+    exit(1);
+}
+
 $loaderPath = $root.'/hm-loader.js';
 if (! is_file($loaderPath)) {
     fwrite(STDERR, "Production hm-loader.js is missing from the static snapshot.\n");
@@ -143,6 +231,9 @@ $result = [
     'format_code' => $formatCode,
     'auto_mount_target' => $target,
     'renderer' => $renderer,
+    'direct_candidate_count' => $directCandidateCount,
+    'horus_runtime_script_count' => $horusRuntimeScriptCount,
+    'global_controls_allow_serving' => true,
 ];
 
 echo json_encode($result, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
