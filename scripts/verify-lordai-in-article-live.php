@@ -146,7 +146,7 @@ foreach ($candidates as $index => $candidate) {
             exit(1);
         }
         foreach ($scripts as $script) {
-            $url = trim((string) ((array) $script)['url'] ?? '');
+            $url = trim((string) (((array) $script)['url'] ?? ''));
             if (! filter_var($url, FILTER_VALIDATE_URL) || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
                 fwrite(STDERR, 'LordAI Direct Demand candidate '.$index.' contains a non-HTTPS runtime script.'."\n");
                 exit(1);
