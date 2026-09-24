@@ -65,6 +65,23 @@ class PublisherStatement extends Model
         return $this->publisher_invoice_status !== PublisherInvoiceStatus::NotRequired;
     }
 
+    public function hasPayableBalance(): bool
+    {
+        return $this->finalized_at !== null
+            && (int) $this->balance_due_minor > 0
+            && (int) $this->balance_due_minor >= (int) $this->payment_threshold_minor
+            && ! in_array($this->status, [
+                PublisherStatementStatus::Draft, PublisherStatementStatus::Paid,
+                PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward,
+            ], true);
+    }
+
+    public function canUploadInvoice(): bool
+    {
+        return $this->hasPayableBalance()
+            && in_array($this->publisher_invoice_status, [PublisherInvoiceStatus::Required, PublisherInvoiceStatus::Rejected], true);
+    }
+
     public function scopeLatestPerPublisherCurrency(Builder $query): Builder
     {
         return $query->whereRaw(<<<'SQL'

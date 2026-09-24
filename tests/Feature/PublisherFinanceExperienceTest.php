@@ -34,6 +34,86 @@ class PublisherFinanceExperienceTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
+    public function test_publisher_roles_render_all_finance_routes_with_theme_and_only_authorized_controls(): void
+    {
+        [, $publisher, $admin, $viewer] = $this->context();
+        $statement = $this->statement($publisher, 'HM-ROLE-ROUTES', 15000, 10000, PublisherInvoiceStatus::Required);
+        foreach ([$admin, $viewer] as $user) {
+            $this->actingAs($user);
+            foreach (['publisher.reporting.index', 'publisher.finance.overview', 'publisher.finance.statements.index',
+                'publisher.finance.payment-method.edit', 'publisher.finance.payouts.index'] as $route) {
+                $this->get(route($route))->assertOk()->assertSee('data-theme-toggle', false)
+                    ->assertSee('data-hm-theme="dark"', false)->assertSee('assets/dashboard-theme.js', false);
+            }
+            $page = $this->get(route('publisher.finance.statements.show', $statement))->assertOk();
+            if ($user->is($admin)) {
+                $page->assertSee('Upload private invoice');
+                $this->get(route('publisher.finance.payment-method.edit'))->assertSee('Save payment method');
+            } else {
+                $page->assertDontSee('Upload private invoice');
+                $this->get(route('publisher.finance.payment-method.edit'))->assertDontSee('Save payment method');
+            }
+            $this->get(route('admin.finance.overview'))->assertForbidden();
+        }
+    }
+
+    public function test_ineligible_statement_invoice_uploads_leave_state_and_storage_unchanged(): void
+    {
+        Storage::fake('local');
+        [$finance, $publisher, $user] = $this->context();
+        $profile = app(PublisherPaymentProfileService::class)->save($publisher, [
+            'beneficiary_name' => 'Publisher', 'payment_method' => 'WISE', 'currency' => 'USD',
+            'country' => 'US', 'account_reference' => 'WISE-1234',
+        ], $user);
+        app(PublisherPaymentProfileService::class)->review($profile, PublisherPaymentProfileStatus::Verified, $finance);
+        $statement = $this->statement($publisher, 'HM-INVOICE-STATES', 15000, 0, PublisherInvoiceStatus::Required);
+        foreach ([
+            ['status' => 'PAID'], ['balance_due_minor' => 0], ['status' => 'DRAFT'], ['finalized_at' => null],
+            ['status' => 'CARRIED_FORWARD'], ['status' => 'BELOW_THRESHOLD'], ['payment_threshold_minor' => 20000],
+            ['publisher_invoice_status' => 'NOT_REQUIRED'],
+        ] as $overrides) {
+            $statement->update(array_replace([
+                'status' => 'PAYABLE', 'balance_due_minor' => 15000, 'payment_threshold_minor' => 0,
+                'finalized_at' => now(), 'publisher_invoice_status' => 'REQUIRED',
+            ], $overrides));
+            $before = $statement->fresh()->getAttributes();
+            $this->actingAs($user)->get(route('publisher.finance.statements.show', $statement))
+                ->assertOk()->assertDontSee('Upload private invoice');
+            foreach (['publisher.finance.statements.invoice', 'publisher.reporting.statements.invoice'] as $route) {
+                $this->post(route($route, $statement), [
+                    'invoice_number' => 'INVALID', 'invoice' => UploadedFile::fake()->create('invoice.pdf', 10, 'application/pdf'),
+                ])->assertSessionHasErrors('invoice');
+            }
+            $this->assertSame($before, $statement->fresh()->getAttributes());
+            $this->assertSame([], Storage::disk('local')->allFiles());
+            if (($overrides['publisher_invoice_status'] ?? null) !== 'NOT_REQUIRED') {
+                $overview = app(PublisherFinanceService::class)->overview($publisher->fresh());
+                $this->assertFalse($overview['currencies']->firstWhere('currency', 'USD')['readiness']['ready']);
+                $this->assertFalse(collect($overview['actions'])->contains(fn ($action) => str_starts_with($action['code'], 'UPLOAD_INVOICE_')));
+            }
+        }
+    }
+
+    public function test_zero_balance_generation_does_not_request_an_invoice_and_review_cannot_reopen_paid_statement(): void
+    {
+        [$finance, $publisher, $user] = $this->context();
+        PublisherContract::withoutGlobalScopes()->where('publisher_id', $publisher->id)->update(['payment_threshold' => '0.00']);
+        $period = FinancialPeriod::create([
+            'period_key' => now()->format('Y-m'), 'currency' => 'USD',
+            'starts_on' => now()->startOfMonth(), 'ends_on' => now()->endOfMonth(), 'status' => 'CLOSING',
+        ]);
+        $service = app(\App\Services\Reporting\PublisherStatementService::class);
+        $statement = $service->generate($period, $publisher, $finance);
+        $this->assertSame(PublisherInvoiceStatus::NotRequired, $statement->publisher_invoice_status);
+        $this->assertFalse($statement->canUploadInvoice());
+        $statement->update(['status' => 'PAID', 'publisher_invoice_status' => 'RECEIVED',
+            'publisher_invoice_path' => 'private.pdf', 'publisher_invoice_number' => 'OLD']);
+        $this->actingAs($finance)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->post(route('admin.finance.statements.invoice-review', $statement), ['publisher_invoice_status' => 'ACCEPTED'])
+            ->assertSessionHasErrors('publisher_invoice_status');
+        $this->assertSame('PAID', $statement->fresh()->status->value);
+    }
+
     public function test_publisher_finance_pages_separate_estimated_finalized_and_currencies(): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10));

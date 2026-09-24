@@ -151,9 +151,9 @@ final class PublisherStatementService
         ];
         $hash = hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR));
 
-        $status = $balance < $threshold
-            ? PublisherStatementStatus::BelowThreshold
-            : PublisherStatementStatus::PendingInvoice;
+        $status = $balance <= 0
+            ? PublisherStatementStatus::Finalized
+            : ($balance < $threshold ? PublisherStatementStatus::BelowThreshold : PublisherStatementStatus::PendingInvoice);
         $carryForward = $status === PublisherStatementStatus::BelowThreshold ? $balance : 0;
 
         $statement = PublisherStatement::withoutGlobalScopes()->updateOrCreate(
@@ -211,37 +211,36 @@ final class PublisherStatementService
         )) {
             abort(403);
         }
-        $statement = PublisherStatement::withoutGlobalScopes()->findOrFail($statement->id);
-        if ((int) $statement->balance_due_minor < (int) $statement->payment_threshold_minor) {
-            throw ValidationException::withMessages(['invoice' => 'An invoice is not required while this statement remains below threshold.']);
-        }
-        if (in_array($statement->publisher_invoice_status, [PublisherInvoiceStatus::Received, PublisherInvoiceStatus::Accepted], true)) {
-            throw ValidationException::withMessages(['invoice' => 'An invoice has already been received for this statement.']);
-        }
-        $stored = $this->uploads->store($file, 'publisher-invoices/'.$statement->publisher_id.'/'.$statement->financial_period_id, [
-            'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpg',
-        ], (int) config('security.uploads.invoice_max_bytes'));
-        $checksum = $stored['checksum'];
-        $path = $stored['path'];
-        $statement->update([
-            'publisher_invoice_number' => $invoiceNumber,
-            'publisher_invoice_path' => $path,
-            'publisher_invoice_uploaded_at' => now(),
-            'publisher_invoice_uploaded_by' => $actor->id,
-            'publisher_invoice_status' => PublisherInvoiceStatus::Received,
-            'publisher_invoice_reviewed_at' => null,
-            'publisher_invoice_reviewed_by' => null,
-            'publisher_invoice_review_reason' => null,
-            'status' => PublisherStatementStatus::PendingInvoice,
-        ]);
+        return DB::transaction(function () use ($statement, $file, $invoiceNumber, $actor): PublisherStatement {
+            $statement = PublisherStatement::withoutGlobalScopes()->lockForUpdate()->findOrFail($statement->id);
+            if (! $statement->canUploadInvoice()) {
+                throw ValidationException::withMessages(['invoice' => 'This statement does not currently accept an invoice upload.']);
+            }
+            $stored = $this->uploads->store($file, 'publisher-invoices/'.$statement->publisher_id.'/'.$statement->financial_period_id, [
+                'application/pdf' => 'pdf', 'image/png' => 'png', 'image/jpeg' => 'jpg',
+            ], (int) config('security.uploads.invoice_max_bytes'));
+            $checksum = $stored['checksum'];
+            $path = $stored['path'];
+            $statement->update([
+                'publisher_invoice_number' => $invoiceNumber,
+                'publisher_invoice_path' => $path,
+                'publisher_invoice_uploaded_at' => now(),
+                'publisher_invoice_uploaded_by' => $actor->id,
+                'publisher_invoice_status' => PublisherInvoiceStatus::Received,
+                'publisher_invoice_reviewed_at' => null,
+                'publisher_invoice_reviewed_by' => null,
+                'publisher_invoice_review_reason' => null,
+                'status' => PublisherStatementStatus::PendingInvoice,
+            ]);
 
-        $this->audit->record('reporting.publisher_invoice.uploaded', $statement->organization_id, $actor, $statement, newValues: [
-            'publisher_invoice_number' => $invoiceNumber,
-            'checksum' => $checksum,
-            'path' => '[PRIVATE_FILE]',
-        ]);
+            $this->audit->record('reporting.publisher_invoice.uploaded', $statement->organization_id, $actor, $statement, newValues: [
+                'publisher_invoice_number' => $invoiceNumber,
+                'checksum' => $checksum,
+                'path' => '[PRIVATE_FILE]',
+            ]);
 
-        return $statement->refresh();
+            return $statement->refresh();
+        });
     }
 
     public function reviewInvoice(
@@ -264,6 +263,9 @@ final class PublisherStatementService
             $statement = PublisherStatement::withoutGlobalScopes()->lockForUpdate()->findOrFail($statement->id);
             if ($statement->publisher_invoice_status === $status) {
                 return $statement;
+            }
+            if (! $statement->hasPayableBalance()) {
+                throw ValidationException::withMessages(['publisher_invoice_status' => 'This statement is no longer available for invoice review.']);
             }
             if ($statement->publisher_invoice_status !== PublisherInvoiceStatus::Received) {
                 throw ValidationException::withMessages(['publisher_invoice_status' => 'Only a received invoice can be reviewed.']);

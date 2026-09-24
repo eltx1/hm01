@@ -170,6 +170,7 @@ final class PublisherFinanceService
             'opening_balance_minor' => (int) $statement->opening_balance_minor,
             'payment_threshold_minor' => (int) $statement->payment_threshold_minor,
             'has_publisher_invoice' => filled($statement->publisher_invoice_path),
+            'can_upload_invoice' => $statement->canUploadInvoice(),
             'publisher_invoice_number' => $statement->publisher_invoice_number,
             'publisher_invoice_uploaded_at' => $statement->publisher_invoice_uploaded_at,
             'publisher_invoice_review_reason' => $statement->publisher_invoice_review_reason,
@@ -323,6 +324,9 @@ final class PublisherFinanceService
         if ((int) $statement->balance_due_minor < (int) $statement->payment_threshold_minor) {
             return ['ready' => false, 'code' => 'BELOW_THRESHOLD', 'label' => 'Balance remains below the payment threshold'];
         }
+        if (! $statement->hasPayableBalance()) {
+            return ['ready' => false, 'code' => 'STATEMENT_NOT_PAYABLE', 'label' => 'This statement is not available for payout'];
+        }
         if (in_array($statement->publisher_invoice_status, [
             PublisherInvoiceStatus::Required,
             PublisherInvoiceStatus::Rejected,
@@ -341,10 +345,7 @@ final class PublisherFinanceService
 
     private function isPayable(PublisherStatement $statement): bool
     {
-        return (int) $statement->balance_due_minor > 0
-            && $statement->finalized_at !== null
-            && (int) $statement->balance_due_minor >= (int) $statement->payment_threshold_minor
-            && ! in_array($statement->status, [PublisherStatementStatus::Draft, PublisherStatementStatus::Paid, PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward], true);
+        return $statement->hasPayableBalance();
     }
 
     private function actions(
@@ -364,7 +365,7 @@ final class PublisherFinanceService
         }
 
         foreach ($statements as $statement) {
-            if ((int) $statement->balance_due_minor <= 0 || $statement->status === PublisherStatementStatus::Paid) {
+            if (! $statement->hasPayableBalance()) {
                 continue;
             }
             $invoiceStatus = $statement->publisher_invoice_status;
