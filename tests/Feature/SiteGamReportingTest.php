@@ -354,21 +354,28 @@ class SiteGamReportingTest extends TestCase
     public function test_wrong_unit_and_malformed_downloads_fail_atomically_and_do_not_become_zero_reports(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([['2026-09-20', '999', 1, 1, 0, 1, 0, 10000]]))]);
+        Http::fake([
+            'storage.googleapis.com/*' => Http::sequence()
+                ->push($this->csv([['2026-09-20', '999', 1, 1, 0, 1, 0, 10000]]))
+                ->push('<html>Error</html>')
+                ->push($this->csv([['2026-09-20', '12345', 1, 1, 0, 1, 0, 'AED 10000']])),
+        ]);
+
         $job = $this->import($binding);
         $this->assertSame(ReportImportStatus::Failed, $job->status);
-        $this->assertDatabaseCount('daily_reports', 0);
-        Http::fake(['storage.googleapis.com/*' => fn () => Http::response('<html>Error</html>')]);
-        $this->assertSame(ReportImportStatus::Failed, $this->import($binding)->status);
+        $this->assertStringContainsString('outside the selected ad unit', strtolower((string) $job->error_message));
         $this->assertDatabaseCount('daily_reports', 0);
 
-        Http::fake(['storage.googleapis.com/*' => fn () => Http::response(
-            $this->csv([['2026-09-20', '12345', 1, 1, 0, 1, 0, 'AED 10000']])
-        )]);
+        $malformed = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $malformed->status);
+        $this->assertDatabaseCount('daily_reports', 0);
+
         $wrongCurrency = $this->import($binding);
         $this->assertSame(ReportImportStatus::Failed, $wrongCurrency->status);
         $this->assertStringContainsString('unexpected currency', strtolower((string) $wrongCurrency->error_message));
         $this->assertDatabaseCount('daily_reports', 0);
+
+        $this->assertSame(3, $this->google->jobs, 'Each terminal bad artifact must force a fresh Google report job on retry.');
     }
 
     public function test_download_url_is_restricted_to_google_without_exposing_temporary_credentials(): void
