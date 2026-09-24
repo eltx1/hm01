@@ -81,6 +81,11 @@ final class PublisherStatementService
             ->where(fn ($query) => $query->whereNull('ends_at')->orWhereDate('ends_at', '>=', $period->starts_on))
             ->latest('starts_at')
             ->first();
+        if ($contract && strtoupper((string) $contract->currency) !== strtoupper((string) $period->currency)) {
+            throw ValidationException::withMessages([
+                'payment_threshold' => 'The active contract currency must match the financial period currency before its payment threshold can be applied. Review the publisher commercial terms.',
+            ]);
+        }
         try {
             $threshold = Money::decimalToMinor((string) ($contract?->payment_threshold ?? '0'));
         } catch (InvalidArgumentException) {

@@ -32,6 +32,10 @@ or nonzero. Both cases now have explicit coverage.
 - Ad-unit jobs refresh network-currency metadata from the current network read.
 - Existing validation of site/unit/date, atomic imports, deduplication, revenue
   shares, and closed accounting periods remains in the financial pipeline.
+- Statement generation now rejects a contract/period currency mismatch before
+  using the contract payment threshold. Previously a foreign-currency threshold
+  could silently be treated as a USD amount. Financial close rolls back fully
+  and requests review of the commercial terms; no guessed conversion is used.
 - No site-specific production IDs, migration, historical balance rewrite,
   exchange-rate guess, serving/runtime change, or publisher reinstallation.
 - Existing sanitized production audit counters are exposed in its aggregate
@@ -51,6 +55,16 @@ The parser's data-driven tests additionally cover USD markers, Unicode spacing,
 non-USD expected currency, malformed/oversized numbers and conflicting markers,
 including a zero explicitly marked with the wrong currency.
 
+An additional integration test follows an AED Google network through a confirmed
+USD estimate, rejected unproven final report, successful finalized USD snapshot,
+80/20 revenue allocation, monthly close, private publisher invoice upload,
+invoice acceptance, payout approval by a separate actor, and USD settlement.
+It asserts that estimates are not payable, failed imports prevent close, successful
+replacement retires the error, the original estimate is replaced rather than
+added, a conflicting contract currency rolls back close, and repeated close
+preserves the statement snapshot. Payment behavior is tested in fixtures only;
+no real publisher payment or invoice is created by this investigation.
+
 Local `git diff --check` passes. PHP is unavailable in the local workspace;
 PHP 8.2/8.3/8.4, MySQL, and the existing browser/Node regression suites run in the
 repository's GitHub checks. Exact results and deployment proof are recorded in
@@ -62,6 +76,7 @@ from fixture tests; the screenshot alone is not live import confirmation.
 - `app/Services/Reporting/GamReportMoneyParser.php`
 - `app/Services/Reporting/Connectors/GamAdUnitReportConnector.php`
 - `app/Services/Reporting/Connectors/GamReportConnector.php`
+- `app/Services/Reporting/PublisherStatementService.php`
 - `tests/Unit/GamReportMoneyParserTest.php`
 - `tests/Feature/SiteGamReportingTest.php`
 - `tests/Feature/GamRestConnectorTest.php`

@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Enums\OrganizationType;
+use App\Enums\PublisherInvoiceStatus;
+use App\Enums\PublisherPaymentProfileStatus;
 use App\Enums\ReportFinality;
 use App\Enums\FinancialReportingMethod;
 use App\Enums\ReportGranularity;
@@ -17,6 +19,8 @@ use App\Models\DemandSite;
 use App\Models\GamApiOperation;
 use App\Models\GamConnection;
 use App\Models\HourlyReport;
+use App\Models\PublisherContract;
+use App\Models\PublisherStatement;
 use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
@@ -30,6 +34,9 @@ use App\Services\Reporting\FinancialPeriodService;
 use App\Services\Reporting\MonetizationFinancialBindingService;
 use App\Services\Reporting\MonetizationFinancialReadinessService;
 use App\Services\Reporting\ReportImportService;
+use App\Services\Reporting\PublisherStatementService;
+use App\Services\Reporting\PublisherPaymentService;
+use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\ReportingBridge;
 use App\Services\Reporting\RevenueRuleService;
 use App\Services\Reporting\SiteGamFinancialCoverage;
@@ -43,6 +50,8 @@ use Database\Seeders\InventoryDeliverySeeder;
 use Database\Seeders\ReportingSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\ValidationException;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
@@ -412,6 +421,101 @@ class SiteGamReportingTest extends TestCase
         $this->assertStringContainsString('unexpected currency', $job->error_message);
         Http::assertNothingSent();
         $this->assertDatabaseCount('daily_reports', 0);
+    }
+
+    public function test_converted_google_usd_flows_through_finalization_invoice_and_settlement_without_network_currency_leaking(): void
+    {
+        Storage::fake('local');
+        [$admin, $publisher, $publisherUser, $site] = $context = $this->context();
+        $finance = $this->makeUser($admin->organization, RoleName::FinanceAdmin);
+        $this->google->currency = 'AED';
+        $this->google->reportCurrency = 'USD';
+        $binding = $this->bind($context);
+        $contract = PublisherContract::withoutGlobalScopes()->create([
+            'organization_id' => $publisher->organization_id, 'publisher_id' => $publisher->id,
+            'contract_reference' => 'USD-GAM-FLOW', 'starts_at' => '2026-09-01', 'auto_renews' => false,
+            'revenue_share_percent' => 80, 'payment_threshold' => 100, 'currency' => 'USD',
+            'payment_terms' => 'Net 30', 'status' => 'ACTIVE', 'created_by' => $admin->id,
+        ]);
+        app(RevenueRuleService::class)->createRule([
+            'name' => 'USD website split', 'scope_type' => 'WEBSITE', 'scope_id' => $site->id,
+            'effective_from' => '2026-09-01', 'currency' => 'USD', 'publisher_share_bp' => 8000,
+            'horus_share_bp' => 2000, 'mcm_partner_share_bp' => 0,
+        ], $admin);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, '999000000']]))
+            ->push($this->csv([['2026-09-20', '12345', 120, 100, 20, 95, 3, '200000000']]))
+            ->push($this->csv([
+                ['2026-09-19', '12345', 20, 0, 20, 0, 0, '0'],
+                ['2026-09-20', '12345', 120, 100, 20, 95, 3, '200000000'],
+            ]))]);
+        $day = CarbonImmutable::parse('2026-09-21', $binding->connection->timezone);
+        $estimated = app(ReportImportService::class)->runConnection($binding->connection, $day, $day,
+            ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $estimated->status);
+        $this->assertFalse(DailyReport::withoutGlobalScopes()->sole()->settlement_eligible);
+        $this->assertDatabaseCount('publisher_statements', 0);
+
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 12:00:00', 'UTC'));
+        $periods = app(FinancialPeriodService::class);
+        $period = $periods->periodFor('2026-09-01', 'USD');
+        $this->google->reportCurrency = null;
+        $failed = $this->import($binding, '2026-09-01', '2026-09-30');
+        $this->assertSame(ReportImportStatus::Failed, $failed->status);
+        $this->assertFalse($periods->readiness($period)['ready']);
+        $this->google->reportCurrency = 'USD';
+        $finalized = $this->import($binding, '2026-09-01', '2026-09-30');
+        $this->assertSame(ReportImportStatus::Completed, $finalized->status, $finalized->error_message ?? '');
+        $this->assertSame(ReportImportStatus::Duplicate, $failed->fresh()->status);
+        $this->assertSame(20000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertSame(16000, (int) DailyReport::withoutGlobalScopes()->sum('publisher_earnings_minor'));
+        $this->assertSame(['USD'], DailyReport::withoutGlobalScopes()->pluck('currency')->unique()->values()->all());
+        $readiness = $periods->readiness($period);
+        $this->assertTrue($readiness['ready'], json_encode($readiness));
+
+        // A contract amount in another currency must never silently become a
+        // USD threshold or let a partial financial close persist.
+        $contract->update(['currency' => 'AED']);
+        try {
+            $periods->close($period, $admin);
+            $this->fail('A foreign-currency payment threshold must not be relabelled as USD.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('payment_threshold', $exception->errors());
+        }
+        $this->assertSame('OPEN', $period->fresh()->status->value);
+        $this->assertDatabaseCount('monthly_reports', 0);
+        $this->assertDatabaseCount('publisher_statements', 0);
+        $contract->update(['currency' => 'USD']);
+        $periods->close($period->fresh(), $admin);
+        $statement = PublisherStatement::withoutGlobalScopes()->sole();
+        $this->assertSame('USD', $statement->currency);
+        $this->assertSame(20000, (int) $statement->gross_revenue_minor);
+        $this->assertSame(16000, (int) $statement->balance_due_minor);
+        $this->assertSame(10000, (int) $statement->payment_threshold_minor);
+        $this->assertSame(PublisherInvoiceStatus::Required, $statement->publisher_invoice_status);
+        $snapshot = $statement->snapshot_hash;
+        // The existing scheduler skips the closed month; closing twice does not
+        // regenerate invoices or money. No actual payment provider is contacted.
+        $periods->close($period->fresh(), $admin);
+        $this->assertSame($snapshot, $statement->fresh()->snapshot_hash);
+        $statements = app(PublisherStatementService::class);
+        $statements->uploadInvoice($statement, UploadedFile::fake()->create('invoice.pdf', 10, 'application/pdf'),
+            'PUB-USD-001', $publisherUser);
+        $statements->reviewInvoice($statement->fresh(), PublisherInvoiceStatus::Accepted, $finance);
+        $profile = app(PublisherPaymentProfileService::class)->save($publisher, [
+            'beneficiary_name' => 'Publisher', 'payment_method' => 'BANK_TRANSFER', 'currency' => 'USD',
+            'country' => 'US', 'account_reference' => 'USD-TEST-ACCOUNT',
+        ], $publisherUser);
+        app(PublisherPaymentProfileService::class)->review($profile, PublisherPaymentProfileStatus::Verified, $admin);
+        $payments = app(PublisherPaymentService::class);
+        $payment = $payments->create($statement->fresh(), 16000, ['payment_method' => 'BANK_TRANSFER'], $admin);
+        $payments->approve($payment, $finance);
+        $payments->markPaid($payment->fresh(), 'USD-GAM-SETTLEMENT', $admin);
+        $this->assertSame('USD', $payment->fresh()->currency);
+        $this->assertSame(16000, (int) $payment->fresh()->settled_amount_minor);
+        $this->assertSame('PAID', $statement->fresh()->status->value);
+        $this->assertSame(0, (int) $statement->fresh()->balance_due_minor);
+        $this->assertSame($snapshot, $statement->fresh()->snapshot_hash);
     }
 
     public function test_pending_google_job_is_resumed_without_duplicate_submission_or_false_zero_revenue(): void
