@@ -91,7 +91,22 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             }
             throw new GamReportPending('Google is preparing the ad-unit report; synchronization will resume automatically.');
         }
-        $rows = $this->parse($this->google->download($binding->gamConnection, (string) $jobId), $binding, $connection, $from, $to, $granularity);
+        try {
+            $rows = $this->parse(
+                $this->google->download($binding->gamConnection, (string) $jobId),
+                $binding,
+                $connection,
+                $from,
+                $to,
+                $granularity,
+            );
+        } catch (\Throwable $exception) {
+            // A completed Google job can still yield an invalid, stale, or
+            // unexpected CSV. Do not pin retries to that same completed job.
+            unset($configuration['google_jobs'][$key]);
+            $connection->update(['configuration' => $configuration]);
+            throw $exception;
+        }
 
         return [
             'rows' => $rows, 'external_report_id' => 'gam-unit:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
@@ -141,7 +156,15 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 }
                 $buckets[$key] = [];
                 foreach (self::COLUMNS as $column => $field) {
-                    $value = $this->integer($row['Column.'.$column]);
+                    $rawValue = $row['Column.'.$column];
+                    $sourceCurrency = strtoupper((string) data_get($connection->configuration, 'source_network_currency', ''));
+                    $value = $field === 'revenue_micros'
+                        ? $this->moneyMicros(
+                            $rawValue,
+                            $this->canonicalCurrency(),
+                            $sourceCurrency !== '' && $sourceCurrency !== $this->canonicalCurrency(),
+                        )
+                        : $this->integer($rawValue);
                     if ($field !== 'revenue_micros' && $value < 0) {
                         throw new RuntimeException('The Google report contains a negative delivery metric.');
                     }
@@ -178,6 +201,30 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
 
         return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
+    }
+
+    private function moneyMicros(string $value, string $expectedCurrency, bool $requireCurrencyMarker = false): int
+    {
+        $value = trim($value);
+
+        if (preg_match('/^(.+?)\\s+(-?\\d+)$/uD', $value, $matches) === 1) {
+            $prefix = trim((string) $matches[1]);
+            $allowedPrefixes = $expectedCurrency === 'USD'
+                ? ['USD', '$', 'US$']
+                : [$expectedCurrency];
+
+            if (! in_array($prefix, $allowedPrefixes, true)) {
+                throw new RuntimeException('The Google GAM report returned a monetary value in an unexpected currency.');
+            }
+
+            $value = (string) $matches[2];
+        } elseif (preg_match('/^-?\\d+$/D', $value) !== 1) {
+            throw new RuntimeException('The Google report contains an invalid revenue value.');
+        } elseif ($requireCurrencyMarker) {
+            throw new RuntimeException('The Google GAM report did not prove that converted revenue is in the canonical currency.');
+        }
+
+        return $this->integer($value);
     }
 
     private function integer(string $value): int

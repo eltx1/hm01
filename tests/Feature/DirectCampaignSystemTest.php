@@ -80,6 +80,29 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(10, $summary['clicks']);
         $this->assertSame(700, $summary['spend_minor']);
         $this->assertDatabaseHas('advertiser_invoices', ['campaign_id' => $campaign->id, 'status' => 'ISSUED']);
+
+        // The bridge can also materialize AdvertiserReport rows for the same
+        // campaign/day. Unified reporting and invoicing must prefer the
+        // delivery log rather than counting both stores.
+        $beforeFallbackRemoval = app(\App\Services\Reporting\UnifiedReportService::class)
+            ->advertiserSummary($campaign->advertiser, now()->startOfMonth(), now());
+        $this->assertSame(700, $beforeFallbackRemoval['spend_minor']);
+        $this->assertSame(300, $beforeFallbackRemoval['impressions']);
+        $this->assertSame(700, $campaign->invoices()->firstOrFail()->subtotal_minor);
+
+        // Publisher-finance deduplication may intentionally exclude the
+        // campaign bridge when Site GAM already owns revenue. Advertiser cost
+        // and invoices must still come from the delivery log.
+        \App\Models\AdvertiserReport::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->delete();
+        $invoice = $campaign->invoices()->firstOrFail();
+        app(\App\Services\Reporting\AdvertiserFinancialService::class)->synchronizeInvoice($invoice);
+        $this->assertSame(700, $invoice->fresh()->subtotal_minor);
+        $advertiserSummary = app(\App\Services\Reporting\UnifiedReportService::class)
+            ->advertiserSummary($campaign->advertiser, now()->startOfMonth(), now());
+        $this->assertSame(700, $advertiserSummary['spend_minor']);
+        $this->assertSame(300, $advertiserSummary['impressions']);
     }
 
     public function test_direct_campaign_completes_over_rest_first_hybrid_connections(): void
@@ -115,6 +138,18 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertSame(2, collect($soap->calls)->where('method', 'createLineItemCreativeAssociations')->count());
         $this->assertSame(2, collect($soap->calls)->where('method', 'performLineItemAction')->count());
         Http::assertSentCount(2);
+
+        // Campaign reporting uses the legacy SOAP ReportQuery schema and must
+        // ask Google to convert monetary metrics to Horus' canonical USD.
+        $reports = app(CampaignReportingService::class)->requestDeliveryReports(
+            $campaign->fresh()->load('networkInstances.connection')
+        );
+        $this->assertCount(2, $reports);
+        $reportCalls = collect($soap->calls)->where('method', 'runReportJob');
+        $this->assertCount(2, $reportCalls);
+        $this->assertTrue($reportCalls->every(
+            fn (array $call): bool => data_get($call, 'payload.reportJob.reportQuery.reportCurrency') === 'USD'
+        ));
     }
 
     public function test_one_network_failure_is_isolated_and_retry_does_not_duplicate_horus_objects(): void
@@ -135,6 +170,32 @@ class DirectCampaignSystemTest extends TestCase
         $this->assertTrue($retry['success']);
         $this->assertSame($horusCount, GamRemoteObject::withoutGlobalScopes()->where('gam_connection_id', $horus->id)->count());
         $this->assertDatabaseHas('campaign_network_instances', ['id' => $partnerInstance->id, 'status' => CampaignNetworkStatus::Active->value]);
+    }
+
+    public function test_campaign_reporting_refuses_non_usd_spend_instead_of_relabeling_it(): void
+    {
+        [$campaign] = $this->campaignAcrossTwoNetworks('MOCK');
+        $campaign->update(['currency' => 'AED']);
+        $instance = $campaign->networkInstances()->firstOrFail();
+
+        try {
+            app(CampaignReportingService::class)->recordAggregated($instance, [[
+                'report_date' => now()->toDateString(),
+                'external_report_id' => 'non-usd-report',
+                'impressions' => 100,
+                'clicks' => 2,
+                'views' => 1,
+                'spend_minor' => 250,
+            ]]);
+            $this->fail('Non-USD campaign reporting must fail closed without an FX ledger.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('denominated in USD', $exception->getMessage());
+        }
+
+        $this->assertDatabaseMissing('campaign_delivery_logs', [
+            'campaign_id' => $campaign->id,
+            'spend_minor' => 250,
+        ]);
     }
 
     public function test_creative_validation_rejects_unsafe_html_missing_assets_and_duplicate_files(): void

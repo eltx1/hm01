@@ -56,6 +56,26 @@ class AdvertiserCampaignCapabilityGuardrailTest extends TestCase
         $this->assertSame(ServingMode::HorusDirect, $fx['site']->fresh()->serving_mode);
     }
 
+    public function test_non_usd_campaign_remains_draft_until_an_explicit_fx_ledger_exists(): void
+    {
+        $fx = $this->fixture();
+        $fx['campaign']->update(['currency' => 'AED']);
+
+        $result = app(CampaignDeliveryCapabilityService::class)->evaluate($fx['campaign'], true);
+
+        $this->assertSame(CampaignDeliveryCapabilityStatus::ConfigurationIncomplete, $result->status);
+        $this->assertSame('CAMPAIGN_CURRENCY_UNSUPPORTED_FOR_GAM_REPORTING', $result->reasons[0]['code']);
+
+        try {
+            app(CampaignWorkflowService::class)->submit($fx['campaign']->fresh(), $fx['advertiserUser']);
+            $this->fail('A non-USD GAM-backed campaign must not reach submission without an FX ledger.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('delivery_capability', $exception->errors());
+        }
+
+        $this->assertSame(CampaignStatus::Draft, $fx['campaign']->fresh()->status);
+    }
+
     public function test_disabled_and_unhealthy_selected_gam_connections_are_blocked_with_exact_status(): void
     {
         $disabled = $this->fixture();

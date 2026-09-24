@@ -5,7 +5,7 @@ Manager account, searches for an ad unit by name/code/ID, and selects **Connect
 reports**. The exact name, code or numeric ID also works without search or
 JavaScript. When only one account is available it is selected automatically.
 Ambiguous names require selection of the intended ID. Account access, unit ID,
-network currency and timezone are verified before the binding is saved. The network currency is retained as source metadata; Horus always requests report revenue in the configured canonical reporting currency (`USD` by default).
+network currency and timezone are verified before the binding is saved. The network currency is retained as source metadata; Horus always requests report revenue in **USD**. This is a fixed accounting/reporting invariant, not an environment-selectable display preference.
 
 If no account has been connected, select **Connect your first Ad Manager
 account** in the same section. Google sign-in discovers one or several networks
@@ -49,10 +49,10 @@ failures back off and expired preparation jobs are retried.
 
 Reports request total impressions, clicks, requests, responses, unmatched requests
 and total CPM/CPC/CPD revenue, including dynamic allocation. Every GAM query sends
-`reportCurrency=USD` (or the configured canonical reporting currency), regardless
+`reportCurrency=USD`, regardless
 of the network's base currency. Google performs the reporting FX conversion using
 its report-currency rules; Horus stores the returned CSV_DUMP micros directly in
-that canonical currency and converts micros to minor units once per aggregate. Dates and the returned unit ID
+USD and converts micros to minor units once per aggregate. Dates and the returned unit ID
 must match the binding. Malformed, oversized and failed downloads never create
 zero-revenue reports. A completed, valid report fills omitted dates/hours with zero
 to correctly apply downward corrections. Download URLs are Google HTTPS URLs;

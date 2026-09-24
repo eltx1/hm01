@@ -40,7 +40,7 @@ final class GamHybridConnector implements GamConnectorInterface
     public function activateLineItem(array $filterStatement, array $options = []): GamResult { return $this->route(__FUNCTION__, [$filterStatement], $options); }
     public function resumeLineItem(array $filterStatement, array $options = []): GamResult { return $this->route(__FUNCTION__, [$filterStatement], $options); }
     public function archiveObject(array $attributes, array $options = []): GamResult { return $this->route(__FUNCTION__, [$attributes], $options, $attributes); }
-    public function runReport(array $reportQuery, array $options = []): GamResult { return $this->route(__FUNCTION__, [$reportQuery], $options); }
+    public function runReport(array $reportQuery, array $options = []): GamResult { return $this->route(__FUNCTION__, [$reportQuery], $options, $reportQuery); }
     public function getObjectByRemoteId(string $service, string $remoteId, array $options = []): GamResult { return $this->route(__FUNCTION__, [$service, $remoteId], $options, ['service' => $service]); }
 
     private function route(string $operation, array $arguments, array $options, array $context = []): GamResult

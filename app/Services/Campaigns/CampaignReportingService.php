@@ -26,6 +26,7 @@ final class CampaignReportingService
 
     public function requestDeliveryReports(Campaign $campaign): array
     {
+        $reportCurrency = $this->canonicalReportCurrency($campaign);
         $results = [];
         foreach ($campaign->networkInstances as $instance) {
             $lineItem = $this->lineItemMapping($instance);
@@ -39,6 +40,9 @@ final class CampaignReportingService
                 'dateRangeType' => 'CUSTOM_DATE',
                 'startDate' => $campaign->starts_at->toDateString(),
                 'endDate' => ($campaign->ends_at->isPast() ? $campaign->ends_at : now())->toDateString(),
+                // Google converts revenue metrics in the report itself. Never
+                // relabel network-currency money after it reaches Horus.
+                'reportCurrency' => $reportCurrency,
                 'statement' => [
                     'query' => 'WHERE LINE_ITEM_ID = :lineItemId',
                     'values' => [['key' => 'lineItemId', 'value' => ['__type' => 'NumberValue', 'value' => $lineItem->remote_object_id]]],
@@ -54,6 +58,7 @@ final class CampaignReportingService
 
     public function recordAggregated(CampaignNetworkInstance $instance, array $rows): int
     {
+        $this->canonicalReportCurrency($instance->campaign);
         $count = 0;
         foreach ($rows as $row) {
             CampaignDeliveryLog::withoutGlobalScopes()->updateOrCreate(
@@ -80,6 +85,20 @@ final class CampaignReportingService
         $this->reportingBridge->recordCampaignRows($instance, $rows);
         $instance->campaign->invoices()->get()->each(fn ($invoice) => $this->advertiserFinancials->synchronizeInvoice($invoice));
         return $count;
+    }
+
+    private function canonicalReportCurrency(Campaign $campaign): string
+    {
+        $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        $currency = preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
+
+        if (strtoupper((string) $campaign->currency) !== $currency) {
+            throw new RuntimeException(
+                "GAM-backed campaign reporting is denominated in {$currency}; a {$campaign->currency} campaign cannot consume these amounts without an explicit FX ledger."
+            );
+        }
+
+        return $currency;
     }
 
     public function summary(Campaign $campaign): array

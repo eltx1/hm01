@@ -5,15 +5,21 @@ namespace App\Services\Reporting;
 use App\Enums\GamConnectionType;
 use App\Enums\ReportFinality;
 use App\Enums\ReportGranularity;
+use App\Enums\ReportImportStatus;
 use App\Enums\ReportSourceCode;
 use App\Models\CampaignNetworkInstance;
 use App\Models\DemandAccount;
+use App\Models\DailyReport;
 use App\Models\DemandSite;
 use App\Models\GamConnection;
+use App\Models\GamNetwork;
+use App\Models\HourlyReport;
+use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class ReportingBridge
@@ -24,22 +30,124 @@ final class ReportingBridge
 
     public function connectionForGam(GamConnection $gam, ?User $actor = null): ReportSourceConnection
     {
+        return DB::transaction(function () use ($gam, $actor): ReportSourceConnection {
+            $locked = GamConnection::withoutGlobalScopes()
+                ->whereKey($gam->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            return $this->connectionForGamLocked($locked, $actor);
+        });
+    }
+
+    private function connectionForGamLocked(GamConnection $gam, ?User $actor = null): ReportSourceConnection
+    {
         $sourceCode = match ($gam->type) {
             GamConnectionType::HorusGam => ReportSourceCode::HorusGam,
             GamConnectionType::McmPartnerGam => ReportSourceCode::McmPartnerGam,
             GamConnectionType::PublisherGam => ReportSourceCode::PublisherGam,
         };
 
-        return $this->connection(
+        $canonicalCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        if (! preg_match('/^[A-Z]{3}$/D', $canonicalCurrency)) {
+            $canonicalCurrency = 'USD';
+        }
+
+        $legacyConnectionId = null;
+        $existing = ReportSourceConnection::withoutGlobalScopes()
+            ->where('connection_type', 'GAM_CONNECTION')
+            ->where('connection_id', $gam->id)
+            ->first();
+        // Preserve the source-local reporting clock before connection()
+        // refreshes generic fields. Resetting an existing GAM source to UTC
+        // here would shift finalized daily windows for non-UTC networks.
+        $existingTimezone = trim((string) ($existing?->timezone ?? ''));
+        if ($existing && strtoupper((string) $existing->currency) !== $canonicalCurrency) {
+            $hasFinancialHistory = DailyReport::withoutGlobalScopes()
+                ->where('report_source_connection_id', $existing->id)
+                ->exists()
+                || HourlyReport::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $existing->id)
+                    ->exists();
+
+            if ($hasFinancialHistory) {
+                // Preserve every historical amount in its original denomination.
+                // The active source gets a fresh identity so future Google reports
+                // can be requested in canonical USD without ever relabelling AED,
+                // EUR, or another network-currency row.
+                $legacyConfiguration = (array) ($existing->configuration ?? []);
+                $legacyConfiguration['currency_policy'] = 'LEGACY_SOURCE_CURRENCY';
+                $legacyConfiguration['canonical_currency_cutover_to'] = $canonicalCurrency;
+                $legacyConfiguration['canonical_currency_cutover_at'] = now()->toIso8601String();
+                $legacyConfiguration['legacy_currency'] = strtoupper((string) $existing->currency);
+                $legacyConfiguration['canonical_currency_superseded_imports'] = ReportImportJob::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $existing->id)
+                    ->whereIn('status', [
+                        ReportImportStatus::Pending->value,
+                        ReportImportStatus::Failed->value,
+                    ])
+                    ->update([
+                        'status' => ReportImportStatus::Duplicate->value,
+                        'error_message' => null,
+                        'next_retry_at' => null,
+                        'completed_at' => now(),
+                    ]);
+                $existing->update([
+                    'connection_type' => 'GAM_CONNECTION_LEGACY',
+                    'status' => 'DISABLED',
+                    'is_enabled' => false,
+                    'configuration' => $legacyConfiguration,
+                    'updated_by' => $actor?->id,
+                ]);
+                $legacyConnectionId = $existing->id;
+            }
+        }
+
+        $connection = $this->connection(
             $sourceCode,
             $gam->organization_id,
             'GAM_CONNECTION',
             $gam->id,
             $gam->name,
             $gam->network_code,
-            data_get($gam->configuration, 'currency', config('reporting.default_currency', 'USD')),
+            $canonicalCurrency,
             $actor,
         );
+
+        $configuration = (array) ($connection->configuration ?? []);
+        $network = GamNetwork::withoutGlobalScopes()
+            ->where('gam_connection_id', $gam->id)
+            ->where('network_code', $gam->network_code)
+            ->orderByDesc('is_current')
+            ->orderByDesc('last_seen_at')
+            ->first();
+        $sourceCurrency = strtoupper(trim((string) ($network?->currency_code ?: data_get($gam->configuration, 'currency', ''))));
+        $networkTimezone = trim((string) ($network?->time_zone ?: $existingTimezone ?: $connection->timezone ?: config('reporting.default_timezone', 'UTC')));
+        try {
+            CarbonImmutable::now($networkTimezone);
+        } catch (\Throwable) {
+            $networkTimezone = (string) config('reporting.default_timezone', 'UTC');
+        }
+
+        $configuration['currency_policy'] = 'CANONICAL_REPORTING_CURRENCY';
+        $configuration['report_currency'] = $canonicalCurrency;
+        if (preg_match('/^[A-Z]{3}$/D', $sourceCurrency) === 1) {
+            $configuration['source_network_currency'] = $sourceCurrency;
+        }
+        if ($legacyConnectionId !== null) {
+            $networkNow = CarbonImmutable::now($networkTimezone);
+            $rebackfillFrom = $networkNow->startOfMonth();
+            $configuration['legacy_connection_id'] = $legacyConnectionId;
+            $configuration['canonical_currency_cutover_at'] = now()->toIso8601String();
+            $configuration['canonical_currency_rebackfill_from'] = $rebackfillFrom->toDateString();
+            $configuration['canonical_currency_rebackfill_required'] = $rebackfillFrom->lt($networkNow->startOfDay());
+        }
+        $connection->update([
+            'configuration' => $configuration,
+            'timezone' => $networkTimezone,
+        ]);
+
+        return $connection;
     }
 
     public function connectionForDemand(DemandAccount $account, ?User $actor = null): ReportSourceConnection
@@ -100,7 +208,10 @@ final class ReportingBridge
                 'gross_revenue_minor' => (int) ($row['spend_minor'] ?? 0),
                 'spend_minor' => (int) ($row['spend_minor'] ?? 0),
                 'video_starts' => (int) ($row['views'] ?? 0),
-                'currency' => $instance->campaign->currency,
+                // Campaign GAM reports are requested from Google in the
+                // canonical reporting denomination. Never relabel that money
+                // with the advertiser campaign's display/budget currency.
+                'currency' => $connection->currency,
             ]);
         }
         if ($normalized === []) {

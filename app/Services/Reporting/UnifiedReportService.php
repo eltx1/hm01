@@ -9,6 +9,7 @@ use App\Models\Advertiser;
 use App\Models\AdvertiserInvoice;
 use App\Models\AdvertiserReport;
 use App\Models\Campaign;
+use App\Models\CampaignDeliveryLog;
 use App\Models\DailyReport;
 use App\Models\Publisher;
 use App\Models\PublisherPayment;
@@ -105,23 +106,46 @@ final class UnifiedReportService
         CarbonInterface|string|null $to = null,
     ): array {
         [$from, $to] = $this->range($from, $to);
-        $rows = AdvertiserReport::withoutGlobalScopes()
+        $campaigns = Campaign::withoutGlobalScopes()
+            ->where('advertiser_id', $advertiser->id)
+            ->get(['id', 'name', 'total_budget_minor', 'currency']);
+
+        // CampaignDeliveryLog is authoritative when the campaign sync path has
+        // recorded a given campaign/day. AdvertiserReport remains a valid
+        // fallback for imported reporting sources that do not pass through the
+        // campaign sync service. Prefer per campaign/day so the two stores are
+        // never summed twice.
+        $deliveryRows = CampaignDeliveryLog::withoutGlobalScopes()
+            ->whereIn('campaign_id', $campaigns->pluck('id'))
+            ->whereDate('report_date', '>=', $from->toDateString())
+            ->whereDate('report_date', '<=', $to->toDateString())
+            ->with('campaign')
+            ->get();
+        $advertiserRows = AdvertiserReport::withoutGlobalScopes()
             ->where('advertiser_id', $advertiser->id)
             ->whereDate('report_date', '>=', $from->toDateString())
             ->whereDate('report_date', '<=', $to->toDateString())
-            ->with(['campaign', 'connection.source'])
+            ->with('campaign')
             ->get();
+
+        $deliveryDays = $deliveryRows->map(
+            fn ($row): string => $row->campaign_id.'|'.$row->report_date->toDateString()
+        )->unique()->flip();
+        $rows = $deliveryRows->concat($advertiserRows->reject(
+            fn ($row): bool => $deliveryDays->has($row->campaign_id.'|'.$row->report_date->toDateString())
+        ));
+
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
+        $spend = (int) $rows->sum('spend_minor');
 
         return [
             'from' => $from, 'to' => $to,
             'impressions' => $impressions,
             'clicks' => $clicks,
             'ctr_bp' => $impressions > 0 ? (int) round($clicks * 10000 / $impressions) : 0,
-            'spend_minor' => (int) $rows->sum('spend_minor'),
-            'remaining_budget_minor' => max(0, (int) Campaign::withoutGlobalScopes()
-                ->where('advertiser_id', $advertiser->id)->sum('total_budget_minor') - (int) $rows->sum('spend_minor')),
+            'spend_minor' => $spend,
+            'remaining_budget_minor' => max(0, (int) $campaigns->sum('total_budget_minor') - $spend),
             'campaigns' => $rows->groupBy('campaign_id')->map(function (Collection $group): array {
                 $campaign = $group->first()->campaign;
                 $impressions = (int) $group->sum('impressions');
@@ -143,7 +167,30 @@ final class UnifiedReportService
 
     public function campaignCost(Campaign $campaign): array
     {
-        $rows = AdvertiserReport::withoutGlobalScopes()->where('campaign_id', $campaign->id)->get();
+        $deliveryRows = CampaignDeliveryLog::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->get();
+        $advertiserRows = AdvertiserReport::withoutGlobalScopes()
+            ->where('campaign_id', $campaign->id)
+            ->get();
+
+        $deliveryDays = $deliveryRows->map(
+            fn ($row): string => $row->report_date->toDateString()
+        )->unique()->flip();
+        $rows = $deliveryRows->concat($advertiserRows->reject(
+            fn ($row): bool => $deliveryDays->has($row->report_date->toDateString())
+        ));
+
+        if ($deliveryRows->isNotEmpty()) {
+            $canonical = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+            $canonical = preg_match('/^[A-Z]{3}$/D', $canonical) === 1 ? $canonical : 'USD';
+            if (strtoupper((string) $campaign->currency) !== $canonical) {
+                throw new \RuntimeException(
+                    "Campaign delivery is denominated in {$canonical}; invoice synchronization requires an explicit FX ledger for {$campaign->currency}."
+                );
+            }
+        }
+
         $impressions = (int) $rows->sum('impressions');
         $clicks = (int) $rows->sum('clicks');
         $spend = (int) $rows->sum('spend_minor');
@@ -186,7 +233,7 @@ final class UnifiedReportService
 
     private function currency(?string $currency): string
     {
-        $currency = strtoupper(trim((string) ($currency ?: config('reporting.default_currency', 'USD'))));
+        $currency = strtoupper(trim((string) ($currency ?: config('reporting.canonical_currency', 'USD'))));
 
         return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
     }

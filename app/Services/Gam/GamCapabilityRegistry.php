@@ -21,7 +21,7 @@ final class GamCapabilityRegistry
     private const REST_OPERATIONS = [
         'testConnection', 'getCurrentNetwork', 'listAccessibleNetworks', 'getNetworkByCode',
         'createAdUnit', 'updateAdUnit', 'createPlacement', 'createCustomTargetingKey',
-        'createCustomTargetingValue', 'createOrder', 'updateOrder', 'runReport',
+        'createCustomTargetingValue', 'createOrder', 'updateOrder',
     ];
 
     /** @var list<string> */
@@ -38,6 +38,16 @@ final class GamCapabilityRegistry
 
         if ($operation === 'getObjectByRemoteId') {
             return $this->restReadableService((string) ($context['service'] ?? '')) ? self::REST : self::SOAP;
+        }
+
+        if ($operation === 'runReport') {
+            // REST ReportDefinition uses metrics/dateRange/currencyCode.
+            // Legacy SOAP ReportQuery uses columns/dateRangeType/reportCurrency.
+            // Prefer SOAP for ambiguous payloads so a legacy query is never
+            // posted to the REST resource with the wrong schema.
+            return array_key_exists('metrics', $context) || array_key_exists('dateRange', $context)
+                ? self::REST
+                : self::SOAP;
         }
 
         if (in_array($operation, self::REST_OPERATIONS, true)) {
@@ -59,6 +69,7 @@ final class GamCapabilityRegistry
         foreach (self::SOAP_FALLBACK_OPERATIONS as $operation) $matrix[$operation] = self::SOAP;
         $matrix['archiveObject'] = 'CONTEXTUAL';
         $matrix['getObjectByRemoteId'] = 'CONTEXTUAL';
+        $matrix['runReport'] = 'CONTEXTUAL';
         ksort($matrix);
 
         return $matrix;
