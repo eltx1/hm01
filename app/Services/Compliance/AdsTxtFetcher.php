@@ -22,9 +22,14 @@ final class AdsTxtFetcher
             ->where('verification_status', 'VERIFIED')
             ->pluck('domain')->map(fn (string $domain): string => strtolower(rtrim($domain, '.')))->unique()->values();
         $primary = strtolower(rtrim($site->primary_domain, '.'));
-        if (! $allowedHosts->contains($primary)) {
-            return $this->failure('DOMAIN_NOT_VERIFIED', 'The primary website domain is not verified for safe compliance fetching.', null, null, hrtime(true));
+        if ($primary === '' || str_contains($primary, '/') || str_contains($primary, ':')) {
+            return $this->failure('INVALID_DOMAIN', 'The ads.txt verification domain is invalid.', null, null, hrtime(true));
         }
+        // Reading a public file is not proof of domain ownership. Pending sites
+        // must be crawlable to diagnose their ads.txt before activation. DNS/IP
+        // safety still applies to every request; other redirect hosts still
+        // require an explicitly verified domain belonging to this same site.
+        $allowedHosts->push($primary);
 
         return $this->fetchInternal($primary, $allowedHosts, false);
     }
