@@ -933,3 +933,40 @@ test('Google GPT runtime injects the GPT library once into the publisher documen
     vm.runInNewContext(gptSource, runtime.sandbox, { filename: 'hm-gpt-direct-second-load.js' });
     assert.equal(runtime.appendedScripts.length, 1, 'reloading the Horus runtime must not inject GPT twice');
 });
+
+
+test('rewarded collision dismisses its prompt without disrupting the active video', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast').toString('base64'),
+    };
+    const target = container(attributes, 'collision');
+    const runtime = runVideo(target);
+    await tick();
+    const activeVideo = {destroyed: false};
+    runtime.sandbox.__HORUS_VIDEO_DIRECT_RUNTIME_V1__.active = activeVideo;
+    runtime.created.find(node => node.tagName === 'BUTTON').click();
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(runtime.sandbox.__HORUS_VIDEO_DIRECT_RUNTIME_V1__.active, activeVideo);
+    assert.equal(activeVideo.destroyed, false);
+    assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-granted').length, 0);
+});
+
+test('rewarded private-mode storage getter failure does not prevent opening or completion', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast').toString('base64'),
+    };
+    const target = container(attributes, 'private');
+    const runtime = runVideo(target);
+    Object.defineProperty(runtime.sandbox, 'localStorage', {get() {throw new Error('Storage denied');}});
+    await tick();
+    runtime.created.find(node => node.tagName === 'BUTTON').click();
+    runtime.managers[0].emit('complete');
+    runtime.managers[0].emit('all-ads-completed');
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-granted').length, 1);
+});

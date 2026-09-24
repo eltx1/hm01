@@ -112,8 +112,9 @@
 
     function rewardCooldownRemaining(container) {
         var seconds = rewardCooldownSeconds(container);
-        if (!seconds || !window.localStorage) return 0;
+        if (!seconds) return 0;
         try {
+            if (!window.localStorage) return 0;
             var grantedAt = Number(window.localStorage.getItem(rewardStorageKey(container)) || 0);
             if (!Number.isFinite(grantedAt) || grantedAt <= 0) return 0;
             return Math.max(0, seconds - Math.floor((Date.now() - grantedAt) / 1000));
@@ -123,8 +124,8 @@
     }
 
     function rememberRewardGrant(container) {
-        if (!window.localStorage || rewardCooldownSeconds(container) <= 0) return;
-        try { window.localStorage.setItem(rewardStorageKey(container), String(Date.now())); } catch (error) {}
+        if (rewardCooldownSeconds(container) <= 0) return;
+        try { if (window.localStorage) window.localStorage.setItem(rewardStorageKey(container), String(Date.now())); } catch (error) {}
     }
 
     function clearContainer(container) {
@@ -223,6 +224,7 @@
             container.style.margin = '0';
             container.style.inset = '0';
             container.style.zIndex = '2147483646';
+            container.style.pointerEvents = 'auto';
         }
         container.appendChild(video);
         container.appendChild(adLayer);
@@ -231,9 +233,9 @@
             closeButton.textContent = '×';
             closeButton.setAttribute('aria-label', 'Close rewarded video');
             closeButton.setAttribute('data-hm-reward-close', '1');
-            closeButton.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:2147483647;width:38px;height:38px;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:26px/38px system-ui,sans-serif;cursor:pointer;';
+            closeButton.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:2147483647;width:38px;height:38px;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:26px/38px system-ui,sans-serif;cursor:pointer;pointer-events:auto;touch-action:manipulation;';
             container.appendChild(closeButton);
-            if (closeButton.focus) closeButton.focus({ preventScroll: true });
+            try { if (closeButton.focus) closeButton.focus({ preventScroll: true }); } catch (error) {}
         }
 
         var player = container.__hmVideoPlayer = {
@@ -265,6 +267,9 @@
     function destroyPlayer(player, reason) {
         if (!player || player.destroyed) return;
         player.destroyed = true;
+        window.clearTimeout(player.startupTimer);
+        // Dismissal must not depend on IMA or publisher focus handlers succeeding.
+        if (player.rewarded && player.container.style) player.container.style.display = 'none';
         if (player.intersectionObserver && player.intersectionObserver.disconnect) player.intersectionObserver.disconnect();
         if (player.resizeHandler && window.removeEventListener) window.removeEventListener('resize', player.resizeHandler);
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
@@ -319,6 +324,9 @@
         player.started = true;
         setStatus(player.container, 'requesting');
 
+        if (player.rewarded) player.startupTimer = window.setTimeout(function () {
+            failVideo(player, new Error('Rewarded video did not start in time'), 'startup-timeout');
+        }, 15000);
         try {
             player.displayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
             player.displayContainer.initialize();
@@ -335,7 +343,11 @@
                     failVideo(player, error, 'playback');
                 });
                 player.adsManager.addEventListener(adTypes.LOADED, function () { setStatus(player.container, 'loaded'); });
-                player.adsManager.addEventListener(adTypes.STARTED, function () { setStatus(player.container, 'started'); });
+                player.adsManager.addEventListener(adTypes.STARTED, function () {
+                    if (player.destroyed) return;
+                    window.clearTimeout(player.startupTimer);
+                    setStatus(player.container, 'started');
+                });
                 if (player.rewarded && adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, function () {
                     player.completedAds += 1;
                 });
@@ -452,8 +464,9 @@
 
     function finishReading(container) {
         if (container.__hmReadingCleanup) {
-            container.__hmReadingCleanup();
+            var cleanup = container.__hmReadingCleanup;
             container.__hmReadingCleanup = null;
+            try { cleanup(); } catch (error) {}
         }
         if (state.readingPrompt === container) state.readingPrompt = null;
     }
@@ -487,7 +500,7 @@
         container.style.borderRadius = '14px';
         container.style.boxSizing = 'border-box';
         if (reading && !remaining) {
-            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;width:100%;height:100%;max-width:none;margin:0;padding:20px;box-sizing:border-box;background:rgba(5,8,22,.78);overflow:auto;';
+            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;width:100%;height:100%;max-width:none;margin:0;padding:20px;box-sizing:border-box;background:rgba(5,8,22,.78);overflow:auto;pointer-events:auto;';
         }
 
         prompt.setAttribute('data-hm-reward-prompt', '1');
@@ -517,7 +530,7 @@
             if (remaining) button.style.display = 'none';
         }
         button.setAttribute('aria-label', button.textContent);
-        button.style.cssText = 'min-height:44px;max-width:100%;white-space:normal;padding:10px 22px;border:0;border-radius:999px;background:linear-gradient(115deg,#ffe495,#f1b733 56%,#cf8b13);color:#071127;font:700 15px/1.5 system-ui,sans-serif;cursor:pointer;';
+        button.style.cssText = 'min-height:44px;max-width:100%;white-space:normal;padding:10px 22px;border:0;border-radius:999px;background:linear-gradient(115deg,#ffe495,#f1b733 56%,#cf8b13);color:#071127;font:700 15px/1.5 system-ui,sans-serif;cursor:pointer;pointer-events:auto;touch-action:manipulation;';
         if (reading && remaining) button.style.display = 'none';
         if (remaining) button.style.opacity = '0.65';
         prompt.appendChild(title);
@@ -527,8 +540,8 @@
             decline.type = 'button';
             decline.textContent = arabic ? 'متابعة القراءة الآن' : 'Continue reading now';
             decline.setAttribute('data-hm-reward-decline', '1');
-            decline.style.cssText = 'min-height:44px;padding:10px 20px;border:1px solid #9da9c2;border-radius:999px;background:transparent;color:#f6f8ff;font:500 15px/1.5 system-ui,sans-serif;cursor:pointer;';
-            decline.addEventListener('click', function () { container.__hmDestroy('dismissed'); });
+            decline.style.cssText = 'min-height:44px;padding:10px 20px;border:1px solid #9da9c2;border-radius:999px;background:transparent;color:#f6f8ff;font:500 15px/1.5 system-ui,sans-serif;cursor:pointer;pointer-events:auto;touch-action:manipulation;';
+            decline.addEventListener('click', function (event) { event.stopPropagation(); container.__hmDestroy('dismissed'); });
             prompt.appendChild(decline);
         }
         container.appendChild(prompt);
@@ -543,12 +556,19 @@
             }
             if (state.active && !state.active.destroyed) {
                 setStatus(container, 'duplicate', 'another-video-is-active');
+                container.__hmDestroy('duplicate');
                 return false;
             }
+            if (event && event.stopPropagation) event.stopPropagation();
             activated = true;
-            var player = createPlayer(container);
-            startAds(player, ima, vastUrl);
-            return true;
+            try {
+                var player = createPlayer(container);
+                startAds(player, ima, vastUrl);
+                return !player.destroyed;
+            } catch (error) {
+                container.__hmDestroy('error');
+                return false;
+            }
         }
 
         if (button.addEventListener) button.addEventListener('click', activate);
@@ -559,9 +579,9 @@
                 destroyPlayer(container.__hmVideoPlayer, reason || 'dismissed');
                 return;
             }
+            if (container.style) container.style.display = 'none';
             setStatus(container, reason || 'dismissed');
             clearContainer(container);
-            if (container.style) container.style.display = 'none';
             finishReading(container);
             rewardEvent(container, 'horus:rewarded-closed', { granted: false, reason: reason || 'dismissed' });
         };
@@ -584,7 +604,7 @@
                 window.removeEventListener('keydown', keyHandler);
                 if (previousFocus && previousFocus.isConnected && previousFocus.focus) previousFocus.focus({ preventScroll: true });
             };
-            if (button.focus) button.focus({ preventScroll: true });
+            try { if (button.focus) button.focus({ preventScroll: true }); } catch (error) {}
         }
         if (reading && remaining) container.style.display = 'none';
 

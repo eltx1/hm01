@@ -424,14 +424,17 @@
             if (closed) return;
             closed = true;
             window.clearTimeout(timer);
-            listeners.forEach(function (entry) { if (pubads.removeEventListener) pubads.removeEventListener(entry[0], entry[1]); });
-            window.removeEventListener('keydown', keyboard);
-            if (slot) destroySlot(slot);
+            // Release the publisher page before calling any third-party cleanup.
             container.style.display = 'none';
+            listeners.forEach(function (entry) {
+                try { if (pubads && pubads.removeEventListener) pubads.removeEventListener(entry[0], entry[1]); } catch (error) {}
+            });
+            window.removeEventListener('keydown', keyboard);
+            if (slot) { try { destroySlot(slot); } catch (error) {} }
             if (state.rewarded === container) state.rewarded = null;
             container.setAttribute('data-hm-reward-phase', reason);
             if (reason === 'failed' || reason === 'empty' || reason === 'ineligible') report(container, reason);
-            if (previousFocus && previousFocus.isConnected && previousFocus.focus) previousFocus.focus({ preventScroll: true });
+            try { if (previousFocus && previousFocus.isConnected && previousFocus.focus) previousFocus.focus({ preventScroll: true }); } catch (error) {}
             emit('horus:rewarded-closed', { granted: granted, reason: reason });
         }
         container.__hmDestroy = function () { close('closed'); };
@@ -449,8 +452,10 @@
             listeners.push([name, callback]);
         }
         function ready(event) {
-            if (prompt || showing) return;
+            if (closed || prompt || showing) return;
+            if (typeof event.makeRewardedVisible !== 'function') { close('failed'); return; }
             window.clearTimeout(timer);
+            timer = window.setTimeout(function () { close('expired'); }, 120000);
             var ar = /^ar\b/i.test(String(document.documentElement.lang || ''));
             previousFocus = document.activeElement;
             prompt = document.createElement('div');
@@ -458,7 +463,7 @@
             var copy = document.createElement('p');
             watch = document.createElement('button');
             decline = document.createElement('button');
-            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:20px;background:rgba(5,8,22,.78);overflow:auto;';
+            container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:20px;background:rgba(5,8,22,.78);overflow:auto;pointer-events:auto;';
             prompt.style.cssText = 'box-sizing:border-box;width:100%;max-width:480px;padding:28px;border:1px solid rgba(241,183,51,.22);border-radius:26px;background:linear-gradient(135deg,#050b1e,#0a2153);color:#f6f8ff;text-align:center;font:16px/1.6 system-ui,sans-serif;box-shadow:0 28px 90px rgba(0,0,0,.38);';
             prompt.setAttribute('role', 'dialog');
             prompt.setAttribute('aria-modal', 'true');
@@ -471,12 +476,14 @@
             watch.type = decline.type = 'button';
             watch.textContent = ar ? 'شاهد الإعلان واستكمل القراءة' : 'View ad and continue reading';
             decline.textContent = ar ? 'متابعة القراءة الآن' : 'Continue reading now';
-            var buttonCss = 'display:block;width:100%;min-height:44px;margin-top:12px;white-space:normal;padding:12px;border-radius:999px;font:600 15px/1.5 system-ui,sans-serif;cursor:pointer;';
+            var buttonCss = 'display:block;width:100%;min-height:44px;margin-top:12px;white-space:normal;padding:12px;border-radius:999px;font:600 15px/1.5 system-ui,sans-serif;cursor:pointer;pointer-events:auto;touch-action:manipulation;';
             watch.style.cssText = buttonCss + 'border:0;color:#071127;background:linear-gradient(115deg,#ffe495,#f1b733 56%,#cf8b13);';
             decline.style.cssText = buttonCss + 'border:1px solid #9da9c2;color:#f6f8ff;background:transparent;';
             watch.addEventListener('click', function (click) {
                 if (closed || showing || !click.isTrusted) return;
+                click.stopPropagation();
                 showing = true;
+                window.clearTimeout(timer);
                 container.style.display = 'none';
                 try {
                     if (!event.makeRewardedVisible()) { close('failed'); return; }
@@ -484,11 +491,11 @@
                     emit('horus:rewarded-opened');
                 } catch (error) { close('failed'); }
             });
-            decline.addEventListener('click', function () { close('dismissed'); });
+            decline.addEventListener('click', function (click) { click.stopPropagation(); close('dismissed'); });
             [title, copy, watch, decline].forEach(function (node) { prompt.appendChild(node); });
             container.appendChild(prompt);
             window.addEventListener('keydown', keyboard);
-            watch.focus({ preventScroll: true });
+            try { watch.focus({ preventScroll: true }); } catch (error) {}
             container.setAttribute('data-hm-reward-phase', 'ready');
             report(container, 'rendered');
             emit('horus:rewarded-ready');
