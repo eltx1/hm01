@@ -425,6 +425,41 @@ jobs:
 
           echo "Canonical CDN serves the Loader, global controls, LordAI config, and all Horus-owned LordAI Direct JS runtimes byte-for-byte."
 
+      - name: Diagnose Cloudflare custom WAF after runtime verification failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+
+          curl -fsSL --max-time 30 "${auth[@]}"             "https://api.cloudflare.com/client/v4/zones?name=horusmedia.net&account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=10"             -o "$RUNNER_TEMP/horus-zones.json"
+          zone_id="$(jq -r '.result[0].id // empty' "$RUNNER_TEMP/horus-zones.json")"
+          test -n "$zone_id"
+
+          status="$(curl -sSL --max-time 30 "${auth[@]}"             -o "$RUNNER_TEMP/horus-custom-waf.json"             -w '%{http_code}'             "https://api.cloudflare.com/client/v4/zones/$zone_id/rulesets/phases/http_request_firewall_custom/entrypoint")"
+          echo "Cloudflare custom WAF entrypoint API: HTTP $status"
+          if [[ "$status" != '200' ]]; then
+            exit 0
+          fi
+
+          jq -c '{
+            matching_rules: [
+              .result.rules[]?
+              | select(.enabled != false)
+              | select(
+                  ((.expression // "") | test("cdn\\.horusmedia\\.net|horusmedia\\.net"; "i"))
+                  or ((.action // "") | test("block|challenge"; "i"))
+                )
+              | {
+                  action,
+                  description,
+                  enabled,
+                  expression
+                }
+            ]
+          }' "$RUNNER_TEMP/horus-custom-waf.json"
+
       - name: Verify representative ads.txt artifacts on exact Pages deployment
         shell: bash
         env:
