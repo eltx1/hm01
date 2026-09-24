@@ -16,6 +16,8 @@ test('dashboard light/dark round trip preserves controls, mobile navigation and 
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await open(page);
+    // WebKit may return the initial computed style before its first style flush.
+    await expect.poll(() => page.locator('body').evaluate(el => getComputedStyle(el).backgroundImage)).not.toBe('none');
     const original = await page.locator('body').evaluate(el => getComputedStyle(el).backgroundImage);
     await expect(page.locator('html')).toHaveAttribute('data-hm-theme', 'dark');
     await page.getByRole('button', { name: 'Switch to White Mode' }).click();

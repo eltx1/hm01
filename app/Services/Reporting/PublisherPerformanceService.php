@@ -17,7 +17,8 @@ final class PublisherPerformanceService
             ->whereHas('dimension', fn ($query) => $query->where('publisher_id', $publisher->id)
                 ->where('organization_id', $publisher->organization_id))
             ->where('currency', $currency)
-            ->whereBetween('report_date', [$from, $to])
+            ->whereDate('report_date', '>=', $from)
+            ->whereDate('report_date', '<=', $to)
             ->whereIn('finality', [ReportFinality::Estimated->value, ReportFinality::Finalized->value])
             ->with('dimension.site')
             ->get();
