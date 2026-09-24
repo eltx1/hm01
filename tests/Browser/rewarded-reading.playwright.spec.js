@@ -226,3 +226,54 @@ for (const mode of ['unsupported', 'capped', 'empty', 'decline', 'closed']) {
         expect(await page.evaluate(() => Object.values(window.events).flat().length)).toBe(0);
     });
 }
+
+for (const action of ['watch', 'decline']) {
+    test(`GPT rewarded ${action} works with inherited pointer-events and throwing cleanup`, async ({page}) => {
+        await openGptRewarded(page);
+        await page.evaluate(() => {
+            document.body.style.pointerEvents = 'none';
+            window.service.removeEventListener = () => { throw new Error('provider cleanup failed'); };
+            document.querySelector('#previous').focus = () => { throw new Error('focus unavailable'); };
+            window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { throw new Error('inventory expired'); }});
+        });
+        await page.getByRole('button', {name: action === 'watch' ? 'شاهد الإعلان واستكمل القراءة' : 'متابعة القراءة الآن'}).click();
+        await expect(page.locator('#reward')).toBeHidden();
+        expect(await page.evaluate(() => window.grants)).toBe(0);
+        // A late Google callback must not resurrect the dismissed dialog.
+        await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { return true; }}));
+        await expect(page.locator('#reward')).toBeHidden();
+    });
+}
+
+test('GPT ready prompt expires safely without a grant', async ({page}) => {
+    await page.clock.install();
+    await openGptRewarded(page);
+    await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { return true; }}));
+    await page.clock.fastForward(120001);
+    await expect(page.locator('#reward')).toBeHidden();
+    expect(await page.evaluate(() => window.grants)).toBe(0);
+});
+
+test('VAST rewarded recovers when IMA never responds', async ({page}) => {
+    await page.clock.install();
+    await openReading(page, 'en');
+    await page.evaluate(() => {
+        window.google.ima.AdsLoader.prototype.requestAds = function () { window.requests++; };
+        document.body.style.pointerEvents = 'none';
+        document.querySelector('#previous').focus = () => { throw new Error('focus unavailable'); };
+    });
+    await page.getByRole('button', {name: 'Watch ad and continue reading', exact:true}).click();
+    expect(await page.evaluate(() => window.requests)).toBe(1);
+    await page.clock.fastForward(15001);
+    await expect(page.locator('#reward')).toBeHidden();
+    expect(await page.evaluate(() => window.grants)).toBe(0);
+});
+
+test('VAST close remains available while SDK cleanup throws', async ({page}) => {
+    await openReading(page, 'en');
+    await page.getByRole('button', {name:'Watch ad and continue reading', exact:true}).click();
+    await page.evaluate(() => { window.manager.destroy = () => { throw new Error('cleanup failed'); }; });
+    await page.getByRole('button', {name:'Close rewarded video'}).click();
+    await expect(page.locator('#reward')).toBeHidden();
+    expect(await page.evaluate(() => window.grants)).toBe(0);
+});
