@@ -83,6 +83,8 @@ class SiteGamReportingTest extends TestCase
 
             public int $jobs = 0;
 
+            public ?string $reportCurrency = null;
+
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
             {
                 $this->calls[] = compact('service', 'method', 'payload');
@@ -99,7 +101,7 @@ class SiteGamReportingTest extends TestCase
                 return match ($method) {
                     'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
                     'getAdUnitsByStatement' => ['results' => $this->units],
-                    'runReportJob' => ['id' => (string) ++$this->jobs],
+                    'runReportJob' => ['id' => (string) ++$this->jobs, 'reportQuery' => ['reportCurrency' => $this->reportCurrency]],
                     'getReportJobStatus' => ['value' => $this->status],
                     'getReportDownloadUrlWithOptions' => ['value' => $this->url],
                     default => throw new \RuntimeException('Unexpected Google call: '.$method),
@@ -317,6 +319,99 @@ class SiteGamReportingTest extends TestCase
             ->assertViewHas('summary', fn (array $summary): bool => $summary['currency'] === 'USD')
             ->assertSee('Horus requests GAM revenue from Google in USD');
         $this->assertStringNotContainsString('private-download', GamApiOperation::query()->get()->toJson());
+    }
+
+    public function test_new_sites_share_the_same_automatic_currency_path_without_unit_specific_configuration(): void
+    {
+        [$admin, $publisher, $user, $firstSite, $gam] = $this->context();
+        $this->google->currency = 'AED';
+        $sites = [$firstSite, $this->makeSiteFor($publisher, $user), $this->makeSiteFor($publisher, $user)];
+        $bindings = [];
+        foreach ($sites as $index => $site) {
+            $unit = (string) (70001 + $index);
+            $this->google->units = [['id' => $unit, 'name' => 'Unit '.$index, 'adUnitCode' => 'unit_'.$index]];
+            $binding = app(SiteGamReportingService::class)->bind($site, $gam->id, $unit, $admin);
+            $bindings[] = $binding;
+            // A newly serving unit may have requests/impressions but no revenue.
+            $revenue = $index === 2 ? '0' : 'US$ 12000000';
+            Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([
+                ['2026-09-20', $unit, 30, 20, 10, 20, 0, $revenue],
+            ]))]);
+            $job = $this->import($binding);
+            $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+            $row = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->connection->id)->sole();
+            $this->assertSame($site->id, $row->dimension->site_id);
+            $this->assertSame(20, (int) $row->impressions);
+            $this->assertSame($index === 2 ? 0 : 1200, (int) $row->gross_revenue_minor);
+            $this->assertSame('ACTIVE', app(ReportingHealthService::class)->forSite($site)['status']);
+        }
+        $this->assertCount(3, array_unique(array_map(fn ($binding) => $binding->connection->id, $bindings)));
+        $this->assertSame(2400, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+
+        // The normal scheduled refresh recovers an earlier error, importing a
+        // mixed zero/paid report without reconnecting or touching the other sites.
+        $third = $bindings[2];
+        $third->connection->update(['status' => 'ERROR', 'last_error' => 'Earlier currency validation failure']);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([
+                ['2026-09-19', '70003', 5, 0, 5, 0, 0, '0'],
+                ['2026-09-20', '70003', 30, 20, 10, 20, 0, 'US$ 2500000'],
+            ]))
+            ->push($this->csv([['2026-09-21', '70003', 8, 2, 6, 2, 0, '0']]))]);
+        $results = app(SiteGamReportSynchronizer::class)->sync($third->fresh());
+        $this->assertCount(2, $results);
+        foreach ($results as $job) {
+            $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        }
+        $this->assertNull($third->connection->fresh()->last_error);
+        $this->assertSame('ACTIVE', $third->connection->fresh()->status->value);
+        $this->assertSame(2650, (int) DailyReport::withoutGlobalScopes()->where('finality', 'FINALIZED')->sum('gross_revenue_minor'));
+        $this->assertSame([], app(SiteGamReportSynchronizer::class)->sync($third->fresh()));
+    }
+
+    public function test_google_confirmed_currency_survives_pending_resume_but_does_not_authorize_a_different_job(): void
+    {
+        $context = $this->context();
+        $this->google->currency = 'AED';
+        $this->google->reportCurrency = 'USD';
+        $binding = $this->bind($context);
+        $this->google->status = 'IN_PROGRESS';
+        $this->assertSame(ReportImportStatus::Pending, $this->import($binding)->status);
+        $checkpoint = array_values($binding->connection->fresh()->configuration['google_jobs'])[0];
+        $this->assertSame('USD', $checkpoint['confirmed_report_currency']);
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([
+            ['2026-09-20', '12345', 120, 100, 20, 95, 3, '123450000'],
+        ]))]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $this->assertSame(1, $this->google->jobs);
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sole()->gross_revenue_minor);
+        $before = DailyReport::withoutGlobalScopes()->sole()->getAttributes();
+
+        $this->google->reportCurrency = null;
+        $failed = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $failed->status);
+        $this->assertStringContainsString('did not prove', $failed->error_message);
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->sole()->getAttributes());
+        $this->assertEmpty($binding->connection->fresh()->configuration['google_jobs']);
+
+        $this->google->reportCurrency = 'USD';
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $this->assertSame(ReportImportStatus::Duplicate, $failed->fresh()->status);
+        $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_conflicting_google_currency_is_rejected_before_downloading_or_importing(): void
+    {
+        $context = $this->context();
+        $this->google->currency = 'AED';
+        $this->google->reportCurrency = 'AED';
+        $binding = $this->bind($context);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertStringContainsString('unexpected currency', $job->error_message);
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('daily_reports', 0);
     }
 
     public function test_pending_google_job_is_resumed_without_duplicate_submission_or_false_zero_revenue(): void
