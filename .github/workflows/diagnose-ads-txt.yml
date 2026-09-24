@@ -1,7 +1,7 @@
 name: Diagnose ads.txt fetching
 on:
   push:
-    branches: [fix/ads-txt-reward-mobile]
+    branches: [main]
     paths: [.github/workflows/diagnose-ads-txt.yml]
   workflow_dispatch:
 permissions:
