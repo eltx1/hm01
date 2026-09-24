@@ -45,7 +45,9 @@ final class PublisherStatementService
             ->where('publisher_id', $publisher->id)
             ->where('currency', $period->currency)
             ->whereHas('period', fn ($query) => $query->where('ends_on', '<', $period->starts_on))
-            ->latest('created_at')
+            ->orderByDesc(FinancialPeriod::select('ends_on')
+                ->whereColumn('financial_periods.id', 'publisher_statements.financial_period_id'))
+            ->orderByDesc('created_at')
             ->first();
         $opening = max(0, (int) ($previous?->carry_forward_minor ?? 0));
 

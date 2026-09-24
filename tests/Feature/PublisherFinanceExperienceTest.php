@@ -338,6 +338,74 @@ class PublisherFinanceExperienceTest extends TestCase
             ->get(route('publisher.finance.overview'))->assertForbidden();
     }
 
+    public function test_selected_period_is_publisher_safe_and_keeps_paid_statement_out_of_readiness(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10));
+        [$admin, $publisher, $user, , $site] = $this->context();
+        $connection = $this->connection($admin->organization_id);
+        $date = now()->subDay()->toImmutable();
+        app(ReportImportService::class)->importRows($connection, [[
+            'date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+            'impressions' => 1000, 'clicks' => 8, 'gross_revenue_minor' => 10000, 'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'selected-period');
+        $summary = app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, $date->toDateString(), $date->toDateString());
+        $this->assertSame(7000, $summary['earnings_minor']);
+        $this->assertSame(7000, $summary['ecpm_minor']);
+        $this->assertSame(1000, $summary['impressions']);
+        $this->assertSame(0, $summary['estimated_minor']);
+        $this->assertStringNotContainsString('gross_revenue_minor', json_encode($summary));
+        $this->assertStringNotContainsString('horus_earnings_minor', json_encode($summary));
+        $empty = app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, $date->subDays(2)->toDateString(), $date->subDay()->toDateString());
+        $this->assertFalse($empty['available']);
+
+        $this->actingAs($user)->get(route('publisher.finance.overview', ['from' => $date->toDateString(), 'to' => $date->toDateString()]))
+            ->assertOk()->assertSee('Your earnings at a glance')->assertSee('USD 70.00')
+            ->assertSee('Paid to date')->assertSee('data-theme-toggle', false);
+        $this->get(route('publisher.finance.overview', ['from' => 'bad-date']))->assertSessionHasErrors('from');
+        $this->get(route('publisher.reporting.index', ['from' => '2026-09-20', 'to' => '2026-09-01']))->assertSessionHasErrors('to');
+        $this->get(route('publisher.finance.overview', ['from' => '2020-01-01', 'to' => '2026-09-01']))->assertSessionHasErrors('to');
+
+        $profile = app(PublisherPaymentProfileService::class)->save($publisher, [
+            'beneficiary_name' => 'Publisher', 'payment_method' => 'WISE', 'currency' => 'USD',
+            'country' => 'US', 'account_reference' => 'WISE-1234',
+        ], $user);
+        app(PublisherPaymentProfileService::class)->review($profile, PublisherPaymentProfileStatus::Verified, $admin);
+        $statement = $this->statement($publisher, 'HM-ZERO-PAID', 0, 0, PublisherInvoiceStatus::Accepted);
+        $statement->update(['status' => 'PAID']);
+        $usd = app(PublisherFinanceService::class)->overview($publisher->fresh())['currencies']->firstWhere('currency', 'USD');
+        $this->assertFalse($usd['readiness']['ready']);
+        $this->assertSame('NO_BALANCE_DUE', $usd['readiness']['code']);
+    }
+
+    public function test_previous_statement_is_selected_by_financial_month_and_older_invoice_actions_remain_visible(): void
+    {
+        [$admin, $publisher, $user] = $this->context();
+        $latest = $this->statement($publisher, 'HM-LATEST-MONTH', 4000, 10000, PublisherInvoiceStatus::NotRequired);
+        $olderPeriod = FinancialPeriod::create([
+            'period_key' => now()->subMonthsNoOverflow(2)->format('Y-m'), 'currency' => 'USD',
+            'starts_on' => now()->subMonthsNoOverflow(2)->startOfMonth(),
+            'ends_on' => now()->subMonthsNoOverflow(2)->endOfMonth(), 'status' => 'CLOSED',
+        ]);
+        $older = $latest->replicate();
+        $older->fill([
+            'financial_period_id' => $olderPeriod->id, 'statement_number' => 'HM-OLDER-LATE-IMPORT',
+            'carry_forward_minor' => 9000,
+            'balance_due_minor' => 12000, 'publisher_invoice_status' => 'REQUIRED', 'status' => 'PENDING_INVOICE',
+        ])->save();
+        // fillable excludes timestamps: explicitly emulate a backfilled historical statement.
+        $older->forceFill(['created_at' => now()->addHour()])->save();
+        $currentPeriod = FinancialPeriod::create([
+            'period_key' => now()->format('Y-m'), 'currency' => 'USD',
+            'starts_on' => now()->startOfMonth(), 'ends_on' => now()->endOfMonth(), 'status' => 'CLOSING',
+        ]);
+        $generated = app(\App\Services\Reporting\PublisherStatementService::class)->generate($currentPeriod, $publisher, $admin);
+        $this->assertSame(4000, (int) $generated->opening_balance_minor);
+        $actions = collect(app(PublisherFinanceService::class)->overview($publisher)['actions']);
+        $this->assertTrue($actions->contains(fn ($action) => ($action['href'] ?? '') === route('publisher.finance.statements.show', $older->id).'#publisher-invoice'));
+        $this->actingAs($user)->get(route('publisher.finance.overview'))->assertOk()
+            ->assertSee(route('publisher.finance.statements.show', $older->id).'#publisher-invoice', false);
+    }
+
     private function context(): array
     {
         $this->seedIdentity();

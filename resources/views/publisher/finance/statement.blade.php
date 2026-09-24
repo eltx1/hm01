@@ -47,7 +47,7 @@
     @empty<p class="muted">No statement lines.</p>@endforelse
 </article>
 
-<article>
+<article id="publisher-invoice">
     <p class="eyebrow">Private document</p><h2>Publisher invoice</h2>
     <div class="summary-grid">
         <div><strong>Required</strong><span>{{ $statement['publisher_invoice_status'] !== 'NOT_REQUIRED' ? 'Yes' : 'No' }}</span></div>

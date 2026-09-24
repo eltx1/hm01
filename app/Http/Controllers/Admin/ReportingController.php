@@ -8,6 +8,7 @@ use App\Enums\ReportGranularity;
 use App\Enums\RevenueRuleScope;
 use App\Enums\ReportSourceCode;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ReportPeriodRequest;
 use App\Models\FinancialPeriod;
 use App\Models\PublisherPayment;
 use App\Models\PublisherStatement;
@@ -31,10 +32,10 @@ use Illuminate\View\View;
 
 class ReportingController extends Controller
 {
-    public function index(Request $request, UnifiedReportService $reports): View
+    public function index(ReportPeriodRequest $request, UnifiedReportService $reports): View
     {
-        $from = $request->date('from') ?: now()->startOfMonth();
-        $to = $request->date('to') ?: now();
+        $from = CarbonImmutable::parse($request->validated('from'));
+        $to = CarbonImmutable::parse($request->validated('to'));
 
         $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 

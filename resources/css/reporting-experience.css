@@ -1,0 +1,21 @@
+.report-filter { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
+.report-filter label { display: grid; gap: .35rem; flex: 1 1 10rem; color: var(--hm-muted); }
+.report-filter button { min-height: 2.6rem; }
+.report-shortcuts { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .7rem; }
+.report-shortcuts [aria-current="true"] { background: var(--hm-glass); border-color: var(--hm-gold-highlight); font-weight: 800; }
+.report-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
+.report-metrics article { min-width: 0; }
+.report-context { line-height: 1.6; }
+.report-trend { display: grid; gap: .7rem; max-height: 24rem; overflow: auto; }
+.report-trend-row { display: grid; grid-template-columns: 6rem minmax(2rem, 1fr) auto; gap: .6rem; align-items: center; font-size: .8rem; }
+.report-trend meter { width: 100%; height: .8rem; accent-color: var(--hm-gold); }
+.report-trend meter::-webkit-meter-optimum-value { background: var(--hm-gold); }
+.report-trend meter::-moz-meter-bar { background: var(--hm-gold); }
+.report-disclosure > summary { cursor: pointer; font-weight: 750; padding: .75rem 0; }
+.report-finance-links { display: flex; flex-wrap: wrap; gap: .75rem; }
+@media (max-width: 1100px) { .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) {
+    .report-metrics { grid-template-columns: 1fr; }
+    .report-trend-row { grid-template-columns: 5.5rem minmax(1.5rem, 1fr) auto; gap: .35rem; font-size: .72rem; }
+    .report-filter button { width: 100%; }
+}

@@ -1,28 +1,25 @@
 @extends('layouts.admin')
-@section('title', 'Publisher statements')
-@section('heading', 'Publisher statements')
+@section('title', 'Statements & invoices')
+@section('heading', 'Statements & invoices')
 @section('content')
 @include('publisher.finance._tabs')
-<section class="hero"><div><p class="eyebrow">Finalized accounting records</p><h2>Statements</h2><p>Opening balances, Publisher earnings, affiliate earnings, payments, invoices, and carry-forward remain separated by currency and period.</p></div></section>
+<section class="hero"><div><p class="eyebrow">Your monthly accounting</p><h2>Statements &amp; invoices</h2><p>Open a month to see its earnings, adjustments and carry-forward, upload your invoice, or follow its payment. Each statement keeps its original currency.</p></div></section>
 <div class="table-wrap">
     <table>
-        <thead><tr><th>Statement</th><th>Period</th><th>Status</th><th>Publisher earnings</th><th>Affiliate earnings</th><th>Paid</th><th>Balance due</th><th>Carry-forward</th><th>Invoice</th><th></th></tr></thead>
+        <caption class="sr-only">Monthly statements and invoice progress</caption>
+        <thead><tr><th scope="col">Month / statement</th><th scope="col">Earnings</th><th scope="col">Paid</th><th scope="col">Balance due</th><th scope="col">Invoice</th><th scope="col">Details</th></tr></thead>
         <tbody>
         @forelse($statements as $statement)
             <tr>
-                <td><strong>{{ $statement['statement_number'] }}</strong><span class="table-note">Finalized {{ $statement['finalized_at']?->toDateString() ?: '—' }}</span></td>
-                <td>{{ $statement['period_key'] }}<span class="table-note">{{ $statement['currency'] }}</span></td>
-                <td><span class="pill">{{ $statement['status'] }}</span></td>
-                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['publisher_earnings_minor']) }}</td>
-                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['affiliate_earnings_minor']) }}</td>
-                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['paid_minor']) }}</td>
-                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }}</td>
-                <td>{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['carry_forward_minor']) }}</td>
-                <td><span class="pill">{{ $statement['publisher_invoice_status'] }}</span></td>
-                <td><a href="{{ route('publisher.finance.statements.show', $statement['id']) }}">Open</a></td>
+                <th scope="row"><strong>{{ $statement['period_key'] }} · {{ $statement['currency'] }}</strong><span class="table-note">{{ $statement['statement_number'] }}</span><x-status-badge :status="$statement['status']" /></th>
+                <td class="money">{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['publisher_earnings_minor']) }}<span class="table-note">Referral: {{ \App\Support\Money::formatMinor((int) $statement['affiliate_earnings_minor']) }}</span></td>
+                <td class="money">{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['paid_minor']) }}</td>
+                <td class="money">{{ $statement['currency'] }} {{ \App\Support\Money::formatMinor((int) $statement['balance_due_minor']) }}<span class="table-note">Carry-forward: {{ \App\Support\Money::formatMinor((int) $statement['carry_forward_minor']) }}</span></td>
+                <td><x-status-badge :status="$statement['publisher_invoice_status']" /></td>
+                <td><a class="section-anchor" href="{{ route('publisher.finance.statements.show', $statement['id']) }}">View statement →</a></td>
             </tr>
         @empty
-            <tr><td colspan="10">Statements appear after a financial period is finalized.</td></tr>
+            <tr><td colspan="6">Statements appear after a financial period is finalized.</td></tr>
         @endforelse
         </tbody>
     </table>

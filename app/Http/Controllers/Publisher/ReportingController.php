@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Publisher;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ReportPeriodRequest;
+use App\Services\Reporting\PublisherPerformanceService;
 use App\Http\Requests\SavePublisherPaymentProfileRequest;
 use App\Models\Publisher;
 use App\Models\PublisherStatement;
@@ -17,14 +19,24 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ReportingController extends Controller
 {
-    public function index(Request $request, PublisherFinanceService $finance): View
+    public function index(ReportPeriodRequest $request, PublisherFinanceService $finance): View
     {
-        return view('publisher.finance.overview', $finance->overview($this->publisher($request)));
+        return view('publisher.finance.overview', [
+            ...$finance->overview($this->publisher($request)),
+            'performance' => app(PublisherPerformanceService::class)->summary(
+                $this->publisher($request), $request->validated('from'), $request->validated('to'),
+            ),
+        ]);
     }
 
-    public function overview(Request $request, PublisherFinanceService $finance): View
+    public function overview(ReportPeriodRequest $request, PublisherFinanceService $finance): View
     {
-        return view('publisher.finance.overview', $finance->overview($this->publisher($request)));
+        return view('publisher.finance.overview', [
+            ...$finance->overview($this->publisher($request)),
+            'performance' => app(PublisherPerformanceService::class)->summary(
+                $this->publisher($request), $request->validated('from'), $request->validated('to'),
+            ),
+        ]);
     }
 
     public function statements(Request $request, PublisherFinanceService $finance): View

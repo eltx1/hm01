@@ -43,6 +43,32 @@ class ReportingFinancialSystemTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
+    public function test_reports_keep_same_named_websites_separate_and_validate_date_ranges(): void
+    {
+        [$admin, $publisher, $publisherUser, $site] = $this->reportingContext();
+        $secondSite = $this->makeSiteFor($publisher, $publisherUser, ['display_name' => $site->display_name]);
+        $connection = $this->connection(ReportSourceCode::HorusGam, $admin->organization_id, 'Site grouping');
+        $date = now()->subDay()->toImmutable();
+        app(ReportImportService::class)->importRows($connection, [
+            ['date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $site->id, 'impressions' => 100, 'gross_revenue_minor' => 1000, 'currency' => 'USD'],
+            ['date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $secondSite->id, 'impressions' => 200, 'gross_revenue_minor' => 2000, 'currency' => 'USD'],
+        ], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'same-named-sites');
+        $summary = app(UnifiedReportService::class)->adminSummary($date, $date, 'USD');
+        $this->assertCount(2, $summary['revenue_by_website']);
+        $this->assertSame(3000, (int) $summary['revenue_by_website']->sum('gross_revenue_minor'));
+        $publisherSummary = app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, $date->toDateString(), $date->toDateString());
+        $this->assertCount(2, $publisherSummary['websites']);
+        $otherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Other report tenant');
+        $otherUser = $this->makeUser($otherOrg, RoleName::PublisherAdmin);
+        $otherPublisher = $this->makePublisherFor($otherUser);
+        $this->assertFalse(app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($otherPublisher, $date->toDateString(), $date->toDateString())['available']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.index', ['from' => 'not-a-date']))->assertSessionHasErrors('from');
+        $this->get(route('admin.reporting.index', ['from' => '2026-09-10', 'to' => '2026-09-01']))->assertSessionHasErrors('to');
+        $this->get(route('admin.reporting.index', ['from' => $date->toDateString(), 'to' => $date->toDateString()]))
+            ->assertOk()->assertSee('Daily revenue')->assertSee('Source health and import details');
+    }
+
     public function test_same_report_is_idempotent_and_multiple_sources_are_unified_with_horus_gam_identified(): void
     {
         [$admin, $publisher, $publisherUser, $site] = $this->reportingContext();
