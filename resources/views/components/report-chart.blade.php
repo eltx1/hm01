@@ -20,7 +20,7 @@
         $previousDay = $point['day'];
     }
 @endphp
-<div class="report-chart">
+<div class="report-chart" tabindex="0" role="region" aria-label="{{ $label }} chart; scroll horizontally on small screens">
     <svg viewBox="0 0 900 238" role="img" aria-label="{{ $label }} in {{ $currency }} from {{ $start->toDateString() }} to {{ $end->toDateString() }}. Missing days are left as gaps.">
         @foreach([0, 1, 2, 3] as $tick)
             @php($y = 24 + $tick / 3 * 172)
