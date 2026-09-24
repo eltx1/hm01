@@ -69,7 +69,9 @@ final class AdsTxtComplianceController extends Controller
     {
         $check = $verifier->verify($site, 'ADMIN', $request->user());
 
-        return back()->with('status', 'Ads.txt verification completed: '.$check->status.'.');
+        $failure = data_get($check->findings, 'fetch.message');
+
+        return back()->with('status', 'Ads.txt verification completed: '.$check->status.'.'.($failure ? ' '.$failure : ''));
     }
 
     public function storeRecord(Request $request, AdsTxtRecordManager $manager): RedirectResponse
