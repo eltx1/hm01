@@ -362,6 +362,69 @@ jobs:
 
           echo "LordAI production config and centering Loader are byte-for-byte live on exact Pages deployment."
 
+      - name: Verify canonical CDN can serve critical ad runtime
+        shell: bash
+        env:
+          LORDAI_CONFIG_PATH: ${{ steps.lordai.outputs.config_path }}
+        run: |
+          set -euo pipefail
+          local_dir="$RUNNER_TEMP/production-static-snapshot"
+          ua='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36'
+          probe_dir="$RUNNER_TEMP/canonical-cdn-runtime"
+          mkdir -p "$probe_dir"
+
+          verify_path() {
+            local relative="$1"
+            local expected="$local_dir/$relative"
+            local output="$probe_dir/$(printf '%s' "$relative" | tr '/.' '__')"
+            test -f "$expected"
+
+            local status
+            status="$(curl -sSL --max-time 20 --retry 2 --retry-delay 1               --user-agent "$ua"               --output "$output"               --write-out '%{http_code}'               "$CDN_URL/$relative?liveverify=$GITHUB_RUN_ID")"
+
+            if [[ "$status" != '200' ]]; then
+              echo "Critical ad-serving runtime path $CDN_URL/$relative returned HTTP $status. Refusing to mark production live." >&2
+              exit 1
+            fi
+
+            if ! cmp -s "$expected" "$output"; then
+              echo "Critical ad-serving runtime path $CDN_URL/$relative does not match the confirmed production snapshot." >&2
+              exit 1
+            fi
+
+            echo "Canonical CDN runtime exact: $relative"
+          }
+
+          verify_path "hm-loader.js"
+          verify_path "configs/_global/control.json"
+          verify_path "$LORDAI_CONFIG_PATH"
+
+          mapfile -t horus_runtime_paths < <(php -r '
+            $config = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+            $seen = [];
+            foreach ((array) ($config["directDemand"]["placements"] ?? []) as $placement) {
+                foreach ((array) ($placement["candidates"] ?? []) as $candidate) {
+                    foreach ((array) ($candidate["tag"]["scripts"] ?? []) as $script) {
+                        $url = trim((string) ($script["url"] ?? ""));
+                        if (strtolower((string) parse_url($url, PHP_URL_HOST)) !== "cdn.horusmedia.net") continue;
+                        $path = ltrim((string) parse_url($url, PHP_URL_PATH), "/");
+                        if ($path === "" || str_contains($path, "..")) {
+                            fwrite(STDERR, "Invalid canonical Horus runtime path in Direct Demand config.\n");
+                            exit(1);
+                        }
+                        $seen[$path] = true;
+                    }
+                }
+            }
+            foreach (array_keys($seen) as $path) echo $path.PHP_EOL;
+          ' "$local_dir/$LORDAI_CONFIG_PATH")
+
+          for relative in "${horus_runtime_paths[@]}"; do
+            verify_path "$relative"
+          done
+
+          echo "Canonical CDN serves the Loader, global controls, LordAI config, and all Horus-owned LordAI Direct JS runtimes byte-for-byte."
+
       - name: Verify representative ads.txt artifacts on exact Pages deployment
         shell: bash
         env:
