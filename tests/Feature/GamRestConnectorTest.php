@@ -21,6 +21,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\InteractsWithGam;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\TestCase;
@@ -54,8 +55,20 @@ class GamRestConnectorTest extends TestCase
             && ! str_contains($request->url(), 'v202'));
     }
 
-    public function test_full_network_gam_reporting_requests_usd_even_when_network_metadata_is_aed(): void
+    public static function convertedReportValues(): array
     {
+        return [
+            ['US$ 123450000', null, 12345],
+            ['0', null, 0],
+            ['123450000', 'USD', 12345],
+            ['-123450000', 'USD', -12345],
+        ];
+    }
+
+    #[DataProvider('convertedReportValues')]
+    public function test_full_network_gam_reporting_requests_usd_even_when_network_metadata_is_aed(
+        string $money, ?string $confirmedCurrency, int $expectedMinor,
+    ): void {
         $this->seedIdentity();
         $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);
@@ -67,8 +80,10 @@ class GamRestConnectorTest extends TestCase
             'configuration' => ['currency' => 'AED'],
         ]);
 
-        $google = new class implements GamSoapTransportInterface
+        $google = new class($confirmedCurrency) implements GamSoapTransportInterface
         {
+            public function __construct(private readonly ?string $confirmedCurrency) {}
+
             public array $calls = [];
 
             public function call(\App\Models\GamConnection $connection, string $service, string $method, array $payload = []): array
@@ -87,7 +102,7 @@ class GamRestConnectorTest extends TestCase
                         'currencyCode' => 'AED',
                         'timeZone' => 'Asia/Dubai',
                     ],
-                    'runReportJob' => ['id' => '77'],
+                    'runReportJob' => ['id' => '77', 'reportQuery' => ['reportCurrency' => $this->confirmedCurrency]],
                     'getReportJobStatus' => ['value' => 'COMPLETED'],
                     'getReportDownloadUrlWithOptions' => ['value' => 'https://storage.googleapis.com/report.csv?signature=private'],
                     default => throw new \RuntimeException('Unexpected Google call: '.$method),
@@ -103,7 +118,7 @@ class GamRestConnectorTest extends TestCase
         ];
         $values = [
             '2026-09-20', '1001',
-            120, 100, 20, 95, 3, '$ 123450000',
+            120, 100, 20, 95, 3, $money,
         ];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
@@ -130,7 +145,7 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame('USD', data_get($result, 'metadata.report_currency'));
         $this->assertSame('AED', data_get($result, 'metadata.source_network_currency'));
         $this->assertSame('Asia/Dubai', $reportConnection->fresh()->timezone);
-        $this->assertSame(12345, data_get($result, 'rows.0.gross_revenue_minor'));
+        $this->assertSame($expectedMinor, data_get($result, 'rows.0.gross_revenue_minor'));
         $this->assertSame('USD', data_get($result, 'rows.0.currency'));
 
         $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');

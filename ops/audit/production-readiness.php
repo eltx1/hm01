@@ -260,11 +260,12 @@ $unitEstimated = $count('report_import_jobs', fn ($q) => $unitImportScope($q)->w
     ->where('granularity', 'DAILY')->where('finality', 'ESTIMATED')->where('completed_at', '>=', now()->subDay()));
 $unitFinalized = $count('report_import_jobs', fn ($q) => $unitImportScope($q)->where('status', 'COMPLETED')
     ->where('granularity', 'DAILY')->where('finality', 'FINALIZED')->where('completed_at', '>=', now()->subDay()));
+$metrics['site_gam_reporting'] = ['enabled_connections' => $unitEnabled, 'connections_with_error' => $unitErrors,
+    'estimated_daily_imports_24h' => $unitEstimated, 'finalized_daily_imports_24h' => $unitFinalized];
 $add('Reporting', 'ad_unit_daily_refresh', $unitEnabled === 0 ? 'NOT_CONFIGURED'
     : ($unitErrors === 0 && $unitEstimated + $unitFinalized > 0 ? 'PASS' : 'BLOCKED'), 'P2',
     'Reporting-only connection health and completed daily snapshots in the last 24 hours.',
-    ['enabled_connections' => $unitEnabled, 'connections_with_error' => $unitErrors,
-        'estimated_daily_imports_24h' => $unitEstimated, 'finalized_daily_imports_24h' => $unitFinalized]);
+    $metrics['site_gam_reporting']);
 
 $today = now()->toDateString();
 $currentTerms = $count('publisher_contracts', fn ($query) => $query

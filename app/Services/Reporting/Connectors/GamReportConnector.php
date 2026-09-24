@@ -8,6 +8,7 @@ use App\Models\GamConnection;
 use App\Models\ReportSourceConnection;
 use App\Services\Reporting\Contracts\ReportSourceConnectorInterface;
 use App\Services\Reporting\GamAdUnitReportClient;
+use App\Services\Reporting\GamReportMoneyParser;
 use App\Services\Reporting\GamReportPending;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -44,9 +45,10 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         'AD_UNIT_ID' => 'gam_ad_unit_id',
     ];
 
-    public function __construct(private readonly GamAdUnitReportClient $google)
-    {
-    }
+    public function __construct(
+        private readonly GamAdUnitReportClient $google,
+        private readonly GamReportMoneyParser $money,
+    ) {}
 
     public function fetch(
         ReportSourceConnection $connection,
@@ -137,6 +139,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                 'id' => $jobId,
                 'requested_at' => now()->toIso8601String(),
                 'currency' => $canonicalCurrency,
+                'confirmed_report_currency' => $this->money->confirmedCurrency($response, $canonicalCurrency),
             ];
             $connection->update([
                 'configuration' => $configuration,
@@ -172,6 +175,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                 $from,
                 $to,
                 $granularity,
+                data_get($configuration, 'google_jobs.'.$key.'.confirmed_report_currency'),
             );
         } catch (\Throwable $exception) {
             // A completed Google job can still produce unusable output.
@@ -211,6 +215,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         CarbonInterface $from,
         CarbonInterface $to,
         ReportGranularity $granularity,
+        ?string $confirmedReportCurrency,
     ): array {
         $stream = fopen('php://temp', 'w+');
         fwrite($stream, $csv);
@@ -256,10 +261,11 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                     $rawValue = (string) $source['Column.'.$column];
                     $sourceCurrency = strtoupper((string) data_get($connection->configuration, 'source_network_currency', ''));
                     $value = $field === 'revenue_micros'
-                        ? $this->moneyMicros(
+                        ? $this->money->parse(
                             $rawValue,
                             $this->canonicalCurrency(),
-                            $sourceCurrency !== '' && $sourceCurrency !== $this->canonicalCurrency(),
+                            $sourceCurrency,
+                            $confirmedReportCurrency,
                         )
                         : $this->integer($rawValue);
                     if ($field !== 'revenue_micros' && $value < 0) {
@@ -298,30 +304,6 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         $currency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
 
         return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
-    }
-
-    private function moneyMicros(string $value, string $expectedCurrency, bool $requireCurrencyMarker = false): int
-    {
-        $value = trim($value);
-
-        if (preg_match('/^(.+?)\\s+(-?\\d+)$/uD', $value, $matches) === 1) {
-            $prefix = trim((string) $matches[1]);
-            $allowedPrefixes = $expectedCurrency === 'USD'
-                ? ['USD', '$', 'US$']
-                : [$expectedCurrency];
-
-            if (! in_array($prefix, $allowedPrefixes, true)) {
-                throw new RuntimeException('The Google GAM report returned a monetary value in an unexpected currency.');
-            }
-
-            $value = (string) $matches[2];
-        } elseif (preg_match('/^-?\\d+$/D', $value) !== 1) {
-            throw new RuntimeException('The Google GAM report contains an invalid revenue value.');
-        } elseif ($requireCurrencyMarker) {
-            throw new RuntimeException('The Google GAM report did not prove that converted revenue is in the canonical currency.');
-        }
-
-        return $this->integer($value);
     }
 
     private function integer(string $value): int
