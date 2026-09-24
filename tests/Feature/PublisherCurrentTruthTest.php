@@ -29,7 +29,25 @@ class PublisherCurrentTruthTest extends TestCase
 
         $this->assertFalse($labels->contains('Onboarding'));
         $this->assertTrue($labels->contains('Websites'));
-        $this->assertTrue($labels->contains('Monetization Center'));
+        $this->assertTrue($labels->contains('Monetization health'));
+    }
+
+    public function test_publisher_navigation_stays_task_first_without_admin_technical_sections(): void
+    {
+        $this->seedIdentity();
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Publisher'), RoleName::PublisherAdmin);
+        $this->makePublisherFor($user);
+
+        $groups = collect(app(ControlPlaneNavigation::class)->for($user));
+        $this->assertSame(
+            ['Home', 'Reports & Money', 'Monetization', 'Account', 'Help'],
+            $groups->pluck('label')->values()->all(),
+        );
+
+        $labels = $groups->flatMap(fn (array $group) => collect($group['items'])->pluck('label'));
+        foreach (['GAM Connections', 'Demand Accounts', 'API Operations', 'Financial Periods'] as $adminOnly) {
+            $this->assertFalse($labels->contains($adminOnly), $adminOnly.' must not appear in Publisher navigation.');
+        }
     }
 
     public function test_new_publisher_is_not_prompted_for_payment_details_before_a_payout_is_relevant(): void

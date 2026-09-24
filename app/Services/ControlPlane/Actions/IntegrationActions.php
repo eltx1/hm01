@@ -16,6 +16,10 @@ final class IntegrationActions implements ActionCenterProvider
 {
     public function actions(User $user): array
     {
+        if (! $user->isHorusAdministrator()) {
+            return [];
+        }
+
         $items = [];
 
         if ($user->hasPermission('gam.connections.view')) {

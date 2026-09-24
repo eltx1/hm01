@@ -35,6 +35,23 @@ class InvitationTest extends TestCase
         app(InvitationService::class)->accept($token, 'Again', 'secure-password-123');
     }
 
+    public function test_publisher_team_invitation_form_is_scoped_and_hides_internal_roles(): void
+    {
+        $this->seedIdentity();
+        $organization = $this->makeOrganization(OrganizationType::Publisher, 'Scoped Publisher');
+        $admin = $this->makeUser($organization, RoleName::PublisherAdmin);
+
+        $this->actingAs($admin)->get(route('admin.invitations.create'))
+            ->assertOk()
+            ->assertSee('Invite team member')
+            ->assertSee('Scoped Publisher')
+            ->assertSee('Publisher Admin')
+            ->assertSee('Publisher Viewer')
+            ->assertDontSee('Organization ID')
+            ->assertDontSee('Super Admin')
+            ->assertDontSee('Finance Admin');
+    }
+
     public function test_publisher_cannot_invite_horus_administrator_role(): void
     {
         Notification::fake();

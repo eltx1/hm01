@@ -37,6 +37,7 @@ class DashboardController extends Controller
     private function administrator(Request $request, UnifiedReportService $reports, ActionCenter $actionCenter): View
     {
         $user = $request->user();
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 
         return view('dashboards.admin', [
             'totalPublishers' => $user->hasPermission('publishers.view') ? Publisher::withoutGlobalScopes()->count() : null,
@@ -45,7 +46,7 @@ class DashboardController extends Controller
             'activeCampaigns' => $user->hasPermission('campaigns.view') || $user->hasPermission('campaigns.review')
                 ? Campaign::withoutGlobalScopes()->whereIn('status', [CampaignStatus::Scheduled->value, CampaignStatus::Active->value, CampaignStatus::Paused->value])->count()
                 : null,
-            'reporting' => $user->hasPermission('reporting.admin.view') ? $reports->adminSummary() : null,
+            'reporting' => $user->hasPermission('reporting.admin.view') ? $reports->adminSummary(currency: $canonicalCurrency) : null,
             'showInternalMargin' => $user->hasPermission('finance.internal_margin.view'),
             'failedJobs' => $user->hasPermission('operations.view') ? DB::table('failed_jobs')->latest('failed_at')->limit(10)->get() : collect(),
             'auditEvents' => $user->hasPermission('audit.view') ? AuditLog::query()->latest()->limit(10)->get() : collect(),
@@ -64,9 +65,24 @@ class DashboardController extends Controller
             'contracts' => fn ($query) => $query->latest(),
             'paymentProfile',
         ])->firstOrFail();
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
         $reporting = $request->user()->hasPermission('finance.publisher.view_own')
             ? app(PublisherFinanceService::class)->dashboard($publisher)
-            : ['impressions' => 0, 'currencies' => collect(), 'statements' => collect()];
+            : [
+                'canonical_currency' => $canonicalCurrency,
+                'primary' => [
+                    'currency' => $canonicalCurrency,
+                    'today_available' => false,
+                    'today_impressions' => 0,
+                    'today_clicks' => 0,
+                    'today_estimated_earnings_minor' => 0,
+                    'finalized_earnings_minor' => 0,
+                    'statement_balance_due_minor' => 0,
+                ],
+                'impressions' => 0,
+                'statements' => collect(),
+                'legacy_currency_count' => 0,
+            ];
 
         return view('dashboards.publisher', [
             'publisher' => $publisher,

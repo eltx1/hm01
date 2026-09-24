@@ -122,17 +122,35 @@ final class PublisherFinanceService
     public function dashboard(Publisher $publisher): array
     {
         $overview = $this->overview($publisher);
+        $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
+        $primary = $overview['currencies']->firstWhere('currency', $canonicalCurrency) ?? [
+            'currency' => $canonicalCurrency,
+            'today_available' => false,
+            'today_impressions' => 0,
+            'today_clicks' => 0,
+            'today_estimated_earnings_minor' => 0,
+            'today_updated_at' => null,
+            'estimated_earnings_minor' => 0,
+            'finalized_earnings_minor' => 0,
+            'statement_balance_due_minor' => 0,
+            'pending_payout_minor' => 0,
+            'paid_minor' => 0,
+        ];
+
         $impressions = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
+            ->where('currency', $canonicalCurrency)
             ->where('finality', ReportFinality::Finalized->value)
             ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('report_date', '<=', now()->toDateString())
             ->sum('impressions');
 
         return [
+            'canonical_currency' => $canonicalCurrency,
+            'primary' => $primary,
             'impressions' => (int) $impressions,
-            'currencies' => $overview['currencies'],
-            'statements' => $overview['statements'],
+            'statements' => $overview['statements']->where('currency', $canonicalCurrency)->values(),
+            'legacy_currency_count' => $overview['currencies']->where('currency', '!=', $canonicalCurrency)->count(),
         ];
     }
 
@@ -245,14 +263,17 @@ final class PublisherFinanceService
             ->distinct()
             ->pluck('currency');
 
+        $canonicalCurrency = strtoupper(trim((string) config('reporting.canonical_currency', 'USD')));
+        $canonicalCurrency = preg_match('/^[A-Z]{3}$/D', $canonicalCurrency) === 1 ? $canonicalCurrency : 'USD';
+
         return collect([
+            $canonicalCurrency,
             ...$reported,
             ...$statements->pluck('currency'),
             ...$payments->pluck('currency'),
             $contract?->currency,
             $publisher->paymentProfile?->currency,
-        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()->sort()->values()
-            ->whenEmpty(fn (Collection $currencies) => $currencies->push(strtoupper((string) config('reporting.default_currency', 'USD'))));
+        ])->filter()->map(fn ($currency) => strtoupper((string) $currency))->unique()->sort()->values();
     }
 
     private function activeContract(Publisher $publisher): ?PublisherContract

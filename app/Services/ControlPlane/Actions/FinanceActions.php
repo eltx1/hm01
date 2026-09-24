@@ -15,6 +15,10 @@ final class FinanceActions implements ActionCenterProvider
 {
     public function actions(User $user): array
     {
+        if (! $user->isHorusAdministrator()) {
+            return [];
+        }
+
         $items = [];
         $financeCounts = null;
         if ($user->hasPermission('finance.operations.view') || $user->hasPermission('finance.payments.view') || $user->hasPermission('finance.reconciliation.manage')) {

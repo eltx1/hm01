@@ -10,6 +10,10 @@ final class MonetizationActions implements ActionCenterProvider
 {
     public function actions(User $user): array
     {
+        if (! $user->isHorusAdministrator()) {
+            return [];
+        }
+
         if (! $user->hasPermission('operations.view')) {
             return [];
         }
