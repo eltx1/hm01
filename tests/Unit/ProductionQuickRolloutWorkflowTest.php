@@ -51,6 +51,18 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString("'global_controls_allow_serving' => true", $script);
     }
 
+    public function test_production_audit_treats_global_serving_kill_switches_as_blocking(): void
+    {
+        $audit = file_get_contents(dirname(__DIR__, 2).'/ops/audit/production-readiness.php');
+
+        $this->assertIsString($audit);
+        $this->assertStringContainsString("'global_serving_controls'", $audit);
+        $this->assertStringContainsString("['AD_SERVING', 'DIRECT_JS', 'NATIVE_DEMAND']", $audit);
+        $this->assertStringContainsString("'BLOCKED'", $audit);
+        $this->assertStringContainsString("'P1'", $audit);
+        $this->assertStringContainsString('One or more global serving controls currently block browser ad delivery.', $audit);
+    }
+
     public function test_static_sync_retries_transient_cloudflare_pages_publication_failure_and_stays_fail_closed(): void
     {
         $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/sync-production-static-edge.yml');
