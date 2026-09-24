@@ -556,6 +556,7 @@
             }
             if (state.active && !state.active.destroyed) {
                 setStatus(container, 'duplicate', 'another-video-is-active');
+                container.__hmDestroy('duplicate');
                 return false;
             }
             if (event && event.stopPropagation) event.stopPropagation();
