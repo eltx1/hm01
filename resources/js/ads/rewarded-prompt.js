@@ -26,13 +26,9 @@ function rewardedPromptUi(options) {
     // Inline, element-scoped priority prevents publisher button styles from hiding
     // or disabling these controls, without styling any other ad or publisher node.
     function style(node, css) {
-        node.style.cssText = 'all:initial;' + css;
-        if (node.style.setProperty) {
-            for (var i = 0; i < node.style.length; i++) {
-                var property = node.style[i];
-                node.style.setProperty(property, node.style.getPropertyValue(property), 'important');
-            }
-        }
+        // Apply priorities atomically. Upgrading `all` on a live declaration in
+        // Chromium resets its later non-important values before they can be read.
+        node.style.cssText = ('all:initial;' + css).replace(/;/g, ' !important;');
     }
     var prompt = document.createElement('div');
     var title = document.createElement('strong');
