@@ -17,7 +17,19 @@ test('dashboard light/dark round trip preserves controls, mobile navigation and 
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await open(page);
-    // Assert palette and field surfaces; canvas background serialization differs across engines.
+    if (info.project.name.includes('webkit')) {
+        console.log('Initial dashboard styles', await page.evaluate(() => ({
+            theme: document.documentElement.dataset.hmTheme,
+            rootColor: getComputedStyle(document.documentElement).color,
+            white: getComputedStyle(document.documentElement).getPropertyValue('--hm-white'),
+            night: getComputedStyle(document.documentElement).getPropertyValue('--hm-night'),
+            bodyColor: getComputedStyle(document.body).color,
+            bodyBackground: getComputedStyle(document.body).background,
+            sheets: [...document.styleSheets].map(sheet => ({ href: sheet.href, rules: sheet.cssRules.length, first: sheet.cssRules[0]?.cssText })),
+        })));
+        await page.screenshot({ path: info.outputPath('dashboard-initial.png'), fullPage: true });
+    }
+    // Assert the initial palette as well as returning to it after a toggle.
     await expect(page.locator('body')).toHaveCSS('color', 'rgb(246, 248, 255)');
     const original = await page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--hm-bg-page'));
     const originalField = await page.locator('input').evaluate(el => getComputedStyle(el).backgroundColor);
