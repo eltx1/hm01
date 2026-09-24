@@ -47,7 +47,7 @@ final class ProductionQuickRolloutWorkflowTest extends TestCase
         $this->assertStringContainsString("quick_in_article_display", $script);
         $this->assertStringContainsString("has no enabled Direct Demand candidate", $script);
         $this->assertStringContainsString("has no executable Direct JS candidate", $script);
-        $this->assertStringContainsString("'direct_candidate_count' => $directCandidateCount", $script);
+        $this->assertStringContainsString("'direct_candidate_count' => \\$directCandidateCount", $script);
         $this->assertStringContainsString("'global_controls_allow_serving' => true", $script);
     }
 
