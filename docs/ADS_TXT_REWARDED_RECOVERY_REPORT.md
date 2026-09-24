@@ -26,6 +26,8 @@ was blocked locally by the ownership prerequisite.
   Existing non-rewarded startup and provider completion-based grants remain.
 - tests/Feature/AdsTxtComplianceTest.php: pending-domain success without ownership
   mutation, private-DNS rejection, and unauthorized redirect regressions.
+- tests/Browser/hm-direct-trusted-runtimes.test.js: active-video collision and
+  denied localStorage getter regressions.
 - tests/Browser/rewarded-reading.playwright.spec.js: inherited pointer-events,
   provider/focus exceptions, late callbacks, prompt expiry, silent IMA startup.
 - .github/workflows/diagnose-ads-txt.yml: bounded read-only live fetch checks and
@@ -34,7 +36,7 @@ was blocked locally by the ownership prerequisite.
 
 ## Validation
 
-Local Node runtime/browser suite: 234 tests passed, 0 failed.
+Local Node runtime/browser suite: 236 tests passed, 0 failed.
 JavaScript syntax and diff whitespace checks passed.
 PHP, MySQL and real Chromium/WebKit desktop/mobile checks run in PR #196.
 Local PHP is unavailable; Playwright browser downloads failed in the local
