@@ -1,0 +1,52 @@
+name: Diagnose ads.txt fetching
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/diagnose-ads-txt.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Read-only aggregate ads.txt diagnosis
+        env:
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          php_file="$(mktemp)"
+          cat > "$php_file" <<'PHP'
+          <?php
+          chdir($argv[1]);
+          require 'vendor/autoload.php';
+          $app = require 'bootstrap/app.php';
+          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+          $counts = [];
+          $checks = App\Models\SupplyChainCheck::withoutGlobalScopes()->where('check_type', 'ADS_TXT')->orderByDesc('checked_at')->get()->unique('site_id');
+          foreach ($checks as $check) {
+              $code = data_get($check->findings, 'fetch.error_code') ?: $check->status;
+              $counts[$code] = ($counts[$code] ?? 0) + 1;
+          }
+          echo json_encode(['latest_fetch_codes' => $counts, 'curl' => extension_loaded('curl'), 'allow_url_fopen' => ini_get('allow_url_fopen')], JSON_THROW_ON_ERROR).PHP_EOL;
+          $live = [];
+          foreach (App\Models\Site::withoutGlobalScopes()->where('status', 'ACTIVE')->limit(3)->get() as $site) {
+              $result = app(App\Services\Compliance\AdsTxtFetcher::class)->fetch($site);
+              $code = $result['error_code'] ?: 'FETCH_OK';
+              $live[] = ['code' => $code, 'http_status' => $result['http_status'], 'duration_ms' => $result['duration_ms'], 'redirect_hops' => count($result['redirects'])];
+          }
+          echo json_encode(['active_site_live_fetches' => $live], JSON_THROW_ON_ERROR).PHP_EOL;
+          PHP
+          encoded="$(base64 -w0 "$php_file")"
+          ssh -p "$SSH_PORT" "$USER@$HOST" "tmp_file=\$(mktemp); printf '%s' '$encoded' | base64 -d > \"\$tmp_file\"; php \"\$tmp_file\" '$REMOTE_HOME/htdocs/app.horusmedia.net'; result=\$?; rm -f \"\$tmp_file\"; exit \$result"
