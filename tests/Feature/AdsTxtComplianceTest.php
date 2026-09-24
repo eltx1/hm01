@@ -163,7 +163,7 @@ class AdsTxtComplianceTest extends TestCase
         $this->assertNotNull($redirectDomain->id);
     }
 
-    public function test_private_dns_and_unverified_domains_are_rejected_before_any_http_request(): void
+    public function test_private_dns_is_rejected_before_any_http_request(): void
     {
         Http::fake();
         $this->app->instance(DnsResolver::class, new class implements DnsResolver
@@ -177,10 +177,39 @@ class AdsTxtComplianceTest extends TestCase
         $this->assertSame('UNSAFE_TARGET', $private->findings['fetch']['error_code']);
         Http::assertNothingSent();
 
-        $this->publicDns();
+    }
+
+    public function test_pending_primary_domain_is_fetched_without_granting_ownership_or_activation(): void
+    {
         $this->site->domains()->update(['verification_status' => 'PENDING', 'verified_at' => null]);
-        $unverified = app(AdsTxtVerifier::class)->verify($this->site);
-        $this->assertSame('DOMAIN_NOT_VERIFIED', $unverified->findings['fetch']['error_code']);
+        $status = $this->site->getRawOriginal('status');
+        $canonical = app(SupplyChainArtifactBuilder::class)->adsTxtForSite($this->site);
+        Http::fake(['https://publisher-site.example/ads.txt' => Http::response($canonical, 200, ['Content-Type' => 'text/plain'])]);
+
+        $check = app(AdsTxtVerifier::class)->verify($this->site);
+
+        $this->assertTrue($check->findings['fetch']['ok']);
+        $this->assertSame(200, $check->http_status);
+        Http::assertSentCount(1);
+        $domain = $this->site->domains()->where('is_primary', true)->firstOrFail();
+        $this->assertSame('PENDING', $domain->verification_status);
+        $this->assertNull($domain->verified_at);
+        $this->assertSame($status, $this->site->fresh()->getRawOriginal('status'));
+    }
+
+    public function test_pending_primary_domain_still_rejects_private_dns_and_unverified_redirects(): void
+    {
+        $this->site->domains()->update(['verification_status' => 'PENDING', 'verified_at' => null]);
+        Http::fake(['*' => Http::response('', 302, ['Location' => 'https://unverified.example/ads.txt'])]);
+        $check = app(AdsTxtVerifier::class)->verify($this->site);
+        $this->assertSame('UNAUTHORIZED_REDIRECT', $check->findings['fetch']['error_code']);
+        Http::assertSentCount(1);
+        $this->fakeHttp();
+        $this->app->instance(DnsResolver::class, new class implements DnsResolver {
+            public function addresses(string $host): array { return ['169.254.169.254']; }
+        });
+        $check = app(AdsTxtVerifier::class)->verify($this->site);
+        $this->assertSame('UNSAFE_TARGET', $check->findings['fetch']['error_code']);
         Http::assertNothingSent();
     }
 
