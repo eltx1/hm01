@@ -59,7 +59,7 @@
     @if($statement['has_publisher_invoice'])
         <a class="hm-button-secondary button-link" href="{{ route('publisher.finance.statements.invoice.download', $statement['id']) }}">Download my private invoice</a>
     @endif
-    @if(in_array($statement['publisher_invoice_status'], ['REQUIRED', 'REJECTED'], true) && auth()->user()->hasPermission('finance.publisher.invoice.upload'))
+    @if($statement['can_upload_invoice'] && auth()->user()->hasPermission('finance.publisher.invoice.upload'))
         <form method="post" enctype="multipart/form-data" action="{{ route('publisher.finance.statements.invoice', $statement['id']) }}" class="form-grid">
             @csrf
             <label>Invoice number<input class="hm-input" name="invoice_number" required maxlength="128"></label>
@@ -69,7 +69,7 @@
     @elseif($statement['publisher_invoice_status'] === 'RECEIVED')
         <p class="muted">The invoice was received and is awaiting Finance processing. No payment is represented as paid until settlement is recorded.</p>
     @elseif($statement['publisher_invoice_status'] === 'NOT_REQUIRED')
-        <p class="muted">No invoice is required for this below-threshold statement.</p>
+        <p class="muted">No invoice is required for this statement.</p>
     @endif
 </article>
 
