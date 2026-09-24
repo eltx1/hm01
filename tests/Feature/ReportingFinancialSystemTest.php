@@ -43,6 +43,23 @@ class ReportingFinancialSystemTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
+    public function test_report_chart_keeps_missing_days_as_gaps_and_negative_amounts_visible(): void
+    {
+        $html = \Illuminate\Support\Facades\Blade::render('<x-report-chart :rows="$rows" currency="USD" from="2026-09-01" to="2026-09-04" />', [
+            'rows' => collect([
+                ['date' => '2026-09-01', 'gross_revenue_minor' => 1000],
+                ['date' => '2026-09-02', 'gross_revenue_minor' => -200],
+                ['date' => '2026-09-04', 'gross_revenue_minor' => 500],
+            ]),
+        ]);
+        $this->assertStringContainsString('Missing days are left as gaps.', $html);
+        $this->assertStringContainsString('2026-09-02: USD -2.00', $html);
+        preg_match('/class="report-chart-line" d="([^"]*)"/', $html, $path);
+        $this->assertSame(2, substr_count($path[1], ' M '));
+        $this->assertSame(1, substr_count($path[1], ' L '));
+        $this->assertSame(3, substr_count($html, 'class="report-chart-point"'));
+    }
+
     public function test_reports_keep_same_named_websites_separate_and_validate_date_ranges(): void
     {
         [$admin, $publisher, $publisherUser, $site] = $this->reportingContext();

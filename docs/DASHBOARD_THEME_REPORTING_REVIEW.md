@@ -15,8 +15,11 @@ margin/gross/net data. Finance figures are separate from selected report dates.
 Paid-to-date is clearly all-time; scheduled payouts are identified as part of
 pending payouts. Monthly statements link to private invoice review and payout.
 
-Admin reports put performance first, identify gross breakdowns versus adjusted
-headline totals, and keep technical source/import detail in a disclosure.
+Admin reports use four prioritized metrics, compact styled date controls, a
+calendar-spaced SVG revenue chart and ranked breakdown panels. Publisher reports
+share the chart; missing dates remain gaps and negative values remain visible.
+Gross breakdowns versus adjusted headline totals stay explicit, and technical
+source/import detail remains in a disclosure.
 Permission-aware Finance links preserve the existing route authorization.
 
 ## Confirmed defects corrected
@@ -79,3 +82,5 @@ markup; PHP feature tests exercise server-rendered report routes separately.
 - `tests/Browser/dashboard-theme.test.js`
 - `tests/Feature/PublisherFinanceExperienceTest.php`
 - `tests/Feature/ReportingFinancialSystemTest.php`
+
+- `resources/views/components/report-chart.blade.php`
