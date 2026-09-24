@@ -636,8 +636,8 @@ test('Continue reading prompt is optional and dismissal requests no ad or reward
     await tick();
     assert.equal(runtime.requested.length, 0);
     const buttons = runtime.created.filter((node) => node.tagName === 'BUTTON');
-    assert.equal(buttons[0].textContent, 'Watch ad and continue reading');
-    assert.equal(buttons[1].textContent, 'Continue reading now');
+    assert.equal(buttons[0].textContent, 'Watch ad');
+    assert.equal(buttons[1].textContent, 'Continue without an ad');
     buttons[1].click();
     assert.equal(target.style.display, 'none');
     assert.equal(runtime.requested.length, 0);
@@ -658,7 +658,7 @@ test('Continue reading localizes Arabic and Escape closes without granting', asy
     const prompt = runtime.created.find(node => node.attributes['data-hm-reward-prompt'] === '1');
     assert.equal(prompt.attributes.dir, 'rtl');
     assert.equal(prompt.attributes.role, 'dialog');
-    assert.equal(runtime.created.find(node => node.tagName === 'BUTTON').textContent, 'شاهد الإعلان واستكمل القراءة');
+    assert.equal(runtime.created.find(node => node.tagName === 'BUTTON').textContent, 'شاهد الإعلان');
     runtime.sandbox.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
     assert.equal(target.style.display, 'none');
     target.__hmDestroy('dismissed');
