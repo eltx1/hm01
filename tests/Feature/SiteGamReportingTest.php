@@ -336,6 +336,8 @@ class SiteGamReportingTest extends TestCase
         $this->google->currency = 'AED';
         $sites = [$firstSite, $this->makeSiteFor($publisher, $user), $this->makeSiteFor($publisher, $user)];
         $bindings = [];
+        $responses = Http::sequence();
+        Http::fake(['storage.googleapis.com/*' => $responses]);
         foreach ($sites as $index => $site) {
             $unit = (string) (70001 + $index);
             $this->google->units = [['id' => $unit, 'name' => 'Unit '.$index, 'adUnitCode' => 'unit_'.$index]];
@@ -343,9 +345,9 @@ class SiteGamReportingTest extends TestCase
             $bindings[] = $binding;
             // A newly serving unit may have requests/impressions but no revenue.
             $revenue = $index === 2 ? '0' : 'US$ 12000000';
-            Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([
+            $responses->push($this->csv([
                 ['2026-09-20', $unit, 30, 20, 10, 20, 0, $revenue],
-            ]))]);
+            ]));
             $job = $this->import($binding);
             $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
             $row = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->connection->id)->sole();
@@ -361,12 +363,12 @@ class SiteGamReportingTest extends TestCase
         // mixed zero/paid report without reconnecting or touching the other sites.
         $third = $bindings[2];
         $third->connection->update(['status' => 'ERROR', 'last_error' => 'Earlier currency validation failure']);
-        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+        $responses
             ->push($this->csv([
                 ['2026-09-19', '70003', 5, 0, 5, 0, 0, '0'],
                 ['2026-09-20', '70003', 30, 20, 10, 20, 0, 'US$ 2500000'],
             ]))
-            ->push($this->csv([['2026-09-21', '70003', 8, 2, 6, 2, 0, '0']]))]);
+            ->push($this->csv([['2026-09-21', '70003', 8, 2, 6, 2, 0, '0']]));
         $results = app(SiteGamReportSynchronizer::class)->sync($third->fresh());
         $this->assertCount(2, $results);
         foreach ($results as $job) {
