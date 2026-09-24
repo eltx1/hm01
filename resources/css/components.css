@@ -352,3 +352,25 @@
         transition: none;
     }
 }
+/* Website ad controls use the dashboard theme in both color modes. */
+.quick-ads-picker { display:flex; align-items:end; flex-wrap:wrap; gap:1rem; }
+.quick-ads-picker label { flex:1 1 20rem; min-width:0; }
+.quick-ads-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr)); gap:1rem; }
+.quick-ad-card { min-width:0; display:flex; flex-direction:column; gap:1rem; }
+.quick-ad-heading { display:flex; align-items:center; gap:1rem; }
+.quick-ad-heading > div:last-child { min-width:0; overflow-wrap:anywhere; }
+.quick-ad-heading h3, .quick-ad-heading p { margin:.2rem 0; }
+.quick-ad-preview { position:relative; flex:0 0 64px; height:82px; border:1px solid var(--hm-line-strong); border-radius:10px; padding:16px 7px; background:var(--hm-glass); }
+.quick-ad-preview i { display:block; height:4px; margin:6px 0; background:var(--hm-line-strong); border-radius:2px; }
+.quick-ad-preview span { position:absolute; inset-inline:5px; top:32px; height:17px; display:grid; place-items:center; color:var(--hm-ink); background:var(--hm-gold); font:700 9px/1 var(--hm-font-sans); border-radius:3px; }
+.quick-ad-preview--top span { top:6px; }
+.quick-ad-preview--bottom span { top:auto; bottom:6px; }
+.quick-ad-preview--left span { inset-inline:auto; left:5px; top:18px; width:15px; height:48px; }
+.quick-ad-preview--right span { inset-inline:auto; right:5px; top:18px; width:15px; height:48px; }
+.quick-ad-controls { display:flex; gap:.8rem; align-items:start; flex-wrap:wrap; margin-top:auto; }
+.quick-ad-remove { flex:1 1 6rem; }
+.quick-ad-remove summary { padding:.7rem; color:var(--hm-danger); cursor:pointer; }
+.quick-ad-remove[open] { flex-basis:100%; }
+.quick-ad-remove p { margin:.5rem 0; }
+.quick-ads-removed { margin-top:1rem; }
+.quick-ads-removed > summary { font-weight:700; cursor:pointer; padding:.5rem 0; }

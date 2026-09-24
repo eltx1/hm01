@@ -17,6 +17,7 @@ const vastUrl = 'https://video.example/vast?slot=outstream&format=xml';
 
 async function open(page) {
     await page.setContent(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+        <a id="quick-manage-link" href="https://dashboard.example/admin/demand/quick/manage">Manage website ads</a>
         <form id="quick-monetize-form">
             <input type="hidden" name="placement_mode" id="quick-placement-mode" value="new">
             <select name="site_id" id="quick-site"><option value="site-one" selected>First site</option><option value="site-two">Second site</option></select>
@@ -59,6 +60,14 @@ async function open(page) {
 async function formData(page) {
     return page.locator('#quick-monetize-form').evaluate(form => Object.fromEntries(new FormData(form)));
 }
+
+test('manage ads follows the selected website without changing activation inputs', async ({ page }) => {
+    await open(page);
+    await expect(page.locator('#quick-manage-link')).toHaveAttribute('href', 'https://dashboard.example/admin/demand/quick/manage?site=site-one');
+    await page.locator('#quick-site').selectOption('site-two');
+    await expect(page.locator('#quick-manage-link')).toHaveAttribute('href', 'https://dashboard.example/admin/demand/quick/manage?site=site-two');
+    expect(await formData(page)).toMatchObject({ site_id: 'site-two', placement_preset: 'responsive_display' });
+});
 
 test('a responsive GAM path stays responsive and submits an explicit path input', async ({ page }) => {
     await open(page);

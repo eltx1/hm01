@@ -79,7 +79,7 @@ test('floating video clears rendered bottom anchors, follows resize and stops af
 
 // No paid inventory or external requests: exercise the real DOM/runtime using
 // a deterministic IMA boundary. Real demand/no-fill remains a publisher smoke test.
-async function openReading(page, language) {
+async function openReading(page, language, browserLanguages = [language]) {
     await page.route('https://reader.example/**', route => route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html><html lang="${language}"><meta name="viewport" content="width=device-width,initial-scale=1"><body>
@@ -116,6 +116,10 @@ async function openReading(page, language) {
             ViewMode: { NORMAL: 'normal' },
         } };
     });
+    await page.evaluate(languages => {
+        Object.defineProperty(navigator, 'languages', { configurable: true, value: languages });
+        Object.defineProperty(navigator, 'language', { configurable: true, value: languages[0] || '' });
+    }, browserLanguages);
     await page.addScriptTag({ content: runtime });
 }
 
@@ -128,7 +132,7 @@ for (const language of ['en', 'ar']) {
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
         expect(await page.evaluate(() => window.requests)).toBe(0);
-        await expect(page.getByRole('button', { name: language === 'ar' ? 'شاهد الإعلان واستكمل القراءة' : 'Watch ad and continue reading', exact: true })).toBeFocused();
+        await expect(page.getByRole('button', { name: language === 'ar' ? 'شاهد الإعلان' : 'Watch ad', exact: true })).toBeFocused();
         await testInfo.attach(`reading-${language}`, { body: await page.screenshot(), contentType: 'image/png' });
         await page.keyboard.press('Escape');
         await expect(dialog).toBeHidden();
@@ -140,7 +144,7 @@ for (const language of ['en', 'ar']) {
 for (const outcome of ['complete', 'error', 'close']) {
     test(`reading resumes after ${outcome}`, async ({ page }) => {
         await openReading(page, 'en');
-        await page.getByRole('button', { name: 'Watch ad and continue reading', exact: true }).click();
+        await page.getByRole('button', { name: 'Watch ad', exact: true }).click();
         expect(await page.evaluate(() => window.requests)).toBe(1);
         if (outcome === 'close') await page.getByRole('button', { name: 'Close rewarded video' }).click();
         else await page.evaluate(outcome => {
@@ -179,6 +183,10 @@ async function openGptRewarded(page, options = {}) {
         if (options.capped) localStorage.setItem('hm:gpt:rewarded:v1:/123/rewarded', String(Date.now()));
         if (options.grantAge) localStorage.setItem('hm:gpt:rewarded:v1:/123/rewarded', String(Date.now() - options.grantAge));
     }, options);
+    await page.evaluate(languages => {
+        Object.defineProperty(navigator, 'languages', { configurable: true, value: languages });
+        Object.defineProperty(navigator, 'language', { configurable: true, value: languages[0] || '' });
+    }, options.browserLanguages || ['ar']);
     await page.addScriptTag({content: gptRuntime});
 }
 
@@ -198,7 +206,7 @@ test('GPT rewarded uses official slot and grants only on Google grant, once', as
     await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { window.visibleCalls++; return true; }}));
     await expect(page.getByRole('dialog')).toBeVisible();
     expect(await page.evaluate(() => window.visibleCalls)).toBe(0);
-    await page.getByRole('button', {name:'شاهد الإعلان واستكمل القراءة'}).click();
+    await page.getByRole('button', {name:'شاهد الإعلان'}).click();
     expect(await page.evaluate(() => window.visibleCalls)).toBe(1);
     await page.evaluate(() => window.emitGpt('rewardedSlotVideoCompleted'));
     expect(await page.evaluate(() => window.grants)).toBe(0);
@@ -214,9 +222,9 @@ for (const mode of ['unsupported', 'capped', 'empty', 'decline', 'closed']) {
         if (mode === 'empty') await page.evaluate(() => window.emitGpt('slotRenderEnded', {isEmpty: true}));
         if (mode === 'decline' || mode === 'closed') {
             await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { return true; }}));
-            if (mode === 'decline') await page.getByRole('button', {name: 'متابعة القراءة الآن'}).click();
+            if (mode === 'decline') await page.getByRole('button', {name: 'المتابعة بدون إعلان'}).click();
             else {
-                await page.getByRole('button', {name:'شاهد الإعلان واستكمل القراءة'}).click();
+                await page.getByRole('button', {name:'شاهد الإعلان'}).click();
                 await page.evaluate(() => window.emitGpt('rewardedSlotClosed'));
             }
         }
@@ -236,7 +244,7 @@ for (const action of ['watch', 'decline']) {
             document.querySelector('#previous').focus = () => { throw new Error('focus unavailable'); };
             window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { throw new Error('inventory expired'); }});
         });
-        await page.getByRole('button', {name: action === 'watch' ? 'شاهد الإعلان واستكمل القراءة' : 'متابعة القراءة الآن'}).click();
+        await page.getByRole('button', {name: action === 'watch' ? 'شاهد الإعلان' : 'المتابعة بدون إعلان'}).click();
         await expect(page.locator('#reward')).toBeHidden();
         expect(await page.evaluate(() => window.grants)).toBe(0);
         // A late Google callback must not resurrect the dismissed dialog.
@@ -262,7 +270,7 @@ test('VAST rewarded recovers when IMA never responds', async ({page}) => {
         document.body.style.pointerEvents = 'none';
         document.querySelector('#previous').focus = () => { throw new Error('focus unavailable'); };
     });
-    await page.getByRole('button', {name: 'Watch ad and continue reading', exact:true}).click();
+    await page.getByRole('button', {name: 'Watch ad', exact:true}).click();
     expect(await page.evaluate(() => window.requests)).toBe(1);
     await page.clock.fastForward(15001);
     await expect(page.locator('#reward')).toBeHidden();
@@ -271,9 +279,91 @@ test('VAST rewarded recovers when IMA never responds', async ({page}) => {
 
 test('VAST close remains available while SDK cleanup throws', async ({page}) => {
     await openReading(page, 'en');
-    await page.getByRole('button', {name:'Watch ad and continue reading', exact:true}).click();
+    await page.getByRole('button', {name:'Watch ad', exact:true}).click();
     await page.evaluate(() => { window.manager.destroy = () => { throw new Error('cleanup failed'); }; });
     await page.getByRole('button', {name:'Close rewarded video'}).click();
     await expect(page.locator('#reward')).toBeHidden();
     expect(await page.evaluate(() => window.grants)).toBe(0);
 });
+
+for (const provider of ['gpt', 'vast']) {
+    async function openPrompt(page, languages = ['en-US']) {
+        if (provider === 'vast') await openReading(page, 'ar', languages);
+        else {
+            await openGptRewarded(page, {browserLanguages: languages});
+            await page.evaluate(() => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { window.visibleCalls++; return true; }}));
+        }
+    }
+
+    test(`${provider} neutral prompt survives publisher CSS and X dismisses without opt-in`, async ({page}) => {
+        await openPrompt(page);
+        // Publisher global styles must not make our close control invisible or unclickable.
+        await page.addStyleTag({content: 'button { display:none !important; visibility:hidden !important; pointer-events:none !important; color:transparent !important; background:magenta !important; } strong,p { color:transparent !important; }'});
+        const prompt = page.getByRole('dialog');
+        const close = prompt.getByRole('button', {name: 'Close', exact: true});
+        await expect(prompt).toHaveAttribute('lang', 'en'); // Browser wins over Arabic page.
+        await expect(prompt).toHaveAttribute('dir', 'ltr');
+        await expect(prompt).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+        await expect(prompt.locator('[data-hm-reward-disclosure]')).toHaveText('Watching is entirely optional. Closing this message will not block the content.');
+        await expect(close).toBeVisible();
+        await expect(close).toHaveCSS('color', 'rgb(17, 24, 39)');
+        const box = await close.boundingBox();
+        expect(box.width).toBeGreaterThanOrEqual(44);
+        expect(box.height).toBeGreaterThanOrEqual(44);
+        await close.click();
+        await expect(page.locator('#reward')).toBeHidden();
+        await expect(page.locator('article')).toBeVisible();
+        expect(await page.evaluate(() => window.grants)).toBe(0);
+        expect(await page.evaluate(provider => provider === 'gpt' ? window.visibleCalls : window.requests, provider)).toBe(0);
+        if (provider === 'gpt') {
+            await page.evaluate(() => {
+                window.emitGpt('rewardedSlotReady', {makeRewardedVisible() { window.visibleCalls++; return true; }});
+                window.emitGpt('rewardedSlotGranted');
+            });
+            await expect(page.locator('#reward')).toBeHidden();
+            expect(await page.evaluate(() => window.grants)).toBe(0);
+        }
+    });
+
+    test(`${provider} keyboard focus includes X and returns to publisher content`, async ({page}) => {
+        await openPrompt(page);
+        const watch = page.getByRole('button', {name:'Watch ad', exact:true});
+        const close = page.getByRole('button', {name:'Close', exact:true});
+        await expect(watch).toBeFocused();
+        await page.keyboard.press('Shift+Tab');
+        await expect(close).toBeFocused();
+        await page.keyboard.press('Tab');
+        await expect(watch).toBeFocused();
+        await page.keyboard.press('Tab');
+        await expect(page.getByRole('button', {name:'Continue without an ad'})).toBeFocused();
+        await page.keyboard.press('Tab');
+        await expect(close).toBeFocused();
+        await page.keyboard.press('Enter');
+        await expect(page.locator('#reward')).toBeHidden();
+        await expect(page.locator('#previous')).toBeFocused();
+        expect(await page.evaluate(() => window.grants)).toBe(0);
+    });
+
+    test(`${provider} uses supported browser fallback and keeps X visible in landscape`, async ({page}) => {
+        await page.setViewportSize({width: 667, height: 320});
+        await openPrompt(page, ['ja-JP', 'fr-FR']);
+        const prompt = page.getByRole('dialog');
+        await expect(prompt).toHaveAttribute('lang', 'fr');
+        const close = page.getByRole('button', {name:'Fermer', exact:true});
+        const box = await close.boundingBox();
+        expect(box.y).toBeGreaterThanOrEqual(0);
+        expect(box.y + box.height).toBeLessThanOrEqual(320);
+        await close.click();
+        await expect(page.locator('#reward')).toBeHidden();
+    });
+
+    test(`${provider} falls back to page language with RTL when browser languages are unsupported`, async ({page}) => {
+        await openPrompt(page, ['ja-JP']);
+        await expect(page.getByRole('dialog')).toHaveAttribute('lang', 'ar');
+        await expect(page.getByRole('dialog')).toHaveAttribute('dir', 'rtl');
+        await expect(page.locator('[data-hm-reward-disclosure]')).toContainText('اختيارية تمامًا');
+        await page.getByRole('button', {name:'إغلاق', exact:true}).click();
+        await expect(page.locator('#reward')).toBeHidden();
+        expect(await page.evaluate(() => window.grants)).toBe(0);
+    });
+}

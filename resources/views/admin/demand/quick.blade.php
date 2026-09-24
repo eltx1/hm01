@@ -25,6 +25,7 @@
             <span class="pill">{{ $sites->count() }} ACTIVE WEBSITE(S)</span>
         </div>
         <div class="status-row" style="margin-top:1rem">
+            <a class="hm-button-primary button-link" id="quick-manage-link" href="{{ route('admin.demand.quick.manage', $selectedSiteId ? ['site' => $selectedSiteId] : []) }}">Manage website ads</a>
             <a class="hm-button-secondary button-link" href="{{ route('admin.demand.index') }}">← Direct Demand</a>
             <a class="section-anchor" href="{{ route('admin.demand.accounts.create') }}">Advanced setup</a>
         </div>
@@ -244,6 +245,13 @@
     };
 
     const refreshMode = () => {
+        const manageLink = document.getElementById('quick-manage-link');
+        if (manageLink) {
+            const destination = new URL(manageLink.href, window.location.href);
+            destination.searchParams.delete('site');
+            if (site.value) destination.searchParams.set('site', site.value);
+            manageLink.href = destination.href;
+        }
         const existing = useExisting.checked;
         mode.value = existing ? 'existing' : 'new';
 

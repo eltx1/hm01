@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\DemandNetworkController;
 use App\Http\Controllers\Admin\DirectDemandAccountController;
 use App\Http\Controllers\Admin\DirectDemandQuickMonetizeController;
+use App\Http\Controllers\Admin\QuickAdManagementController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix('admin')->group(function (): void {
@@ -13,6 +14,10 @@ Route::middleware(['auth', 'active', 'verified', 'admin.2fa', 'horus'])->prefix(
         ->middleware('permission:demand.manage')->name('admin.demand.quick.create');
     Route::post('/demand/quick', [DirectDemandQuickMonetizeController::class, 'store'])
         ->middleware('permission:demand.manage')->name('admin.demand.quick.store');
+    Route::get('/demand/quick/manage', [QuickAdManagementController::class, 'index'])
+        ->middleware('permission:demand.manage')->name('admin.demand.quick.manage');
+    Route::patch('/sites/{site}/demand/quick/placements/{placement}', [QuickAdManagementController::class, 'update'])
+        ->middleware('permission:demand.manage')->name('admin.demand.quick.placements.update');
     Route::post('/sites/{site}/demand/quick-responsive/expand', [DirectDemandQuickMonetizeController::class, 'expandResponsiveBundle'])
         ->middleware(['permission:demand.manage', 'throttle:10,1'])->name('admin.sites.demand.quick-responsive.expand');
 

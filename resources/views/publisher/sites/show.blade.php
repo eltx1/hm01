@@ -25,6 +25,7 @@
         <p>{{ $site->primary_domain }} · {{ $site->language }}/{{ $site->country }} · {{ $site->content_category }}</p>
         <div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$site->serving_mode" /><x-status-badge :status="$monetization['overall']['status']" /></div>
         <a class="hm-button-secondary button-link" href="{{ route('admin.publishers.show', $site->publisher) }}">Open Publisher 360</a>
+        @if(auth()->user()->hasPermission('demand.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.demand.quick.manage', ['site' => $site->id]) }}">Manage website ads</a>@endif
     </div>
 </section>
 

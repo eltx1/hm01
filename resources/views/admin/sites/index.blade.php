@@ -22,7 +22,7 @@
     <td>{{ $site->primary_domain }}</td>
     <td><x-status-badge :status="$site->status" /></td>
     <td>{{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</td>
-    <td><a href="{{ route('admin.sites.show', $site) }}">Site 360</a></td>
+    <td><div class="status-row"><a href="{{ route('admin.sites.show', $site) }}">Site 360</a>@if(auth()->user()->hasPermission('demand.manage'))<a class="hm-button-secondary button-link" href="{{ route('admin.demand.quick.manage', ['site' => $site->id]) }}">Manage ads</a>@endif</div></td>
 </tr>
 @empty
 <tr><td colspan="6">No websites yet.</td></tr>
