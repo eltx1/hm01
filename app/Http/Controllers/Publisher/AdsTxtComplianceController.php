@@ -54,6 +54,8 @@ final class AdsTxtComplianceController extends Controller
     {
         $check = $verifier->verify($site, 'PUBLISHER', $request->user());
 
-        return back()->with('status', 'Ads.txt check completed: '.$check->status.'.');
+        $failure = data_get($check->findings, 'fetch.message');
+
+        return back()->with('status', 'Ads.txt check completed: '.$check->status.'.'.($failure ? ' '.$failure : ''));
     }
 }
