@@ -106,7 +106,7 @@ final class PublisherFinanceService
             ];
         })->values();
 
-        $actions = $this->actions($profile?->verification_status, $currencies, $payments);
+        $actions = $this->actions($profile?->verification_status, $payments, $statementModels);
         $publisherCurrencies = $currencies->map(fn (array $summary): array => $this->publisherCurrencySummary($summary))->values();
 
         return [
@@ -314,6 +314,12 @@ final class PublisherFinanceService
         if (! $statement) {
             return ['ready' => false, 'code' => 'NO_FINALIZED_STATEMENT', 'label' => 'Awaiting a finalized statement'];
         }
+        if ((int) $statement->balance_due_minor <= 0 || $statement->status === PublisherStatementStatus::Paid) {
+            return ['ready' => false, 'code' => 'NO_BALANCE_DUE', 'label' => 'No outstanding balance on this statement'];
+        }
+        if ($statement->status === PublisherStatementStatus::Draft || ! $statement->finalized_at) {
+            return ['ready' => false, 'code' => 'NO_FINALIZED_STATEMENT', 'label' => 'Awaiting a finalized statement'];
+        }
         if ((int) $statement->balance_due_minor < (int) $statement->payment_threshold_minor) {
             return ['ready' => false, 'code' => 'BELOW_THRESHOLD', 'label' => 'Balance remains below the payment threshold'];
         }
@@ -335,14 +341,16 @@ final class PublisherFinanceService
 
     private function isPayable(PublisherStatement $statement): bool
     {
-        return (int) $statement->balance_due_minor >= (int) $statement->payment_threshold_minor
-            && ! in_array($statement->status, [PublisherStatementStatus::Paid, PublisherStatementStatus::BelowThreshold], true);
+        return (int) $statement->balance_due_minor > 0
+            && $statement->finalized_at !== null
+            && (int) $statement->balance_due_minor >= (int) $statement->payment_threshold_minor
+            && ! in_array($statement->status, [PublisherStatementStatus::Draft, PublisherStatementStatus::Paid, PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward], true);
     }
 
     private function actions(
         ?PublisherPaymentProfileStatus $profileStatus,
-        Collection $currencies,
         Collection $payments,
+        Collection $statements,
     ): array {
         $actions = [];
         if ($profileStatus === null || $profileStatus === PublisherPaymentProfileStatus::Incomplete) {
@@ -355,12 +363,19 @@ final class PublisherFinanceService
             $actions[] = ['code' => 'PROFILE_PENDING', 'label' => 'Finance is reviewing your payment profile; no further details are required now.'];
         }
 
-        foreach ($currencies as $summary) {
-            $invoiceStatus = $summary['latest_statement']?->publisher_invoice_status;
-            if ($invoiceStatus === PublisherInvoiceStatus::Required) {
-                $actions[] = ['code' => 'UPLOAD_INVOICE_'.$summary['currency'], 'label' => "Upload the required {$summary['currency']} Publisher invoice."];
-            } elseif ($invoiceStatus === PublisherInvoiceStatus::Rejected) {
-                $actions[] = ['code' => 'REPLACE_INVOICE_'.$summary['currency'], 'label' => "Replace the rejected {$summary['currency']} Publisher invoice."];
+        foreach ($statements as $statement) {
+            if ((int) $statement->balance_due_minor <= 0 || $statement->status === PublisherStatementStatus::Paid) {
+                continue;
+            }
+            $invoiceStatus = $statement->publisher_invoice_status;
+            if (in_array($invoiceStatus, [PublisherInvoiceStatus::Required, PublisherInvoiceStatus::Rejected], true)) {
+                $replace = $invoiceStatus === PublisherInvoiceStatus::Rejected;
+                $actions[] = [
+                    'code' => ($replace ? 'REPLACE_INVOICE_' : 'UPLOAD_INVOICE_').$statement->currency,
+                    'label' => ($replace ? 'Replace the rejected' : 'Upload the required')." {$statement->currency} invoice for {$statement->period?->period_key}.",
+                    'href' => route('publisher.finance.statements.show', $statement->id).'#publisher-invoice',
+                    'link_label' => 'Open statement',
+                ];
             }
         }
         if ($payments->contains(fn (PublisherPayment $payment) => $payment->status === PublisherPaymentStatus::Failed)) {
@@ -369,6 +384,16 @@ final class PublisherFinanceService
         if ($payments->contains(fn (PublisherPayment $payment) => $payment->status === PublisherPaymentStatus::Held)) {
             $actions[] = ['code' => 'PAYOUT_HELD', 'label' => 'A payout is on hold. Review its explanation; no earnings were removed by the hold.'];
         }
+
+        foreach ($actions as &$action) {
+            if (! isset($action['href'])) {
+                $action['href'] = str_starts_with($action['code'], 'PAYOUT_')
+                    ? route('publisher.finance.payouts.index')
+                    : route('publisher.finance.payment-method.edit');
+                $action['link_label'] = 'View details';
+            }
+        }
+        unset($action);
 
         return $actions === []
             ? [['code' => 'NONE', 'label' => 'No action is required from you right now.']]

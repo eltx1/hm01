@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<html data-hm-theme="dark" lang="{{ str_replace('_', '-', app()->getLocale()) }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,6 +21,7 @@
     @php($unreadNotifications = $notificationPreview->whereNull('read_at')->count() + (auth()->check() && auth()->user()->hasPermission('notifications.view_own') ? auth()->user()->horusNotifications()->where('in_app_visible', true)->unread()->whereNotIn('id', $notificationPreview->pluck('id'))->count() : 0))
     <title>@yield('title', 'Dashboard') · {{ $brandIdentity->name }}</title>
     <x-brand.favicons />
+    <script src="{{ asset('assets/dashboard-theme.js') }}?v={{ substr(hash_file('sha256', public_path('assets/dashboard-theme.js')), 0, 12) }}"></script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body @if(! $isHorusWorkspace && $brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
@@ -55,6 +56,7 @@
                     </p>
                     <h1>@yield('heading', 'Dashboard')</h1>
                 </div>
+                <button type="button" class="hm-button-secondary theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to White Mode" hidden>White Mode</button>
                 @if(auth()->user()->hasPermission('notifications.view_own'))
                 <details class="notification-bell"><summary aria-label="Notifications">🔔 @if($unreadNotifications)<span aria-label="{{ $unreadNotifications }} unread notifications">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary><div class="notification-popover"><strong>Latest notifications</strong>@forelse($notificationPreview as $item)<a href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted">No notifications yet.</p>@endforelse<a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center</a></div></details>
                 @endif

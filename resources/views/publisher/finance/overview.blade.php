@@ -14,7 +14,7 @@
 <section class="hero">
     <div>
         <p class="eyebrow">{{ $publisher->display_name }}</p>
-        <h2>Your reporting, earnings and payout status</h2>
+        <h2>See what you earned. Know what comes next.</h2>
         <p>Horus standardizes Ad Manager reporting to <strong>{{ $canonicalCurrency }}</strong>. Today is estimated; finalized earnings and statements are the accounting record.</p>
         <div class="status-row">
             <span class="pill">Reporting currency · {{ $canonicalCurrency }}</span>
@@ -23,12 +23,14 @@
     </div>
 </section>
 
+@include('publisher.finance._performance')
+
 @if($financeActions->isNotEmpty())
 <article class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Needs your attention</p><h2>Finance actions</h2></div><span class="pill">{{ $financeActions->count() }}</span></div>
     <div class="compact-list">
         @foreach($financeActions as $action)
-            <div class="compact-row"><div><strong>{{ $action['label'] }}</strong><p>{{ str($action['code'])->replace('_', ' ')->headline() }}</p></div></div>
+            <div class="compact-row"><div><strong>{{ $action['label'] }}</strong></div>@if(!empty($action['href']))<a class="hm-button-secondary" href="{{ $action['href'] }}">{{ $action['link_label'] ?? 'View details' }}</a>@endif</div>
         @endforeach
     </div>
 </article>
@@ -53,23 +55,21 @@
 </section>
 
 <section class="workspace-section">
-    <div class="workspace-heading">
-        <div><p class="eyebrow">{{ $primary['current_period'] }}</p><h2>This month</h2></div>
-        <span class="pill">{{ $primary['readiness']['label'] }}</span>
+    <div class="workspace-heading"><div><p class="eyebrow">Finance · separate from your selected report dates</p><h2>Your statement and payouts</h2></div><span class="pill">{{ $primary['readiness']['label'] }}</span></div>
+    <div class="report-metrics">
+        <article><p class="eyebrow">Latest statement balance</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['statement_balance_due_minor']) }}</strong><span class="muted">{{ $primary['last_finalized_period'] ?: 'No finalized statement yet' }} · includes carry-forward</span>@if($primary['latest_statement_id'])<a class="section-anchor" href="{{ route('publisher.finance.statements.show', $primary['latest_statement_id']) }}">View statement →</a>@endif</article>
+        <article><p class="eyebrow">Pending payout</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['pending_payout_minor']) }}</strong><span class="muted">Includes scheduled and held amounts</span></article>
+        <article><p class="eyebrow">Paid to date</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['paid_minor']) }}</strong><span class="muted">Settled payments across all periods</span></article>
+        <article><p class="eyebrow">Payment threshold</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['payment_threshold_minor']) }}</strong><span class="muted">Subject to invoice and Finance review</span></article>
     </div>
-    <section class="metric-grid">
-        <article><p class="eyebrow">Estimated earnings</p><strong class="metric-small money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['estimated_earnings_minor']) }}</strong><span class="muted">Not finalized yet</span></article>
-        <article><p class="eyebrow">Finalized earnings</p><strong class="metric-small money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['finalized_earnings_minor']) }}</strong><span class="muted">Finalized ad earnings</span></article>
-        <article><p class="eyebrow">Statement payable</p><strong class="metric-small money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['current_payable_minor']) }}</strong><span class="muted">Finalized statement liability</span></article>
-        <article><p class="eyebrow">Paid</p><strong class="metric-small money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['paid_minor']) }}</strong><span class="muted">Settled amount only</span></article>
-    </section>
+    <p class="muted">Reports track ad performance. Monthly statements include approved adjustments, referral earnings and carry-forward. An uploaded invoice must be reviewed before payout; money is only marked paid after settlement.</p>
 </section>
 
 <section class="split-grid">
     <article>
         <div class="workspace-heading"><div><p class="eyebrow">Payouts</p><h2>What happens next</h2></div><a class="section-anchor" href="{{ route('publisher.finance.payouts.index') }}">Payout history →</a></div>
-        <div class="compact-row"><div><strong>Pending payout</strong><p>Created, approved or processing</p></div><strong class="money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['pending_payout_minor']) }}</strong></div>
-        <div class="compact-row"><div><strong>Scheduled payout</strong><p>Has a scheduled payment date</p></div><strong class="money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['scheduled_payout_minor']) }}</strong></div>
+        <div class="compact-row"><div><strong>Pending payout</strong><p>All unsettled payouts, including scheduled and held</p></div><strong class="money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['pending_payout_minor']) }}</strong></div>
+        <div class="compact-row"><div><strong>Scheduled payout</strong><p>Part of pending payout, not an additional balance</p></div><strong class="money">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['scheduled_payout_minor']) }}</strong></div>
         <a class="hm-button-secondary button-link" href="{{ route('publisher.finance.payment-method.edit') }}">Payment details</a>
     </article>
     <article>

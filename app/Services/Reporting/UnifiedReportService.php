@@ -47,6 +47,10 @@ final class UnifiedReportService
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
+            'available' => $rows->isNotEmpty(),
+            'updated_at' => $rows->max('updated_at'),
+            'daily_revenue' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
+                ->map(fn ($group, $date) => ['date' => $date, 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'), 'impressions' => (int) $group->sum('impressions')])->values(),
             'managed_impressions' => (int) $rows->sum('impressions'),
             'horus_gam_impressions' => (int) $horusGam->sum('impressions'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
@@ -55,10 +59,10 @@ final class UnifiedReportService
             'horus_margin_minor' => max(0, (int) $rows->sum('horus_earnings_minor') - $horusAdjustment),
             'mcm_partner_earnings_minor' => max(0, (int) $rows->sum('mcm_partner_earnings_minor') - $mcmAdjustment),
             'approved_adjustments_minor' => $adjustmentTotal,
-            'revenue_by_publisher' => $this->group($rows, fn ($row) => $row->dimension?->publisher?->display_name ?? 'Unassigned'),
-            'revenue_by_website' => $this->group($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
+            'revenue_by_publisher' => $this->group($rows, fn ($row) => $row->dimension?->publisher_id ?? 'unassigned', fn ($row) => $row->dimension?->publisher?->display_name ?? 'Unassigned'),
+            'revenue_by_website' => $this->group($rows, fn ($row) => $row->dimension?->site_id ?? 'unassigned', fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'revenue_by_source' => $this->group($rows, fn ($row) => $row->connection?->source?->name ?? 'Unknown'),
-            'revenue_by_campaign' => $this->group($rows, fn ($row) => $row->dimension?->campaign?->name ?? 'Non-campaign'),
+            'revenue_by_campaign' => $this->group($rows, fn ($row) => $row->dimension?->campaign_id ?? 'none', fn ($row) => $row->dimension?->campaign?->name ?? 'Non-campaign'),
             'outstanding_publisher_payments_minor' => (int) $this->latestPublisherStatements($currency)->sum('balance_due_minor'),
             'advertiser_balances_minor' => (int) AdvertiserInvoice::withoutGlobalScopes()
                 ->where('currency', $currency)->sum('balance_due_minor'),
@@ -238,10 +242,10 @@ final class UnifiedReportService
         return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
     }
 
-    private function group(Collection $rows, callable $key): Collection
+    private function group(Collection $rows, callable $key, ?callable $labelFor = null): Collection
     {
         return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
-            'label' => $label,
+            'label' => $labelFor ? $labelFor($group->first()) : $label,
             'impressions' => (int) $group->sum('impressions'),
             'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
             'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),

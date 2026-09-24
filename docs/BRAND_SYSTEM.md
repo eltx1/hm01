@@ -260,3 +260,13 @@ public/assets/brand/
 ```
 
 Every future UI task must read this file and the supplied website CSS before implementation.
+
+## Optional dashboard White Mode
+
+The owner-approved dark design remains the default. Authenticated dashboard
+users may opt into White Mode using the header toggle. The light palette is
+scoped to `data-hm-theme="light"`; it preserves spacing, components, official
+logo binaries, gold actions, permissions and all ad-serving boundaries.
+The preference is local to the browser and optional storage failure must never
+block navigation. Public marketing, ad creatives and embedded ad runtimes do
+not load the dashboard theme script.

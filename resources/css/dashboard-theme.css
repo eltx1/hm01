@@ -1,0 +1,35 @@
+/* Opt-in dashboard palette. Absence of the attribute preserves the original dark UI. */
+:root[data-hm-theme="light"] {
+    color-scheme: light;
+    --hm-night: #f5f7fc;
+    --hm-night-2: #edf2fa;
+    --hm-white: #17233c;
+    --hm-muted: #4d5d76;
+    --hm-muted-2: #566680;
+    --hm-gold-highlight: #805400;
+    --hm-gold-soft: #785209;
+    --hm-success: #13754f;
+    --hm-danger: #b42338;
+    --hm-line: rgba(18, 40, 79, .14);
+    --hm-line-strong: rgba(18, 40, 79, .24);
+    --hm-line-gold: rgba(145, 99, 10, .32);
+    --hm-glass: rgba(255, 255, 255, .92);
+    --hm-glass-strong: #fff;
+    --hm-bg-page: radial-gradient(circle at 16% 2%, rgba(28, 99, 207, .055), transparent 29rem), linear-gradient(180deg, #f8faff, #eef2f9);
+    --hm-bg-card: linear-gradient(145deg, #fff, #f3f6fc);
+    --hm-bg-card-hover: linear-gradient(145deg, #fff, #eaf0fa);
+    --hm-shadow-card: 0 16px 48px rgba(18, 40, 79, .08);
+    --hm-shadow-blue: 0 12px 32px rgba(18, 73, 157, .07);
+    --hm-shadow-gold: 0 8px 22px rgba(145, 99, 10, .10);
+}
+:root[data-hm-theme="light"] :is(.sidebar, .workspace-tabs, .secret-box, .recovery-grid, .import-report) { background: var(--hm-glass); }
+:root[data-hm-theme="light"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]), select, textarea, .hm-input) { color: var(--hm-white); background: #fff; border-color: var(--hm-line-strong); }
+:root[data-hm-theme="light"] :is(input, textarea)::placeholder { color: var(--hm-muted-2); opacity: 1; }
+:root[data-hm-theme="light"] :is(.import-panel, .ai-dashboard-card, .ai-activation-panel) { background: linear-gradient(145deg, #effaf6, #f5f8ff); }
+:root[data-hm-theme="light"] :is(.status-badge-success, .ai-step.is-complete > span) { color: #136b47; }
+:root[data-hm-theme="light"] :is(.status-badge-danger, .hm-button-danger, .field-error, .action-card-danger .action-count) { color: #a51e32; }
+:root[data-hm-theme="light"] :is(.metric-small, .hm-text-gold) { color: #805400; }
+:root[data-hm-theme="light"] .navigation-links .active { background: #e9effa; color: #173c76; }
+:root[data-hm-theme="light"] .hm-button-secondary { background: #fff; }
+.theme-toggle { flex: 0 0 auto; white-space: nowrap; font-size: .78rem; min-height: 2.5rem; }
+.theme-toggle[hidden] { display: none; }

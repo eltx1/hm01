@@ -118,6 +118,14 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Execute deterministic Traffic Gate real-browser matrix
         run: npx playwright test --config=playwright.traffic-gate.config.js
+      - name: Preserve dashboard theme previews
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-theme-previews
+          path: test-results/**/dashboard-*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
   mysql:
     runs-on: ubuntu-latest
