@@ -6,93 +6,49 @@ use PHPUnit\Framework\TestCase;
 
 final class ProductionQuickRolloutWorkflowTest extends TestCase
 {
-    public function test_lordai_repair_resolves_current_site_by_canonical_domain(): void
+    public function test_obsolete_lordai_destructive_repair_workflow_is_removed(): void
     {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+        $path = dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml';
 
-        $this->assertIsString($workflow);
-        $this->assertStringContainsString('SITE_DOMAIN: lordai.net', $workflow);
-        $this->assertStringContainsString('primary_domain', $workflow);
-        $this->assertStringContainsString('Expected exactly one live site for domain', $workflow);
-        $this->assertStringContainsString('sticky_bottom', $workflow);
-        $this->assertStringContainsString('sticky_top', $workflow);
-        $this->assertStringContainsString('lordai-quick-surface-repair-v2.done', $workflow);
-        $this->assertStringContainsString('"would_pin_loader_release" => "2.0.0"', $workflow);
-        $this->assertStringContainsString('"would_align_anchor_surface_positions"', $workflow);
-        $this->assertStringNotContainsString('SITE_KEY: hm_ircll0wkqg54jvt9gz85mhr2', $workflow);
+        $this->assertFileDoesNotExist(
+            $path,
+            'The old one-time LordAI repair could disable valid Quick Monetize display surfaces after a deploy.',
+        );
     }
 
-    public function test_automatic_lordai_repair_requires_the_upstream_deploy_job_to_have_completed_successfully(): void
+    public function test_live_verification_requires_canonical_cdn_runtime_delivery(): void
     {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/verify-production-live.yml');
 
         $this->assertIsString($workflow);
-        $this->assertStringContainsString('Require upstream production deploy job success', $workflow);
-        $this->assertStringContainsString("if: github.event_name == 'workflow_run'", $workflow);
-        $this->assertStringContainsString('github.rest.actions.listJobsForWorkflowRun', $workflow);
-        $this->assertStringContainsString("jobs.filter((job) => job.name === 'deploy')", $workflow);
-        $this->assertStringContainsString("deploy.status !== 'completed' || deploy.conclusion !== 'success'", $workflow);
-        $this->assertStringContainsString('Upstream deploy job did not complete successfully', $workflow);
+        $this->assertStringContainsString('Verify canonical CDN can serve critical ad runtime', $workflow);
+        $this->assertStringContainsString('verify_path "hm-loader.js"', $workflow);
+        $this->assertStringContainsString('verify_path "configs/_global/control.json"', $workflow);
+        $this->assertStringContainsString('verify_path "$LORDAI_CONFIG_PATH"', $workflow);
+        $this->assertStringContainsString('Critical ad-serving runtime path $CDN_URL/$relative returned HTTP $status', $workflow);
+        $this->assertStringContainsString('Canonical CDN serves the Loader, global controls, LordAI config, and all Horus-owned LordAI Direct JS runtimes byte-for-byte.', $workflow);
+
+        $runtimeStep = strstr($workflow, '- name: Verify canonical CDN can serve critical ad runtime');
+        $this->assertIsString($runtimeStep);
+        $runtimeStep = strstr($runtimeStep, '- name: Verify representative ads.txt artifacts on exact Pages deployment', true);
+        $this->assertIsString($runtimeStep);
+        $this->assertStringNotContainsString('HORUS_ALLOW_CLOUDFLARE_WAF_403_FALLBACK', $runtimeStep);
+        $this->assertStringNotContainsString("status" == '403'", $runtimeStep);
     }
 
-    public function test_lordai_remote_tinker_program_cannot_expand_php_variables_as_shell_variables(): void
+    public function test_lordai_live_contract_proves_global_controls_and_executable_direct_candidate(): void
     {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
+        $script = file_get_contents(dirname(__DIR__, 2).'/scripts/verify-lordai-in-article-live.php');
 
-        $this->assertIsString($workflow);
-        $this->assertStringContainsString("php artisan tinker --execute='", $workflow);
-        $this->assertStringContainsString('getenv("SITE_DOMAIN")', $workflow);
-        $this->assertStringContainsString("<<'REMOTE'", $workflow);
-        $this->assertStringContainsString('GITHUB_RUN_ID=', $workflow);
-        $this->assertStringNotContainsString('tinker --execute="\\$domain=', $workflow);
-    }
-
-    public function test_manual_lordai_repair_supports_read_only_dry_run_preview(): void
-    {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
-
-        $this->assertIsString($workflow);
-        $this->assertStringContainsString('dry_run:', $workflow);
-        $this->assertStringContainsString('default: true', $workflow);
-        $this->assertStringContainsString("if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true", $workflow);
-        $this->assertStringContainsString('Preview LordAI Quick surface reconciliation', $workflow);
-        $this->assertStringContainsString('"dry_run" => true', $workflow);
-        $this->assertStringContainsString('"would_disable" => $plannedDisabled->all()', $workflow);
-        $this->assertStringContainsString("github.event_name == 'workflow_dispatch' && inputs.dry_run == false", $workflow);
-    }
-
-    public function test_successful_lordai_repair_dispatches_static_sync_once_and_retries_only_an_unmarked_dispatch(): void
-    {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
-
-        $this->assertIsString($workflow);
-        $this->assertStringContainsString('Resolve one-time repair state', $workflow);
-        $this->assertStringContainsString('id: repair_state', $workflow);
-        $this->assertStringContainsString('lordai-quick-surface-repair-v2.static-edge-dispatched', $workflow);
-        $this->assertStringContainsString("printf '%s' repair", $workflow);
-        $this->assertStringContainsString("printf '%s' dispatch", $workflow);
-        $this->assertStringContainsString("printf '%s' complete", $workflow);
-        $this->assertStringContainsString("if: steps.repair_state.outputs.state == 'repair'", $workflow);
-        $this->assertStringContainsString("if: steps.repair_state.outputs.state == 'repair' || steps.repair_state.outputs.state == 'dispatch'", $workflow);
-        $this->assertStringContainsString('Trigger immediate static-edge reconciliation', $workflow);
-        $this->assertStringContainsString('gh workflow run sync-production-static-edge.yml', $workflow);
-        $this->assertStringContainsString('--ref main', $workflow);
-        $this->assertStringContainsString('Mark static-edge reconciliation dispatched', $workflow);
-    }
-
-    public function test_lordai_repair_aligns_loader_metadata_and_anchor_geometry_before_urgent_publication(): void
-    {
-        $workflow = file_get_contents(dirname(__DIR__, 2).'/.github/workflows/lordai-quick-surface-repair.yml');
-
-        $this->assertIsString($workflow);
-        $this->assertStringContainsString('$loaderVersion = "2.0.0";', $workflow);
-        $this->assertStringContainsString('App\\Models\\LoaderRelease::query()->updateOrCreate', $workflow);
-        $this->assertStringContainsString('["loader_release_id" => $loaderRelease->id]', $workflow);
-        $this->assertStringContainsString('data_set($settings, "surface.position", $position);', $workflow);
-        $this->assertStringContainsString('ops.quick_surface_repair.anchor_geometry_aligned', $workflow);
-        $this->assertStringContainsString('ops.quick_surface_repair.loader_release_aligned', $workflow);
-        $this->assertStringContainsString('App\\Enums\\StaticDeliveryPriority::Urgent', $workflow);
-        $this->assertStringContainsString('data_get($published->payload, "loader.version") !== $loaderVersion', $workflow);
+        $this->assertIsString($script);
+        $this->assertStringContainsString("configs/_global/control.json", $script);
+        $this->assertStringContainsString("['adServingDisabled', 'directJsDisabled', 'nativeDemandDisabled']", $script);
+        $this->assertStringContainsString("directDemandEnabled", $script);
+        $this->assertStringContainsString("quick_in_article_display", $script);
+        $this->assertStringContainsString("has no enabled Direct Demand candidate", $script);
+        $this->assertStringContainsString("has no executable Direct JS candidate", $script);
+        $this->assertStringContainsString("'direct_candidate_count' => $directCandidateCount", $script);
+        $this->assertStringContainsString("'global_controls_allow_serving' => true", $script);
     }
 
     public function test_static_sync_retries_transient_cloudflare_pages_publication_failure_and_stays_fail_closed(): void
