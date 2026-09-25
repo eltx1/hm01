@@ -169,7 +169,7 @@ function turnstileTechnicalErrorStub() {
     })();`;
 }
 
-for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, repeatLibraryFailure } of [
+for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, repeatLibraryFailure, latePreparationFailure } of [
     { serverPass: true, requiresConsent: false },
     { serverPass: false, requiresConsent: false },
     { serverPass: true, requiresConsent: true },
@@ -178,8 +178,9 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
     { serverPass: true, requiresConsent: true, earlyLibraryFailure: true },
     { serverPass: false, requiresConsent: true, earlyLibraryFailure: true },
     { serverPass: true, requiresConsent: true, earlyLibraryFailure: true, repeatLibraryFailure: true },
+    { serverPass: true, requiresConsent: true, earlyLibraryFailure: true, latePreparationFailure: true },
 ]) {
-    test(`early verification and parallel Turnstile respect late CMP: server=${serverPass}, consent-required=${requiresConsent}, blocked=${Boolean(consentBlocked)}, early-error=${Boolean(earlyLibraryFailure)}, repeated-error=${Boolean(repeatLibraryFailure)}`, async ({ page }) => {
+    test(`early verification and parallel Turnstile respect late CMP: server=${serverPass}, consent-required=${requiresConsent}, blocked=${Boolean(consentBlocked)}, early-error=${Boolean(earlyLibraryFailure)}, repeated-error=${Boolean(repeatLibraryFailure)}, late-error=${Boolean(latePreparationFailure)}`, async ({ page }) => {
         const selected = config();
         selected.privacy.requireConsentBeforeAds = requiresConsent;
         selected.privacy.cmp = { timeoutMs: consentBlocked ? 100 : 10000, actionOnTimeout: requiresConsent ? 'BLOCK_ADS' : 'LIMITED_ADS' };
@@ -187,9 +188,11 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
         let releaseParser;
         let releaseVerification;
         let releaseGateConfig;
+        let releaseLateFailure;
         const parserReady = new Promise(resolve => { releaseParser = resolve; });
         const verificationReady = new Promise(resolve => { releaseVerification = resolve; });
         const gateConfigReady = new Promise(resolve => { releaseGateConfig = resolve; });
+        const lateFailureReady = new Promise(resolve => { releaseLateFailure = resolve; });
         let gateConfigRequested = false;
         let gateLibraryRequested = false;
         let gateLibraryLoads = 0;
@@ -230,7 +233,10 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
             if (url.origin === 'https://challenges.cloudflare.com' && url.pathname === '/turnstile/v0/api.js') {
                 gateLibraryRequested = true;
                 gateLibraryLoads++;
-                if (earlyLibraryFailure && (gateLibraryLoads === 1 || repeatLibraryFailure)) return route.abort('blockedbyclient');
+                if (earlyLibraryFailure && (gateLibraryLoads === 1 || repeatLibraryFailure)) {
+                    if (latePreparationFailure) await lateFailureReady;
+                    return route.abort('blockedbyclient');
+                }
                 return route.fulfill({ contentType: 'application/javascript', body: 'window.turnstile = { render(node, options) { queueMicrotask(() => options.callback("synthetic-token")); return "widget"; }, remove() {} };' });
             }
             if (url.origin === 'https://siteverify.horusmedia.net' && url.pathname === '/verify') {
@@ -263,7 +269,7 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
             await expect.poll(() => counts.verifies).toBe(1);
             releaseVerification();
         }
-        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass && !earlyLibraryFailure ? 'PASSED' : 'ERROR');
+        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(latePreparationFailure ? 'PENDING' : serverPass && !earlyLibraryFailure ? 'PASSED' : 'ERROR');
         expect(await page.evaluate(() => document.readyState)).toBe('loading');
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
         expect(await page.evaluate(() => window.HorusMediaLoader.getConfig())).toBeNull();
@@ -271,6 +277,7 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
         await expect.poll(() => page.evaluate(() => document.readyState)).not.toBe('loading');
         await expect.poll(() => page.evaluate(() => typeof window.releaseConsent)).toBe('function');
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        releaseLateFailure();
         if (earlyLibraryFailure && !repeatLibraryFailure) {
             await expect.poll(() => counts.verifies).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();

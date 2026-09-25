@@ -112,16 +112,32 @@ const trafficGateRuntime = String.raw`
         if (!preparation || preparation.runtime !== state.trafficGate) return;
         if (config && preparation.script === script && preparation.siteKey === siteKey
             && preparation.snapshot === JSON.stringify(config)
-            && !preparation.runtime.retryAtDomReady) return;
+            && !preparation.runtime.retryAtDomReady) return preparation.runtime;
 
         // Retire a stale attempt, including a completed PASS. Old frame messages
         // lose their listener/source/nonce binding before any new attempt starts.
         // A transient early failure gets the normal DOM-time attempt once. The
         // preparation owner is cleared above, so repeated boots cannot loop.
+        retirePreparedTrafficGate();
+    }
+
+    function retirePreparedTrafficGate() {
         trafficGateSetState(TRAFFIC_GATE_STATES.unavailable, 'PREPARATION_DISCARDED');
         trafficGateCleanup();
         settleTrafficGateDecision();
         state.trafficGate = freshTrafficGateRuntime();
+    }
+
+    function beginDomTrafficGate(config, earlyAttempt, generation) {
+        return beginTrafficGate(config).then(function (decision) {
+            // A preparation may still be pending at DOM readiness. If it fails
+            // afterwards, restore the same one normal attempt instead of letting
+            // its earlier start consume the page's ordinary verification window.
+            if (!earlyAttempt || earlyAttempt !== state.trafficGate || !earlyAttempt.retryAtDomReady
+                || generation !== state.preparationGeneration || state.config !== config) return decision;
+            retirePreparedTrafficGate();
+            return beginTrafficGate(config);
+        });
     }
 
     function startEarlyBootPreparation() {
@@ -580,7 +596,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         var generation = nextPreparationGeneration();
         var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
             if (generation !== state.preparationGeneration) return [];
-            reconcileEarlyTrafficGate(config, script, siteKey);
+            var earlyAttempt = reconcileEarlyTrafficGate(config, script, siteKey);
             state.config = config;
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
@@ -606,7 +622,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 if (state.config !== config || !state.privacyDecision) return [];
                 return startMonetization(config, script, diagnostic);
             });
-            var gatePromise = beginTrafficGate(config);
+            var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation);
             var privacyPromise = resolvePrivacy(config).then(function (decision) {
                 if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {
                     prepareStaticConnections(config, true);

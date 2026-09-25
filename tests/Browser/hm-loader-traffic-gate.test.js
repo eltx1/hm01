@@ -750,6 +750,27 @@ test('an unavailable early runtime can recover when the normal page environment 
     assert.equal(runtime.metrics.gamRequests, 1);
 });
 
+test('an adopted pending preparation that fails after DOM still gets exactly one normal attempt', async () => {
+    for (const recovered of [true, false]) {
+        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+        await runtime.flush();
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 1);
+        runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 2);
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate(recovered ? 'PASS' : 'TIMEOUT');
+        await boot;
+        await runtime.sandbox.HorusMediaLoader.boot();
+        assert.equal(runtime.metrics.gateFrames, 2);
+        if (recovered) assert.equal(runtime.metrics.gamRequests, 1);
+        else assertNoMonetization(runtime.metrics);
+    }
+});
+
 test('a failed normal attempt after early failure cannot create an unbounded restart loop', async () => {
     const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
     await runtime.flush();

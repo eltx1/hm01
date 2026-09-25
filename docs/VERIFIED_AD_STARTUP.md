@@ -32,6 +32,8 @@ decision or claiming a measured field improvement.
   nonce; this preserves availability when early loading failed or consumed the
   deadline. Explicit denial/server rejection does not retry; every fallback must
   independently pass the same full server-side and privacy checks.
+  This also covers an early preparation that is still pending at DOM readiness
+  and fails afterwards: it retains the one normal fallback, never an endless loop.
   A failed normal attempt cannot restart on subsequent boot/refresh calls.
   A refreshed or replaced configuration must match the exact captured snapshot,
   script and site key; otherwise the old frame/listener/PASS is retired before a
