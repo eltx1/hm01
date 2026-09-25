@@ -104,7 +104,10 @@ class FormExperienceTest extends TestCase
         $this->put(route('publisher.finance.payment-method.update'), $this->details())->assertForbidden();
         $this->actingAs($finance)->withSession(['two_factor_passed_at' => now()->timestamp]);
         $this->withoutExceptionHandling();
-        $this->fixture('admin-payment', $this->get(route('admin.publishers.payment-profile.edit', $publisher))->assertOk()->assertSee('Record verification decision')->assertDontSee('PRIVATE-ACCOUNT'));
+        $adminPage = $this->get(route('admin.publishers.payment-profile.edit', $publisher))->assertOk()
+            ->assertSee('Record verification decision')->assertDontSee('PRIVATE-ACCOUNT')
+            ->assertSee('value="VERIFIED" selected', false);
+        $this->fixture('admin-payment', $adminPage);
     }
 
     private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void

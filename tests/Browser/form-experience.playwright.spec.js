@@ -28,6 +28,7 @@ for (const name of ['payment-empty', 'payment-verified', 'site-create', 'site-ed
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await open(page, name);
+        if (name === 'admin-payment') await expect(page.locator('[name="verification_status"]')).toHaveValue('VERIFIED');
         for (const theme of ['dark', 'light']) {
             await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
