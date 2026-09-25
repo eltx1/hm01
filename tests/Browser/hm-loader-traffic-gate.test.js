@@ -550,6 +550,7 @@ test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP
     const boot = runtime.sandbox.HorusMediaLoader.boot();
     runtime.sendGate('PASS');
     await runtime.flush();
+    await runtime.sandbox.HorusMediaLoader.scan();
     assertNoMonetization(runtime.metrics);
     consent({ eventStatus: 'tcloaded', gdprApplies: false }, true);
     await boot;

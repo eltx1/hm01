@@ -17,6 +17,9 @@ decision or claiming a measured field improvement.
 - DOM/CMP discovery, iframe authorization, Turnstile, server-side verification,
   slot definition, bidding, provider initialization and ad requests retain their
   existing ordering. No automatic ad refresh or new telemetry is introduced.
+- The central request predicate also explicitly requires a resolved privacy
+  decision. Regression testing exposed a pre-existing direct `scan()` call path
+  that could run after gate PASS while CMP was still pending; it is now closed.
 - Reuse the preparation only within five seconds of its start. Long parser stalls,
   forced refreshes and failed early fetches use a fresh normal boot. No verification
   token, PASS result or user authorization is persisted.

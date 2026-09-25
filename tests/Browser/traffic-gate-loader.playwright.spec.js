@@ -4,6 +4,7 @@ import { applyTrafficGateTransform } from '../../scripts/transform-loader-traffi
 
 const baseLoader = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
 const loader = applyTrafficGateTransform(baseLoader);
+const productionLoader = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 const gateHtml = await readFile(new URL('../../public/traffic-gate/index.html', import.meta.url), 'utf8');
 const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-traffic-gate.js', import.meta.url), 'utf8');
 
@@ -191,7 +192,7 @@ for (const serverPass of [true, false]) {
                 await parserReady;
                 return route.fulfill({ contentType: 'application/javascript', body: 'window.__tcfapi = (command, version, callback) => { window.releaseConsent = () => callback({eventStatus:"tcloaded", gdprApplies:false}, true); };' });
             }
-            if (url.origin === CDN && url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: loader });
+            if (url.origin === CDN && url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: productionLoader });
             if (url.origin === CDN && url.pathname === `/configs/${SITE}/production.json`) {
                 counts.configs++;
                 return route.fulfill({ contentType: 'application/json', body: JSON.stringify(selected) });
@@ -229,12 +230,14 @@ for (const serverPass of [true, false]) {
         expect(await page.locator('link[rel="preconnect"][data-hm-preparation]').count()).toBe(3);
         releaseParser();
         await expect.poll(() => counts.verifies).toBe(1);
+        await page.evaluate(() => { window.initialBootForTest = window.HorusMediaLoader.boot(); });
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
         releaseVerification();
         await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass ? 'PASSED' : 'ERROR');
+        await page.evaluate(() => window.HorusMediaLoader.scan());
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
         await page.evaluate(() => window.releaseConsent());
-        await page.evaluate(() => window.HorusMediaLoader.boot());
+        await page.evaluate(() => window.initialBootForTest);
         if (serverPass) {
             await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines.gptLoads)).toBe(1);
