@@ -339,9 +339,16 @@
     }
 
     async function startNormalMode(parentUrl) {
+        // A well-formed, source-bound HELLO may prepare the library concurrently
+        // with the independent config read. Never render a challenge or verify a
+        // token until that config authorizes the parent and gate settings.
+        const configuration = loadSiteConfiguration(boundParent.sitePublicKey);
+        // Observe rejection immediately, even if config is slow/denied or the
+        // deadline expires first. Library availability is not authorization.
+        const turnstileReady = loadTurnstileScript().then(() => true, () => false);
         let config;
         try {
-            config = await loadSiteConfiguration(boundParent.sitePublicKey);
+            config = await configuration;
         } catch {
             fail('STATIC_CONFIG_UNAVAILABLE');
             return;
@@ -366,13 +373,12 @@
         }
 
         setState(STATES.parentValidated);
-        try {
-            await loadTurnstileScript();
-        } catch {
+        const libraryAvailable = await turnstileReady;
+        if (terminal) return;
+        if (!libraryAvailable) {
             fail('TURNSTILE_SCRIPT_ERROR');
             return;
         }
-        if (terminal) return;
         renderTurnstile(gate.siteKey, timings, false);
     }
 

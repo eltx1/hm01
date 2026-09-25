@@ -9,8 +9,8 @@ function replaceOnce(source, search, replacement, label) {
 }
 
 const trafficGateRuntime = String.raw`
-    // Preparation never installs an ad script or publishes an authorization result.
-    // Keep DOM/CMP discovery at its existing boundary; only static work starts early.
+    // Start static work and isolated verification early. Ad initialization and CMP
+    // discovery keep their DOM boundary, including CMPs installed later by the page.
     var earlyBootPreparation = null;
     var EARLY_PREPARATION_MAX_AGE_MS = 5000;
 
@@ -84,6 +84,62 @@ const trafficGateRuntime = String.raw`
         });
     }
 
+    function prepareEarlyTrafficGate(config, script, siteKey) {
+        if (state.config || state.booting || state.earlyTrafficGatePreparation
+            || window.__HM_RELEASE_HANDOFF_FAILED__
+            || !config || config.siteKey !== siteKey
+            || !hostAllowed(currentHostname(), config.allowedHostnames)
+            || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return;
+        var settings = trafficGateSettings(config);
+        var controls = effectiveControls(config);
+        var parent = document.body || document.documentElement;
+        if (!parent || !parent.appendChild || !settings.enabled || !settings.valid
+            || controls.trafficGateDisabled || trafficGateRuntimeState().started) return;
+
+        // Do not expose config or attach a monetization callback before DOM/CMP.
+        // Bind this attempt to the exact snapshot so a later refresh cannot adopt
+        // its PASS (or pending iframe) for different configuration.
+        var snapshot = JSON.stringify(config);
+        beginTrafficGate(config);
+        state.earlyTrafficGatePreparation = {
+            script: script, siteKey: siteKey, snapshot: snapshot, runtime: state.trafficGate
+        };
+    }
+
+    function reconcileEarlyTrafficGate(config, script, siteKey) {
+        var preparation = state.earlyTrafficGatePreparation;
+        state.earlyTrafficGatePreparation = null;
+        if (!preparation || preparation.runtime !== state.trafficGate) return;
+        if (config && preparation.script === script && preparation.siteKey === siteKey
+            && preparation.snapshot === JSON.stringify(config)
+            && !preparation.runtime.retryAtDomReady) return preparation.runtime;
+
+        // Retire a stale attempt, including a completed PASS. Old frame messages
+        // lose their listener/source/nonce binding before any new attempt starts.
+        // A transient early failure gets the normal DOM-time attempt once. The
+        // preparation owner is cleared above, so repeated boots cannot loop.
+        retirePreparedTrafficGate();
+    }
+
+    function retirePreparedTrafficGate() {
+        trafficGateSetState(TRAFFIC_GATE_STATES.unavailable, 'PREPARATION_DISCARDED');
+        trafficGateCleanup();
+        settleTrafficGateDecision();
+        state.trafficGate = freshTrafficGateRuntime();
+    }
+
+    function beginDomTrafficGate(config, earlyAttempt, generation) {
+        return beginTrafficGate(config).then(function (decision) {
+            // A preparation may still be pending at DOM readiness. If it fails
+            // afterwards, restore the same one normal attempt instead of letting
+            // its earlier start consume the page's ordinary verification window.
+            if (!earlyAttempt || earlyAttempt !== state.trafficGate || !earlyAttempt.retryAtDomReady
+                || generation !== state.preparationGeneration || state.config !== config) return decision;
+            retirePreparedTrafficGate();
+            return beginTrafficGate(config);
+        });
+    }
+
     function startEarlyBootPreparation() {
         var script = findScript();
         var siteKey = scriptData(script, 'siteKey');
@@ -93,7 +149,10 @@ const trafficGateRuntime = String.raw`
         earlyBootPreparation = preparation;
         preparation.promise = fetchBootPreparation(script, siteKey, false).then(function (config) {
             if (generation === state.preparationGeneration
-                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) prepareStaticConnections(config, false);
+                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) {
+                prepareStaticConnections(config, false);
+                prepareEarlyTrafficGate(config, script, siteKey);
+            }
             return config;
         }).catch(function () {
             // An early fetch failure must not become an unhandled rejection.
@@ -143,6 +202,7 @@ const trafficGateRuntime = String.raw`
             maxTimer: null,
             decisionPromise: null,
             decisionResolve: null,
+            retryAtDomReady: false,
             resume: null
         };
     }
@@ -315,10 +375,11 @@ const trafficGateRuntime = String.raw`
         settleTrafficGateDecision();
     }
 
-    function trafficGateTechnicalFailure(stateName, reason) {
+    function trafficGateTechnicalFailure(stateName, reason, retryAtDomReady) {
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
         trafficGateSetState(stateName, reason);
+        gate.retryAtDomReady = retryAtDomReady !== false;
         trafficGateCleanup();
         settleTrafficGateDecision();
     }
@@ -333,7 +394,7 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         gate.maxTimer = null;
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
-        trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
+        trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT', true);
     }
 
     function generateTrafficGateNonce() {
@@ -369,11 +430,15 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_ERROR') {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR');
+            // Any failed early preparation can fall back to the ordinary DOM
+            // attempt. An explicit server rejection is authoritative and is not
+            // a loading failure. Every new attempt still needs fresh verification.
+            var preparationFailed = message.category !== 'VERIFICATION_REJECTED';
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR', preparationFailed);
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_TIMEOUT') {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'TURNSTILE_TIMEOUT');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'TURNSTILE_TIMEOUT', true);
         }
     }
 
@@ -432,7 +497,7 @@ const trafficGateRuntime = String.raw`
                 iframe.style.setProperty('pointer-events', 'none');
             }
         } catch (error) {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED', true);
             return decision;
         }
 
@@ -450,11 +515,11 @@ const trafficGateRuntime = String.raw`
                     sitePublicKey: settings.siteKey
                 }, settings.origin);
             } catch (error) {
-                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'HANDSHAKE_FAILED');
+                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'HANDSHAKE_FAILED', true);
             }
         };
         iframe.onerror = function () {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
         };
 
         trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
@@ -465,7 +530,7 @@ const trafficGateRuntime = String.raw`
             if (!parent || !parent.appendChild) throw new Error('No frame parent');
             parent.appendChild(iframe);
         } catch (error) {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED', true);
         }
         return decision;
     }
@@ -531,6 +596,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         var generation = nextPreparationGeneration();
         var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
             if (generation !== state.preparationGeneration) return [];
+            var earlyAttempt = reconcileEarlyTrafficGate(config, script, siteKey);
             state.config = config;
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
@@ -556,7 +622,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 if (state.config !== config || !state.privacyDecision) return [];
                 return startMonetization(config, script, diagnostic);
             });
-            var gatePromise = beginTrafficGate(config);
+            var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation);
             var privacyPromise = resolvePrivacy(config).then(function (decision) {
                 if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {
                     prepareStaticConnections(config, true);
@@ -568,6 +634,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 return startMonetization(config, script, diagnostic);
             });
         }).catch(function (error) {
+            if (generation === state.preparationGeneration) reconcileEarlyTrafficGate(null);
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
         }).finally(function () {
@@ -659,13 +726,13 @@ export function applyTrafficGateTransform(input) {
         source,
         "        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });",
         "        if (document.readyState === 'loading') {\n            startEarlyBootPreparation();\n            document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });\n        }",
-        'static preparation before DOM readiness',
+        'static preparation and isolated verification before DOM readiness',
     );
 
     source = replaceOnce(
         source,
         "            state.adInitializationStarted = false;\n            state.servicesEnabled = false;\n",
-        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
+        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.earlyTrafficGatePreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
         'test reset',
     );
 

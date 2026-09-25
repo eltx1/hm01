@@ -195,11 +195,12 @@ test('Publisher A passes with strict Publisher CSP and never needs direct Cloudf
     expect(elapsed).toBeLessThan(1200);
 });
 
-test('Publisher A cannot impersonate Publisher B Site configuration; mismatched origin is DENIED before Cloudflare loads', async ({ page }) => {
+test('Publisher A cannot impersonate Publisher B despite parallel library preparation; no challenge or verification is issued', async ({ page }) => {
     const requests = await installDeterministicNetwork(page);
     await page.goto(`${PUBLISHER_A}/?site=${SITE_B}`);
     await waitForResult(page, 'HORUS_TRAFFIC_GATE_DENIED');
-    expect(requests.some(url => url.startsWith('https://challenges.cloudflare.com/'))).toBe(false);
+    expect(requests.some(url => url.includes('/cdn-cgi/challenge-platform/'))).toBe(false);
+    expect(requests.some(url => url.startsWith('https://siteverify.horusmedia.net/'))).toBe(false);
 });
 
 test('Publisher B independently passes its own Site configuration', async ({ page }) => {

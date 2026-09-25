@@ -199,6 +199,7 @@ function createHarness(config, {
     const listeners = {};
     const documentListeners = {};
     let clockOffset = 0;
+    let nonceSequence = 0;
     const nativeSetTimeout = setTimeout;
     const nativeClearTimeout = clearTimeout;
     const scaledSetTimeout = (callback, delay = 0, ...args) => nativeSetTimeout(callback, Math.max(0, Number(delay) * timerScale), ...args);
@@ -434,7 +435,8 @@ function createHarness(config, {
         pageYOffset: 0,
         crypto: cryptoUnavailable ? undefined : {
             getRandomValues(bytes) {
-                for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 17 + 11) % 256;
+                nonceSequence += 1;
+                for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 17 + 11 + nonceSequence) % 256;
                 return bytes;
             },
         },
@@ -535,7 +537,7 @@ function assertNoMonetization(metrics) {
     assert.equal(metrics.providerInitializations, 0);
 }
 
-test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP installed later', async () => {
+test('pre-DOM verification can PASS but all engines wait for DOM and a CMP installed later', async () => {
     const config = baseConfig({ gam: true, standalone: true, direct: true });
     config.privacy.cmp.timeoutMs = 5000;
     config.privacy.requireConsentBeforeAds = false;
@@ -543,8 +545,12 @@ test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP
     await runtime.flush();
     assert.equal(runtime.metrics.configFetches, 1);
     assert.equal(runtime.metrics.globalFetches, 1);
-    assert.equal(runtime.metrics.gateFrames, 0);
+    assert.equal(runtime.metrics.gateFrames, 1);
     assert.equal(runtime.sandbox.HorusMediaLoader.getConfig(), null);
+    runtime.sendGate('PASS');
+    await runtime.flush();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
+    await runtime.sandbox.HorusMediaLoader.scan();
     assertNoMonetization(runtime.metrics);
     const hints = runtime.metrics.preparationHints.map(node => node.attributes);
     assert.equal(hints.filter(hint => hint.rel === 'preload' && hint.as === 'script' && hint.href === config.gpt.url).length, 1);
@@ -554,7 +560,6 @@ test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP
     runtime.domReady();
     await runtime.flush();
     const boot = runtime.sandbox.HorusMediaLoader.boot();
-    runtime.sendGate('PASS');
     await runtime.flush();
     await runtime.sandbox.HorusMediaLoader.scan();
     assertNoMonetization(runtime.metrics);
@@ -564,6 +569,7 @@ test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP
     assert.equal(runtime.metrics.gptScripts, 1);
     assert.equal(runtime.metrics.configFetches, 1);
     assert.equal(runtime.metrics.globalFetches, 1);
+    assert.equal(runtime.metrics.gateFrames, 1, 'DOM boot adopts the same verified attempt');
     assert.equal(runtime.metrics.preparationHints.length, 4);
 });
 
@@ -576,7 +582,8 @@ test('a long parser stall refreshes configuration and emergency controls before 
     await runtime.sandbox.HorusMediaLoader.boot();
     assert.equal(runtime.metrics.configFetches, 2);
     assert.equal(runtime.metrics.globalFetches, 2);
-    assert.equal(runtime.metrics.gateFrames, 0);
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assert.equal(runtime.metrics.gateFrameRemovals, 1);
     assertNoMonetization(runtime.metrics);
 });
 
@@ -590,6 +597,7 @@ test('discarded pending preparations cannot add hints after a newer emergency st
     runtime.metrics.releaseFirstConfig();
     await runtime.flush();
     assert.equal(runtime.metrics.preparationHints.length, 0);
+    assert.equal(runtime.metrics.gateFrames, 0);
     assertNoMonetization(runtime.metrics);
 });
 
@@ -641,7 +649,10 @@ test('early preparation respects rejected domains, paused sites, invalid gates a
         await runtime.flush();
         assertNoMonetization(runtime.metrics);
         assert.equal(runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload').length, 0, variant);
-        if (['host', 'pause', 'global', 'invalid-gate'].includes(variant)) assert.equal(runtime.metrics.preparationHints.length, 0, variant);
+        if (['host', 'pause', 'global', 'invalid-gate'].includes(variant)) {
+            assert.equal(runtime.metrics.preparationHints.length, 0, variant);
+            assert.equal(runtime.metrics.gateFrames, 0, variant);
+        }
     }
 });
 
@@ -672,6 +683,166 @@ test('gate disabled preserves normal Loader behavior without creating an iframe'
     assert.equal(runtime.metrics.gamSlots, 1);
     assert.equal(runtime.metrics.gamRequests, 1);
     assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'DISABLED');
+});
+
+test('a head-loaded gate uses the available document root and reuses its pending attempt at DOM readiness', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+    runtime.sandbox.document.body = null;
+    await runtime.flush();
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assertNoMonetization(runtime.metrics);
+    runtime.sandbox.document.body = runtime.sandbox.document.documentElement;
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    assert.equal(runtime.metrics.gateFrames, 1);
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+test('DOM readiness never retries an explicit denial or rejected server verification', async () => {
+    for (const result of ['DENIED', 'VERIFICATION_REJECTED']) {
+        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+        await runtime.flush();
+        runtime.sendGate(result === 'DENIED' ? 'DENIED' : 'ERROR', { category: result });
+        const state = runtime.sandbox.HorusMediaLoader.getTrafficGateState().state;
+        runtime.domReady();
+        await runtime.sandbox.HorusMediaLoader.boot();
+        assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, state, result);
+        assert.equal(runtime.metrics.gateFrames, 1, result);
+        assertNoMonetization(runtime.metrics);
+    }
+});
+
+test('every pre-DOM loading failure gets one normal attempt with a new nonce and still requires PASS', async () => {
+    for (const result of ['DEADLINE', 'TIMEOUT', 'TURNSTILE_SCRIPT_ERROR', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE', 'ERROR', 'GATE_NOT_READY']) {
+        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+        await runtime.flush();
+        const oldNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
+        if (result === 'DEADLINE') await new Promise(resolve => setTimeout(resolve, 60));
+        else runtime.sendGate(result === 'TIMEOUT' ? 'TIMEOUT' : 'ERROR', { category: result });
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 2, result);
+        assert.notEqual(runtime.metrics.hellos.at(-1).payload.pageNonce, oldNonce);
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate('PASS');
+        await boot;
+        assert.equal(runtime.metrics.gamRequests, 1, result);
+    }
+});
+
+test('an unavailable early runtime can recover when the normal page environment is ready', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, cryptoUnavailable: true });
+    await runtime.flush();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'UNAVAILABLE');
+    assert.equal(runtime.metrics.gateFrames, 0);
+    runtime.sandbox.crypto = { getRandomValues(bytes) { bytes.fill(17); return bytes; } };
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assertNoMonetization(runtime.metrics);
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+test('an adopted pending preparation that fails after DOM still gets exactly one normal attempt', async () => {
+    for (const recovered of [true, false]) {
+        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+        await runtime.flush();
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 1);
+        runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 2);
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate(recovered ? 'PASS' : 'TIMEOUT');
+        await boot;
+        await runtime.sandbox.HorusMediaLoader.boot();
+        assert.equal(runtime.metrics.gateFrames, 2);
+        if (recovered) assert.equal(runtime.metrics.gamRequests, 1);
+        else assertNoMonetization(runtime.metrics);
+    }
+});
+
+test('a failed normal attempt after early failure cannot create an unbounded restart loop', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+    await runtime.flush();
+    runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    runtime.sendGate('TIMEOUT');
+    await boot;
+    await runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    assert.equal(runtime.metrics.gateFrames, 2);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
+    assertNoMonetization(runtime.metrics);
+});
+
+test('a fresh unchanged snapshot after a parser stall preserves the early deadline and iframe', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+    await runtime.flush();
+    runtime.elapse(6000);
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    assert.equal(runtime.metrics.configFetches, 2);
+    assert.equal(runtime.metrics.gateFrames, 1);
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+test('changed configuration retires the early attempt and rejects its late messages and PASS', async () => {
+    for (const earlyPass of [false, true]) {
+        const config = baseConfig();
+        const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
+        await runtime.flush();
+        const previousSource = runtime.gateFrame.contentWindow;
+        const previousNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
+        if (earlyPass) runtime.sendGate('PASS');
+        config.configVersion += 1;
+        config.trafficGate.siteKey = '0x4AAAAA_replacement_key';
+        runtime.elapse(6000);
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 2);
+        assert.equal(runtime.metrics.gateFrameRemovals, 1);
+        assert.notEqual(runtime.metrics.hellos.at(-1).payload.pageNonce, previousNonce);
+        runtime.sendGate('PASS', {}, { source: previousSource, nonce: previousNonce });
+        await runtime.flush();
+        assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PENDING');
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate('PASS');
+        await boot;
+        assert.equal(runtime.metrics.gamRequests, 1);
+    }
+});
+
+test('a discarded early PASS never survives a domain revocation or failed config refresh', async () => {
+    for (const failure of ['domain', 'fetch']) {
+        const config = baseConfig();
+        const runtime = createHarness(config, { readyState: 'loading', autoboot: true });
+        await runtime.flush();
+        runtime.sendGate('PASS');
+        runtime.elapse(6000);
+        if (failure === 'domain') config.allowedHostnames = ['another.example'];
+        else runtime.sandbox.fetch = async () => { throw new Error('unavailable'); };
+        runtime.domReady();
+        await runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.sandbox.HorusMediaLoader.scan();
+        assert.notEqual(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
+        assertNoMonetization(runtime.metrics);
+    }
 });
 
 test('before PASS every monetization engine remains at zero, then one PASS releases GAM, standalone Prebid and Direct JS', async () => {
