@@ -168,6 +168,87 @@ function turnstileTechnicalErrorStub() {
     })();`;
 }
 
+for (const serverPass of [true, false]) {
+    test(`pre-DOM GPT download stays inert until server verification and late CMP: ${serverPass ? 'pass' : 'reject'}`, async ({ page }) => {
+        const selected = config();
+        selected.privacy.cmp = { timeoutMs: 10000, actionOnTimeout: 'BLOCK_ADS' };
+        selected.trafficGate.timings.maxWaitMs = 10000;
+        let releaseParser;
+        let releaseVerification;
+        const parserReady = new Promise(resolve => { releaseParser = resolve; });
+        const verificationReady = new Promise(resolve => { releaseVerification = resolve; });
+        const counts = { configs: 0, controls: 0, library: 0, verifies: 0 };
+        const unexpected = [];
+        await page.route('**/*', async route => {
+            const request = route.request();
+            const url = new URL(request.url());
+            if (url.origin === PUBLISHER && url.pathname === '/') {
+                return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head>
+                    <script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-version="52"></script>
+                    <script src="/parser-block.js"></script></head><body><div class="hm-ad" data-placement="gam_slot"></div></body></html>` });
+            }
+            if (url.origin === PUBLISHER && url.pathname === '/parser-block.js') {
+                await parserReady;
+                return route.fulfill({ contentType: 'application/javascript', body: 'window.__tcfapi = (command, version, callback) => { window.releaseConsent = () => callback({eventStatus:"tcloaded", gdprApplies:false}, true); };' });
+            }
+            if (url.origin === CDN && url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: loader });
+            if (url.origin === CDN && url.pathname === `/configs/${SITE}/production.json`) {
+                counts.configs++;
+                return route.fulfill({ contentType: 'application/json', body: JSON.stringify(selected) });
+            }
+            if (url.origin === CDN && url.pathname === '/configs/_global/control.json') {
+                counts.controls++;
+                return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ controls: selected.controls }) });
+            }
+            if (url.origin === CDN && url.pathname === '/assets/prebid/horus-prebid.min.js') return route.fulfill({ contentType: 'application/javascript', body: prebidStub() });
+            if (url.origin === GATE && url.pathname === '/traffic-gate/') return route.fulfill({ contentType: 'text/html', body: gateHtml });
+            if (url.origin === GATE && url.pathname === '/assets/traffic-gate/horus-traffic-gate.js') return route.fulfill({ contentType: 'application/javascript', body: gateJs });
+            if (url.origin === GATE && url.pathname === `/configs/${SITE}/production.json`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(selected) });
+            if (url.origin === 'https://challenges.cloudflare.com' && url.pathname === '/turnstile/v0/api.js') {
+                return route.fulfill({ contentType: 'application/javascript', body: 'window.turnstile = { render(node, options) { queueMicrotask(() => options.callback("synthetic-token")); return "widget"; }, remove() {} };' });
+            }
+            if (url.origin === 'https://siteverify.horusmedia.net' && url.pathname === '/verify') {
+                const headers = { 'Access-Control-Allow-Origin': GATE, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' };
+                if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+                counts.verifies++;
+                await verificationReady;
+                return route.fulfill({ status: serverPass ? 200 : 422, headers, contentType: 'application/json', body: JSON.stringify({ success: serverPass, pageNonce: request.postDataJSON().pageNonce }) });
+            }
+            if (url.href === selected.gpt.url) {
+                counts.library++;
+                return route.fulfill({ contentType: 'application/javascript', headers: { 'Cache-Control': 'public, max-age=3600' }, body: gptStub() });
+            }
+            unexpected.push(url.href);
+            return route.abort('blockedbyclient');
+        });
+        await page.goto(PUBLISHER + '/', { waitUntil: 'commit' });
+        await expect.poll(() => counts.library).toBe(1);
+        expect(await page.evaluate(() => document.readyState)).toBe('loading');
+        expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        expect(counts).toEqual({ configs: 1, controls: 1, library: 1, verifies: 0 });
+        expect(await page.locator('link[rel="preconnect"][data-hm-preparation]').count()).toBe(3);
+        releaseParser();
+        await expect.poll(() => counts.verifies).toBe(1);
+        expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        releaseVerification();
+        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass ? 'PASSED' : 'ERROR');
+        expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        await page.evaluate(() => window.releaseConsent());
+        await page.evaluate(() => window.HorusMediaLoader.boot());
+        if (serverPass) {
+            await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
+            expect(await page.evaluate(() => window.__task52Engines.gptLoads)).toBe(1);
+        } else {
+            expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+            expect(await page.locator('script[data-hm-gpt]').count()).toBe(0);
+        }
+        expect(counts.library).toBe(1); // The post-PASS script reuses the preloaded response.
+        expect(counts.configs).toBe(1);
+        expect(counts.controls).toBe(1);
+        expect(unexpected).toEqual([]);
+    });
+}
+
 test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge only after PASS and keeps one slot owner', async ({ page }) => {
     const requests = [];
     page.on('request', request => requests.push({ url: request.url(), at: Date.now() }));
@@ -215,7 +296,8 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
     await page.goto(PUBLISHER + '/');
     await page.waitForTimeout(650);
     expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
-    expect(requests.some(item => item.url.includes('securepubads.g.doubleclick.net'))).toBe(false);
+    expect(requests.filter(item => item.url.includes('securepubads.g.doubleclick.net')).every(item => new URL(item.url).pathname === '/tag/js/gpt.js')).toBe(true);
+    expect(await page.locator('link[rel="preload"][as="script"][data-hm-preparation]').count()).toBe(1);
     expect(requests.some(item => item.url.includes('horus-prebid.min.js'))).toBe(false);
 
     await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBeGreaterThan(0);
@@ -283,7 +365,7 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
     // request is allowed.
     await page.waitForTimeout(600);
     expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
-    expect(requests.some(url => url.includes('securepubads.g.doubleclick.net'))).toBe(false);
+    expect(requests.filter(url => url.includes('securepubads.g.doubleclick.net')).every(url => new URL(url).pathname === '/tag/js/gpt.js')).toBe(true);
 
     await expect.poll(
         () => page.evaluate(() => window.HorusMediaLoader?.getTrafficGateState?.().state),
@@ -292,7 +374,9 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
 
     await page.waitForTimeout(2200);
     expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
-    expect(requests.some(url => url.includes('securepubads.g.doubleclick.net'))).toBe(false);
+    expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+    expect(await page.locator('script[data-hm-gpt]').count()).toBe(0);
+    expect(requests.filter(url => url.includes('securepubads.g.doubleclick.net')).every(url => new URL(url).pathname === '/tag/js/gpt.js')).toBe(true);
     const gate = await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState());
     expect(['MAX_WAIT', 'TURNSTILE_TIMEOUT']).toContain(gate.reason);
     expect(await page.locator('iframe[data-hm-traffic-gate="1"]').count()).toBe(0);

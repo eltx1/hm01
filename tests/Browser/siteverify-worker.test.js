@@ -60,4 +60,30 @@ test('preflight is origin-restricted and makes no validation call', async () => 
     const response = await verifyRequest(new Request('https://siteverify.horusmedia.net/verify', { method: 'OPTIONS', headers: { Origin: 'https://verify.horusmedia.net' } }), env, () => { throw new Error('must not call'); });
     assert.equal(response.status, 204);
     assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'POST');
+    assert.equal(response.headers.get('Access-Control-Max-Age'), '600');
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://verify.horusmedia.net');
+    assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Content-Type');
+    assert.equal(response.headers.get('Access-Control-Allow-Credentials'), null);
+    assert.equal(response.headers.get('Vary'), 'Origin');
+    const denied = await verifyRequest(new Request('https://siteverify.horusmedia.net/verify', { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } }), env);
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get('Access-Control-Max-Age'), null);
+    assert.equal(denied.headers.get('Access-Control-Allow-Origin'), null);
+});
+
+test('cached CORS permission never caches verification or skips the next token check', async () => {
+    let calls = 0;
+    const verify = async () => {
+        calls++;
+        return Response.json(calls === 1 ? result : { success: false, 'error-codes': ['timeout-or-duplicate'] });
+    };
+    const first = await verifyRequest(request(), env, verify);
+    const replay = await verifyRequest(request(), env, verify);
+    assert.equal(first.status, 200);
+    assert.equal(replay.status, 422);
+    assert.equal(calls, 2);
+    for (const response of [first, replay]) {
+        assert.equal(response.headers.get('Cache-Control'), 'no-store');
+        assert.equal(response.headers.get('Access-Control-Max-Age'), null);
+    }
 });

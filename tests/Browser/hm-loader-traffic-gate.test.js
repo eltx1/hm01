@@ -166,6 +166,8 @@ function createHarness(config, {
     timerScale = 0.02,
     iframeFailure = false,
     cryptoUnavailable = false,
+    readyState = 'complete',
+    autoboot = false,
 } = {}) {
     const metrics = {
         fetches: [],
@@ -185,6 +187,7 @@ function createHarness(config, {
         localStorageWrites: 0,
         privacyStarted: 0,
         privacyResolved: 0,
+        preparationHints: [],
     };
     const elements = config.placements.map((item) => domElement(item.code));
     let globalControls = structuredClone(initialGlobalControls);
@@ -193,6 +196,8 @@ function createHarness(config, {
     let intervalSequence = 0;
     const intervals = new Map();
     const listeners = {};
+    const documentListeners = {};
+    let clockOffset = 0;
     const nativeSetTimeout = setTimeout;
     const nativeClearTimeout = clearTimeout;
     const scaledSetTimeout = (callback, delay = 0, ...args) => nativeSetTimeout(callback, Math.max(0, Number(delay) * timerScale), ...args);
@@ -329,14 +334,16 @@ function createHarness(config, {
 
     const document = {
         currentScript: loaderScript,
-        readyState: 'complete',
+        readyState,
         visibilityState: 'visible',
         documentElement: root,
         body: root,
         activeElement: null,
         head: {
             appendChild(node) {
-                if (node.getAttribute?.('data-hm-gpt') === '1') {
+                if (node.getAttribute?.('data-hm-preparation') === '1') {
+                    metrics.preparationHints.push(node);
+                } else if (node.getAttribute?.('data-hm-gpt') === '1') {
                     metrics.gptScripts += 1;
                     queueMicrotask(() => node.onload?.());
                 } else if (node.getAttribute?.('data-hm-prebid') === '1') {
@@ -382,7 +389,7 @@ function createHarness(config, {
             if (selector === 'script[data-site-key]') return [loaderScript];
             return [];
         },
-        addEventListener() {},
+        addEventListener(name, callback) { (documentListeners[name] ||= []).push(callback); },
     };
 
     class MutationObserver {
@@ -401,7 +408,7 @@ function createHarness(config, {
         Object,
         JSON,
         Math,
-        Date,
+        Date: class extends Date { static now() { return Date.now() + clockOffset; } },
         Number,
         String,
         Boolean,
@@ -449,7 +456,7 @@ function createHarness(config, {
             listeners[name] = listeners[name].filter((candidate) => candidate !== callback);
         },
         dispatchEvent(event) { (listeners[event.type] || []).slice().forEach((callback) => callback(event)); },
-        __HM_DISABLE_AUTOBOOT__: true,
+        __HM_DISABLE_AUTOBOOT__: !autoboot,
     };
     if (deferredTcf) {
         sandbox.__tcfapi = (command, version, callback) => {
@@ -477,6 +484,11 @@ function createHarness(config, {
         elements,
         get gateFrame() { return gateFrame; },
         setGlobalControls(value) { globalControls = structuredClone(value); },
+        elapse(ms) { clockOffset += ms; },
+        domReady() {
+            document.readyState = 'interactive';
+            (documentListeners.DOMContentLoaded || []).splice(0).forEach(callback => callback());
+        },
         sendGate(type, extra = {}, overrides = {}) {
             assert.ok(gateFrame, 'gate frame must exist before sending a result');
             const hello = metrics.hellos.at(-1);
@@ -517,6 +529,86 @@ function assertNoMonetization(metrics) {
     assert.equal(metrics.prebidAuctions, 0);
     assert.equal(metrics.providerInitializations, 0);
 }
+
+test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP installed later', async () => {
+    const config = baseConfig({ gam: true, standalone: true, direct: true });
+    config.privacy.cmp.timeoutMs = 5000;
+    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
+    await runtime.flush();
+    assert.equal(runtime.metrics.configFetches, 1);
+    assert.equal(runtime.metrics.globalFetches, 1);
+    assert.equal(runtime.metrics.gateFrames, 0);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getConfig(), null);
+    assertNoMonetization(runtime.metrics);
+    const hints = runtime.metrics.preparationHints.map(node => node.attributes);
+    assert.equal(hints.filter(hint => hint.rel === 'preload' && hint.as === 'script' && hint.href === config.gpt.url).length, 1);
+    assert.equal(hints.filter(hint => hint.rel === 'preconnect').length, 3);
+    let consent;
+    runtime.sandbox.__tcfapi = (command, version, callback) => { consent = callback; };
+    runtime.domReady();
+    await runtime.flush();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    runtime.sendGate('PASS');
+    await runtime.flush();
+    assertNoMonetization(runtime.metrics);
+    consent({ eventStatus: 'tcloaded', gdprApplies: false }, true);
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+    assert.equal(runtime.metrics.gptScripts, 1);
+    assert.equal(runtime.metrics.configFetches, 1);
+    assert.equal(runtime.metrics.globalFetches, 1);
+    assert.equal(runtime.metrics.preparationHints.length, 4);
+});
+
+test('a long parser stall refreshes configuration and emergency controls before monetization', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+    await runtime.flush();
+    runtime.elapse(6000);
+    runtime.setGlobalControls({ ...openControls(), adServingDisabled: true });
+    runtime.domReady();
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.metrics.configFetches, 2);
+    assert.equal(runtime.metrics.globalFetches, 2);
+    assert.equal(runtime.metrics.gateFrames, 0);
+    assertNoMonetization(runtime.metrics);
+});
+
+test('early preparation respects rejected domains, paused sites, invalid gates and engine controls', async () => {
+    for (const variant of ['host', 'pause', 'global', 'invalid-gate', 'gam-disabled', 'standalone', 'custom-gpt']) {
+        const config = baseConfig({ gam: variant !== 'standalone', standalone: variant === 'standalone' });
+        const controls = openControls();
+        if (variant === 'host') config.allowedHostnames = ['another.example'];
+        if (variant === 'pause') config.immediatePause = true;
+        if (variant === 'global') controls.adServingDisabled = true;
+        if (variant === 'invalid-gate') config.trafficGate.readiness = 'INVALID';
+        if (variant === 'gam-disabled') controls.gamDisabled = true;
+        if (variant === 'custom-gpt') config.gpt.url = 'https://untrusted.example/gpt.js';
+        const runtime = createHarness(config, { readyState: 'loading', autoboot: true, globalControls: controls });
+        await runtime.flush();
+        assertNoMonetization(runtime.metrics);
+        assert.equal(runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload').length, 0, variant);
+        if (['host', 'pause', 'global', 'invalid-gate'].includes(variant)) assert.equal(runtime.metrics.preparationHints.length, 0, variant);
+    }
+});
+
+test('failed early fetch retries through normal boot and forced refresh ignores the early snapshot', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+    await runtime.flush();
+    runtime.setGlobalControls({ ...openControls(), adServingDisabled: true });
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    assert.equal(runtime.metrics.globalFetches, 2);
+    assertNoMonetization(runtime.metrics);
+    const retry = createHarness(baseConfig(), { readyState: 'loading', autoboot: false, gateAutoResponse: 'PASS' });
+    const fetch = retry.sandbox.fetch;
+    retry.sandbox.fetch = async () => { throw new Error('temporary network failure'); };
+    retry.sandbox.__HM_DISABLE_AUTOBOOT__ = false;
+    retry.reevaluateLoader();
+    await retry.flush();
+    retry.sandbox.fetch = fetch;
+    retry.domReady();
+    await retry.sandbox.HorusMediaLoader.boot();
+    assert.equal(retry.metrics.gamRequests, 1);
+});
 
 test('gate disabled preserves normal Loader behavior without creating an iframe', async () => {
     const runtime = createHarness(baseConfig({ gate: false, gam: true }));
