@@ -363,7 +363,7 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
         trafficGateSetState(stateName, reason);
-        gate.retryAtDomReady = retryAtDomReady === true;
+        gate.retryAtDomReady = retryAtDomReady !== false;
         trafficGateCleanup();
         settleTrafficGateDecision();
     }
@@ -414,12 +414,11 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_ERROR') {
-            // Explicit verification rejection, invalid configuration and unknown
-            // errors are not transient preparation failures. Never retry them
-            // simply because the parent DOM became ready.
-            var transient = ['STATIC_CONFIG_UNAVAILABLE', 'TURNSTILE_SCRIPT_ERROR',
-                'TURNSTILE_ERROR', 'VERIFICATION_UNAVAILABLE'].indexOf(message.category) !== -1;
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR', transient);
+            // Any failed early preparation can fall back to the ordinary DOM
+            // attempt. An explicit server rejection is authoritative and is not
+            // a loading failure. Every new attempt still needs fresh verification.
+            var preparationFailed = message.category !== 'VERIFICATION_REJECTED';
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR', preparationFailed);
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_TIMEOUT') {

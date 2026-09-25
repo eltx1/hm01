@@ -27,10 +27,11 @@ decision or claiming a measured field improvement.
   are checked before rendering any challenge or verifying a token. A rejected
   parent can download the public library but cannot start a challenge or Siteverify.
 - A matching pending/successful early attempt is adopted at DOM readiness with
-  its original timer and nonce. A transient technical failure of early preparation
+  its original timer and nonce. Any technical/loading failure of early preparation
   gets one normal DOM-time attempt with the same configured limits and a fresh
   nonce; this preserves availability when early loading failed or consumed the
-  deadline. Explicit denial/server rejection and unclassified errors do not retry.
+  deadline. Explicit denial/server rejection does not retry; every fallback must
+  independently pass the same full server-side and privacy checks.
   A failed normal attempt cannot restart on subsequent boot/refresh calls.
   A refreshed or replaced configuration must match the exact captured snapshot,
   script and site key; otherwise the old frame/listener/PASS is retired before a

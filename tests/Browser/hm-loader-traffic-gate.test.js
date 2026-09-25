@@ -701,8 +701,8 @@ test('a head-loaded gate uses the available document root and reuses its pending
     assert.equal(runtime.metrics.gamRequests, 1);
 });
 
-test('DOM readiness never retries an explicit denial, rejected verification or unclassified error', async () => {
-    for (const result of ['DENIED', 'ERROR', 'VERIFICATION_REJECTED', 'GATE_NOT_READY']) {
+test('DOM readiness never retries an explicit denial or rejected server verification', async () => {
+    for (const result of ['DENIED', 'VERIFICATION_REJECTED']) {
         const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
         await runtime.flush();
         runtime.sendGate(result === 'DENIED' ? 'DENIED' : 'ERROR', { category: result });
@@ -715,8 +715,8 @@ test('DOM readiness never retries an explicit denial, rejected verification or u
     }
 });
 
-test('transient pre-DOM failure gets one normal attempt with a new nonce and still requires PASS', async () => {
-    for (const result of ['DEADLINE', 'TIMEOUT', 'TURNSTILE_SCRIPT_ERROR', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE']) {
+test('every pre-DOM loading failure gets one normal attempt with a new nonce and still requires PASS', async () => {
+    for (const result of ['DEADLINE', 'TIMEOUT', 'TURNSTILE_SCRIPT_ERROR', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE', 'ERROR', 'GATE_NOT_READY']) {
         const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
         await runtime.flush();
         const oldNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
@@ -732,6 +732,22 @@ test('transient pre-DOM failure gets one normal attempt with a new nonce and sti
         await boot;
         assert.equal(runtime.metrics.gamRequests, 1, result);
     }
+});
+
+test('an unavailable early runtime can recover when the normal page environment is ready', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, cryptoUnavailable: true });
+    await runtime.flush();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'UNAVAILABLE');
+    assert.equal(runtime.metrics.gateFrames, 0);
+    runtime.sandbox.crypto = { getRandomValues(bytes) { bytes.fill(17); return bytes; } };
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assertNoMonetization(runtime.metrics);
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
 });
 
 test('a failed normal attempt after early failure cannot create an unbounded restart loop', async () => {
