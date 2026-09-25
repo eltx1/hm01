@@ -75,7 +75,7 @@ test('320px payment footer fits and avoids the floating contact link', async ({ 
     await open(page, 'payment-empty');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     const save = page.getByRole('button', { name: 'Save payment method' });
-    await save.evaluate(element => element.scrollIntoView({ block: 'end' }));
+    await save.evaluate(element => element.scrollIntoView({ block: 'end', behavior: 'instant' }));
     const a = await save.boundingBox();
     const b = await page.locator('.hm-whatsapp-contact').boundingBox();
     expect(a.x + a.width <= b.x || a.y + a.height <= b.y || a.y >= b.y + b.height).toBe(true);

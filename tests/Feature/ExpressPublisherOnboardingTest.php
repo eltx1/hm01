@@ -161,7 +161,7 @@ class ExpressPublisherOnboardingTest extends TestCase
         $publisherUser = User::query()->where('email', 'fast@publisher.example')->firstOrFail();
         $this->actingAs($publisherUser)->get(route('publisher.sites.create'))
             ->assertOk()
-            ->assertSee('Display name')
+            ->assertSee('Website name')
             ->assertSee('Primary domain')
             ->assertSee('Content category')
             ->assertSee('Primary country')

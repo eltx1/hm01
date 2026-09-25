@@ -72,14 +72,14 @@
     .hm-whatsapp-enabled .ui-page .ui-form-actions { padding-right: calc(1.1rem + 64px); }
 }
 @media (max-width: 600px) {
-    .ui-page-intro { align-items: flex-start; padding-block: 1.1rem; }
+    .ui-page-intro { align-items: flex-start; flex-direction: column; padding-block: 1.1rem; gap: .75rem; }
     .ui-page-intro .status-badge { flex: 0 0 auto; max-width: 9rem; white-space: normal; text-align: center; }
     .ui-fields, .ui-readonly-grid, .ui-form-aside { grid-template-columns: 1fr; }
     .ui-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .ui-form-section { padding: 1.1rem; }
     .ui-form-actions { padding: 1rem 1.1rem; }
-    .ui-action-buttons { width: 100%; justify-content: flex-start; }
-    .ui-action-buttons button { flex: 1 1 auto; }
+    .ui-action-buttons { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+    .ui-action-buttons button { flex: 1 1 12rem; }
     .ui-field :is(input.hm-input, select.hm-input, textarea.hm-input) { font-size: 16px; }
     .ui-form-actions { scroll-margin-bottom: 6rem; }
 }

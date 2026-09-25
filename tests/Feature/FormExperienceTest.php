@@ -80,7 +80,9 @@ class FormExperienceTest extends TestCase
         [$user, $publisher, $finance] = $this->context();
         $this->actingAs($user);
         $paymentRoute = route('publisher.finance.payment-method.edit');
+        $this->withoutExceptionHandling();
         $this->fixture('payment-empty', $this->get($paymentRoute)->assertOk()->assertSee('Choose how you get paid')->assertSee('aria-current="page"', false));
+        $this->withExceptionHandling();
         $service = app(PublisherPaymentProfileService::class);
         $profile = $service->save($publisher, $this->details(), $user);
         $service->review($profile, PublisherPaymentProfileStatus::Verified, $finance);
