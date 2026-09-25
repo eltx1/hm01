@@ -1,0 +1,35 @@
+/* Shared by the public homepage and the publisher workspace. */
+.hm-whatsapp-contact {
+    position: fixed;
+    right: calc(20px + env(safe-area-inset-right, 0px));
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    z-index: 15;
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, .45);
+    border-radius: 50%;
+    background: #128c4a;
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .2);
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.hm-whatsapp-contact svg { display: block; width: 26px; height: 26px; fill: currentColor; }
+.hm-whatsapp-contact:hover { background: #0d713b; color: #fff; }
+.hm-whatsapp-contact:focus-visible { outline: 3px solid #fff; outline-offset: 3px; box-shadow: 0 0 0 7px #128c4a; }
+
+/* Last-page controls and footer links can scroll clear of the floating button. */
+.hm-whatsapp-enabled .admin-shell > main,
+.hm-whatsapp-enabled .site-footer { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+
+@media (max-width: 1100px) {
+    .navigation-open .hm-whatsapp-contact { visibility: hidden; }
+}
+
+@media print {
+    .hm-whatsapp-contact { display: none; }
+}

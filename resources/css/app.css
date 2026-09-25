@@ -1,5 +1,6 @@
 @import './brand-tokens.css';
 @import './components.css';
+@import '../../website/assets/css/whatsapp-contact.css';
 @import url('https://fonts.bunny.net/css?family=inter:400,500,600,700,800');
 
 :root {
