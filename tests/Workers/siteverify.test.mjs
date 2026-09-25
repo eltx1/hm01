@@ -27,9 +27,18 @@ test('native Workers request reaches Siteverify; redirects never forward the sec
         body: JSON.stringify(payload),
     });
     try {
+        const preflight = await mf.dispatchFetch('https://siteverify.horusmedia.net/verify', {
+            method: 'OPTIONS', headers: { Origin: 'https://verify.horusmedia.net', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
+        });
+        assert.equal(preflight.status, 204);
+        assert.equal(preflight.headers.get('Access-Control-Max-Age'), '600');
+        assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), 'https://verify.horusmedia.net');
+        assert.equal(calls.length, 0);
         const success = await verify();
         assert.equal(success.status, 200, 'native fetch must not throw before contacting Siteverify');
         assert.deepEqual(await success.json(), { success: true, pageNonce: nonce });
+        assert.equal(success.headers.get('Cache-Control'), 'no-store');
+        assert.equal(success.headers.get('Access-Control-Max-Age'), null);
         assert.equal(calls.length, 1);
         assert.equal(calls[0].url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
         assert.equal(calls[0].body.secret, 'synthetic-secret');

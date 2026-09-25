@@ -9,6 +9,114 @@ function replaceOnce(source, search, replacement, label) {
 }
 
 const trafficGateRuntime = String.raw`
+    // Preparation never installs an ad script or publishes an authorization result.
+    // Keep DOM/CMP discovery at its existing boundary; only static work starts early.
+    var earlyBootPreparation = null;
+    var EARLY_PREPARATION_MAX_AGE_MS = 5000;
+
+    function nextPreparationGeneration() {
+        state.preparationGeneration = Number(state.preparationGeneration || 0) + 1;
+        return state.preparationGeneration;
+    }
+
+    function addPreparationHint(rel, href, as, crossOrigin) {
+        try {
+            var key = [rel, href, as || '', crossOrigin || ''].join('|');
+            state.preparationHints = state.preparationHints || {};
+            if (state.preparationHints[key]) return;
+            var parent = document.head || document.documentElement;
+            if (!parent) return;
+            var link = document.createElement('link');
+            link.setAttribute('rel', rel);
+            link.setAttribute('href', href);
+            link.setAttribute('data-hm-preparation', '1');
+            if (as) link.setAttribute('as', as);
+            if (crossOrigin) link.setAttribute('crossorigin', crossOrigin);
+            parent.appendChild(link);
+            state.preparationHints[key] = true;
+        } catch (error) {
+            // Resource hints are optional. CSP/DOM failures must not break boot.
+        }
+    }
+
+    function prepareStaticConnections(config, privacyReady) {
+        if (!config || window.__HM_RELEASE_HANDOFF_FAILED__
+            || !hostAllowed(currentHostname(), config.allowedHostnames)
+            || config.status !== 'active' || config.immediatePause) return;
+        var controls = normalizeControls(config.controls || {});
+        if (controls.adServingDisabled) return;
+        var gate = trafficGateSettings(config);
+        if (gate.enabled && !controls.trafficGateDisabled) {
+            if (!gate.valid) return;
+            addPreparationHint('preconnect', gate.origin);
+            addPreparationHint('preconnect', 'https://challenges.cloudflare.com');
+            addPreparationHint('preconnect', 'https://siteverify.horusmedia.net', null, 'anonymous');
+        }
+
+        var privacy = config.privacy || {};
+        var cmp = privacy.cmp || {};
+        if (!privacyReady && (privacy.requireConsentBeforeAds !== false
+            || String(privacy.mode || '').toUpperCase() === 'STRICT'
+            || String(cmp.actionOnTimeout || '').toUpperCase() === 'BLOCK_ADS')) return;
+        if (controls.gamDisabled || (window.googletag && (window.googletag.apiReady || window.googletag.pubadsReady))) return;
+        var hasGam = (config.placements || []).some(function (placement) {
+            return placement.enabled && placement.status === 'active' && placement.adUnitPath
+                && placement.renderer !== 'PREBID_STANDALONE';
+        });
+        if (!hasGam) return;
+        try {
+            var url = new URL(config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js');
+            if (url.protocol !== 'https:' || url.username || url.password || url.port
+                || ['securepubads.g.doubleclick.net', 'pagead2.googlesyndication.com'].indexOf(url.hostname) === -1
+                || url.pathname !== '/tag/js/gpt.js') return;
+            // Match the classic script's existing fetch mode. A preload downloads
+            // bytes without running GPT or any publisher-owned googletag queue.
+            // Slot definition, script execution and requests stay behind PASS/CMP.
+            addPreparationHint('preload', url.href, 'script');
+        } catch (error) {}
+    }
+
+    function fetchBootPreparation(script, siteKey, force) {
+        return Promise.all([fetchGlobalControl(script, force), fetchConfig(script, siteKey, force)]).then(function (prepared) {
+            var config = prepared[1];
+            config.controls = mergeControls(config.controls || {}, prepared[0] || {});
+            return config;
+        });
+    }
+
+    function startEarlyBootPreparation() {
+        var script = findScript();
+        var siteKey = scriptData(script, 'siteKey');
+        if (!siteKey || !window.fetch || earlyBootPreparation || state.booting) return;
+        var generation = nextPreparationGeneration();
+        var preparation = { script: script, siteKey: siteKey, startedAt: Date.now(), promise: null };
+        earlyBootPreparation = preparation;
+        preparation.promise = fetchBootPreparation(script, siteKey, false).then(function (config) {
+            if (generation === state.preparationGeneration
+                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) prepareStaticConnections(config, false);
+            return config;
+        }).catch(function () {
+            // An early fetch failure must not become an unhandled rejection.
+            // Normal boot gets one fresh attempt through its existing error path.
+            return null;
+        });
+    }
+
+    function takeBootPreparation(script, siteKey, force) {
+        var preparation = earlyBootPreparation;
+        earlyBootPreparation = null;
+        if (!force && preparation && preparation.script === script && preparation.siteKey === siteKey
+            && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) {
+            return preparation.promise.then(function (config) {
+                return config && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS
+                    ? config : fetchBootPreparation(script, siteKey, force);
+            });
+        }
+        // Do not reuse an old pre-DOM snapshot after a long parser stall or a
+        // forced refresh: emergency controls/config must be read again.
+        return fetchBootPreparation(script, siteKey, force);
+    }
+
     var TRAFFIC_GATE_PROTOCOL_VERSION = 2;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
     var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
@@ -420,12 +528,9 @@ const bootReplacement = String.raw`    function startMonetization(config, script
 
         // Static configuration and global controls are independent preparation.
         // Neither waits for Turnstile or CMP resolution.
-        var globalPromise = fetchGlobalControl(script, Boolean(options.force));
-        var configPromise = fetchConfig(script, siteKey, Boolean(options.force));
-        var bootPromise = Promise.all([globalPromise, configPromise]).then(function (prepared) {
-            var globalControls = prepared[0] || {};
-            var config = prepared[1];
-            config.controls = mergeControls(config.controls || {}, globalControls);
+        var generation = nextPreparationGeneration();
+        var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
+            if (generation !== state.preparationGeneration) return [];
             state.config = config;
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
@@ -446,12 +551,18 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             // Once static configuration is known, privacy and the Client Traffic
             // Gate begin in parallel. PASS never waits for configured gate timers;
             // monetization waits only until both independent prerequisites permit it.
+            prepareStaticConnections(config, false);
             setTrafficGateResume(function () {
                 if (state.config !== config || !state.privacyDecision) return [];
                 return startMonetization(config, script, diagnostic);
             });
             var gatePromise = beginTrafficGate(config);
-            var privacyPromise = resolvePrivacy(config);
+            var privacyPromise = resolvePrivacy(config).then(function (decision) {
+                if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {
+                    prepareStaticConnections(config, true);
+                }
+                return decision;
+            });
             return Promise.all([gatePromise, privacyPromise]).then(function () {
                 if (!trafficGateAllowsMonetization()) return [];
                 return startMonetization(config, script, diagnostic);
@@ -512,7 +623,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
-        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;\n        if (!trafficGateAllowsMonetization()) return false;\n        if (state.privacyDecision && state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
+        "    function canRequestAds(config) {\n        if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;\n        if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;\n        if (!trafficGateAllowsMonetization()) return false;\n        if (!state.privacyDecision || state.privacyDecision.blocked) return false;\n        return !clickGuardBlocked(config);\n    }\n",
         'central request gate',
     );
 
@@ -546,8 +657,15 @@ export function applyTrafficGateTransform(input) {
 
     source = replaceOnce(
         source,
+        "        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });",
+        "        if (document.readyState === 'loading') {\n            startEarlyBootPreparation();\n            document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });\n        }",
+        'static preparation before DOM readiness',
+    );
+
+    source = replaceOnce(
+        source,
         "            state.adInitializationStarted = false;\n            state.servicesEnabled = false;\n",
-        "            state.adInitializationStarted = false;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
+        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
         'test reset',
     );
 

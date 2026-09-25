@@ -16,6 +16,9 @@ export async function verifyRequest(request, env, upstream = fetch) {
     if (request.method === 'OPTIONS') {
         headers['Access-Control-Allow-Methods'] = 'POST';
         headers['Access-Control-Allow-Headers'] = 'Content-Type';
+        // Cache only the browser's permission to POST from our exact gate origin.
+        // POST responses remain no-store and every token still reaches Siteverify.
+        headers['Access-Control-Max-Age'] = '600';
         return new Response(null, { status: 204, headers });
     }
     if (request.method !== 'POST') return respond(405, { success: false });
