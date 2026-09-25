@@ -355,7 +355,8 @@ final class AccountSecurityCenterTest extends TestCase
 
         $this->assertStringContainsString('validateCsrfTokens(except: [])', $bootstrap);
         $this->assertStringContainsString('@csrf', $profile.$security.$setup);
-        $this->assertStringContainsString('for="account-name"', $profile);
+        $this->actingAs($this->publisherUser())->get(route('account.profile.edit'))
+            ->assertOk()->assertSee('for="account-name"', false)->assertSee('id="account-name"', false);
         $this->assertStringContainsString('autocomplete="current-password"', $security);
         $this->assertStringContainsString('autocomplete="new-password"', $security);
         $this->assertStringContainsString('autocomplete="one-time-code"', $setup);

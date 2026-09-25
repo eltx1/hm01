@@ -1,10 +1,12 @@
 import './bootstrap';
 import './site-gam-reporting';
+import './payment-profile';
 import '../css/publisher-application.css';
 import '../css/ux-launch.css';
 import '../css/interface-density.css';
 import '../css/dashboard-theme.css';
 import '../css/reporting-experience.css';
+import '../css/form-experience.css';
 
 const navigation = document.querySelector('#control-navigation');
 const navigationToggle = document.querySelector('[data-nav-toggle]');

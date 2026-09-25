@@ -1,0 +1,91 @@
+/* Shared form rhythm: labels, helpers and actions must never stretch into grid rows. */
+.workspace-tabs a[aria-current="page"] { color: var(--hm-gold-highlight); background: color-mix(in srgb, var(--hm-gold) 10%, var(--hm-glass)); box-shadow: inset 0 0 0 1px var(--hm-line-gold); }
+.form-grid { align-items: start; row-gap: 1rem; column-gap: 1.1rem; }
+.form-stack { gap: 1rem; }
+:is(.form-grid, .form-stack) label { align-content: start; }
+.form-grid > :is(button, .hm-button-primary, .hm-button-secondary, .hm-button-danger) { align-self: end; justify-self: start; width: auto; min-height: 2.65rem; }
+.form-grid > :is(button, .hm-button-primary, .hm-button-secondary, .hm-button-danger).full { justify-self: start; }
+:is(.form-grid, .form-stack) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="color"]), select:not([multiple])) { min-height: 2.65rem; }
+.ui-page { max-width: 1180px; margin-inline: auto; }
+.ui-page-intro { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.4rem 0 1.6rem; }
+.ui-page-intro h2 { margin: 0 0 .45rem; font-size: clamp(1.45rem, 2.2vw, 1.9rem); letter-spacing: -.035em; }
+.ui-page-intro p { margin: 0; color: var(--hm-muted); line-height: 1.6; max-width: 65ch; }
+.ui-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 264px; align-items: start; gap: 1.3rem; }
+.ui-form-surface { min-width: 0; border: 1px solid var(--hm-line-strong); border-radius: 1.1rem; background: var(--hm-glass); overflow: hidden; }
+.ui-form-section { margin: 0; padding: 1.5rem; border: 0; min-width: 0; }
+.ui-form-section + .ui-form-section { border-top: 1px solid var(--hm-line); }
+.ui-section-heading { display: flex; align-items: flex-start; gap: .7rem; margin-bottom: 1.15rem; }
+.ui-section-heading h2 { margin: .05rem 0 .3rem; font-size: 1rem; letter-spacing: -.02em; }
+.ui-section-heading p { margin: 0; color: var(--hm-muted); font-size: .8rem; line-height: 1.55; }
+.ui-section-number { flex: 0 0 auto; display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border: 1px solid var(--hm-line-gold); border-radius: .5rem; color: var(--hm-gold-highlight); font-size: .7rem; font-weight: 800; }
+.ui-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 1.15rem 1rem; }
+.ui-fields .full { grid-column: 1 / -1; }
+.ui-field { display: grid; align-content: start; min-width: 0; gap: .45rem; }
+.ui-field .field-label { font-size: .79rem; font-weight: 650; line-height: 1.45; }
+.ui-field :is(input.hm-input, select.hm-input, textarea.hm-input) { min-height: 2.75rem; border-radius: .6rem; padding: .65rem .75rem; line-height: 1.4; }
+.ui-field textarea.hm-input { min-height: 5rem; }
+.ui-field input[type="file"] { max-width: 100%; font-size: .78rem; }
+.ui-field input[type="color"] { width: 4.5rem; padding: .25rem; cursor: pointer; }
+.ui-field input[readonly] { background: var(--hm-bg-card); color: var(--hm-muted); }
+.ui-field :is(.field-help, .field-error) { margin: 0; font-size: .73rem; line-height: 1.5; max-width: 65ch; }
+.ui-form-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1.2rem 1.5rem; border-top: 1px solid var(--hm-line); background: var(--hm-bg-card); }
+.ui-form-actions > p { margin: 0; color: var(--hm-muted); line-height: 1.5; font-size: .75rem; flex: 1 1 12rem; max-width: 38ch; }
+.ui-action-buttons { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; margin-inline-start: auto; }
+.ui-action-buttons :is(button, a) { min-height: 2.75rem; width: auto; border-radius: .65rem; padding: .65rem 1rem; white-space: normal; text-align: center; box-shadow: none; }
+.ui-form-aside { display: grid; gap: 1rem; min-width: 0; }
+.ui-aside-card { border: 1px solid var(--hm-line); border-radius: 1rem; padding: 1.2rem; background: var(--hm-bg-card); }
+.ui-aside-card h2 { margin: .8rem 0 .5rem; font-size: .98rem; }
+.ui-aside-card p { color: var(--hm-muted); font-size: .77rem; line-height: 1.65; margin: .5rem 0 0; }
+.ui-aside-icon { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border: 1px solid var(--hm-line-gold); border-radius: .75rem; color: var(--hm-gold-highlight); }
+.ui-aside-icon svg { width: 20px; height: 20px; }
+.ui-detail-list { margin: 1rem 0 0; display: grid; gap: .8rem; }
+.ui-detail-list > div { display: grid; gap: .25rem; border-top: 1px solid var(--hm-line); padding-top: .8rem; }
+.ui-detail-list dt { color: var(--hm-muted); font-size: .72rem; }
+.ui-detail-list dd { margin: 0; overflow-wrap: anywhere; font-size: .8rem; font-weight: 650; }
+.ui-guidance-list { margin: .8rem 0 0; padding-inline-start: 1.05rem; color: var(--hm-muted); font-size: .77rem; line-height: 1.65; }
+.ui-guidance-list li + li { margin-top: .7rem; }
+.ui-inline-note { margin: 1rem 0 0; padding: .8rem .9rem; border-inline-start: 2px solid var(--hm-line-gold); border-radius: .3rem; background: var(--hm-bg-card); color: var(--hm-muted); font-size: .76rem; line-height: 1.55; }
+.ui-disclosure { margin-top: 1.2rem; border-top: 1px solid var(--hm-line); padding-top: 1rem; }
+.ui-disclosure > summary { cursor: pointer; font-weight: 650; color: var(--hm-muted); font-size: .8rem; }
+.ui-disclosure[open] > summary { margin-bottom: .85rem; }
+.ui-choice-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+.ui-choice { position: relative; display: grid; align-content: start; gap: .5rem; padding: .95rem .75rem; border: 1px solid var(--hm-line-strong); border-radius: .75rem; cursor: pointer; min-width: 0; background: var(--hm-bg-card); }
+.ui-choice input { margin: 0; position: absolute; top: .7rem; right: .7rem; width: 15px; height: 15px; accent-color: var(--hm-gold); }
+.ui-choice-icon { display: grid; place-items: center; width: 25px; height: 25px; color: var(--hm-muted); }
+.ui-choice-icon svg { width: 21px; height: 21px; }
+.ui-choice strong { font-size: .77rem; color: var(--hm-white); font-weight: 700; line-height: 1.3; }
+.ui-choice small { font-size: .68rem; color: var(--hm-muted); line-height: 1.4; }
+.ui-choice:has(input:checked) { border-color: var(--hm-gold); background: color-mix(in srgb, var(--hm-gold) 8%, var(--hm-glass)); box-shadow: 0 0 0 1px var(--hm-line-gold); }
+.ui-choice:has(input:checked) .ui-choice-icon { color: var(--hm-gold-highlight); }
+.ui-choice:focus-within { outline: 2px solid var(--hm-gold-highlight); outline-offset: 3px; }
+.ui-readonly-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; margin: 0; }
+.ui-readonly-grid dt { color: var(--hm-muted); margin-bottom: .35rem; }
+.ui-readonly-grid dd { margin: 0; overflow-wrap: anywhere; }
+.ui-narrow-form { max-width: 780px; }
+@media (max-width: 1100px) {
+    .ui-settings-layout { grid-template-columns: minmax(0, 1fr) 230px; gap: 1rem; }
+}
+@media (max-width: 900px) {
+    .ui-settings-layout { grid-template-columns: 1fr; }
+    .ui-form-aside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    /* Reserve a narrow action-footer gutter for the floating contact control. */
+    .hm-whatsapp-enabled .ui-page .ui-form-actions { padding-right: calc(1.1rem + 64px); }
+}
+@media (max-width: 600px) {
+    .ui-page-intro { align-items: flex-start; flex-direction: column; padding-block: 1.1rem; gap: .75rem; }
+    .ui-page-intro .status-badge { flex: 0 0 auto; max-width: 9rem; white-space: normal; text-align: center; }
+    .ui-fields, .ui-readonly-grid, .ui-form-aside { grid-template-columns: 1fr; }
+    .ui-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ui-form-section { padding: 1.1rem; }
+    .ui-form-actions { padding: 1rem 1.1rem; }
+    .ui-action-buttons { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+    .ui-action-buttons button { flex: 1 1 12rem; }
+    .ui-field :is(input.hm-input, select.hm-input, textarea.hm-input) { font-size: 16px; }
+    .ui-form-actions { scroll-margin-bottom: 6rem; }
+}
+
+.ui-account-settings .workspace-section { margin-top: 1.5rem; }
+.ui-account-settings article { padding: 1.3rem; border-radius: 1rem; }
+.ui-account-settings .form-stack { max-width: 580px; }
+.ui-brand-preview { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1.2rem; }
+.ui-brand-preview .brand-preview { max-width: 140px; max-height: 70px; object-fit: contain; }

@@ -45,6 +45,11 @@ jobs:
             npm audit --package-lock-only --audit-level=moderate --registry=https://registry.yarnpkg.com
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           npx playwright install --with-deps chromium webkit
+      - name: Render changed forms through real application routes
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          HORUS_UI_FIXTURES=1 php artisan test --filter=FormExperienceTest
       - name: Validate deployment foundation
         run: |
           bash -n ops/deploy/horus-atomic-deploy.sh
@@ -77,6 +82,16 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan route:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan schedule:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
+      - name: Review real Blade forms in desktop and mobile browsers
+        run: |
+          npx playwright test --config=playwright.form-experience.config.js
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: form-experience-${{ github.sha }}
+          path: test-results/form-experience
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Smoke-test production environment template
         run: |
           rm -f .env database/production-smoke.sqlite

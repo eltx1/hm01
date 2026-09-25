@@ -1,18 +1,29 @@
 @extends('layouts.admin')
 @section('title', 'Create Support Ticket')
-@section('heading', 'Create Support Ticket')
+@section('heading', 'Contact support')
 @section('content')
-<section class="hero"><div><p class="eyebrow">Secure first-party support</p><h2>How can we help?</h2><p>Describe one issue clearly. Payment, reporting, website, contract, and campaign resources can be linked only when they belong to your organization.</p></div></section>
-<article class="workspace-section">
-    <form method="post" action="{{ route('support.tickets.store') }}" enctype="multipart/form-data" class="form-grid">
-        @csrf
-        <label class="full">Subject<input class="hm-input" name="subject" value="{{ old('subject') }}" maxlength="255" required></label>
-        <label>Category<select class="hm-input" name="category" required>@foreach($categories as $category)<option value="{{ $category->value }}" @selected(old('category') === $category->value)>{{ $category->label() }}</option>@endforeach</select></label>
-        <label>Priority<select class="hm-input" name="priority" required>@foreach($priorities as $priority)<option value="{{ $priority->value }}" @selected(old('priority', 'NORMAL') === $priority->value)>{{ str($priority->value)->title() }}</option>@endforeach</select><small>Urgent operational priority is assigned by Horus Support.</small></label>
-        <label class="full">Related resource<select class="hm-input" name="linked_resource"><option value="">No linked resource</option>@foreach($resources as $resource)<option value="{{ $resource['type'] }}|{{ $resource['id'] }}" @selected(old('linked_resource') === $resource['type'].'|'.$resource['id'])>{{ $resource['label'] }}</option>@endforeach</select></label>
-        <label class="full">Description<textarea class="hm-input" name="description" rows="10" maxlength="10000" required>{{ old('description') }}</textarea><small>Plain text only. Customer-supplied HTML is never rendered.</small></label>
-        <label class="full">Optional attachment<input class="hm-input" type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv"><small>PDF, JPG, PNG, WebP, TXT, or CSV. Maximum 10 MB.</small></label>
-        <div class="full status-row"><button class="hm-button-primary">Create secure ticket</button><a class="text-link" href="{{ route('support.tickets.index') }}">Cancel</a></div>
-    </form>
-</article>
+<div class="ui-page">
+    <div class="ui-page-intro"><div><h2>How can we help?</h2><p>Tell us what happened. We’ll keep the conversation together in one ticket.</p></div></div>
+    <div class="ui-settings-layout">
+        <form method="post" action="{{ route('support.tickets.store') }}" enctype="multipart/form-data" class="ui-form-surface">
+            @csrf
+            <x-form-section number="01" title="About your request" description="Choose the topic that best matches your question.">
+                <div class="ui-fields">
+                    <x-form-field class="full" name="subject" label="Subject" :value="old('subject')" maxlength="255" required placeholder="A short summary of your question" />
+                    <x-form-field name="category" label="Category" as="select" :value="old('category', $categories[0]->value ?? '')" :options="collect($categories)->mapWithKeys(fn ($category) => [$category->value => $category->label()])->all()" required />
+                    <x-form-field name="priority" label="Priority" as="select" :value="old('priority', 'NORMAL')" :options="collect($priorities)->mapWithKeys(fn ($priority) => [$priority->value => str($priority->value)->title()->toString()])->all()" required help="Horus Support assesses urgent operational issues." />
+                    <x-form-field class="full" name="linked_resource" label="Related website or record" as="select" :value="old('linked_resource')" :options="collect($resources)->mapWithKeys(fn ($resource) => [$resource['type'].'|'.$resource['id'] => $resource['label']])->all()" placeholder="No linked resource" help="Optional. Select a record from your organization to give us context." />
+                </div>
+            </x-form-section>
+            <x-form-section number="02" title="What happened?" description="Include what you expected and the steps that led to the issue.">
+                <div class="ui-fields">
+                    <x-form-field class="full" name="description" label="Message" as="textarea" :value="old('description')" rows="8" maxlength="10000" required placeholder="Describe your question or issue…" />
+                    <x-form-field class="full" name="attachment" label="Attachment" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.csv" help="Optional. PDF, JPG, PNG, WebP, TXT or CSV, up to 10 MB." />
+                </div>
+            </x-form-section>
+            <x-form-actions :cancel-href="route('support.tickets.index')" help="You can follow up from your support inbox."><button class="hm-button-primary" type="submit" data-submitting-label="Sending…">Send support request</button></x-form-actions>
+        </form>
+        <aside class="ui-form-aside"><section class="ui-aside-card"><span class="ui-aside-icon"><x-ui-icon name="mail" /></span><h2>Help us help you</h2><ul class="ui-guidance-list"><li>Keep each ticket focused on one issue.</li><li>Include the website or report date where relevant.</li><li>A screenshot can help explain what you are seeing.</li></ul></section></aside>
+    </div>
+</div>
 @endsection
