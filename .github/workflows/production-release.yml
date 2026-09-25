@@ -45,6 +45,11 @@ jobs:
             npm audit --package-lock-only --audit-level=moderate --registry=https://registry.yarnpkg.com
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           npx playwright install --with-deps chromium webkit
+      - name: Render changed forms through real application routes
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          HORUS_UI_FIXTURES=1 php artisan test --filter=FormExperienceTest
       - name: Validate deployment foundation
         run: |
           bash -n ops/deploy/horus-atomic-deploy.sh
@@ -79,7 +84,6 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
       - name: Review real Blade forms in desktop and mobile browsers
         run: |
-          HORUS_UI_FIXTURES=1 php artisan test --filter=FormExperienceTest
           npx playwright test --config=playwright.form-experience.config.js
       - uses: actions/upload-artifact@v7
         if: always()

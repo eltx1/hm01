@@ -55,8 +55,8 @@
                     <x-form-field name="account_reference" label="Account or payment reference" value="" maxlength="255" autocomplete="new-password" :help="$profile?->maskedAccountReference() ? 'Saved reference: '.$profile->maskedAccountReference().'. Leave blank to keep it when using the same payment method.' : 'Add a bank account / IBAN, PayPal email, or your provider’s payment reference. Needed before Finance can verify your details.'" />
                     <x-form-field name="routing_reference" label="Routing number or SWIFT / BIC" value="" maxlength="255" autocomplete="new-password" help="For bank details when needed. To replace the account, include its routing details again." />
                 </div>
-                <p class="ui-inline-note" data-payment-change-note @if(! $profile || $selectedMethod === $profile->payment_method)hidden@endif>Changing the payment method? Enter its account or payment reference, even if you already have a saved destination.</p>
-                <details class="ui-disclosure" @if($errors->has('tax_identifier'))open@endif>
+                <p class="ui-inline-note" data-payment-change-note @if(! $profile || $selectedMethod === $profile->payment_method) hidden @endif>Changing the payment method? Enter its account or payment reference, even if you already have a saved destination.</p>
+                <details class="ui-disclosure" @if($errors->has('tax_identifier')) open @endif>
                     <summary>Tax information <span class="muted">· optional</span></summary>
                     <x-form-field name="tax_identifier" label="Tax identification number" value="" maxlength="100" autocomplete="new-password" help="Provide this only when requested. Leave blank to keep any tax information already saved." />
                 </details>

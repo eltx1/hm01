@@ -90,6 +90,7 @@ class FormExperienceTest extends TestCase
         $this->from($paymentRoute)->put(route('publisher.finance.payment-method.update'), array_replace($this->details(), ['country' => 'INVALID']))->assertSessionHasErrors('country');
         $this->fixture('payment-error', $this->get($paymentRoute)->assertOk()->assertSee('aria-invalid="true"', false)->assertDontSee('PRIVATE-ACCOUNT'));
         session()->forget(['errors', '_old_input']);
+        $this->withoutExceptionHandling();
         $site = $this->makeSiteFor($publisher, $user, ['primary_domain' => 'example.test', 'display_name' => 'Example website']);
         foreach (['site-create' => route('publisher.sites.create'), 'site-edit' => route('publisher.sites.edit', $site),
             'support-create' => route('support.tickets.create'), 'account-profile' => route('account.profile.edit'),
@@ -99,8 +100,10 @@ class FormExperienceTest extends TestCase
         $viewer = $this->makeUser($user->organization, RoleName::PublisherViewer);
         $this->actingAs($viewer);
         $this->fixture('payment-viewer', $this->get($paymentRoute)->assertOk()->assertDontSee('data-payment-profile-form')->assertDontSee('Save payment method')->assertSee('••••9876'));
+        $this->withExceptionHandling();
         $this->put(route('publisher.finance.payment-method.update'), $this->details())->assertForbidden();
         $this->actingAs($finance)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $this->withoutExceptionHandling();
         $this->fixture('admin-payment', $this->get(route('admin.publishers.payment-profile.edit', $publisher))->assertOk()->assertSee('Record verification decision')->assertDontSee('PRIVATE-ACCOUNT'));
     }
 
