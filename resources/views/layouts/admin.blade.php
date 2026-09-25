@@ -24,7 +24,7 @@
     <script src="{{ asset('assets/dashboard-theme.js') }}?v={{ substr(hash_file('sha256', public_path('assets/dashboard-theme.js')), 0, 12) }}"></script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body @if(! $isHorusWorkspace && $brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
+<body @class(['hm-whatsapp-enabled' => $brand?->type === \App\Enums\OrganizationType::Publisher]) @if(! $isHorusWorkspace && $brand?->primary_color)style="--hm-tenant-accent: {{ $brand->primary_color }}"@endif>
     <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
@@ -71,5 +71,8 @@
             @yield('content')
         </main>
     </div>
+    @if($brand?->type === \App\Enums\OrganizationType::Publisher)
+        <x-whatsapp-contact />
+    @endif
 </body>
 </html>
