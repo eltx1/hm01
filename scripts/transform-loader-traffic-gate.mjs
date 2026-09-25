@@ -9,8 +9,8 @@ function replaceOnce(source, search, replacement, label) {
 }
 
 const trafficGateRuntime = String.raw`
-    // Preparation never installs an ad script or publishes an authorization result.
-    // Keep DOM/CMP discovery at its existing boundary; only static work starts early.
+    // Start static work and isolated verification early. Ad initialization and CMP
+    // discovery keep their DOM boundary, including CMPs installed later by the page.
     var earlyBootPreparation = null;
     var EARLY_PREPARATION_MAX_AGE_MS = 5000;
 
@@ -84,6 +84,43 @@ const trafficGateRuntime = String.raw`
         });
     }
 
+    function prepareEarlyTrafficGate(config, script, siteKey) {
+        if (state.config || state.booting || state.earlyTrafficGatePreparation
+            || window.__HM_RELEASE_HANDOFF_FAILED__
+            || !config || config.siteKey !== siteKey
+            || !hostAllowed(currentHostname(), config.allowedHostnames)
+            || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return;
+        var settings = trafficGateSettings(config);
+        var controls = effectiveControls(config);
+        var parent = document.body || document.documentElement;
+        if (!parent || !parent.appendChild || !settings.enabled || !settings.valid
+            || controls.trafficGateDisabled || trafficGateRuntimeState().started) return;
+
+        // Do not expose config or attach a monetization callback before DOM/CMP.
+        // Bind this attempt to the exact snapshot so a later refresh cannot adopt
+        // its PASS (or pending iframe) for different configuration.
+        var snapshot = JSON.stringify(config);
+        beginTrafficGate(config);
+        state.earlyTrafficGatePreparation = {
+            script: script, siteKey: siteKey, snapshot: snapshot, runtime: state.trafficGate
+        };
+    }
+
+    function reconcileEarlyTrafficGate(config, script, siteKey) {
+        var preparation = state.earlyTrafficGatePreparation;
+        state.earlyTrafficGatePreparation = null;
+        if (!preparation || preparation.runtime !== state.trafficGate) return;
+        if (config && preparation.script === script && preparation.siteKey === siteKey
+            && preparation.snapshot === JSON.stringify(config)) return;
+
+        // Retire a stale attempt, including a completed PASS. Old frame messages
+        // lose their listener/source/nonce binding before any new attempt starts.
+        trafficGateSetState(TRAFFIC_GATE_STATES.unavailable, 'PREPARATION_DISCARDED');
+        trafficGateCleanup();
+        settleTrafficGateDecision();
+        state.trafficGate = freshTrafficGateRuntime();
+    }
+
     function startEarlyBootPreparation() {
         var script = findScript();
         var siteKey = scriptData(script, 'siteKey');
@@ -93,7 +130,10 @@ const trafficGateRuntime = String.raw`
         earlyBootPreparation = preparation;
         preparation.promise = fetchBootPreparation(script, siteKey, false).then(function (config) {
             if (generation === state.preparationGeneration
-                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) prepareStaticConnections(config, false);
+                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) {
+                prepareStaticConnections(config, false);
+                prepareEarlyTrafficGate(config, script, siteKey);
+            }
             return config;
         }).catch(function () {
             // An early fetch failure must not become an unhandled rejection.
@@ -531,6 +571,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         var generation = nextPreparationGeneration();
         var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
             if (generation !== state.preparationGeneration) return [];
+            reconcileEarlyTrafficGate(config, script, siteKey);
             state.config = config;
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
@@ -568,6 +609,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 return startMonetization(config, script, diagnostic);
             });
         }).catch(function (error) {
+            if (generation === state.preparationGeneration) reconcileEarlyTrafficGate(null);
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
         }).finally(function () {
@@ -659,13 +701,13 @@ export function applyTrafficGateTransform(input) {
         source,
         "        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });",
         "        if (document.readyState === 'loading') {\n            startEarlyBootPreparation();\n            document.addEventListener('DOMContentLoaded', function () { boot(); }, { once: true });\n        }",
-        'static preparation before DOM readiness',
+        'static preparation and isolated verification before DOM readiness',
     );
 
     source = replaceOnce(
         source,
         "            state.adInitializationStarted = false;\n            state.servicesEnabled = false;\n",
-        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
+        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.earlyTrafficGatePreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
         'test reset',
     );
 

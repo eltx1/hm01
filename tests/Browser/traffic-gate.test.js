@@ -38,6 +38,9 @@ function createHarness({
     behavior = 'pass',
     verificationReplies = null,
     config = configFor(allowedHostname),
+    deferConfig = false,
+    deferLibrary = false,
+    libraryError = false,
 } = {}) {
     const messages = [];
     const verificationCalls = [];
@@ -47,6 +50,9 @@ function createHarness({
     let renderOptions = null;
     let renderCount = 0;
     let resetCount = 0;
+    const scriptRequests = [];
+    let releaseConfig;
+    let releaseLibrary;
 
     const parent = {
         postMessage(payload, targetOrigin) {
@@ -80,8 +86,15 @@ function createHarness({
         head: {
             appendChild(script) {
                 elements.set(script.id, script);
-                context.window.turnstile = turnstile;
-                script.listeners.load?.();
+                scriptRequests.push(script.src);
+                releaseLibrary = () => {
+                    if (libraryError) script.listeners.error?.();
+                    else {
+                        context.window.turnstile = turnstile;
+                        script.listeners.load?.();
+                    }
+                };
+                if (!deferLibrary) releaseLibrary();
                 return script;
             },
         },
@@ -126,7 +139,9 @@ function createHarness({
                 const next = verificationReplies?.shift() ?? { status: 200, body: { success: true, pageNonce: NONCE } };
                 return { ok: next.status === 200, status: next.status, json: async () => next.body };
             }
-            return { ok: config !== null, json: async () => config };
+            const response = { ok: config !== null, json: async () => config };
+            if (deferConfig) return new Promise(resolve => { releaseConfig = () => resolve(response); });
+            return response;
         },
     });
     context.window = {
@@ -175,6 +190,10 @@ function createHarness({
         timers,
         hello,
         runTimer,
+        flush,
+        scriptRequests,
+        releaseConfig: () => releaseConfig(),
+        releaseLibrary: () => releaseLibrary(),
         get renderCount() { return renderCount; },
         get resetCount() { return resetCount; },
         get renderOptions() { return renderOptions; },
@@ -200,7 +219,7 @@ test('authorized Site origin receives READY then PASS with the exact nonce and n
     assert.equal(harness.renderOptions.retry, 'never');
 });
 
-test('unauthorized parent origin is denied before Turnstile is loaded or rendered', async () => {
+test('unauthorized parent origin cannot render a challenge or verify despite a prepared library', async () => {
     const harness = createHarness({
         parentOrigin: 'https://attacker.example',
         allowedHostname: 'publisher.example',
@@ -209,10 +228,76 @@ test('unauthorized parent origin is denied before Turnstile is loaded or rendere
     await harness.hello();
 
     assert.equal(harness.renderCount, 0);
+    assert.equal(harness.verificationCalls.length, 0);
     assert.equal(harness.messages.length, 1);
     assert.equal(harness.messages[0].payload.type, 'HORUS_TRAFFIC_GATE_DENIED');
     assert.equal(harness.messages[0].payload.state, 'DENIED');
     assert.equal(harness.messages[0].targetOrigin, 'https://attacker.example');
+});
+
+test('Turnstile library loads while config is pending but no challenge starts before authorization', async () => {
+    const harness = createHarness({ deferConfig: true });
+    const boot = harness.hello();
+    await harness.flush();
+    assert.deepEqual(harness.scriptRequests, ['https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit']);
+    assert.equal(harness.renderCount, 0);
+    assert.equal(harness.verificationCalls.length, 0);
+    assert.equal(harness.messages.length, 0);
+    harness.releaseConfig();
+    await boot;
+    assert.equal(harness.renderCount, 1);
+    assert.equal(harness.verificationCalls.length, 1);
+    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+});
+
+test('authorized config still waits for the parallel library before rendering', async () => {
+    const harness = createHarness({ deferLibrary: true });
+    const boot = harness.hello();
+    await harness.flush();
+    assert.equal(harness.renderCount, 0);
+    assert.equal(harness.verificationCalls.length, 0);
+    harness.releaseLibrary();
+    await boot;
+    assert.equal(harness.renderCount, 1);
+    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+});
+
+test('parallel library rejection is handled while config is pending and never authorizes a challenge', async () => {
+    for (const allowedHostname of ['publisher.example', 'other.example']) {
+        const harness = createHarness({ deferConfig: true, libraryError: true, allowedHostname });
+        const boot = harness.hello();
+        await harness.flush();
+        harness.releaseConfig();
+        await boot;
+        assert.equal(harness.renderCount, 0);
+        assert.equal(harness.verificationCalls.length, 0);
+        assert.equal(harness.messages.at(-1).payload.type,
+            allowedHostname === 'publisher.example' ? 'HORUS_TRAFFIC_GATE_ERROR' : 'HORUS_TRAFFIC_GATE_DENIED');
+    }
+});
+
+test('late config or library completion cannot revive an expired parallel boot', async () => {
+    for (const pending of ['config', 'library']) {
+        const harness = createHarness({ deferConfig: pending === 'config', deferLibrary: pending === 'library' });
+        const boot = harness.hello();
+        await harness.flush();
+        const deadline = harness.timers.find(timer => timer.active && timer.delay > 4000);
+        await harness.runTimer(deadline.delay);
+        if (pending === 'config') harness.releaseConfig();
+        else harness.releaseLibrary();
+        await boot;
+        assert.equal(harness.renderCount, 0);
+        assert.equal(harness.verificationCalls.length, 0);
+        assert.deepEqual(harness.messages.map(({ payload }) => payload.type), ['HORUS_TRAFFIC_GATE_TIMEOUT']);
+    }
+});
+
+test('malformed HELLO never starts parallel preparation', async () => {
+    const harness = createHarness();
+    await harness.hello({ pageNonce: 'bad' });
+    assert.equal(harness.scriptRequests.length, 0);
+    assert.equal(harness.renderCount, 0);
+    assert.equal(harness.verificationCalls.length, 0);
 });
 
 test('Cloudflare Invisible always-fail test key exercises one bounded retry then ERROR', async () => {
