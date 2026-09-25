@@ -168,6 +168,7 @@ function createHarness(config, {
     cryptoUnavailable = false,
     readyState = 'complete',
     autoboot = false,
+    deferFirstConfig = false,
 } = {}) {
     const metrics = {
         fetches: [],
@@ -448,6 +449,10 @@ function createHarness(config, {
                 return { ok: true, json: async () => ({ schemaVersion: 2, controls: structuredClone(globalControls) }) };
             }
             metrics.configFetches += 1;
+            if (deferFirstConfig && metrics.configFetches === 1) {
+                const snapshot = structuredClone(config);
+                return new Promise(resolve => { metrics.releaseFirstConfig = () => resolve({ ok: true, json: async () => snapshot }); });
+            }
             return { ok: true, json: async () => structuredClone(config) };
         },
         addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
@@ -533,6 +538,7 @@ function assertNoMonetization(metrics) {
 test('pre-DOM preparation fetches static data/GPT bytes once and waits for a CMP installed later', async () => {
     const config = baseConfig({ gam: true, standalone: true, direct: true });
     config.privacy.cmp.timeoutMs = 5000;
+    config.privacy.requireConsentBeforeAds = false;
     const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
     await runtime.flush();
     assert.equal(runtime.metrics.configFetches, 1);
@@ -574,9 +580,56 @@ test('a long parser stall refreshes configuration and emergency controls before 
     assertNoMonetization(runtime.metrics);
 });
 
+test('discarded pending preparations cannot add hints after a newer emergency stop', async () => {
+    const config = baseConfig();
+    config.privacy.requireConsentBeforeAds = false;
+    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, deferFirstConfig: true });
+    await runtime.flush();
+    runtime.setGlobalControls({ ...openControls(), adServingDisabled: true });
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    runtime.metrics.releaseFirstConfig();
+    await runtime.flush();
+    assert.equal(runtime.metrics.preparationHints.length, 0);
+    assertNoMonetization(runtime.metrics);
+});
+
+test('consent-required sites preload Google only after privacy permits it, while verification is pending', async () => {
+    const config = baseConfig();
+    config.privacy.cmp = { timeoutMs: 10000, actionOnTimeout: 'BLOCK_ADS' };
+    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, deferredTcf: true, timerScale: 1 });
+    await runtime.flush();
+    const googleHints = () => runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload');
+    assert.equal(googleHints().length, 0);
+    runtime.domReady();
+    await runtime.flush();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(googleHints().length, 0);
+    runtime.metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: false }, true);
+    await runtime.flush();
+    assert.equal(googleHints().length, 1);
+    assertNoMonetization(runtime.metrics);
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+test('privacy BLOCK_ADS prevents even Google preloading after a successful traffic verification', async () => {
+    const config = baseConfig();
+    config.privacy.mode = 'STRICT';
+    config.privacy.cmp = { timeoutMs: 100, actionOnTimeout: 'BLOCK_ADS' };
+    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, gateAutoResponse: 'PASS' });
+    await runtime.flush();
+    runtime.domReady();
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
+    assert.equal(runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload').length, 0);
+    assertNoMonetization(runtime.metrics);
+});
+
 test('early preparation respects rejected domains, paused sites, invalid gates and engine controls', async () => {
     for (const variant of ['host', 'pause', 'global', 'invalid-gate', 'gam-disabled', 'standalone', 'custom-gpt']) {
         const config = baseConfig({ gam: variant !== 'standalone', standalone: variant === 'standalone' });
+        config.privacy.requireConsentBeforeAds = false;
         const controls = openControls();
         if (variant === 'host') config.allowedHostnames = ['another.example'];
         if (variant === 'pause') config.immediatePause = true;

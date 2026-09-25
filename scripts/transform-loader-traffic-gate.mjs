@@ -14,6 +14,11 @@ const trafficGateRuntime = String.raw`
     var earlyBootPreparation = null;
     var EARLY_PREPARATION_MAX_AGE_MS = 5000;
 
+    function nextPreparationGeneration() {
+        state.preparationGeneration = Number(state.preparationGeneration || 0) + 1;
+        return state.preparationGeneration;
+    }
+
     function addPreparationHint(rel, href, as, crossOrigin) {
         try {
             var key = [rel, href, as || '', crossOrigin || ''].join('|');
@@ -34,7 +39,7 @@ const trafficGateRuntime = String.raw`
         }
     }
 
-    function prepareStaticConnections(config) {
+    function prepareStaticConnections(config, privacyReady) {
         if (!config || window.__HM_RELEASE_HANDOFF_FAILED__
             || !hostAllowed(currentHostname(), config.allowedHostnames)
             || config.status !== 'active' || config.immediatePause) return;
@@ -48,6 +53,11 @@ const trafficGateRuntime = String.raw`
             addPreparationHint('preconnect', 'https://siteverify.horusmedia.net', null, 'anonymous');
         }
 
+        var privacy = config.privacy || {};
+        var cmp = privacy.cmp || {};
+        if (!privacyReady && (privacy.requireConsentBeforeAds !== false
+            || String(privacy.mode || '').toUpperCase() === 'STRICT'
+            || String(cmp.actionOnTimeout || '').toUpperCase() === 'BLOCK_ADS')) return;
         if (controls.gamDisabled || (window.googletag && (window.googletag.apiReady || window.googletag.pubadsReady))) return;
         var hasGam = (config.placements || []).some(function (placement) {
             return placement.enabled && placement.status === 'active' && placement.adUnitPath
@@ -70,7 +80,6 @@ const trafficGateRuntime = String.raw`
         return Promise.all([fetchGlobalControl(script, force), fetchConfig(script, siteKey, force)]).then(function (prepared) {
             var config = prepared[1];
             config.controls = mergeControls(config.controls || {}, prepared[0] || {});
-            prepareStaticConnections(config);
             return config;
         });
     }
@@ -79,9 +88,14 @@ const trafficGateRuntime = String.raw`
         var script = findScript();
         var siteKey = scriptData(script, 'siteKey');
         if (!siteKey || !window.fetch || earlyBootPreparation || state.booting) return;
+        var generation = nextPreparationGeneration();
         var preparation = { script: script, siteKey: siteKey, startedAt: Date.now(), promise: null };
         earlyBootPreparation = preparation;
-        preparation.promise = fetchBootPreparation(script, siteKey, false).catch(function () {
+        preparation.promise = fetchBootPreparation(script, siteKey, false).then(function (config) {
+            if (generation === state.preparationGeneration
+                && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) prepareStaticConnections(config, false);
+            return config;
+        }).catch(function () {
             // An early fetch failure must not become an unhandled rejection.
             // Normal boot gets one fresh attempt through its existing error path.
             return null;
@@ -514,7 +528,9 @@ const bootReplacement = String.raw`    function startMonetization(config, script
 
         // Static configuration and global controls are independent preparation.
         // Neither waits for Turnstile or CMP resolution.
+        var generation = nextPreparationGeneration();
         var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
+            if (generation !== state.preparationGeneration) return [];
             state.config = config;
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
@@ -535,12 +551,18 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             // Once static configuration is known, privacy and the Client Traffic
             // Gate begin in parallel. PASS never waits for configured gate timers;
             // monetization waits only until both independent prerequisites permit it.
+            prepareStaticConnections(config, false);
             setTrafficGateResume(function () {
                 if (state.config !== config || !state.privacyDecision) return [];
                 return startMonetization(config, script, diagnostic);
             });
             var gatePromise = beginTrafficGate(config);
-            var privacyPromise = resolvePrivacy(config);
+            var privacyPromise = resolvePrivacy(config).then(function (decision) {
+                if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {
+                    prepareStaticConnections(config, true);
+                }
+                return decision;
+            });
             return Promise.all([gatePromise, privacyPromise]).then(function () {
                 if (!trafficGateAllowsMonetization()) return [];
                 return startMonetization(config, script, diagnostic);

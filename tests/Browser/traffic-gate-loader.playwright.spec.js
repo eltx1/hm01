@@ -169,10 +169,17 @@ function turnstileTechnicalErrorStub() {
     })();`;
 }
 
-for (const serverPass of [true, false]) {
-    test(`pre-DOM GPT download stays inert until server verification and late CMP: ${serverPass ? 'pass' : 'reject'}`, async ({ page }) => {
+for (const { serverPass, requiresConsent, consentBlocked } of [
+    { serverPass: true, requiresConsent: false },
+    { serverPass: false, requiresConsent: false },
+    { serverPass: true, requiresConsent: true },
+    { serverPass: false, requiresConsent: true },
+    { serverPass: true, requiresConsent: true, consentBlocked: true },
+]) {
+    test(`GPT preparation respects verification and privacy: server=${serverPass}, consent-required=${requiresConsent}, blocked=${Boolean(consentBlocked)}`, async ({ page }) => {
         const selected = config();
-        selected.privacy.cmp = { timeoutMs: 10000, actionOnTimeout: 'BLOCK_ADS' };
+        selected.privacy.requireConsentBeforeAds = requiresConsent;
+        selected.privacy.cmp = { timeoutMs: consentBlocked ? 100 : 10000, actionOnTimeout: requiresConsent ? 'BLOCK_ADS' : 'LIMITED_ADS' };
         selected.trafficGate.timings.maxWaitMs = 10000;
         let releaseParser;
         let releaseVerification;
@@ -223,29 +230,38 @@ for (const serverPass of [true, false]) {
             return route.abort('blockedbyclient');
         });
         await page.goto(PUBLISHER + '/', { waitUntil: 'commit' });
-        await expect.poll(() => counts.library).toBe(1);
+        await expect.poll(() => counts.configs).toBe(1);
+        await expect.poll(() => page.locator('link[rel="preconnect"][data-hm-preparation]').count()).toBe(3);
+        if (!requiresConsent) await expect.poll(() => counts.library).toBe(1);
         expect(await page.evaluate(() => document.readyState)).toBe('loading');
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
-        expect(counts).toEqual({ configs: 1, controls: 1, library: 1, verifies: 0 });
+        expect(counts).toEqual({ configs: 1, controls: 1, library: requiresConsent ? 0 : 1, verifies: 0 });
         expect(await page.locator('link[rel="preconnect"][data-hm-preparation]').count()).toBe(3);
         releaseParser();
         await expect.poll(() => counts.verifies).toBe(1);
         await page.evaluate(() => { window.initialBootForTest = window.HorusMediaLoader.boot(); });
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        if (requiresConsent && !consentBlocked) {
+            await page.evaluate(() => window.releaseConsent());
+            await expect.poll(() => counts.library).toBe(1);
+            expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        }
         releaseVerification();
         await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass ? 'PASSED' : 'ERROR');
-        await page.evaluate(() => window.HorusMediaLoader.scan());
-        expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
-        await page.evaluate(() => window.releaseConsent());
+        if (!requiresConsent) {
+            await page.evaluate(() => window.HorusMediaLoader.scan());
+            expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+            await page.evaluate(() => window.releaseConsent());
+        }
         await page.evaluate(() => window.initialBootForTest);
-        if (serverPass) {
+        if (serverPass && !consentBlocked) {
             await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines.gptLoads)).toBe(1);
         } else {
             expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
             expect(await page.locator('script[data-hm-gpt]').count()).toBe(0);
         }
-        expect(counts.library).toBe(1); // The post-PASS script reuses the preloaded response.
+        expect(counts.library).toBe(consentBlocked ? 0 : 1); // Successful boot reuses the preload.
         expect(counts.configs).toBe(1);
         expect(counts.controls).toBe(1);
         expect(unexpected).toEqual([]);

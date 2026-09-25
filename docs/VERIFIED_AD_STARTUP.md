@@ -11,7 +11,9 @@ decision or claiming a measured field improvement.
   controls concurrently. Capture the current Loader script before DOM readiness.
 - After validating the configured hostname, active status, engine controls and
   gate readiness, add connection hints for the existing verification origins.
-- For an active GAM placement, preload the configured official GPT script. This
+- For an active GAM placement, preload the configured official GPT script as soon
+  as privacy permits it. Consent-required/strict/BLOCK_ADS configurations wait for
+  the existing privacy decision; other sites may download before DOM readiness. This
   downloads bytes only: it does not execute GPT or publisher-owned command queues.
   The subsequent classic script uses the same URL and fetch mode to reuse it.
 - DOM/CMP discovery, iframe authorization, Turnstile, server-side verification,
@@ -23,6 +25,8 @@ decision or claiming a measured field improvement.
 - Reuse the preparation only within five seconds of its start. Long parser stalls,
   forced refreshes and failed early fetches use a fresh normal boot. No verification
   token, PASS result or user authorization is persisted.
+- Preparation generations invalidate old in-flight responses, so they cannot
+  emit hints or replace current controls after a newer refresh/emergency stop.
 - The verification frame also hints its existing Cloudflare connections.
 - OPTIONS allows browser caching of its exact-origin POST/Content-Type permission
   for 600 seconds. Every POST still validates its token upstream and remains
@@ -36,7 +40,7 @@ not preload GPT. Protection settings and the Cloudflare plan are unchanged.
 
 ## Validation
 
-- `npm run test:browser`: 244 passed, zero failed.
+- `npm run test:browser`: final result recorded in PR validation.
 - `npm test --prefix tests/Workers`: one native workerd integration test passed,
   including permission-cache headers, uncached POSTs and redirect rejection.
 - Chromium/WebKit desktop/mobile coverage includes parser blocking, a CMP installed
