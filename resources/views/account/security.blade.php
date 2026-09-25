@@ -3,6 +3,7 @@
 @section('heading', 'Account Security')
 @section('content')
 @include('account._tabs')
+<div class="ui-page ui-narrow-form ui-account-settings">
 
 <div class="summary-grid security-summary" aria-label="Security summary">
     <div><span>Password last changed</span><strong>{{ $user->password_changed_at?->diffForHumans() ?? 'No recorded change date' }}</strong></div>
@@ -113,4 +114,5 @@
         </div>
     </article>
 </section>
+</div>
 @endsection

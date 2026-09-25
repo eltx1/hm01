@@ -29,6 +29,13 @@ final class PublisherPaymentProfileService
             $existingDetails = (array) ($profile?->payment_details ?? []);
             $existingTaxIdentifier = $profile?->tax_identifier;
 
+            if ($profile && $profile->payment_method !== (string) $attributes['payment_method']
+                && ! $this->hasReplacement($attributes, 'account_reference')) {
+                throw ValidationException::withMessages([
+                    'account_reference' => 'Enter the account or payment reference for your new payment method.',
+                ]);
+            }
+
             $values = [
                 'organization_id' => $publisher->organization_id,
                 'beneficiary_name' => trim((string) $attributes['beneficiary_name']),
@@ -46,6 +53,9 @@ final class PublisherPaymentProfileService
                 ];
                 $values['payment_details'] = $details;
                 $values['account_last_four'] = $this->lastFour((string) $attributes['account_reference']);
+            } elseif ($this->hasReplacement($attributes, 'routing_reference')) {
+                $details['routing_reference'] = trim((string) $attributes['routing_reference']);
+                $values['payment_details'] = $details;
             }
             if ($this->hasReplacement($attributes, 'tax_identifier')) {
                 $values['tax_identifier'] = trim((string) $attributes['tax_identifier']);
