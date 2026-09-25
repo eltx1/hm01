@@ -99,13 +99,13 @@ test('publisher WhatsApp contact stays usable in both themes and yields to mobil
     }
     await page.getByRole('button', { name: 'Switch to Dark Mode' }).click();
     await expectContactToFit(page);
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
     const lastControl = await page.getByText('Daily report details').boundingBox();
     const contactBox = await link.boundingBox();
     expect(lastControl.y + lastControl.height).toBeLessThan(contactBox.y);
     await link.focus();
     await expect(link).toBeFocused();
-    await page.screenshot({ path: info.outputPath('publisher-whatsapp.png'), fullPage: true });
+    await page.screenshot({ path: info.outputPath('dashboard-publisher-whatsapp.png'), fullPage: true });
     await page.emulateMedia({ media: 'print' });
     await expect(link).toBeHidden();
 });
@@ -128,12 +128,13 @@ test.describe('homepage contact without JavaScript', () => {
         await page.goto('https://website.test/');
         const link = await expectContactToFit(page);
         expect(whatsappRequests).toEqual([]);
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        // The homepage enables smooth scrolling; measure after an explicit instant scroll.
+        await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
         await expectContactToFit(page);
         const footer = await page.locator('.footer-bottom').boundingBox();
         const contactBox = await link.boundingBox();
         expect(footer.y + footer.height).toBeLessThan(contactBox.y);
-        await page.screenshot({ path: info.outputPath('homepage-whatsapp.png') });
+        await page.screenshot({ path: info.outputPath('dashboard-homepage-whatsapp.png') });
         const popupPromise = page.waitForEvent('popup');
         await link.click();
         const popup = await popupPromise;
