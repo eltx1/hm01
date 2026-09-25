@@ -18,7 +18,8 @@ async function open(page, name) {
         }
         return route.fulfill({ status: 204 });
     });
-    await page.goto('https://forms.test/preview');
+    // Match the fixture application's asset origin; all requests are intercepted.
+    await page.goto('http://localhost/preview');
     await expect(page.locator('.ui-page').first()).toBeVisible();
 }
 
