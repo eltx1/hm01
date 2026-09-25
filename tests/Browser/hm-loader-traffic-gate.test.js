@@ -701,12 +701,11 @@ test('a head-loaded gate uses the available document root and reuses its pending
     assert.equal(runtime.metrics.gamRequests, 1);
 });
 
-test('DOM readiness never restarts a failed or timed-out early verification', async () => {
-    for (const result of ['DENIED', 'ERROR', 'TIMEOUT', 'DEADLINE']) {
+test('DOM readiness never retries an explicit denial, rejected verification or unclassified error', async () => {
+    for (const result of ['DENIED', 'ERROR', 'VERIFICATION_REJECTED', 'GATE_NOT_READY']) {
         const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
         await runtime.flush();
-        if (result === 'DEADLINE') await new Promise(resolve => setTimeout(resolve, 60));
-        else runtime.sendGate(result);
+        runtime.sendGate(result === 'DENIED' ? 'DENIED' : 'ERROR', { category: result });
         const state = runtime.sandbox.HorusMediaLoader.getTrafficGateState().state;
         runtime.domReady();
         await runtime.sandbox.HorusMediaLoader.boot();
@@ -714,6 +713,41 @@ test('DOM readiness never restarts a failed or timed-out early verification', as
         assert.equal(runtime.metrics.gateFrames, 1, result);
         assertNoMonetization(runtime.metrics);
     }
+});
+
+test('transient pre-DOM failure gets one normal attempt with a new nonce and still requires PASS', async () => {
+    for (const result of ['DEADLINE', 'TIMEOUT', 'TURNSTILE_SCRIPT_ERROR', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE']) {
+        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+        await runtime.flush();
+        const oldNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
+        if (result === 'DEADLINE') await new Promise(resolve => setTimeout(resolve, 60));
+        else runtime.sendGate(result === 'TIMEOUT' ? 'TIMEOUT' : 'ERROR', { category: result });
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 2, result);
+        assert.notEqual(runtime.metrics.hellos.at(-1).payload.pageNonce, oldNonce);
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate('PASS');
+        await boot;
+        assert.equal(runtime.metrics.gamRequests, 1, result);
+    }
+});
+
+test('a failed normal attempt after early failure cannot create an unbounded restart loop', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
+    await runtime.flush();
+    runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    runtime.sendGate('TIMEOUT');
+    await boot;
+    await runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    assert.equal(runtime.metrics.gateFrames, 2);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
+    assertNoMonetization(runtime.metrics);
 });
 
 test('a fresh unchanged snapshot after a parser stall preserves the early deadline and iframe', async () => {

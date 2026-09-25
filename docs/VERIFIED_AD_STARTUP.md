@@ -26,8 +26,12 @@ decision or claiming a measured field improvement.
   is preparation only: parent hostname, site key, gate configuration and deadline
   are checked before rendering any challenge or verifying a token. A rejected
   parent can download the public library but cannot start a challenge or Siteverify.
-- A matching early attempt is adopted at DOM readiness with its original timer,
-  nonce and result. Failure/timeout does not restart just because the DOM is ready.
+- A matching pending/successful early attempt is adopted at DOM readiness with
+  its original timer and nonce. A transient technical failure of early preparation
+  gets one normal DOM-time attempt with the same configured limits and a fresh
+  nonce; this preserves availability when early loading failed or consumed the
+  deadline. Explicit denial/server rejection and unclassified errors do not retry.
+  A failed normal attempt cannot restart on subsequent boot/refresh calls.
   A refreshed or replaced configuration must match the exact captured snapshot,
   script and site key; otherwise the old frame/listener/PASS is retired before a
   new attempt. Failed config refreshes also discard early verification.
@@ -62,9 +66,9 @@ not preload GPT. Protection settings and the Cloudflare plan are unchanged.
   config is deliberately held, server rejection, slow verification, one-time GPT
   execution, request reuse, and zero monetization before prerequisites succeed.
   Browser execution is required in CI before merge.
-- Early verification follow-up: 257 Node tests passed locally, including stale
+- Early verification follow-up: Node results are recorded in the PR, including stale
   PASS/frame rejection, domain revocation, config refresh failure, preserved
-  deadlines and handled parallel library errors. Final CI/deployment results are
+  pending deadlines, one bounded technical fallback and handled parallel library errors. Final CI/deployment results are
   recorded in its PR rather than presented as publisher field measurements.
 - Existing all-engine, forged-message, replay, bounded-timeout, duplicate-start,
   privacy and global-stop tests remain enabled.

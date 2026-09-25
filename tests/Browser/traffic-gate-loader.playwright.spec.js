@@ -169,14 +169,17 @@ function turnstileTechnicalErrorStub() {
     })();`;
 }
 
-for (const { serverPass, requiresConsent, consentBlocked } of [
+for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, repeatLibraryFailure } of [
     { serverPass: true, requiresConsent: false },
     { serverPass: false, requiresConsent: false },
     { serverPass: true, requiresConsent: true },
     { serverPass: false, requiresConsent: true },
     { serverPass: true, requiresConsent: true, consentBlocked: true },
+    { serverPass: true, requiresConsent: true, earlyLibraryFailure: true },
+    { serverPass: false, requiresConsent: true, earlyLibraryFailure: true },
+    { serverPass: true, requiresConsent: true, earlyLibraryFailure: true, repeatLibraryFailure: true },
 ]) {
-    test(`early verification and parallel Turnstile respect late CMP: server=${serverPass}, consent-required=${requiresConsent}, blocked=${Boolean(consentBlocked)}`, async ({ page }) => {
+    test(`early verification and parallel Turnstile respect late CMP: server=${serverPass}, consent-required=${requiresConsent}, blocked=${Boolean(consentBlocked)}, early-error=${Boolean(earlyLibraryFailure)}, repeated-error=${Boolean(repeatLibraryFailure)}`, async ({ page }) => {
         const selected = config();
         selected.privacy.requireConsentBeforeAds = requiresConsent;
         selected.privacy.cmp = { timeoutMs: consentBlocked ? 100 : 10000, actionOnTimeout: requiresConsent ? 'BLOCK_ADS' : 'LIMITED_ADS' };
@@ -189,6 +192,7 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
         const gateConfigReady = new Promise(resolve => { releaseGateConfig = resolve; });
         let gateConfigRequested = false;
         let gateLibraryRequested = false;
+        let gateLibraryLoads = 0;
         const counts = { configs: 0, controls: 0, library: 0, verifies: 0 };
         const unexpected = [];
         await page.route('**/*', async route => {
@@ -225,6 +229,8 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
             }
             if (url.origin === 'https://challenges.cloudflare.com' && url.pathname === '/turnstile/v0/api.js') {
                 gateLibraryRequested = true;
+                gateLibraryLoads++;
+                if (earlyLibraryFailure && (gateLibraryLoads === 1 || repeatLibraryFailure)) return route.abort('blockedbyclient');
                 return route.fulfill({ contentType: 'application/javascript', body: 'window.turnstile = { render(node, options) { queueMicrotask(() => options.callback("synthetic-token")); return "widget"; }, remove() {} };' });
             }
             if (url.origin === 'https://siteverify.horusmedia.net' && url.pathname === '/verify') {
@@ -253,9 +259,11 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
         // Both the parent parser and gate config are blocked. The library has
         // already downloaded, but no challenge can produce a verification call.
         releaseGateConfig();
-        await expect.poll(() => counts.verifies).toBe(1);
-        releaseVerification();
-        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass ? 'PASSED' : 'ERROR');
+        if (!earlyLibraryFailure) {
+            await expect.poll(() => counts.verifies).toBe(1);
+            releaseVerification();
+        }
+        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass && !earlyLibraryFailure ? 'PASSED' : 'ERROR');
         expect(await page.evaluate(() => document.readyState)).toBe('loading');
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
         expect(await page.evaluate(() => window.HorusMediaLoader.getConfig())).toBeNull();
@@ -263,6 +271,12 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
         await expect.poll(() => page.evaluate(() => document.readyState)).not.toBe('loading');
         await expect.poll(() => page.evaluate(() => typeof window.releaseConsent)).toBe('function');
         expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        if (earlyLibraryFailure && !repeatLibraryFailure) {
+            await expect.poll(() => counts.verifies).toBe(1);
+            expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+            releaseVerification();
+            await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(serverPass ? 'PASSED' : 'ERROR');
+        }
         if (requiresConsent && !consentBlocked) {
             await page.evaluate(() => window.releaseConsent());
             await expect.poll(() => counts.library).toBe(1);
@@ -273,7 +287,7 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
             await page.evaluate(() => window.releaseConsent());
         }
         await page.evaluate(() => window.initialBootForTest);
-        if (serverPass && !consentBlocked) {
+        if (serverPass && !consentBlocked && !repeatLibraryFailure) {
             await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines.gptLoads)).toBe(1);
         } else {
@@ -283,6 +297,13 @@ for (const { serverPass, requiresConsent, consentBlocked } of [
         expect(counts.library).toBe(consentBlocked ? 0 : 1); // Successful boot reuses the preload.
         expect(counts.configs).toBe(1);
         expect(counts.controls).toBe(1);
+        expect(counts.verifies).toBe(repeatLibraryFailure ? 0 : 1);
+        expect(gateLibraryLoads).toBe(earlyLibraryFailure ? 2 : 1);
+        if (repeatLibraryFailure) {
+            await page.evaluate(() => window.HorusMediaLoader.boot());
+            expect(gateLibraryLoads).toBe(2);
+            expect(await page.evaluate(() => window.__task52Engines || null)).toBeNull();
+        }
         expect(unexpected).toEqual([]);
     });
 }

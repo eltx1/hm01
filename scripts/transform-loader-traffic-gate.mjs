@@ -111,10 +111,13 @@ const trafficGateRuntime = String.raw`
         state.earlyTrafficGatePreparation = null;
         if (!preparation || preparation.runtime !== state.trafficGate) return;
         if (config && preparation.script === script && preparation.siteKey === siteKey
-            && preparation.snapshot === JSON.stringify(config)) return;
+            && preparation.snapshot === JSON.stringify(config)
+            && !preparation.runtime.retryAtDomReady) return;
 
         // Retire a stale attempt, including a completed PASS. Old frame messages
         // lose their listener/source/nonce binding before any new attempt starts.
+        // A transient early failure gets the normal DOM-time attempt once. The
+        // preparation owner is cleared above, so repeated boots cannot loop.
         trafficGateSetState(TRAFFIC_GATE_STATES.unavailable, 'PREPARATION_DISCARDED');
         trafficGateCleanup();
         settleTrafficGateDecision();
@@ -183,6 +186,7 @@ const trafficGateRuntime = String.raw`
             maxTimer: null,
             decisionPromise: null,
             decisionResolve: null,
+            retryAtDomReady: false,
             resume: null
         };
     }
@@ -355,10 +359,11 @@ const trafficGateRuntime = String.raw`
         settleTrafficGateDecision();
     }
 
-    function trafficGateTechnicalFailure(stateName, reason) {
+    function trafficGateTechnicalFailure(stateName, reason, retryAtDomReady) {
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
         trafficGateSetState(stateName, reason);
+        gate.retryAtDomReady = retryAtDomReady === true;
         trafficGateCleanup();
         settleTrafficGateDecision();
     }
@@ -373,7 +378,7 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         gate.maxTimer = null;
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
-        trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT');
+        trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT', true);
     }
 
     function generateTrafficGateNonce() {
@@ -409,11 +414,16 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_ERROR') {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR');
+            // Explicit verification rejection, invalid configuration and unknown
+            // errors are not transient preparation failures. Never retry them
+            // simply because the parent DOM became ready.
+            var transient = ['STATIC_CONFIG_UNAVAILABLE', 'TURNSTILE_SCRIPT_ERROR',
+                'TURNSTILE_ERROR', 'VERIFICATION_UNAVAILABLE'].indexOf(message.category) !== -1;
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR', transient);
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_TIMEOUT') {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'TURNSTILE_TIMEOUT');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'TURNSTILE_TIMEOUT', true);
         }
     }
 
@@ -472,7 +482,7 @@ const trafficGateRuntime = String.raw`
                 iframe.style.setProperty('pointer-events', 'none');
             }
         } catch (error) {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED', true);
             return decision;
         }
 
@@ -490,11 +500,11 @@ const trafficGateRuntime = String.raw`
                     sitePublicKey: settings.siteKey
                 }, settings.origin);
             } catch (error) {
-                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'HANDSHAKE_FAILED');
+                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'HANDSHAKE_FAILED', true);
             }
         };
         iframe.onerror = function () {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
         };
 
         trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
@@ -505,7 +515,7 @@ const trafficGateRuntime = String.raw`
             if (!parent || !parent.appendChild) throw new Error('No frame parent');
             parent.appendChild(iframe);
         } catch (error) {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED');
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED', true);
         }
         return decision;
     }
