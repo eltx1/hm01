@@ -12,13 +12,13 @@ final class AdminWebsitePerformanceService
     public function summaries(Collection $sites, string $from, string $to): Collection
     {
         return $this->rows($sites->pluck('id')->all(), $from, $to)
-            ->groupBy(fn ($row) => $row->dimension->site_id)
+            ->groupBy('site_id')
             ->map(fn ($rows) => $this->totals($rows));
     }
 
     public function summary(Site $site, string $from, string $to): array
     {
-        $rows = $this->rows([$site->id], $from, $to);
+        $rows = $this->rows([$site->id], $from, $to, daily: true);
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $this->currency(),
@@ -34,14 +34,31 @@ final class AdminWebsitePerformanceService
         return strtoupper((string) config('reporting.canonical_currency', 'USD'));
     }
 
-    private function rows(array $siteIds, string $from, string $to): Collection
+    private function rows(array $siteIds, string $from, string $to, bool $daily = false): Collection
     {
-        // Same finalized, canonical-currency basis as the admin reporting overview.
-        return DailyReport::query()->where('finality', ReportFinality::Finalized->value)
-            ->where('currency', $this->currency())
-            ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
-            ->whereHas('dimension', fn ($query) => $query->whereIn('site_id', $siteIds))
-            ->with('dimension')->get();
+        // Aggregate before hydration: one row per site (directory) or day (detail).
+        // Keep the DailyReport organization scope and canonical/finalized basis.
+        $query = DailyReport::query()
+            ->join('report_dimensions', 'report_dimensions.id', '=', 'daily_reports.report_dimension_id')
+            ->where('daily_reports.finality', ReportFinality::Finalized->value)
+            ->where('daily_reports.currency', $this->currency())
+            ->whereBetween('daily_reports.report_date', [$from, $to])
+            ->whereIn('report_dimensions.site_id', $siteIds)
+            ->select('report_dimensions.site_id')
+            ->selectRaw('MAX(daily_reports.updated_at) as updated_at')
+            ->groupBy('report_dimensions.site_id');
+        if ($daily) {
+            $query->addSelect('daily_reports.report_date')->groupBy('daily_reports.report_date');
+        }
+        foreach (['impressions', 'clicks', 'gross_revenue_minor', 'publisher_earnings_minor', 'horus_earnings_minor'] as $field) {
+            $query->selectRaw("SUM(daily_reports.{$field}) as {$field}");
+        }
+        foreach (PerformanceMetrics::COUNTERS as $field) {
+            // A partial counter must stay unavailable, not silently sum known rows.
+            $query->selectRaw("CASE WHEN COUNT(daily_reports.{$field}) = COUNT(*) THEN SUM(daily_reports.{$field}) ELSE NULL END as {$field}");
+        }
+
+        return $query->get();
     }
 
     private function totals(Collection $rows): array

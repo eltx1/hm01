@@ -7,32 +7,62 @@ import '../css/interface-density.css';
 import '../css/dashboard-theme.css';
 import '../css/reporting-experience.css';
 import '../css/form-experience.css';
+import '../css/workspace-navigation.css';
 
 const navigation = document.querySelector('#control-navigation');
 const navigationToggle = document.querySelector('[data-nav-toggle]');
-const navigationScrim = document.querySelector('[data-nav-close]');
+const navigationScrim = document.querySelector('.sidebar-scrim');
+const mobileNavigation = window.matchMedia('(max-width: 1100px)');
+const navigationBackground = [...document.querySelectorAll('#main-content, .hm-whatsapp-contact')];
 let returnFocusToNavigationToggle = false;
 
-const setNavigation = (open, { restoreFocus = false } = {}) => {
-    if (!navigation || !navigationToggle || !navigationScrim) return;
+const fitNavigation = () => {
+    const viewport = window.visualViewport;
+    // Browser chrome and the software keyboard can reduce the visible viewport.
+    // Keep normal browser zoom available instead of resizing around a pinch gesture.
+    if (viewport && viewport.scale === 1) {
+        navigation?.style.setProperty('--navigation-height', `${viewport.height}px`);
+        navigation?.style.setProperty('--navigation-top', `${viewport.offsetTop}px`);
+    } else {
+        navigation?.style.removeProperty('--navigation-height');
+        navigation?.style.removeProperty('--navigation-top');
+    }
+};
 
+const setNavigation = (requested, { restoreFocus = false } = {}) => {
+    if (!navigation || !navigationToggle || !navigationScrim) return;
+    const mobile = mobileNavigation.matches;
+    const open = requested && mobile;
     navigation.classList.toggle('is-open', open);
     navigationScrim.classList.toggle('is-open', open);
     navigationToggle.setAttribute('aria-expanded', String(open));
+    navigation.inert = mobile && !open;
+    navigation.toggleAttribute('aria-hidden', mobile && !open);
+    if (mobile && !open) navigation.setAttribute('aria-hidden', 'true');
+    navigationBackground.forEach(element => { element.inert = open; });
     document.body.classList.toggle('navigation-open', open);
+    document.documentElement.classList.toggle('navigation-open', open);
+    fitNavigation();
 
     if (open) {
         returnFocusToNavigationToggle = true;
-        window.requestAnimationFrame(() => navigation.querySelector('[data-nav-filter], a, button, summary')?.focus());
-    } else if (restoreFocus && returnFocusToNavigationToggle) {
+        // Focusing search would immediately open the mobile keyboard.
+        navigation.querySelector('.sidebar-close')?.focus({ preventScroll: true });
+    } else if (restoreFocus && returnFocusToNavigationToggle && mobile) {
         returnFocusToNavigationToggle = false;
-        navigationToggle.focus();
+        navigationToggle.focus({ preventScroll: true });
     }
 };
 
 navigationToggle?.addEventListener('click', () => setNavigation(!navigation?.classList.contains('is-open')));
-navigationScrim?.addEventListener('click', () => setNavigation(false, { restoreFocus: true }));
-navigation?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setNavigation(false)));
+document.querySelectorAll('[data-nav-close]').forEach(button => button.addEventListener('click', () => setNavigation(false, { restoreFocus: true })));
+navigation?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setNavigation(false)));
+mobileNavigation.addEventListener('change', () => setNavigation(false));
+window.visualViewport?.addEventListener('resize', fitNavigation);
+window.visualViewport?.addEventListener('scroll', fitNavigation);
+window.addEventListener('resize', fitNavigation);
+window.addEventListener('pageshow', () => setNavigation(false));
+setNavigation(false);
 
 const navigationFilter = document.querySelector('[data-nav-filter]');
 const navigationEmpty = document.querySelector('[data-nav-empty]');
@@ -60,6 +90,17 @@ navigationFilter?.addEventListener('input', () => {
 });
 
 document.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab' && navigation?.classList.contains('is-open')) {
+        const focusable = [...navigation.querySelectorAll('a, button, input, summary, [tabindex="0"]')]
+            .filter(element => !element.disabled && element.getClientRects().length > 0);
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first?.focus();
+        }
+    }
     if (event.key === 'Escape' && navigation?.classList.contains('is-open')) {
         setNavigation(false, { restoreFocus: true });
     }

@@ -288,3 +288,65 @@ test('payment form remains usable without JavaScript', async ({ browser }) => {
     await expect(page.getByLabel('Country or territory')).toBeVisible();
     await context.close();
 });
+
+for (const name of ['reports-admin', 'reports-publisher', 'payment-viewer']) {
+    test(`${name}: mobile drawer keeps account and logout reachable with long navigation and short viewports`, async ({ page }, info) => {
+        await page.setViewportSize({ width: 390, height: 660 });
+        await open(page, name);
+        const drawer = page.locator('#control-navigation');
+        const toggle = page.locator('[data-nav-toggle]');
+        const close = drawer.getByRole('button', { name: 'Close navigation' });
+        const account = drawer.getByRole('link', { name: 'My account', exact: true });
+        const logout = drawer.getByRole('button', { name: 'Sign out', exact: true });
+        await expect(drawer).toHaveAttribute('inert', '');
+        await expect(account).toHaveAttribute('href', /\/account$/);
+        for (const theme of ['dark', 'light']) {
+            for (const viewport of [{ width: 390, height: 660 }, { width: 320, height: 480 }, { width: 844, height: 320 }]) {
+                await page.setViewportSize(viewport);
+                await toggle.click();
+                await expect(close).toBeFocused();
+                await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+                // Long admin menus must scroll independently without moving account actions.
+                await drawer.locator('details').evaluateAll(groups => groups.forEach(group => { group.open = true; }));
+                await drawer.locator('.sidebar-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
+                for (const control of [account, logout, close]) {
+                    await expect(control).toBeVisible();
+                    const box = await control.boundingBox();
+                    expect(box.y).toBeGreaterThanOrEqual(0);
+                    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+                    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+                    expect(box.height).toBeGreaterThanOrEqual(44);
+                }
+                await logout.focus();
+                await page.keyboard.press('Tab');
+                await expect(drawer.locator('a').first()).toBeFocused();
+                await page.keyboard.press('Shift+Tab');
+                await expect(logout).toBeFocused();
+                await page.screenshot({ path: info.outputPath(`navigation-${name}-${theme}-${viewport.width}.png`) });
+                await close.click();
+                await expect(toggle).toBeFocused();
+                await expect(drawer).toHaveAttribute('inert', '');
+                await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
+            }
+            await page.setViewportSize({ width: 390, height: 660 });
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+        await toggle.click();
+        await page.keyboard.press('Escape');
+        await expect(toggle).toBeFocused();
+        await toggle.click();
+        await page.locator('.sidebar-scrim').click({ position: { x: 380, y: 20 } });
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await toggle.click();
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await expect(drawer).not.toHaveAttribute('inert', '');
+        await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
+        await expect(page.locator('body')).not.toHaveClass(/navigation-open/);
+        // Verify the real logout form still sends a CSRF-protected POST.
+        const request = page.waitForRequest(req => new URL(req.url()).pathname === '/logout');
+        await logout.click();
+        const submitted = await request;
+        expect(submitted.method()).toBe('POST');
+        expect(new URLSearchParams(submitted.postData()).get('_token')).toBeTruthy();
+    });
+}

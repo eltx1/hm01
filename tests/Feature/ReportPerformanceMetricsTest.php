@@ -334,6 +334,31 @@ class ReportPerformanceMetricsTest extends TestCase
         $this->get(route('admin.reporting.websites.show', \App\Models\Site::firstOrFail()))->assertForbidden();
     }
 
+    public function test_admin_website_aggregation_preserves_weighted_metrics_and_unknown_counters(): void
+    {
+        $context = [$admin, $user, $publisher, $site] = $this->context();
+        foreach ([['2026-09-19', 100, 9, 10], ['2026-09-20', 900, 90, 900]] as [$date, $impressions, $viewable, $measurable]) {
+            $this->import($context, ['impressions' => $impressions, 'clicks' => 5, 'gross_revenue_minor' => 10000,
+                'active_view_viewable_impressions' => $viewable, 'active_view_measurable_impressions' => $measurable,
+                'unfilled_impressions' => 10], $date);
+        }
+        $this->actingAs($admin);
+        $service = app(\App\Services\Reporting\AdminWebsitePerformanceService::class);
+        $summary = $service->summary($site, '2026-09-01', '2026-09-21');
+        $this->assertSame(1088, $summary['viewability_bp']);
+        $this->assertSame(100, $summary['ctr_bp']);
+        $this->assertSame(20000, $summary['ecpm_minor']);
+        $this->assertCount(2, $summary['days']);
+        $this->assertSame(20, $summary['unfilled_impressions']);
+        $this->assertSame(1088, $service->summaries(collect([$site]), '2026-09-01', '2026-09-21')[$site->id]['viewability_bp']);
+        DailyReport::query()->whereDate('report_date', '2026-09-19')->update(['unfilled_impressions' => null]);
+        $summary = $service->summary($site, '2026-09-01', '2026-09-21');
+        $this->assertNull($summary['unfilled_impressions']);
+        $this->assertNull($summary['days'][0]['unfilled_impressions']);
+        $this->assertSame(10, $summary['days'][1]['unfilled_impressions']);
+        $this->assertNull($service->summaries(collect([$site]), '2026-09-01', '2026-09-21')[$site->id]['unfilled_impressions']);
+    }
+
     private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void
     {
         if (getenv('HORUS_UI_FIXTURES') !== '1') {

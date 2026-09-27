@@ -1,0 +1,26 @@
+/* Shared by every authenticated workspace. Only links scroll; account actions
+   stay inside the visible viewport, including mobile browser chrome. */
+.sidebar {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+}
+.sidebar-header { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; }
+.sidebar-header .sidebar-brand { flex: 1; min-width: 0; }
+.sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding: .2rem .2rem .8rem; scrollbar-width: thin; }
+.sidebar-account { flex: 0 0 auto; margin-top: 0; padding: .65rem .2rem 0; }
+.sidebar-account > span, .sidebar-account > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-account-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; margin-top: .4rem; }
+.sidebar-account-actions form { margin: 0; }
+.sidebar-account-actions :is(a, button) { width: 100%; min-height: 44px; padding: .4rem; border: 1px solid var(--hm-line); border-radius: .6rem; font: inherit; font-weight: 650; background: var(--hm-glass); color: var(--hm-white); text-align: center; }
+.sidebar-account-actions :is(a, button):hover { border-color: var(--hm-line-gold); }
+.sidebar-close { display: none; }
+@media (max-width: 1100px) {
+    html.navigation-open, body.navigation-open { overflow: hidden; }
+    .sidebar { height: var(--navigation-height, 100dvh); top: var(--navigation-top, 0px); bottom: auto; padding: max(.75rem, env(safe-area-inset-top)) .75rem max(.75rem, env(safe-area-inset-bottom)); visibility: hidden; }
+    .sidebar.is-open { visibility: visible; }
+    .sidebar-close { display: inline-grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 1px solid var(--hm-line); border-radius: .65rem; background: var(--hm-glass); color: var(--hm-white); font-size: 1.6rem; }
+    .sidebar .navigation-links a, .sidebar .navigation-label { min-height: 44px; display: flex; align-items: center; }
+    .sidebar .navigation-finder input { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
