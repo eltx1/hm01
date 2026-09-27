@@ -50,7 +50,7 @@ const setNavigation = (requested, { restoreFocus = false } = {}) => {
         navigation.querySelector('.sidebar-close')?.focus({ preventScroll: true });
     } else if (restoreFocus && returnFocusToNavigationToggle && mobile) {
         returnFocusToNavigationToggle = false;
-        navigationToggle.focus({ preventScroll: true });
+        navigationToggle.focus();
     }
 };
 
