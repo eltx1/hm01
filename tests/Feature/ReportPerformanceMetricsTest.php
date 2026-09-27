@@ -145,9 +145,12 @@ class ReportPerformanceMetricsTest extends TestCase
                 ->assertSee('Unfilled impressions')->assertSee('Customize columns')->assertDontSee('PRIVATE OTHER PUBLISHER')
                 ->assertDontSee('Gross revenue')->assertDontSee('Horus margin')->assertDontSee('gross_revenue_minor');
             if ($route === 'publisher.reporting.index') {
-                $response->assertSee('Your revenue share is already applied.')->assertDontSee('Paid to date')
+                $response->assertDontSee('Your revenue share is already applied.')->assertDontSee('About these numbers')->assertDontSee('Paid to date')
                     ->assertDontSee('Live estimate')->assertDontSee('USD 100.00');
                 $this->fixture('reports-publisher', $response);
+                $selected = $this->get(route($route, ['customize' => 1, 'metrics' => ['clicks', 'viewability_bp']]))
+                    ->assertOk()->assertSee('60.00%')->assertDontSee('Gross revenue')->assertDontSee('PRIVATE OTHER PUBLISHER');
+                $this->fixture('reports-publisher-selected', $selected);
             }
             $csv = $this->get(route($route, ['export' => 'csv', 'metrics' => ['clicks', 'ecpm_minor', 'viewability_bp']]))->assertOk()->streamedContent();
             $this->assertStringContainsString('Publisher earnings', $csv);
@@ -189,7 +192,7 @@ class ReportPerformanceMetricsTest extends TestCase
         $this->assertSame(7000, $summary['ecpm_minor']);
         $this->assertTrue($summary['has_estimates']);
         $response = $this->get(route('publisher.reporting.index'))->assertOk()
-            ->assertSee('Includes estimates')->assertSee('Incomplete source data')->assertSee('Unavailable')
+            ->assertSee('Includes estimates')->assertSee('Unavailable')->assertDontSee('Incomplete source data')
             ->assertSee('USD 70.00')->assertSee('USD 35.00')->assertDontSee('USD 150.00')
             ->assertDontSee('Gross revenue')->assertDontSee('Horus margin');
         $this->fixture('reports-publisher-mixed', $response);
@@ -204,8 +207,8 @@ class ReportPerformanceMetricsTest extends TestCase
             'active_view_viewable_impressions' => 0, 'active_view_measurable_impressions' => 0,
             'unfilled_impressions' => 0], '2026-09-21', ReportFinality::Estimated);
         $response = $this->get(route('publisher.reporting.index', ['from' => '2026-09-21', 'to' => '2026-09-21']))
-            ->assertOk()->assertSee('Includes estimates')->assertSee('No impressions in this period')
-            ->assertSee('No measurable impressions')->assertDontSee('Incomplete source data');
+            ->assertOk()->assertSee('Includes estimates')->assertSee('Unavailable')
+            ->assertDontSee('Incomplete source data');
         $this->fixture('reports-publisher-zero', $response);
     }
 

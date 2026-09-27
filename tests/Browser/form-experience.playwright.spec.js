@@ -46,6 +46,8 @@ for (const name of ['reports-publisher', 'reports-admin']) {
             await expect(page.locator('.report-column-picker')).not.toHaveAttribute('open', '');
             await expect(page.getByText('Gross revenue', { exact: false })).toHaveCount(0);
             await expect(page.getByText('Paid to date', { exact: false })).toHaveCount(0);
+            await expect(page.getByText('Your revenue share is already applied.', { exact: true })).toHaveCount(0);
+            await expect(page.getByText('About these numbers', { exact: true })).toHaveCount(0);
             const hero = await page.locator('.publisher-earnings-value').boundingBox();
             expect(hero.y + hero.height).toBeLessThan(page.viewportSize().height);
         }
@@ -54,6 +56,21 @@ for (const name of ['reports-publisher', 'reports-admin']) {
         }
         for (const theme of ['dark', 'light']) {
             await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
+            if (publisher) {
+                for (const caption of ['Daily publisher performance', 'Publisher website performance']) {
+                    const region = page.getByRole('region', { name: caption, exact: true });
+                    if (page.viewportSize().width <= 600) {
+                        const row = region.locator('.publisher-report-mobile-row').first();
+                        await expect(row.locator('dt')).toHaveText(['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', 'Unfilled impressions']);
+                        await expect(row.locator('dd')).toHaveText(['1,000', '20', '2.00%', '70.00 USD', '60.00%', '25']);
+                        // Selected metrics must be readable immediately, without expanding a row.
+                        for (const value of await row.locator('dt, dd').all()) await expect(value).toBeVisible();
+                        await expect(row.locator('.publisher-row-earnings')).toContainText('70.00 USD');
+                    } else {
+                        await expect(region.locator('tbody tr').first().locator('td')).toHaveText(['1,000', '20', '2.00%', '70.00', '60.00%', '25', '70.00']);
+                    }
+                }
+            }
             await page.screenshot({ path: info.outputPath(`${name}-${theme}.png`), fullPage: true });
             const overflow = await page.evaluate(() => ({
                 width: document.documentElement.scrollWidth, viewport: innerWidth,
@@ -65,14 +82,9 @@ for (const name of ['reports-publisher', 'reports-admin']) {
             if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
         }
         if (publisher) {
-            await page.getByText('How this total is calculated', { exact: true }).click();
+            await page.getByText('Earnings breakdown', { exact: true }).click();
             await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 70.00');
             await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 0.00');
-            if (page.viewportSize().width <= 600) {
-                await daily.locator('summary').first().click();
-                await expect(daily.getByText('Active View', { exact: true })).toBeVisible();
-                await expect(daily.getByText('60.00%', { exact: true })).toBeVisible();
-            }
         }
         await page.getByText('Customize columns', { exact: false }).click();
         await page.getByLabel('Clicks', { exact: true }).uncheck();
@@ -93,19 +105,36 @@ for (const name of ['reports-publisher', 'reports-admin']) {
     });
 }
 
+test('publisher daily and website rows show exactly the selected metrics without interaction', async ({ page }) => {
+    await open(page, 'reports-publisher-selected');
+    for (const caption of ['Daily publisher performance', 'Publisher website performance']) {
+        const region = page.getByRole('region', { name: caption, exact: true });
+        if (page.viewportSize().width <= 600) {
+            const row = region.locator('.publisher-report-mobile-row').first();
+            await expect(row.locator('dt')).toHaveText(['Clicks', 'Active View']);
+            await expect(row.locator('dd')).toHaveText(['20', '60.00%']);
+            for (const value of await row.locator('dt, dd').all()) await expect(value).toBeVisible();
+            await expect(row.locator('.publisher-row-earnings')).toContainText('70.00 USD');
+        } else {
+            await expect(region.locator('thead th')).toHaveText([caption.startsWith('Daily') ? 'Date' : 'Website', 'Clicks', 'Active View', 'Your earnings (USD)']);
+            await expect(region.locator('tbody tr').first().locator('td')).toHaveText(['20', '60.00%', '70.00']);
+        }
+    }
+});
+
 test('publisher report explains mixed and missing data without showing gross revenue', async ({ page }, info) => {
     await open(page, 'reports-publisher-mixed');
     await expect(page.locator('.publisher-earnings-value')).toContainText('105.00');
     await expect(page.locator('.publisher-earnings-topline')).toContainText('Includes estimates');
     await expect(page.locator('.publisher-ad-metric--unavailable')).toHaveCount(2);
-    await expect(page.locator('.publisher-ad-metric--unavailable').first()).toContainText('Incomplete source data');
+    await expect(page.locator('.publisher-ad-metric--unavailable').first()).toContainText('Unavailable');
     await expect(page.getByText('Gross revenue', { exact: false })).toHaveCount(0);
     for (const theme of ['dark', 'light']) {
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
         if (page.viewportSize().width <= 600) await page.screenshot({ path: info.outputPath(`reports-publisher-mixed-${theme}.png`), fullPage: true });
         if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
     }
-    await page.getByText('How this total is calculated', { exact: true }).click();
+    await page.getByText('Earnings breakdown', { exact: true }).click();
     await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 70.00');
     await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 35.00');
 });
@@ -120,7 +149,7 @@ test('publisher report handles empty and zero data with working dates and column
             await expect(page.locator('.publisher-earnings-value')).toContainText('0.00');
             await expect(page.locator('.publisher-earnings-topline')).toContainText('Includes estimates');
             await expect(page.locator('.publisher-ad-metric--unavailable')).toHaveCount(3);
-            await expect(page.getByText('No measurable impressions', { exact: true })).toBeVisible();
+            await expect(page.locator('.publisher-ad-metric--unavailable').first()).toContainText('Unavailable');
         }
         await page.getByText('Change dates', { exact: true }).click();
         await page.getByLabel('From', { exact: true }).fill('2026-09-15');

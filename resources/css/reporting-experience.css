@@ -125,14 +125,11 @@
 .publisher-earnings-topline .report-state { font-size: .68rem; }
 .publisher-earnings .publisher-earnings-value { font-size: clamp(2.2rem, 4vw, 3rem); color: var(--hm-gold-highlight); font-weight: 750; letter-spacing: -.045em; margin: 1rem 0 .45rem; font-variant-numeric: tabular-nums; line-height: 1.1; overflow-wrap: anywhere; }
 .publisher-earnings-value > span { font-size: .82rem; color: var(--hm-muted); letter-spacing: .03em; font-weight: 550; }
-.publisher-earnings-note { font-size: .76rem; margin: 0; color: var(--hm-muted); }
 .publisher-earnings-breakdown { border-top: 1px solid var(--hm-line-gold); margin-top: 1.15rem; }
 .publisher-earnings-breakdown summary { cursor: pointer; padding-top: .85rem; color: var(--hm-muted); font-size: .75rem; }
 .publisher-earnings-breakdown dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: .7rem; margin: 1rem 0 .65rem; font-size: .78rem; }
 .publisher-earnings-breakdown dl > div { display: flex; align-items: start; justify-content: space-between; gap: .5rem; }
 .publisher-earnings-breakdown dd { font-weight: 650; white-space: nowrap; }
-.publisher-earnings-breakdown small { display: block; margin-top: .2rem; font-size: .68rem; }
-.publisher-earnings-breakdown p { margin: 0; font-size: .72rem; line-height: 1.6; }
 .publisher-ad-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--hm-line); border-radius: .9rem; background: var(--hm-glass); overflow: hidden; }
 .publisher-ad-metrics .publisher-ad-metric { display: flex; flex-direction: column; gap: .55rem; border: 0; border-radius: 0; padding: 1.05rem; background: transparent; }
 .publisher-ad-metric:nth-child(-n+3) { border-bottom: 1px solid var(--hm-line); }
@@ -152,9 +149,8 @@
 .publisher-report-tools .report-column-picker input { flex-shrink: 0; }
 .publisher-report-tools button { min-height: 2.6rem; font-size: .75rem; }
 .publisher-report-mobile-rows, .report-chart svg.report-chart-mobile { display: none; }
-.publisher-report-about { color: var(--hm-muted); font-size: .75rem; line-height: 1.65; }
-.publisher-report-about summary, .publisher-finance-performance > summary { cursor: pointer; padding: .6rem 0; }
-.publisher-report-about p { margin: .6rem 0 0; max-width: 85ch; }
+.publisher-report-updated { color: var(--hm-muted); font-size: .75rem; line-height: 1.65; }
+.publisher-finance-performance > summary { cursor: pointer; padding: .6rem 0; }
 .publisher-finance-performance > .publisher-reports { margin-top: 1rem; }
 @media (max-width: 1100px) {
     .publisher-report-overview { grid-template-columns: minmax(0, 1fr); }
@@ -177,9 +173,9 @@
     .report-performance-table--responsive { display: none; }
     .publisher-report-mobile-rows { display: block; margin-top: .8rem; }
     .publisher-report-mobile-row { border-top: 1px solid var(--hm-line); }
-    .publisher-report-mobile-row > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; cursor: pointer; padding: .85rem 0; }
-    .publisher-report-mobile-row summary > span { display: grid; gap: .3rem; font-size: .8rem; min-width: 0; overflow-wrap: anywhere; }
-    .publisher-report-mobile-row summary small { font-size: .65rem; color: var(--hm-muted); }
+    .publisher-report-mobile-row-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; padding: .85rem 0; }
+    .publisher-report-mobile-row-heading > span { display: grid; gap: .3rem; font-size: .8rem; min-width: 0; overflow-wrap: anywhere; }
+    .publisher-report-mobile-row-heading small { font-size: .65rem; color: var(--hm-muted); }
     .publisher-report-mobile-row .publisher-row-earnings { text-align: end; }
     .publisher-row-earnings > strong { font-size: 1rem; color: var(--hm-gold-highlight); white-space: nowrap; }
     .publisher-report-mobile-row dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; padding: .1rem 0 1rem; margin: 0; }
