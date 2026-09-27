@@ -39,8 +39,14 @@ for (const name of ['reports-publisher', 'reports-admin']) {
         await expect(page.getByRole('button', { name: 'Download CSV' })).toBeVisible();
         for (const theme of ['dark', 'light']) {
             await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
-            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
             await page.screenshot({ path: info.outputPath(`${name}-${theme}.png`), fullPage: true });
+            const overflow = await page.evaluate(() => ({
+                width: document.documentElement.scrollWidth, viewport: innerWidth,
+                containers: [...document.querySelectorAll('.reports-page, .reports-page > *, .report-performance-table')]
+                    .map(el => ({ tag: el.tagName, class: el.className, right: el.getBoundingClientRect().right }))
+                    .filter(el => el.right > innerWidth + 1),
+            }));
+            expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
             if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
         }
         expect(errors).toEqual([]);

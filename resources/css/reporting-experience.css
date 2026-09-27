@@ -41,7 +41,8 @@
 }
 
 /* Reporting is a composed workspace: quiet controls, strong totals, generous chart. */
-.reports-page { display: grid; gap: 1.25rem; }
+.reports-page { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 1.25rem; }
+.reports-page > * { min-width: 0; }
 .reports-page > .workspace-section, .reports-page > .report-period { margin: 0; }
 .report-page-heading, .report-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .report-page-heading h2 { font-size: clamp(1.35rem, 2vw, 1.85rem); letter-spacing: -.035em; margin: .3rem 0; }
