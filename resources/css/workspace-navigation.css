@@ -15,6 +15,7 @@
 .sidebar-account-actions :is(a, button) { width: 100%; min-height: 44px; padding: .4rem; border: 1px solid var(--hm-line); border-radius: .6rem; font: inherit; font-weight: 650; background: var(--hm-glass); color: var(--hm-white); text-align: center; }
 .sidebar-account-actions :is(a, button):hover { border-color: var(--hm-line-gold); }
 .sidebar-close { display: none; }
+.sidebar [hidden] { display: none !important; }
 @media (max-width: 1100px) {
     html.navigation-open, body.navigation-open { overflow: hidden; }
     main { padding-inline: max(.75rem, env(safe-area-inset-left)) max(.75rem, env(safe-area-inset-right)); }

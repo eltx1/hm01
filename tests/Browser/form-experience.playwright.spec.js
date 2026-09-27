@@ -332,6 +332,15 @@ for (const name of ['reports-admin', 'reports-publisher', 'payment-viewer']) {
             if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
         }
         await toggle.click();
+        const finder = drawer.locator('[data-nav-filter]');
+        await finder.fill('zzzx-no-page');
+        await expect(drawer.locator('[data-nav-empty]')).toBeVisible();
+        await expect(drawer.locator('.navigation-links a:visible')).toHaveCount(0);
+        await expect(account).toBeVisible();
+        await finder.fill('Dashboard');
+        await expect(drawer.locator('.navigation-links a:visible')).toHaveText(['Dashboard']);
+        await finder.fill('');
+        await expect(drawer.locator('[data-nav-empty]')).toBeHidden();
         await page.keyboard.press('Escape');
         await expect(toggle).toBeFocused();
         await toggle.click();
