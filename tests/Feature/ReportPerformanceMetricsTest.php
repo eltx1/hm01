@@ -142,8 +142,11 @@ class ReportPerformanceMetricsTest extends TestCase
         $this->actingAs($user);
         foreach (['publisher.reporting.index', 'publisher.finance.overview'] as $route) {
             $response = $this->get(route($route))->assertOk()->assertSee('Active View')->assertSee('60.00%')
-                ->assertSee('Unfilled impressions')->assertSee('Customize columns')->assertDontSee('PRIVATE OTHER PUBLISHER');
+                ->assertSee('Unfilled impressions')->assertSee('Customize columns')->assertDontSee('PRIVATE OTHER PUBLISHER')
+                ->assertDontSee('Gross revenue')->assertDontSee('Horus margin')->assertDontSee('gross_revenue_minor');
             if ($route === 'publisher.reporting.index') {
+                $response->assertSee('Your revenue share is already applied.')->assertDontSee('Paid to date')
+                    ->assertDontSee('Live estimate')->assertDontSee('USD 100.00');
                 $this->fixture('reports-publisher', $response);
             }
             $csv = $this->get(route($route, ['export' => 'csv', 'metrics' => ['clicks', 'ecpm_minor', 'viewability_bp']]))->assertOk()->streamedContent();
@@ -151,6 +154,7 @@ class ReportPerformanceMetricsTest extends TestCase
             $this->assertStringContainsString('70.00', $csv);
             $this->assertStringContainsString('60.00%', $csv);
             $this->assertStringNotContainsString('Gross revenue', $csv);
+            $this->assertStringNotContainsString('Horus margin', $csv);
             $this->assertStringNotContainsString('999999', $csv);
             $this->assertStringNotContainsString('Unfilled impressions', $csv);
             $this->get(route($route, ['metrics' => ['gross_revenue_minor']]))->assertSessionHasErrors('metrics.0');
@@ -163,6 +167,71 @@ class ReportPerformanceMetricsTest extends TestCase
         $csv = $this->get(route('admin.reporting.index', ['export' => 'csv']))->assertOk()->streamedContent();
         $this->assertStringContainsString('Gross revenue', $csv);
         $this->assertStringNotContainsString('Publisher earnings', $csv);
+    }
+
+    public function test_publisher_report_explains_estimates_missing_and_zero_metrics_without_leaking_gross(): void
+    {
+        $context = [$admin, $user, $publisher] = $this->context();
+        $this->actingAs($user);
+        $response = $this->get(route('publisher.reporting.index'))->assertOk()
+            ->assertSee('No reports for these dates yet')->assertDontSee('Gross revenue');
+        $this->fixture('reports-publisher-empty', $response);
+
+        $this->import($context, ['impressions' => 1000, 'clicks' => 20, 'gross_revenue_minor' => 10000,
+            'active_view_viewable_impressions' => 300, 'active_view_measurable_impressions' => 500,
+            'unfilled_impressions' => 25], '2026-09-19');
+        $this->import($context, ['impressions' => 500, 'clicks' => 5, 'gross_revenue_minor' => 5000],
+            '2026-09-20', ReportFinality::Estimated);
+        $summary = app(PublisherPerformanceService::class)->summary($publisher, '2026-09-01', '2026-09-21');
+        $this->assertSame(10500, $summary['earnings_minor']);
+        $this->assertSame(7000, $summary['finalized_minor']);
+        $this->assertSame(3500, $summary['estimated_minor']);
+        $this->assertSame(7000, $summary['ecpm_minor']);
+        $this->assertTrue($summary['has_estimates']);
+        $response = $this->get(route('publisher.reporting.index'))->assertOk()
+            ->assertSee('Includes estimates')->assertSee('Incomplete source data')->assertSee('Unavailable')
+            ->assertSee('USD 70.00')->assertSee('USD 35.00')->assertDontSee('USD 150.00')
+            ->assertDontSee('Gross revenue')->assertDontSee('Horus margin');
+        $this->fixture('reports-publisher-mixed', $response);
+        $csv = $this->get(route('publisher.reporting.index', ['export' => 'csv']))->assertOk()->streamedContent();
+        $this->assertStringContainsString('70.00', $csv);
+        $this->assertStringContainsString('35.00', $csv);
+        $this->assertStringNotContainsString('100.00', $csv);
+        $this->assertStringNotContainsString('50.00', $csv);
+        $this->assertStringNotContainsString('Gross revenue', $csv);
+
+        $this->import($context, ['impressions' => 0, 'clicks' => 0, 'gross_revenue_minor' => 0,
+            'active_view_viewable_impressions' => 0, 'active_view_measurable_impressions' => 0,
+            'unfilled_impressions' => 0], '2026-09-21', ReportFinality::Estimated);
+        $response = $this->get(route('publisher.reporting.index', ['from' => '2026-09-21', 'to' => '2026-09-21']))
+            ->assertOk()->assertSee('Includes estimates')->assertSee('No impressions in this period')
+            ->assertSee('No measurable impressions')->assertDontSee('Incomplete source data');
+        $this->fixture('reports-publisher-zero', $response);
+    }
+
+    public function test_report_and_finance_navigation_respects_independent_permissions(): void
+    {
+        [, $user] = $this->context();
+        $role = $user->roles()->firstOrFail();
+        $financePermission = \App\Models\Permission::where('name', 'finance.publisher.view_own')->firstOrFail();
+        $reportPermission = \App\Models\Permission::where('name', 'reporting.publisher.view')->firstOrFail();
+        $role->permissions()->detach($financePermission);
+        $user = $user->fresh();
+        $this->actingAs($user)->get(route('publisher.reporting.index'))->assertOk()
+            ->assertDontSee('href="'.route('publisher.finance.overview').'"', false)
+            ->assertDontSee('View statements');
+        $this->get(route('publisher.finance.overview'))->assertForbidden();
+        $nav = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($user))->pluck('items')->flatten(1);
+        $this->assertSame('publisher.reporting.index', $nav->firstWhere('label', 'Reports & earnings')['route']);
+
+        $role->permissions()->attach($financePermission);
+        $role->permissions()->detach($reportPermission);
+        $user = $user->fresh();
+        $this->actingAs($user)->get(route('publisher.finance.overview'))->assertOk()
+            ->assertDontSee('href="'.route('publisher.reporting.index').'"', false);
+        $this->get(route('publisher.reporting.index'))->assertForbidden();
+        $nav = collect(app(\App\Services\ControlPlane\ControlPlaneNavigation::class)->for($user))->pluck('items')->flatten(1);
+        $this->assertSame('publisher.finance.overview', $nav->firstWhere('label', 'Reports & earnings')['route']);
     }
 
     private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void

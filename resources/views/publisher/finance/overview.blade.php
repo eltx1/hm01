@@ -23,7 +23,10 @@
     </div>
 </section>
 
-@include('publisher.finance._performance')
+<details class="workspace-section publisher-finance-performance">
+    <summary>Performance for selected dates</summary>
+    @include('publisher.finance._performance')
+</details>
 
 @if($financeActions->isNotEmpty())
 <article class="workspace-section">

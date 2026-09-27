@@ -24,8 +24,9 @@ data. Admin reports retain finalized-only scope; publisher reports retain the
 existing estimated/finalized scope, with separate earnings amounts in the CSV.
 
 Percentages use two decimal places. CPM is denominated in USD, rounded to cents
-after aggregation. Zero denominators and unavailable metrics display an em dash;
-CSV uses an empty cell. A real reported count of zero remains zero. If any row
+after aggregation. Zero denominators and unavailable metrics display an em dash
+for staff, and an explicit `Unavailable` label for publishers; CSV uses an empty
+cell. A real reported count of zero remains zero. If any row
 lacks the new counters, the corresponding aggregate is unavailable rather than
 silently presenting a partial total or approximating Active View from impressions.
 
@@ -51,6 +52,33 @@ closed periods and issued statements are not automatically reopened/backfilled.
 Monthly aggregation uses the same measurable-denominator calculation.
 
 ## Validation
+
+### Publisher clarity follow-up
+
+The publisher navigation opens the dedicated report route. Finance, statements,
+payment details and payouts remain separate, permission-aware tabs. A finance-only
+role retains its existing destination. The Finance page keeps its optional date
+report collapsed; its accounting and payment operations are unchanged.
+
+The report leads with one **Your earnings** amount, using the stored publisher
+allocation. A collapsed breakdown explains finalized plus estimated earnings;
+estimated zero-revenue rows still identify the total as including estimates.
+Ad metrics have short explanations, and unavailable metrics distinguish incomplete
+source data from zero denominators. No gross revenue or Horus margin is passed to
+the report view or CSV. No additional revenue-share multiplication is performed.
+
+Quick periods precede the total. Custom dates, column choices and CSV use the same
+native GET form, including externally associated inputs. Daily rows are newest
+first. Mobile rows disclose selected metrics below the date and publisher earnings;
+desktop retains the table. A separate mobile SVG layout uses exactly the same
+publisher earnings points, with readable labels and missing-day gaps.
+
+Files changed by the follow-up: publisher ReportingController, ControlPlaneNavigation,
+PublisherPerformanceService (estimate-presence metadata only), reporting-experience.css,
+report-chart and report-performance-table components, three publisher-report components,
+publisher reporting/index, finance/_performance, finance/_tabs, finance/overview,
+ReportPerformanceMetricsTest, form-experience.playwright.spec.js, this document,
+and compiled public/build assets. Run outcomes are recorded in the follow-up PR.
 
 Regression coverage exercises changing daily shares, weighted ratios, missing
 data, zero denominators, idempotent metric updates, invalid-counter rollback,

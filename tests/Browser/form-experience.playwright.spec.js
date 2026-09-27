@@ -28,17 +28,21 @@ for (const name of ['reports-publisher', 'reports-admin']) {
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await open(page, name);
-        await expect(page.getByRole('region', { name: name === 'reports-publisher' ? 'Daily publisher performance' : 'Daily admin performance', exact: true })).toBeVisible();
-        const dateCell = page.getByRole('region', { name: name === 'reports-publisher' ? 'Daily publisher performance' : 'Daily admin performance', exact: true }).locator('tbody th').first();
-        expect((await dateCell.boundingBox()).height).toBeLessThan(55);
-        await page.getByText('Customize columns', { exact: false }).click();
-        await page.getByLabel('Clicks', { exact: true }).uncheck();
-        const form = page.getByRole('form', { name: 'Reporting period' });
-        const selected = await form.evaluate(el => new FormData(el).getAll('metrics[]'));
-        expect(selected).not.toContain('clicks');
-        expect(selected).toContain('viewability_bp');
-        expect(selected).toContain('unfilled_impressions');
-        await expect(page.getByRole('button', { name: 'Download CSV' })).toBeVisible();
+        const publisher = name === 'reports-publisher';
+        const daily = page.getByRole('region', { name: publisher ? 'Daily publisher performance' : 'Daily admin performance', exact: true });
+        await expect(daily).toBeVisible();
+        if (publisher) {
+            await expect(page.locator('.publisher-earnings')).toHaveCount(1);
+            await expect(page.locator('.publisher-earnings-breakdown')).not.toHaveAttribute('open', '');
+            await expect(page.locator('.report-column-picker')).not.toHaveAttribute('open', '');
+            await expect(page.getByText('Gross revenue', { exact: false })).toHaveCount(0);
+            await expect(page.getByText('Paid to date', { exact: false })).toHaveCount(0);
+            const hero = await page.locator('.publisher-earnings-value').boundingBox();
+            expect(hero.y + hero.height).toBeLessThan(page.viewportSize().height);
+        }
+        if (!publisher || page.viewportSize().width > 600) {
+            expect((await daily.locator('tbody th').first().boundingBox()).height).toBeLessThan(55);
+        }
         for (const theme of ['dark', 'light']) {
             await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
             await page.screenshot({ path: info.outputPath(`${name}-${theme}.png`), fullPage: true });
@@ -51,9 +55,76 @@ for (const name of ['reports-publisher', 'reports-admin']) {
             expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
             if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
         }
+        if (publisher) {
+            await page.getByText('How this total is calculated', { exact: true }).click();
+            await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 70.00');
+            await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 0.00');
+            if (page.viewportSize().width <= 600) {
+                await daily.locator('summary').first().click();
+                await expect(daily.getByText('Active View', { exact: true })).toBeVisible();
+                await expect(daily.getByText('60.00%', { exact: true })).toBeVisible();
+            }
+        }
+        await page.getByText('Customize columns', { exact: false }).click();
+        await page.getByLabel('Clicks', { exact: true }).uncheck();
+        const form = page.getByRole('form', { name: 'Reporting period' });
+        const selected = await form.evaluate(el => new FormData(el).getAll('metrics[]'));
+        expect(selected).not.toContain('clicks');
+        expect(selected).toContain('viewability_bp');
+        expect(selected).toContain('unfilled_impressions');
+        const [download] = await Promise.all([
+            page.waitForRequest(request => new URL(request.url()).searchParams.get('export') === 'csv'),
+            page.getByRole('button', { name: 'Download CSV' }).click(),
+        ]);
+        const query = new URL(download.url()).searchParams;
+        expect(query.getAll('metrics[]')).toEqual(selected);
+        expect(query.get('from')).toBe('2026-09-01');
+        expect(query.get('to')).toBe('2026-09-21');
         expect(errors).toEqual([]);
     });
 }
+
+test('publisher report explains mixed and missing data without showing gross revenue', async ({ page }, info) => {
+    await open(page, 'reports-publisher-mixed');
+    await expect(page.locator('.publisher-earnings-value')).toContainText('105.00');
+    await expect(page.locator('.publisher-earnings-topline')).toContainText('Includes estimates');
+    await expect(page.locator('.publisher-ad-metric--unavailable')).toHaveCount(2);
+    await expect(page.locator('.publisher-ad-metric--unavailable').first()).toContainText('Incomplete source data');
+    await expect(page.getByText('Gross revenue', { exact: false })).toHaveCount(0);
+    for (const theme of ['dark', 'light']) {
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        if (page.viewportSize().width <= 600) await page.screenshot({ path: info.outputPath(`reports-publisher-mixed-${theme}.png`), fullPage: true });
+        if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+    }
+    await page.getByText('How this total is calculated', { exact: true }).click();
+    await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 70.00');
+    await expect(page.locator('.publisher-earnings-breakdown')).toContainText('USD 35.00');
+});
+
+test('publisher report handles empty and zero data with working dates and columns', async ({ page }) => {
+    for (const state of ['empty', 'zero']) {
+        await open(page, `reports-publisher-${state}`);
+        if (state === 'empty') {
+            await expect(page.locator('.publisher-earnings')).toHaveCount(0);
+            await expect(page.getByText('No reports for these dates yet')).toBeVisible();
+        } else {
+            await expect(page.locator('.publisher-earnings-value')).toContainText('0.00');
+            await expect(page.locator('.publisher-earnings-topline')).toContainText('Includes estimates');
+            await expect(page.locator('.publisher-ad-metric--unavailable')).toHaveCount(3);
+            await expect(page.getByText('No measurable impressions', { exact: true })).toBeVisible();
+        }
+        await page.getByText('Change dates', { exact: true }).click();
+        await page.getByLabel('From', { exact: true }).fill('2026-09-15');
+        await page.getByText('Customize columns', { exact: false }).click();
+        await page.getByLabel('Clicks', { exact: true }).uncheck();
+        const data = await page.getByRole('form', { name: 'Reporting period' }).evaluate(form => [...new FormData(form)]);
+        expect(data).toContainEqual(['from', '2026-09-15']);
+        expect(data).not.toContainEqual(['metrics[]', 'clicks']);
+        expect(data).toContainEqual(['metrics[]', 'viewability_bp']);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.unroute('**/*');
+    }
+});
 
 for (const name of ['payment-empty', 'payment-verified', 'site-create', 'site-edit', 'support-create', 'account-profile', 'account-branding', 'account-security', 'admin-payment']) {
     test(`${name}: real page fits dark and light desktop/mobile`, async ({ page }, info) => {
