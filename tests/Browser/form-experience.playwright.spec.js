@@ -299,11 +299,11 @@ for (const name of ['reports-admin', 'reports-publisher', 'payment-viewer']) {
         const account = drawer.getByRole('link', { name: 'My account', exact: true });
         const logout = drawer.getByRole('button', { name: 'Sign out', exact: true });
         await expect(drawer).toHaveAttribute('inert', '');
-        await expect(account).toHaveAttribute('href', /\/account$/);
         for (const theme of ['dark', 'light']) {
             for (const viewport of [{ width: 390, height: 660 }, { width: 320, height: 480 }, { width: 844, height: 320 }]) {
                 await page.setViewportSize(viewport);
                 await toggle.click();
+                await expect(account).toHaveAttribute('href', /\/account$/);
                 await expect(close).toBeFocused();
                 await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
                 // Long admin menus must scroll independently without moving account actions.
@@ -375,5 +375,5 @@ test('website operations tables scroll inside their cards on narrow screens', as
         expect(result.right).toBeLessThanOrEqual(result.viewport);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    await page.screenshot({ path: info.outputPath('workspace-admin-site-mobile.png'), fullPage: true });
+    await page.screenshot({ path: info.outputPath('workspace-admin-site-mobile.png'), fullPage: false });
 });
