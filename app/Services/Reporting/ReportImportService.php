@@ -661,6 +661,23 @@ final class ReportImportService
                 ? (int) round((float) str_replace('%', '', (string) $viewability) * 100)
                 : ((float) $viewability <= 1 ? (int) round((float) $viewability * 10000) : (int) round((float) $viewability)));
 
+        $performance = [];
+        foreach (PerformanceMetrics::COUNTERS as $field) {
+            $value = $lower[$field] ?? null;
+            if ($value !== null && $value !== '' && (! preg_match('/^\d{1,15}$/D', (string) $value))) {
+                throw ValidationException::withMessages([$field => 'Performance counters must be non-negative integers.']);
+            }
+            $performance[$field] = $value === null || $value === '' ? null : (int) $value;
+        }
+        $viewable = $performance['active_view_viewable_impressions'];
+        $measurable = $performance['active_view_measurable_impressions'];
+        if (($viewable === null) !== ($measurable === null) || ($viewable !== null && $viewable > $measurable)) {
+            throw ValidationException::withMessages(['active_view_viewable_impressions' => 'Active View requires both counters, with viewable impressions no greater than measurable impressions.']);
+        }
+        if ($measurable !== null) {
+            $viewabilityBp = app(PerformanceMetrics::class)->viewability($performance);
+        }
+
         $aliases = [
             'publisher_id' => ['publisher_id'],
             'site_id' => ['site_id', 'website_id'],
@@ -695,6 +712,7 @@ final class ReportImportService
             'unfilled_requests' => $unfilled,
             'impressions' => $impressions,
             'clicks' => $clicks,
+            ...$performance,
             'viewability_bp' => $viewabilityBp === null ? null : max(0, min(10000, $viewabilityBp)),
             'gross_revenue_minor' => $gross,
             'demand_partner_deductions_minor' => $this->signedInteger($lower['demand_partner_deductions_minor'] ?? 0),
@@ -711,6 +729,7 @@ final class ReportImportService
     {
         return collect($metrics)->only([
             'ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks',
+            ...PerformanceMetrics::COUNTERS,
             'fill_rate_bp', 'ctr_bp', 'viewability_bp', 'gross_revenue_minor',
             'demand_partner_deductions_minor', 'invalid_traffic_adjustments_minor',
             'other_adjustments_minor', 'net_revenue_minor', 'publisher_earnings_minor',

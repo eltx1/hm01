@@ -47,10 +47,11 @@ final class UnifiedReportService
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
+            'performance' => app(PerformanceMetrics::class)->summarize($rows, 'gross_revenue_minor'),
             'available' => $rows->isNotEmpty(),
             'updated_at' => $rows->max('updated_at'),
             'daily_revenue' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
-                ->map(fn ($group, $date) => ['date' => $date, 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'), 'impressions' => (int) $group->sum('impressions')])->values(),
+                ->map(fn ($group, $date) => ['date' => $date, ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'), 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'), 'impressions' => (int) $group->sum('impressions')])->values(),
             'managed_impressions' => (int) $rows->sum('impressions'),
             'horus_gam_impressions' => (int) $horusGam->sum('impressions'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
@@ -246,6 +247,7 @@ final class UnifiedReportService
     {
         return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
             'label' => $labelFor ? $labelFor($group->first()) : $label,
+            ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'),
             'impressions' => (int) $group->sum('impressions'),
             'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
             'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),

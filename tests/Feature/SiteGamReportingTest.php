@@ -134,6 +134,9 @@ class SiteGamReportingTest extends TestCase
         fputcsv($stream, ['Dimension.DATE', ...($hourly ? ['Dimension.HOUR'] : []), 'Dimension.AD_UNIT_ID',
             ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamAdUnitReportConnector::COLUMNS))], escape: '');
         foreach ($rows as $row) {
+            if (count($row) === ($hourly ? 9 : 8)) {
+                $row = [...$row, 40, 80, 7];
+            }
             fputcsv($stream, $row, escape: '');
         }
         rewind($stream);
@@ -147,6 +150,27 @@ class SiteGamReportingTest extends TestCase
     {
         return app(ReportImportService::class)->runConnection($binding->connection, CarbonImmutable::parse($from),
             CarbonImmutable::parse($to), ReportGranularity::Daily, ReportFinality::Finalized);
+    }
+
+    public function test_finance_only_google_response_preserves_missing_metrics_instead_of_reporting_false_zeros(): void
+    {
+        $context = $this->context();
+        $binding = $this->bind($context);
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...array_map(fn ($column) => 'Column.'.$column,
+            array_keys(array_diff_key(GamAdUnitReportConnector::COLUMNS, \App\Services\Reporting\PerformanceMetrics::GOOGLE_COLUMNS)))], escape: '');
+        fputcsv($stream, ['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 123450000'], escape: '');
+        rewind($stream);
+        Http::fake(['storage.googleapis.com/*' => Http::response(stream_get_contents($stream))]);
+        fclose($stream);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(12345, (int) $row->gross_revenue_minor);
+        $this->assertSame(20, (int) $row->unfilled_requests);
+        $this->assertNull($row->unfilled_impressions);
+        $this->assertNull($row->active_view_viewable_impressions);
+        $this->assertNull($row->viewability_bp);
     }
 
     public function test_site_page_shows_current_estimates_without_changing_finalized_totals_or_calling_google(): void
@@ -322,6 +346,14 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('USD', $query['reportCurrency']);
         $this->assertSame('USD', $row->currency);
         $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        foreach (array_keys(\App\Services\Reporting\PerformanceMetrics::GOOGLE_COLUMNS) as $column) {
+            $this->assertContains($column, $query['columns']);
+        }
+        $metrics = DailyReport::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(40, (int) $metrics->active_view_viewable_impressions);
+        $this->assertSame(80, (int) $metrics->active_view_measurable_impressions);
+        $this->assertSame(5000, (int) $metrics->viewability_bp);
+        $this->assertSame(7, (int) $metrics->unfilled_impressions);
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.reporting.index', ['currency' => 'AED']))
             ->assertOk()

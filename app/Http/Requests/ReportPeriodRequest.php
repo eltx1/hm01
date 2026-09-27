@@ -2,8 +2,10 @@
 
 namespace App\Http\Requests;
 
+use App\Services\Reporting\PerformanceMetrics;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ReportPeriodRequest extends FormRequest
 {
@@ -23,6 +25,10 @@ class ReportPeriodRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'customize' => ['sometimes', 'boolean'],
+            'metrics' => [Rule::requiredIf($this->boolean('customize')), 'array', 'min:1', 'max:6'],
+            'metrics.*' => ['required', 'string', 'distinct', Rule::in(array_keys(PerformanceMetrics::COLUMNS))],
+            'export' => ['sometimes', Rule::in(['csv'])],
             'from' => ['required', 'date_format:Y-m-d'],
             'to' => ['required', 'date_format:Y-m-d', 'after_or_equal:from', function ($attribute, $value, $fail): void {
                 if (is_string($this->input('from')) && is_string($value)
@@ -36,5 +42,12 @@ class ReportPeriodRequest extends FormRequest
                 }
             }],
         ];
+    }
+
+    public function selectedMetrics(): array
+    {
+        // Stable display order; request values can never become SQL columns.
+        return array_values(array_intersect(array_keys(PerformanceMetrics::COLUMNS),
+            $this->validated('metrics', array_keys(PerformanceMetrics::COLUMNS))));
     }
 }

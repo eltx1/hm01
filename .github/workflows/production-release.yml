@@ -49,7 +49,7 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
-          HORUS_UI_FIXTURES=1 php artisan test --filter=FormExperienceTest
+          HORUS_UI_FIXTURES=1 php artisan test --filter='FormExperienceTest|ReportPerformanceMetricsTest'
       - name: Validate deployment foundation
         run: |
           bash -n ops/deploy/horus-atomic-deploy.sh
@@ -90,6 +90,15 @@ jobs:
         with:
           name: form-experience-${{ github.sha }}
           path: test-results/form-experience
+          retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-metrics-${{ github.sha }}
+          path: |
+            test-results/form-experience/**/reports-*.png
+            storage/framework/testing/form-experience/reports-*.html
           retention-days: 7
           if-no-files-found: ignore
       - name: Smoke-test production environment template

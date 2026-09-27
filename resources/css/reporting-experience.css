@@ -6,6 +6,27 @@
 .report-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
 .report-metrics article { min-width: 0; }
 .report-context { line-height: 1.6; }
+.report-quality-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--hm-line); border-radius: .85rem; background: var(--hm-glass); overflow: hidden; }
+.report-quality-metrics .report-quality-metric { min-width: 0; border: 0; border-radius: 0; border-inline-end: 1px solid var(--hm-line); padding: 1rem; background: transparent; box-shadow: none; }
+.report-quality-metric:last-child { border-inline-end: 0; }
+.report-quality-metric p { margin: 0 0 .65rem; color: var(--hm-muted); font-size: .75rem; }
+.report-quality-metric strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.report-quality-metric small { font-size: .7rem; color: var(--hm-muted); }
+.report-column-picker { flex: 1 1 100%; font-size: .8rem; }
+.report-column-picker summary { cursor: pointer; padding: .7rem 0; color: var(--hm-white); }
+.report-column-picker summary span { color: var(--hm-muted); margin-inline-start: .4rem; }
+.report-column-picker fieldset { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: .5rem 0; padding: .5rem; border: 1px solid var(--hm-line); border-radius: .5rem; }
+.report-period .report-column-picker label { display: flex; align-items: center; gap: .5rem; min-height: 2.5rem; flex: 0 1 10rem; }
+.report-column-picker input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--hm-gold); }
+.report-column-picker p { font-size: .75rem; }
+.report-performance-table { max-width: 100%; overflow-x: auto; margin-top: .8rem; }
+.report-performance-table table { min-width: 42rem; width: 100%; font-variant-numeric: tabular-nums; }
+.report-performance-table th, .report-performance-table td { text-align: end; white-space: nowrap; }
+.report-performance-table th:first-child { text-align: start; min-width: 8rem; max-width: 17rem; white-space: normal; overflow-wrap: anywhere; }
+.report-performance-table--date th:first-child { white-space: nowrap; overflow-wrap: normal; }
+.report-performance-table:focus-visible { outline: 2px solid var(--hm-gold); outline-offset: 2px; }
+@media (max-width: 1100px) { .report-quality-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .report-quality-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .report-quality-metric strong { font-size: 1.2rem; } }
 .report-trend { display: grid; gap: .7rem; max-height: 24rem; overflow: auto; }
 .report-trend-row { display: grid; grid-template-columns: 6rem minmax(2rem, 1fr) auto; gap: .6rem; align-items: center; font-size: .8rem; }
 .report-trend meter { width: 100%; height: .8rem; accent-color: var(--hm-gold); }
@@ -21,7 +42,8 @@
 }
 
 /* Reporting is a composed workspace: quiet controls, strong totals, generous chart. */
-.reports-page { display: grid; gap: 1.25rem; }
+.reports-page { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 1.25rem; }
+.reports-page > * { min-width: 0; }
 .reports-page > .workspace-section, .reports-page > .report-period { margin: 0; }
 .report-page-heading, .report-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .report-page-heading h2 { font-size: clamp(1.35rem, 2vw, 1.85rem); letter-spacing: -.035em; margin: .3rem 0; }

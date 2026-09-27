@@ -16,6 +16,22 @@ class GamAdUnitReportClient
         private readonly GamOperationExecutor $operations,
     ) {}
 
+    public function runPerformanceReport(GamConnection $connection, array $query): array
+    {
+        try {
+            return $this->call($connection, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+        } catch (RuntimeException $exception) {
+            // Optional delivery metrics must not disable the existing USD finance import.
+            // Never retry authorization, quota, currency, or arbitrary API failures here.
+            if (! str_contains($exception->getMessage(), 'COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS')) {
+                throw $exception;
+            }
+            $query['columns'] = array_values(array_diff($query['columns'], array_keys(PerformanceMetrics::GOOGLE_COLUMNS)));
+
+            return $this->call($connection, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+        }
+    }
+
     public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
     {
         $response = null;

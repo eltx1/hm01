@@ -122,7 +122,7 @@ class GamRestConnectorTest extends TestCase
         ];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
@@ -147,6 +147,9 @@ class GamRestConnectorTest extends TestCase
         $this->assertSame('Asia/Dubai', $reportConnection->fresh()->timezone);
         $this->assertSame($expectedMinor, data_get($result, 'rows.0.gross_revenue_minor'));
         $this->assertSame('USD', data_get($result, 'rows.0.currency'));
+        $this->assertSame(40, data_get($result, 'totals.active_view_viewable_impressions'));
+        $this->assertSame(80, data_get($result, 'totals.active_view_measurable_impressions'));
+        $this->assertSame(7, data_get($result, 'totals.unfilled_impressions'));
 
         $reportCall = collect($google->calls)->firstWhere('method', 'runReportJob');
         $this->assertSame('USD', data_get($reportCall, 'payload.reportJob.reportQuery.reportCurrency'));
@@ -333,7 +336,7 @@ class GamRestConnectorTest extends TestCase
         $values = ['2026-09-09', '1001', 120, 100, 20, 95, 3, '$ 25000000'];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
@@ -437,7 +440,7 @@ class GamRestConnectorTest extends TestCase
         $values = ['2026-09-21', '1001', 120, 100, 20, 95, 3, 25000000];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);

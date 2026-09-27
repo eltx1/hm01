@@ -327,20 +327,14 @@ final class FinancialPeriodService
             'mcm_partner_earnings_minor', 'video_starts', 'completed_views',
         ];
         $totals = array_fill_keys($fields, 0);
-        $viewableWeighted = 0;
-        $viewabilityBase = 0;
         foreach ($reports as $report) {
             foreach ($fields as $field) {
                 $totals[$field] += (int) $report->{$field};
             }
-            if ($report->viewability_bp !== null && $report->impressions > 0) {
-                $viewableWeighted += ((int) $report->viewability_bp) * ((int) $report->impressions);
-                $viewabilityBase += (int) $report->impressions;
-            }
         }
         $rates = app(RevenueCalculator::class)->rates($totals);
         $totals = array_merge($totals, $rates);
-        $totals['viewability_bp'] = $viewabilityBase > 0 ? (int) round($viewableWeighted / $viewabilityBase) : null;
+        $totals = array_merge($totals, app(PerformanceMetrics::class)->counters(collect($reports)));
 
         return $totals;
     }

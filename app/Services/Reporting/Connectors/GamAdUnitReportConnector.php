@@ -10,6 +10,7 @@ use App\Services\Reporting\Contracts\ReportSourceConnectorInterface;
 use App\Services\Reporting\GamAdUnitReportClient;
 use App\Services\Reporting\GamReportMoneyParser;
 use App\Services\Reporting\GamReportPending;
+use App\Services\Reporting\PerformanceMetrics;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use RuntimeException;
@@ -23,6 +24,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS' => 'impressions',
         'TOTAL_LINE_ITEM_LEVEL_CLICKS' => 'clicks',
         'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE' => 'revenue_micros',
+        ...PerformanceMetrics::GOOGLE_COLUMNS,
     ];
 
     public function __construct(
@@ -54,7 +56,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         if (strtoupper((string) $connection->currency) !== $reportCurrency) {
             throw new RuntimeException('Site GAM reporting must use the canonical Horus report currency. Reconnect or normalize this reporting source.');
         }
-        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.$reportCurrency);
+        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.$reportCurrency.'|'.implode(',', array_keys(self::COLUMNS)));
         $configuration = $connection->configuration ?? [];
         $jobId = data_get($configuration, 'google_jobs.'.$key.'.id');
         if (! $jobId) {
@@ -73,7 +75,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     ['key' => 'unit', 'value' => ['__type' => 'NumberValue', 'value' => $binding->ad_unit_id]],
                 ]],
             ];
-            $response = $this->google->call($binding->gamConnection, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+            $response = $this->google->runPerformanceReport($binding->gamConnection, $query);
             $jobId = (string) ($response['id'] ?? '');
             if (! ctype_digit($jobId)) {
                 throw new RuntimeException('Google did not return a valid report job ID.');
@@ -137,7 +139,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 throw new RuntimeException('The Google report has no CSV header.');
             }
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
-            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...array_map(fn ($key) => 'Column.'.$key, array_keys(self::COLUMNS))];
+            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...array_map(fn ($key) => 'Column.'.$key, array_keys(array_diff_key(self::COLUMNS, PerformanceMetrics::GOOGLE_COLUMNS)))];
             if ($granularity === ReportGranularity::Hourly) {
                 $required[] = 'Dimension.HOUR';
             }
@@ -165,6 +167,10 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 }
                 $buckets[$key] = [];
                 foreach (self::COLUMNS as $column => $field) {
+                    if (! array_key_exists('Column.'.$column, $row)) {
+                        $buckets[$key][$field] = null;
+                        continue;
+                    }
                     $rawValue = $row['Column.'.$column];
                     $sourceCurrency = strtoupper((string) data_get($connection->configuration, 'source_network_currency', ''));
                     $value = $field === 'revenue_micros'
@@ -186,7 +192,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             for ($day = CarbonImmutable::parse($from->toDateString(), $connection->timezone); $day->toDateString() <= $to->toDateString(); $day = $day->addDay()) {
                 $lastHour = $granularity === ReportGranularity::Hourly ? ($day->isSameDay($now) ? $now->hour : 23) : 0;
                 for ($hour = 0; $hour <= $lastHour; $hour++) {
-                    $metrics = $buckets[$day->toDateString().':'.$hour] ?? array_fill_keys(array_values(self::COLUMNS), 0);
+                    $metrics = $buckets[$day->toDateString().':'.$hour] ?? collect(self::COLUMNS)->mapWithKeys(fn ($field, $column) => [$field => in_array('Column.'.$column, $headers, true) ? 0 : null])->all();
                     $micros = $metrics['revenue_micros'];
                     unset($metrics['revenue_micros']);
                     $rows[] = $metrics + [
