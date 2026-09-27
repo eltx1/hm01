@@ -50,6 +50,7 @@ final class ReportDimensionResolver
             ->except(array_merge(self::KEYS, [
                 'organization_id', 'date', 'report_date', 'hour', 'report_hour',
                 'currency', 'ad_requests', 'matched_requests', 'unfilled_requests',
+                ...PerformanceMetrics::COUNTERS,
                 'impressions', 'clicks', 'fill_rate', 'ctr', 'viewability',
                 'viewability_bp', 'revenue', 'revenue_minor', 'gross_revenue_minor',
                 'demand_partner_deductions_minor', 'invalid_traffic_adjustments_minor',

@@ -14,6 +14,7 @@ final class PublisherPerformanceService
     {
         $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
         $rows = DailyReport::withoutGlobalScopes()
+            ->where('organization_id', $publisher->organization_id)
             ->whereHas('dimension', fn ($query) => $query->where('publisher_id', $publisher->id)
                 ->where('organization_id', $publisher->organization_id))
             ->where('currency', $currency)
@@ -38,16 +39,13 @@ final class PublisherPerformanceService
 
     private function totals(Collection $rows): array
     {
-        $impressions = (int) $rows->sum('impressions');
         $earnings = (int) $rows->sum('publisher_earnings_minor');
 
         return [
-            'impressions' => $impressions,
-            'clicks' => (int) $rows->sum('clicks'),
+            ...app(PerformanceMetrics::class)->summarize($rows, 'publisher_earnings_minor'),
             'earnings_minor' => $earnings,
             'estimated_minor' => (int) $rows->where('finality', ReportFinality::Estimated)->sum('publisher_earnings_minor'),
             'finalized_minor' => (int) $rows->where('finality', ReportFinality::Finalized)->sum('publisher_earnings_minor'),
-            'ecpm_minor' => $impressions > 0 ? (int) round($earnings * 1000 / $impressions) : 0,
         ];
     }
 }

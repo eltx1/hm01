@@ -10,6 +10,7 @@ use App\Services\Reporting\Contracts\ReportSourceConnectorInterface;
 use App\Services\Reporting\GamAdUnitReportClient;
 use App\Services\Reporting\GamReportMoneyParser;
 use App\Services\Reporting\GamReportPending;
+use App\Services\Reporting\PerformanceMetrics;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use RuntimeException;
@@ -30,6 +31,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS' => 'impressions',
         'TOTAL_LINE_ITEM_LEVEL_CLICKS' => 'clicks',
         'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE' => 'revenue_micros',
+        ...PerformanceMetrics::GOOGLE_COLUMNS,
     ];
 
     /**
@@ -71,7 +73,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             throw new RuntimeException('The GAM report dates or connection are not valid for automatic financial reporting.');
         }
         $key = hash('sha256', implode('|', [
-            'full-network', $granularity->value, $from->toDateString(), $to->toDateString(), $canonicalCurrency,
+            'full-network', implode(',', array_keys(self::COLUMNS)), $granularity->value, $from->toDateString(), $to->toDateString(), $canonicalCurrency,
             hash('sha256', json_encode($options['statement'] ?? null, JSON_THROW_ON_ERROR)),
         ]));
         $configuration = (array) ($connection->configuration ?? []);
@@ -127,9 +129,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
                 $query['statement'] = $options['statement'];
             }
 
-            $response = $this->google->call($gam, 'ReportService', 'runReportJob', [
-                'reportJob' => ['reportQuery' => $query],
-            ]);
+            $response = $this->google->runPerformanceReport($gam, $query);
             $jobId = (string) ($response['id'] ?? '');
             if (! ctype_digit($jobId)) {
                 throw new RuntimeException('Google did not return a valid GAM report job ID.');
@@ -191,7 +191,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         $connection->update(['configuration' => $configuration]);
 
         $totals = [];
-        foreach (['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks', 'gross_revenue_minor'] as $field) {
+        foreach (['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks', 'gross_revenue_minor', ...\App\Services\Reporting\PerformanceMetrics::COUNTERS] as $field) {
             $totals[$field] = array_sum(array_column($rows, $field));
         }
 
@@ -231,7 +231,7 @@ final class GamReportConnector implements ReportSourceConnectorInterface
             $required = array_merge(
                 ['Dimension.DATE'],
                 array_map(fn (string $dimension): string => 'Dimension.'.$dimension, array_keys(self::DIMENSIONS)),
-                array_map(fn (string $column): string => 'Column.'.$column, array_keys(self::COLUMNS)),
+                array_map(fn (string $column): string => 'Column.'.$column, array_keys(array_diff_key(self::COLUMNS, PerformanceMetrics::GOOGLE_COLUMNS))),
             );
             if (array_diff($required, $headers) || count(array_unique($headers)) !== count($headers)) {
                 throw new RuntimeException('The Google GAM report is missing required dimensions or metrics.');
@@ -258,6 +258,10 @@ final class GamReportConnector implements ReportSourceConnectorInterface
 
                 $metrics = [];
                 foreach (self::COLUMNS as $column => $field) {
+                    if (! array_key_exists('Column.'.$column, $source)) {
+                        $metrics[$field] = null;
+                        continue;
+                    }
                     $rawValue = (string) $source['Column.'.$column];
                     $sourceCurrency = strtoupper((string) data_get($connection->configuration, 'source_network_currency', ''));
                     $value = $field === 'revenue_micros'

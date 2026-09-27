@@ -122,7 +122,7 @@ class GamRestConnectorTest extends TestCase
         ];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
@@ -333,7 +333,7 @@ class GamRestConnectorTest extends TestCase
         $values = ['2026-09-09', '1001', 120, 100, 20, 95, 3, '$ 25000000'];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);
@@ -437,7 +437,7 @@ class GamRestConnectorTest extends TestCase
         $values = ['2026-09-21', '1001', 120, 100, 20, 95, 3, 25000000];
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $headers, escape: '');
-        fputcsv($stream, $values, escape: '');
+        fputcsv($stream, [...$values, 40, 80, 7], escape: '');
         rewind($stream);
         $csv = stream_get_contents($stream);
         fclose($stream);

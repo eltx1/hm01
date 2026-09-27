@@ -19,23 +19,25 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ReportingController extends Controller
 {
-    public function index(ReportPeriodRequest $request, PublisherFinanceService $finance): View
+    public function index(ReportPeriodRequest $request, PublisherFinanceService $finance): View|StreamedResponse
     {
-        return view('publisher.finance.overview', [
-            ...$finance->overview($this->publisher($request)),
-            'performance' => app(PublisherPerformanceService::class)->summary(
-                $this->publisher($request), $request->validated('from'), $request->validated('to'),
-            ),
-        ]);
+        return $this->overview($request, $finance);
     }
 
-    public function overview(ReportPeriodRequest $request, PublisherFinanceService $finance): View
+    public function overview(ReportPeriodRequest $request, PublisherFinanceService $finance): View|StreamedResponse
     {
+        $publisher = $this->publisher($request);
+        $performance = app(PublisherPerformanceService::class)->summary(
+            $publisher, $request->validated('from'), $request->validated('to'),
+        );
+        if ($request->validated('export') === 'csv') {
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics(), $performance['currency'], true);
+        }
+
         return view('publisher.finance.overview', [
-            ...$finance->overview($this->publisher($request)),
-            'performance' => app(PublisherPerformanceService::class)->summary(
-                $this->publisher($request), $request->validated('from'), $request->validated('to'),
-            ),
+            ...$finance->overview($publisher),
+            'performance' => $performance,
+            'reportMetrics' => $request->selectedMetrics(),
         ]);
     }
 

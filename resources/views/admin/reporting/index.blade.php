@@ -4,7 +4,7 @@
 @section('content')
 <div class="reports-page">
 <header class="report-page-heading"><div><p class="eyebrow">REVENUE INTELLIGENCE</p><h2>Performance overview</h2><p class="muted">A clear view of your revenue and the publishers behind it.</p></div><span class="report-state"><span aria-hidden="true">●</span> Finalized data · {{ $summary['currency'] }}</span></header>
-<x-report-period :from="$summary['from']" :to="$summary['to']" />
+<x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
 @if(!$summary['available'])<x-empty-state title="No finalized reports for these dates" description="Try another period or check source imports below. Missing reports do not mean zero revenue." />@endif
 <section class="report-metrics" aria-label="Performance totals">
 @foreach ([
@@ -14,17 +14,20 @@
 ['Managed impressions',number_format($summary['managed_impressions']),'','Reported ad delivery']
 ] as [$label,$value,$unit,$hint])<article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><p class="eyebrow">{{ $label }}</p><div class="report-kpi-value">{{ $value }} @if($unit)<span>{{ $unit }}</span>@endif</div><p class="report-kpi-hint">{{ $hint }}</p></article>@endforeach
 </section>
+<x-report-performance-totals :totals="$summary['performance']" :currency="$summary['currency']" />
 <article class="report-chart-card">
     <div class="report-card-heading"><div><p class="eyebrow">REVENUE TREND</p><h3>Daily performance</h3></div><div class="report-chart-total"><strong>{{ \App\Support\Money::formatMinor((int) $summary['gross_revenue_minor']) }} <small>{{ $summary['currency'] }}</small></strong><span>Gross revenue · before adjustments</span></div></div>
     @if($summary['available'])
         <x-report-chart :rows="$summary['daily_revenue']" :currency="$summary['currency']" :from="$summary['from']" :to="$summary['to']" />
         <div class="report-chart-foot"><span><i aria-hidden="true"></i> Gross revenue</span><span>Only imported days are plotted · Gaps indicate missing data</span></div>
-        <details class="report-data-details"><summary>View daily figures</summary><div class="table-wrap"><table><thead><tr><th scope="col">Date</th><th scope="col">Gross revenue ({{ $summary['currency'] }})</th></tr></thead><tbody>@foreach($summary['daily_revenue'] as $day)<tr><th scope="row">{{ $day['date'] }}</th><td>{{ \App\Support\Money::formatMinor((int) $day['gross_revenue_minor']) }}</td></tr>@endforeach</tbody></table></div></details>
+        <details class="report-data-details" open><summary>Daily performance details</summary>
+            <x-report-performance-table :rows="$summary['daily_revenue']" :metrics="$reportMetrics" :currency="$summary['currency']" label-key="date" revenue-key="gross_revenue_minor" revenue-label="Gross revenue" caption="Daily admin performance" />
+        </details>
     @else<p class="report-chart-empty muted">Your revenue trend will appear when finalized reports are available.</p>@endif
 </article>
 <section class="report-breakdowns">
 @foreach ([['Revenue by publisher',$summary['revenue_by_publisher']],['Revenue by website',$summary['revenue_by_website']],['Revenue by demand source',$summary['revenue_by_source']],['Revenue by campaign',$summary['revenue_by_campaign']]] as [$heading,$rows])
-<article class="report-breakdown"><div class="report-card-heading"><h3>{{ $heading }}</h3><span class="report-count">{{ count($rows) }}</span></div><div class="report-list-labels"><span>Name / impressions</span><span>Gross · {{ $summary['currency'] }}</span></div><div class="report-ranked-list">@forelse($rows as $row)<div class="report-ranked-row"><span class="report-rank">{{ $loop->iteration }}</span><div><strong>{{ $row['label'] }}</strong><span class="muted">{{ number_format($row['impressions']) }} impressions</span></div><strong class="money">{{ \App\Support\Money::formatMinor((int) $row['gross_revenue_minor']) }}</strong></div>@empty<p class="muted report-list-empty">No finalized data in this period.</p>@endforelse</div></article>
+<article class="report-breakdown"><div class="report-card-heading"><h3>{{ $heading }}</h3><span class="report-count">{{ count($rows) }}</span></div><div class="report-list-labels"><span>Name / impressions</span><span>Gross · {{ $summary['currency'] }}</span></div><div class="report-ranked-list">@forelse($rows as $row)<div class="report-ranked-row"><span class="report-rank">{{ $loop->iteration }}</span><div><strong>{{ $row['label'] }}</strong><span class="muted">{{ number_format($row['impressions']) }} impressions</span></div><strong class="money">{{ \App\Support\Money::formatMinor((int) $row['gross_revenue_minor']) }}</strong></div>@empty<p class="muted report-list-empty">No finalized data in this period.</p>@endforelse</div><details class="report-data-details"><summary>Performance details</summary><x-report-performance-table :rows="$rows" :metrics="$reportMetrics" :currency="$summary['currency']" label="Name" revenue-key="gross_revenue_minor" revenue-label="Gross revenue" :caption="$heading" /></details></article>
 @endforeach
 </section>
 <aside class="report-finance-strip"><div><h3>From reports to payouts</h3><p class="muted">Close your month, review invoices and manage publisher payments.</p></div><nav class="report-finance-links" aria-label="Reporting and Finance">

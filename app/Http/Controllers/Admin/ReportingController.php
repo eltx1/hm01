@@ -32,15 +32,21 @@ use Illuminate\View\View;
 
 class ReportingController extends Controller
 {
-    public function index(ReportPeriodRequest $request, UnifiedReportService $reports): View
+    public function index(ReportPeriodRequest $request, UnifiedReportService $reports): View|\Symfony\Component\HttpFoundation\StreamedResponse
     {
         $from = CarbonImmutable::parse($request->validated('from'));
         $to = CarbonImmutable::parse($request->validated('to'));
 
         $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 
+        $summary = $reports->adminSummary($from, $to, $canonicalCurrency);
+        if ($request->validated('export') === 'csv') {
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics(), $canonicalCurrency, false);
+        }
+
         return view('admin.reporting.index', [
-            'summary' => $reports->adminSummary($from, $to, $canonicalCurrency),
+            'summary' => $summary,
+            'reportMetrics' => $request->selectedMetrics(),
             'sources' => ReportSource::query()->withCount('connections')->orderByDesc('is_primary')->orderBy('name')->get(),
             'connections' => ReportSourceConnection::withoutGlobalScopes()->with('source')->latest()->limit(100)->get(),
             'imports' => ReportImportJob::withoutGlobalScopes()->with('connection.source')->latest()->limit(100)->get(),

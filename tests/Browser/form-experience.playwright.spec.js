@@ -20,7 +20,31 @@ async function open(page, name) {
     });
     // Match the fixture application's asset origin; all requests are intercepted.
     await page.goto('http://localhost/preview');
-    await expect(page.locator('.ui-page').first()).toBeVisible();
+    await expect(page.locator(name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
+}
+
+for (const name of ['reports-publisher', 'reports-admin']) {
+    test(`${name}: custom performance metrics fit both themes and preserve selected CSV columns`, async ({ page }, info) => {
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await open(page, name);
+        await expect(page.getByRole('region', { name: name === 'reports-publisher' ? 'Daily publisher performance' : 'Daily admin performance', exact: true })).toBeVisible();
+        await page.getByText('Customize columns', { exact: false }).click();
+        await page.getByLabel('Clicks', { exact: true }).uncheck();
+        const form = page.getByRole('form', { name: 'Reporting period' });
+        const selected = await form.evaluate(el => new FormData(el).getAll('metrics[]'));
+        expect(selected).not.toContain('clicks');
+        expect(selected).toContain('viewability_bp');
+        expect(selected).toContain('unfilled_impressions');
+        await expect(page.getByRole('button', { name: 'Download CSV' })).toBeVisible();
+        for (const theme of ['dark', 'light']) {
+            await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+            await page.screenshot({ path: info.outputPath(`${name}-${theme}.png`), fullPage: true });
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+        expect(errors).toEqual([]);
+    });
 }
 
 for (const name of ['payment-empty', 'payment-verified', 'site-create', 'site-edit', 'support-create', 'account-profile', 'account-branding', 'account-security', 'admin-payment']) {
