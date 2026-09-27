@@ -189,7 +189,8 @@ class SiteGamReportingTest extends TestCase
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.sites.show', $site))->assertOk()
             ->assertSee('Today so far')->assertSee('456.78 USD')->assertSee('Last imported: 2026-09-21 13:00:00')
-            ->assertSee('View completed-day reports')
+            ->assertSee('View full website report')
+            ->assertSee(route('admin.reporting.websites.show', $site), false)
             ->assertViewHas('todayReport', fn ($report) => $report['available'] && $report['impressions'] === 125 && $report['clicks'] === 5);
         $this->assertSame($calls, count($this->google->calls));
         $this->assertSame($count, ReportImportJob::count());

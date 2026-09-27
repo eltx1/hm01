@@ -183,3 +183,29 @@
     .publisher-report-mobile-row dt { font-size: .65rem; }
     .publisher-report-mobile-row dd { font-size: .8rem; font-variant-numeric: tabular-nums; }
 }
+
+/* Admin website reports share the existing reporting palette and responsive rows. */
+.admin-website-reports .report-page-heading > div { min-width: 0; overflow-wrap: anywhere; }
+.admin-website-search { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
+.admin-website-search label { display: grid; gap: .4rem; flex: 1 1 18rem; color: var(--hm-muted); font-size: .8rem; }
+.admin-website-search input { width: 100%; min-width: 0; }
+.admin-website-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.admin-website-card { display: flex; flex-direction: column; gap: 1rem; min-width: 0; padding: 1.2rem; border: 1px solid var(--hm-line); border-radius: .85rem; background: var(--hm-glass); }
+.admin-website-card header { display: flex; align-items: start; justify-content: space-between; gap: .75rem; }
+.admin-website-card header > div { min-width: 0; overflow-wrap: anywhere; }
+.admin-website-card h3 { margin: 0 0 .35rem; font-size: 1rem; }
+.admin-website-card p { margin: .25rem 0; font-size: .75rem; overflow-wrap: anywhere; }
+.admin-website-revenue { display: grid; gap: .3rem; }
+.admin-website-revenue > span { color: var(--hm-muted); font-size: .75rem; }
+.admin-website-revenue strong { color: var(--hm-gold-highlight); font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+.admin-website-revenue small { font-size: .7rem; }
+.admin-website-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem .7rem; margin: 0; }
+.admin-website-card dt { color: var(--hm-muted); font-size: .65rem; }
+.admin-website-card dd { margin: .3rem 0 0; font-size: .85rem; font-weight: 650; overflow-wrap: anywhere; }
+.admin-website-card > a { align-self: start; margin-top: auto; }
+@media (max-width: 800px) { .admin-website-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+    .admin-website-card dl, .admin-website-reports .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .admin-website-reports .report-chart { margin: 1rem 0 .5rem; }
+    .admin-website-reports .report-page-heading { align-items: start; flex-direction: column; }
+}

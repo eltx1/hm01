@@ -145,7 +145,7 @@
         @csrf
         <div class="inline-form"><input class="hm-input" name="reason" minlength="8" placeholder="Bulk reset reason" required><input class="hm-input" type="password" name="current_password" placeholder="Current password" required><input class="hm-input" name="impact_confirmation" placeholder="RESET SELECTED SITES TO INHERIT" required><button class="hm-button-secondary">Reset selected Sites to INHERIT</button></div>
     </form>
-    <div class="table-scroll" data-mobile-responsive-table>
+    <div class="table-scroll" data-mobile-responsive-table tabindex="0" role="region" aria-label="Website traffic protection">
         <table class="hm-table">
             <thead><tr><th>Select</th><th>Site</th><th>Publisher</th><th>Domain</th><th>Effective Gate</th><th>Override</th><th>Policy</th><th>Static status</th><th>Action</th></tr></thead>
             <tbody>

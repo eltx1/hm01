@@ -7,20 +7,20 @@ const manifest = JSON.parse(await readFile(path.join(root, 'public/build/manifes
 const styles = [...new Set([manifest['resources/css/app.css'].file, ...(manifest['resources/js/app.js'].css || [])])];
 const types = { '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2' };
 
-async function open(page, name) {
+async function open(page, name, fixturePath = '/preview') {
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.pathname === '/fixture.css') return route.fulfill({ contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
         if (url.pathname === '/fixture.js') return route.fulfill({ contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
-        if (url.pathname === '/preview') return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
+        if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
         if (/^\/(assets|build)\//.test(url.pathname) && !url.pathname.includes('..')) {
             try { return await route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body: await readFile(path.join(root, 'public', url.pathname)) }); } catch { /* optional branding asset */ }
         }
         return route.fulfill({ status: 204 });
     });
     // Match the fixture application's asset origin; all requests are intercepted.
-    await page.goto('http://localhost/preview');
-    await expect(page.locator(name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
+    await page.goto(`http://localhost${fixturePath}`);
+    await expect(page.locator(name.startsWith('workspace-') ? '#main-content' : name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
 }
 
 for (const name of ['reports-publisher', 'reports-admin']) {
@@ -120,6 +120,60 @@ test('publisher daily and website rows show exactly the selected metrics without
             await expect(region.locator('tbody tr').first().locator('td')).toHaveText(['20', '60.00%', '70.00']);
         }
     }
+});
+
+test('admin can find a website and read all selected daily metrics in both themes', async ({ page }, info) => {
+    await open(page, 'reports-admin-websites');
+    const cards = page.getByRole('region', { name: 'Website performance reports' });
+    // A labelled section is exposed as a region, including new sites without reports.
+    await expect(cards.locator('.admin-website-card')).toHaveCount(3);
+    const link = page.getByRole('link', { name: 'View report for Example publishing', exact: true });
+    const target = new URL(await link.getAttribute('href'));
+    expect(target.searchParams.get('from')).toBe('2026-09-01');
+    expect(target.searchParams.get('to')).toBe('2026-09-21');
+    expect(target.searchParams.get('metrics[0]')).toBe('impressions');
+    await page.getByRole('searchbox', { name: 'Find a website' }).fill('Example publishing');
+    const search = await page.getByRole('search').evaluate(form => new FormData(form).get('q'));
+    expect(search).toBe('Example publishing');
+    for (const theme of ['dark', 'light']) {
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.screenshot({ path: info.outputPath(`reports-admin-websites-${theme}.png`), fullPage: true });
+        if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+    }
+    await page.unroute('**/*');
+    await page.evaluate(() => localStorage.clear());
+    await open(page, 'reports-admin-website', target.pathname);
+    await expect(page.getByRole('heading', { name: 'Example publishing', exact: true })).toBeVisible();
+    const totals = page.getByRole('region', { name: 'Website revenue totals' });
+    await expect(totals).toContainText('100.00');
+    await expect(totals).toContainText('70.00');
+    await expect(totals).toContainText('30.00');
+    const daily = page.getByRole('region', { name: 'Website daily performance', exact: true });
+    for (const theme of ['dark', 'light']) {
+        if (page.viewportSize().width <= 600) {
+            await expect(daily.locator('dt')).toHaveText(['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', 'Unfilled impressions']);
+            await expect(daily.locator('dd')).toHaveText(['1,000', '20', '2.00%', '100.00 USD', '60.00%', '25']);
+            for (const value of await daily.locator('dt, dd').all()) await expect(value).toBeVisible();
+        } else {
+            await expect(daily.locator('tbody tr td')).toHaveText(['1,000', '20', '2.00%', '100.00', '60.00%', '25', '100.00']);
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.screenshot({ path: info.outputPath(`reports-admin-website-${theme}.png`), fullPage: true });
+        if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+    }
+    await page.getByText('Customize columns', { exact: false }).click();
+    await page.getByLabel('Clicks', { exact: true }).uncheck();
+    const [download] = await Promise.all([
+        page.waitForRequest(request => new URL(request.url()).searchParams.get('export') === 'csv'),
+        page.getByRole('button', { name: 'Download CSV' }).click(),
+    ]);
+    const csv = new URL(download.url());
+    expect(csv.pathname).toBe(target.pathname);
+    expect(csv.searchParams.getAll('metrics[]')).not.toContain('clicks');
+    expect(csv.searchParams.get('from')).toBe('2026-09-01');
+    await page.unroute('**/*');
+    await open(page, 'reports-admin-website-empty');
+    await expect(page.getByText('No finalized reports for these dates', { exact: true })).toBeVisible();
 });
 
 test('publisher report explains mixed and missing data without showing gross revenue', async ({ page }, info) => {
@@ -233,4 +287,93 @@ test('payment form remains usable without JavaScript', async ({ browser }) => {
     await expect(page.getByRole('button', { name: 'Save payment method' })).toBeVisible();
     await expect(page.getByLabel('Country or territory')).toBeVisible();
     await context.close();
+});
+
+for (const name of ['reports-admin', 'reports-publisher', 'payment-viewer']) {
+    test(`${name}: mobile drawer keeps account and logout reachable with long navigation and short viewports`, async ({ page }, info) => {
+        await page.setViewportSize({ width: 390, height: 660 });
+        await open(page, name);
+        const drawer = page.locator('#control-navigation');
+        const toggle = page.locator('[data-nav-toggle]');
+        const close = drawer.getByRole('button', { name: 'Close navigation' });
+        const account = drawer.getByRole('link', { name: 'My account', exact: true });
+        const logout = drawer.getByRole('button', { name: 'Sign out', exact: true });
+        await expect(drawer).toHaveAttribute('inert', '');
+        for (const theme of ['dark', 'light']) {
+            for (const viewport of [{ width: 390, height: 660 }, { width: 320, height: 480 }, { width: 844, height: 320 }]) {
+                await page.setViewportSize(viewport);
+                await toggle.click();
+                await expect(account).toHaveAttribute('href', /\/account$/);
+                await expect(close).toBeFocused();
+                await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+                // Long admin menus must scroll independently without moving account actions.
+                await drawer.locator('details').evaluateAll(groups => groups.forEach(group => { group.open = true; }));
+                await drawer.locator('.sidebar-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
+                for (const control of [account, logout, close]) {
+                    await expect(control).toBeVisible();
+                    const box = await control.boundingBox();
+                    expect(box.y).toBeGreaterThanOrEqual(0);
+                    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+                    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+                    expect(box.height).toBeGreaterThanOrEqual(44);
+                }
+                await logout.focus();
+                await page.keyboard.press('Tab');
+                await expect(drawer.locator('a').first()).toBeFocused();
+                await page.keyboard.press('Shift+Tab');
+                await expect(logout).toBeFocused();
+                await page.screenshot({ path: info.outputPath(`navigation-${name}-${theme}-${viewport.width}.png`) });
+                await close.click();
+                await expect(toggle).toBeFocused();
+                await expect(drawer).toHaveAttribute('inert', '');
+                await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
+            }
+            await page.setViewportSize({ width: 390, height: 660 });
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+        await toggle.click();
+        const finder = drawer.locator('[data-nav-filter]');
+        await finder.fill('zzzx-no-page');
+        await expect(drawer.locator('[data-nav-empty]')).toBeVisible();
+        await expect(drawer.locator('.navigation-links a:visible')).toHaveCount(0);
+        await expect(account).toBeVisible();
+        await finder.fill('Dashboard');
+        await expect(drawer.locator('.navigation-links a:visible')).toHaveText(['Dashboard']);
+        await finder.fill('');
+        await expect(drawer.locator('[data-nav-empty]')).toBeHidden();
+        await page.keyboard.press('Escape');
+        await expect(toggle).toBeFocused();
+        await toggle.click();
+        await page.locator('.sidebar-scrim').click({ position: { x: 380, y: 20 } });
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await toggle.click();
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await expect(drawer).not.toHaveAttribute('inert', '');
+        await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
+        await expect(page.locator('body')).not.toHaveClass(/navigation-open/);
+        // Verify the real logout form still sends a CSRF-protected POST.
+        const request = page.waitForRequest(req => new URL(req.url()).pathname === '/logout');
+        await logout.click();
+        const submitted = await request;
+        expect(submitted.method()).toBe('POST');
+        expect(new URLSearchParams(submitted.postData()).get('_token')).toBeTruthy();
+    });
+}
+
+
+test('website operations tables scroll inside their cards on narrow screens', async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 660 });
+    await open(page, 'workspace-admin-site');
+    for (const label of ['Placement delivery details', 'Reporting health details']) {
+        const region = page.getByRole('region', { name: label, exact: true });
+        await region.scrollIntoViewIfNeeded();
+        const result = await region.evaluate(element => {
+            element.scrollLeft = element.scrollWidth;
+            return { left: element.scrollLeft, right: element.getBoundingClientRect().right, viewport: innerWidth };
+        });
+        expect(result.left).toBeGreaterThan(0);
+        expect(result.right).toBeLessThanOrEqual(result.viewport);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath('workspace-admin-site-mobile.png'), fullPage: false });
 });

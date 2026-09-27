@@ -98,3 +98,27 @@ The enum reference defines `TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS`,
 `TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS`, and
 `TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS`. It distinguishes the last metric
 from `TOTAL_UNMATCHED_AD_REQUESTS`; the existing request metric is retained.
+
+
+## Admin website reports
+
+The admin Reports page and website operations list link to website reports.
+`/admin/reporting/websites` provides search by website, domain or publisher and
+24-site pagination. It batches report retrieval for the visible site IDs.
+`/admin/reporting/websites/{site}` shows a site-scoped chart, selected daily
+metrics, CSV, and separately labelled gross revenue, publisher earnings and
+Horus margin. Empty/new websites remain discoverable.
+
+These pages use finalized reports in the configured canonical currency, matching
+the existing admin overview and website breakdowns. Earnings use stored report
+allocations before statement adjustments. They do not allocate publisher-level
+adjustments to individual sites, modify financial records or change settlements.
+The existing Horus workspace, 2FA and `reporting.admin.view` checks protect both
+pages and CSV. Publisher routes are unchanged. Mobile daily metrics remain
+visible without row expansion. Dates and selected metrics carry into drill-down
+links and exports; directory search survives period changes.
+
+Regression coverage includes site/date/finality isolation, stored revenue shares,
+CSV column selection, denied publisher/admin access, deleted and empty sites,
+pagination, search, both themes and desktop/mobile rendering. Changed files and
+CI/deployment results are recorded in the implementation PR.

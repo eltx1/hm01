@@ -2,7 +2,7 @@
 <html data-hm-theme="dark" lang="{{ str_replace('_', '-', app()->getLocale()) }}">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
     @php($brand = auth()->user()?->organization)
@@ -28,22 +28,29 @@
     <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="admin-shell">
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
-            <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
-            <p class="eyebrow">{{ $workspaceLabel }}</p>
-            <label class="navigation-finder">
-                <span class="sr-only">Find a page</span>
-                <input type="search" placeholder="Find a page…" autocomplete="off" data-nav-filter aria-label="Find a page in navigation">
-            </label>
-            <p class="navigation-empty muted" data-nav-empty hidden>No matching page.</p>
-            <x-control-plane.navigation :groups="$navigationGroups" />
+            <div class="sidebar-header">
+                <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
+                <button class="sidebar-close" type="button" data-nav-close aria-label="Close navigation"><span aria-hidden="true">×</span></button>
+            </div>
+            <div class="sidebar-scroll">
+                <p class="eyebrow">{{ $workspaceLabel }}</p>
+                <label class="navigation-finder">
+                    <span class="sr-only">Find a page</span>
+                    <input type="search" placeholder="Find a page…" autocomplete="off" data-nav-filter aria-label="Find a page in navigation">
+                </label>
+                <p class="navigation-empty muted" data-nav-empty hidden>No matching page.</p>
+                <x-control-plane.navigation :groups="$navigationGroups" />
+            </div>
             <div class="sidebar-account">
                 <span>{{ auth()->user()->name }}</span>
                 <small>{{ auth()->user()->email }}</small>
-                <a class="text-link" href="{{ route('account.index') }}">Account &amp; Security</a>
-                <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button" type="submit">Sign out</button></form>
+                <div class="sidebar-account-actions">
+                    <a class="text-link" href="{{ route('account.index') }}">My account</a>
+                    <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button" type="submit">Sign out</button></form>
+                </div>
             </div>
         </aside>
-        <button class="sidebar-scrim" type="button" data-nav-close aria-label="Close navigation"></button>
+        <button class="sidebar-scrim" tabindex="-1" type="button" data-nav-close aria-label="Close navigation"></button>
         <main id="main-content" tabindex="-1">
             <header class="topbar">
                 <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>

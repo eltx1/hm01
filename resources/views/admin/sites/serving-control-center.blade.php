@@ -91,14 +91,14 @@
     </div>
 
     <div class="workspace-heading" style="margin-top:1.5rem"><div><p class="eyebrow">Renderer ownership</p><h3>Placement Matrix</h3></div><span class="muted">Production config v{{ $servingOverview['production_config']['version'] ?: '—' }}</span></div>
-    <div class="table-scroll"><table class="hm-table"><thead><tr><th>Placement</th><th>GAM</th><th>Prebid</th><th>Direct JS</th><th>Renderer</th><th>Status</th></tr></thead><tbody>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Placement delivery details"><table class="hm-table"><thead><tr><th>Placement</th><th>GAM</th><th>Prebid</th><th>Direct JS</th><th>Renderer</th><th>Status</th></tr></thead><tbody>
         @forelse($servingOverview['placement_matrix'] as $row)
             <tr><td><strong>{{ $row['name'] }}</strong><small>{{ $row['placement'] }}</small></td><td>{{ $row['gam'] }}</td><td>{{ $row['prebid'] }}</td><td>{{ $row['direct_js'] }}</td><td><code>{{ $row['renderer'] }}</code></td><td><x-status-badge :status="$row['status']" /></td></tr>
         @empty<tr><td colspan="6" class="muted">No production placement configuration has been published yet.</td></tr>@endforelse
     </tbody></table></div>
 
     <div class="workspace-heading" style="margin-top:1.5rem"><div><p class="eyebrow">Aggregated finance inputs</p><h3>Reporting Health</h3><p class="muted">Provider API/CSV/approved aggregated imports only. Browser impressions are not a finance source.</p></div><x-status-badge :status="$servingOverview['reporting']['status']" /></div>
-    <div class="table-scroll"><table class="hm-table"><thead><tr><th>Engine</th><th>Demand source</th><th>Health</th><th>Report source</th><th>Last report</th><th>Last successful import</th></tr></thead><tbody>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Reporting health details"><table class="hm-table"><thead><tr><th>Engine</th><th>Demand source</th><th>Health</th><th>Report source</th><th>Last report</th><th>Last successful import</th></tr></thead><tbody>
         @forelse($servingOverview['reporting']['sources'] as $source)
             <tr><td>{{ $source['engine'] }}</td><td>{{ $source['label'] }}</td><td><x-status-badge :status="$source['status']" /></td><td>{{ $source['report_source'] ?: '—' }}</td><td>{{ $source['last_report_date'] ?: '—' }}</td><td>{{ $source['last_successful_import_at'] ?: '—' }}</td></tr>
         @empty<tr><td colspan="6" class="muted">No active monetization source currently requires financial reporting.</td></tr>@endforelse
