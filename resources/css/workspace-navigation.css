@@ -21,6 +21,7 @@
     .sidebar.is-open { visibility: visible; }
     .sidebar-close { display: inline-grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 1px solid var(--hm-line); border-radius: .65rem; background: var(--hm-glass); color: var(--hm-white); font-size: 1.6rem; }
     .sidebar .navigation-links a, .sidebar .navigation-label { min-height: 44px; display: flex; align-items: center; }
+    .sidebar .navigation-label::after { margin-inline-start: auto; }
     .sidebar .navigation-finder input { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }

@@ -151,6 +151,6 @@ final class ProductUxLaunchReadinessTest extends TestCase
         $this->assertStringContainsString('@media (max-width: 1024px)', $css);
         $this->assertStringContainsString('@media (prefers-reduced-motion: reduce)', $css);
         $this->assertStringContainsString('form.dataset.submitting', $javascript);
-        $this->assertStringContainsString('navigationToggle.focus()', $javascript);
+        $this->assertStringContainsString('navigationToggle.focus(', $javascript);
     }
 }
