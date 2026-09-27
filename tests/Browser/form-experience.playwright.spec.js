@@ -20,7 +20,7 @@ async function open(page, name, fixturePath = '/preview') {
     });
     // Match the fixture application's asset origin; all requests are intercepted.
     await page.goto(`http://localhost${fixturePath}`);
-    await expect(page.locator(name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
+    await expect(page.locator(name.startsWith('workspace-') ? '#main-content' : name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
 }
 
 for (const name of ['reports-publisher', 'reports-admin']) {
@@ -350,3 +350,21 @@ for (const name of ['reports-admin', 'reports-publisher', 'payment-viewer']) {
         expect(new URLSearchParams(submitted.postData()).get('_token')).toBeTruthy();
     });
 }
+
+
+test('website operations tables scroll inside their cards on narrow screens', async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 660 });
+    await open(page, 'workspace-admin-site');
+    for (const label of ['Placement delivery details', 'Reporting health details']) {
+        const region = page.getByRole('region', { name: label, exact: true });
+        await region.scrollIntoViewIfNeeded();
+        const result = await region.evaluate(element => {
+            element.scrollLeft = element.scrollWidth;
+            return { left: element.scrollLeft, right: element.getBoundingClientRect().right, viewport: innerWidth };
+        });
+        expect(result.left).toBeGreaterThan(0);
+        expect(result.right).toBeLessThanOrEqual(result.viewport);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath('workspace-admin-site-mobile.png'), fullPage: true });
+});

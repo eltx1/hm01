@@ -105,7 +105,10 @@ jobs:
         if: always()
         with:
           name: workspace-navigation-${{ github.sha }}
-          path: test-results/form-experience/**/navigation-*.png
+          path: |
+            test-results/form-experience/**/navigation-*.png
+            test-results/form-experience/**/workspace-*.png
+            storage/framework/testing/form-experience/workspace-*.html
           retention-days: 7
           if-no-files-found: ignore
       - name: Smoke-test production environment template
