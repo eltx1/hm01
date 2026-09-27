@@ -63,13 +63,15 @@ report collapsed; its accounting and payment operations are unchanged.
 The report leads with one **Your earnings** amount, using the stored publisher
 allocation. A collapsed breakdown explains finalized plus estimated earnings;
 estimated zero-revenue rows still identify the total as including estimates.
-Ad metrics have short explanations, and unavailable metrics distinguish incomplete
-source data from zero denominators. No gross revenue or Horus margin is passed to
+Publisher-facing copy uses concise metric labels, earnings states and the update
+time. Revenue-share explanations, formulas and source diagnostics stay out of the
+publisher interface; unavailable values remain explicitly labeled. No gross revenue or Horus margin is passed to
 the report view or CSV. No additional revenue-share multiplication is performed.
 
 Quick periods precede the total. Custom dates, column choices and CSV use the same
 native GET form, including externally associated inputs. Daily rows are newest
-first. Mobile rows disclose selected metrics below the date and publisher earnings;
+first. Mobile rows always show every selected metric below the date and publisher earnings,
+without an expansion control or an extra tap;
 desktop retains the table. A separate mobile SVG layout uses exactly the same
 publisher earnings points, with readable labels and missing-day gaps.
 
@@ -83,7 +85,8 @@ and compiled public/build assets. Run outcomes are recorded in the follow-up PR.
 Regression coverage exercises changing daily shares, weighted ratios, missing
 data, zero denominators, idempotent metric updates, invalid-counter rollback,
 month close/statement preservation, tenant scoping, custom columns, CSV, Google
-column compatibility, and both themes at desktop/mobile sizes. Browser fixtures
+column compatibility, and both themes at desktop/mobile sizes. Daily and website
+metrics must be visible without expansion, with all columns or a selected subset. Browser fixtures
 are real authenticated Blade responses. Run outcomes are recorded in the PR.
 
 ## Primary references
