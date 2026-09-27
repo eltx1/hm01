@@ -234,6 +234,35 @@ class ReportPerformanceMetricsTest extends TestCase
         $this->assertSame('publisher.finance.overview', $nav->firstWhere('label', 'Reports & earnings')['route']);
     }
 
+    public function test_today_and_yesterday_shortcuts_preserve_columns_and_cross_month_boundaries(): void
+    {
+        [$admin, $user] = $this->context();
+        $this->travelTo(CarbonImmutable::parse('2026-10-01 00:05:00', config('app.timezone')));
+        $metrics = ['clicks', 'ecpm_minor'];
+        foreach (['publisher.reporting.index', 'publisher.finance.overview', 'admin.reporting.index'] as $route) {
+            $this->actingAs($route === 'admin.reporting.index' ? $admin : $user)
+                ->withSession(['two_factor_passed_at' => now()->timestamp]);
+            $response = $this->get(route($route, ['metrics' => $metrics]))->assertOk();
+            $dom = new \DOMDocument;
+            @$dom->loadHTML($response->getContent());
+            $xpath = new \DOMXPath($dom);
+            foreach (['Today' => '2026-10-01', 'Yesterday' => '2026-09-30'] as $label => $date) {
+                $link = $xpath->query('//nav[@aria-label="Quick reporting periods"]/a[normalize-space(.)="'.$label.'"]')->item(0);
+                $this->assertNotNull($link);
+                parse_str(parse_url($link->getAttribute('href'), PHP_URL_QUERY), $query);
+                $this->assertSame($date, $query['from']);
+                $this->assertSame($date, $query['to']);
+                $this->assertSame($metrics, $query['metrics']);
+                $this->assertSame(parse_url(route($route), PHP_URL_PATH), parse_url($link->getAttribute('href'), PHP_URL_PATH));
+                $selected = $this->get($link->getAttribute('href'))->assertOk();
+                $selectedDom = new \DOMDocument;
+                @$selectedDom->loadHTML($selected->getContent());
+                $selectedLink = (new \DOMXPath($selectedDom))->query('//nav[@aria-label="Quick reporting periods"]/a[normalize-space(.)="'.$label.'"]')->item(0);
+                $this->assertSame('true', $selectedLink->getAttribute('aria-current'));
+            }
+        }
+    }
+
     private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void
     {
         if (getenv('HORUS_UI_FIXTURES') !== '1') {

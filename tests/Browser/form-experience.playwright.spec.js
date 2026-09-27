@@ -28,6 +28,15 @@ for (const name of ['reports-publisher', 'reports-admin']) {
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await open(page, name);
+        const shortcuts = page.getByRole('navigation', { name: 'Quick reporting periods' });
+        for (const [label, date] of [['Today', '2026-09-21'], ['Yesterday', '2026-09-20']]) {
+            const link = shortcuts.getByRole('link', { name: label, exact: true });
+            await expect(link).toBeVisible();
+            const query = new URL(await link.getAttribute('href')).searchParams;
+            expect(query.get('from')).toBe(date);
+            expect(query.get('to')).toBe(date);
+            expect(query.getAll('metrics[0]')).toEqual(['impressions']);
+        }
         const publisher = name === 'reports-publisher';
         const daily = page.getByRole('region', { name: publisher ? 'Daily publisher performance' : 'Daily admin performance', exact: true });
         await expect(daily).toBeVisible();

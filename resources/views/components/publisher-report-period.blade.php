@@ -2,6 +2,8 @@
 <div class="publisher-report-period">
     <nav class="report-shortcuts" aria-label="Quick reporting periods">
         @foreach([
+            ['Today', now()->toDateString(), now()->toDateString()],
+            ['Yesterday', now()->subDay()->toDateString(), now()->subDay()->toDateString()],
             ['Last 7 days', now()->subDays(6)->toDateString(), now()->toDateString()],
             ['This month', now()->startOfMonth()->toDateString(), now()->toDateString()],
             ['Last month', now()->subMonthNoOverflow()->startOfMonth()->toDateString(), now()->subMonthNoOverflow()->endOfMonth()->toDateString()],
