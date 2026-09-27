@@ -7,19 +7,19 @@ const manifest = JSON.parse(await readFile(path.join(root, 'public/build/manifes
 const styles = [...new Set([manifest['resources/css/app.css'].file, ...(manifest['resources/js/app.js'].css || [])])];
 const types = { '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2' };
 
-async function open(page, name) {
+async function open(page, name, fixturePath = '/preview') {
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.pathname === '/fixture.css') return route.fulfill({ contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
         if (url.pathname === '/fixture.js') return route.fulfill({ contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
-        if (url.pathname === '/preview') return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
+        if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
         if (/^\/(assets|build)\//.test(url.pathname) && !url.pathname.includes('..')) {
             try { return await route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body: await readFile(path.join(root, 'public', url.pathname)) }); } catch { /* optional branding asset */ }
         }
         return route.fulfill({ status: 204 });
     });
     // Match the fixture application's asset origin; all requests are intercepted.
-    await page.goto('http://localhost/preview');
+    await page.goto(`http://localhost${fixturePath}`);
     await expect(page.locator(name.startsWith('reports-') ? '.reports-page' : '.ui-page').first()).toBeVisible();
 }
 
@@ -142,7 +142,7 @@ test('admin can find a website and read all selected daily metrics in both theme
     }
     await page.unroute('**/*');
     await page.evaluate(() => localStorage.clear());
-    await open(page, 'reports-admin-website');
+    await open(page, 'reports-admin-website', target.pathname);
     await expect(page.getByRole('heading', { name: 'Example publishing', exact: true })).toBeVisible();
     const totals = page.getByRole('region', { name: 'Website revenue totals' });
     await expect(totals).toContainText('100.00');
