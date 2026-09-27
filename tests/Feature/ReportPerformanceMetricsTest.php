@@ -266,6 +266,73 @@ class ReportPerformanceMetricsTest extends TestCase
         }
     }
 
+    public function test_admin_website_reports_are_site_scoped_and_keep_csv_dates_metrics_and_permissions(): void
+    {
+        $context = [$admin, $user, $publisher, $site] = $this->context();
+        $this->import($context, ['impressions' => 1000, 'clicks' => 20, 'gross_revenue_minor' => 10000,
+            'active_view_viewable_impressions' => 300, 'active_view_measurable_impressions' => 500,
+            'unfilled_impressions' => 25], '2026-09-20');
+        $this->import($context, ['impressions' => 50, 'gross_revenue_minor' => 50000], '2026-09-21', ReportFinality::Estimated);
+        $this->import($context, ['impressions' => 100, 'gross_revenue_minor' => 20000], '2026-08-20');
+        $other = $this->makeSiteFor($publisher, $user, ['display_name' => 'Other website']);
+        $otherContext = [$admin, $user, $publisher, $other, $context[4]];
+        $this->import($otherContext, ['impressions' => 9999, 'gross_revenue_minor' => 90000], '2026-09-20');
+        $empty = $this->makeSiteFor($publisher, $user, ['display_name' => 'New website']);
+        $this->actingAs($user);
+        $this->get(route('admin.reporting.websites.index'))->assertForbidden();
+        $this->get(route('admin.reporting.websites.show', $site))->assertForbidden();
+        $this->get(route('admin.reporting.websites.show', ['site' => $site, 'export' => 'csv']))->assertForbidden();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $before = DailyReport::withoutGlobalScopes()->get()->map->getAttributes()->all();
+        $response = $this->get(route('admin.reporting.websites.show', $site))->assertOk()
+            ->assertSee('Gross revenue')->assertSee('Publisher earnings')->assertSee('Horus margin')
+            ->assertSee('60.00%')->assertDontSee('Other website');
+        $summary = $response->viewData('summary');
+        $this->assertSame(10000, $summary['gross_revenue_minor']);
+        $this->assertSame(7000, $summary['publisher_earnings_minor']);
+        $this->assertSame(3000, $summary['horus_earnings_minor']);
+        $this->assertSame(1000, $summary['impressions']);
+        $this->assertSame(10000, $summary['ecpm_minor']);
+        $this->assertCount(1, $summary['days']);
+        $this->fixture('reports-admin-website', $response);
+        $csv = $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-20',
+            'to' => '2026-09-20', 'metrics' => ['clicks', 'viewability_bp'], 'export' => 'csv']))->assertOk()->streamedContent();
+        $this->assertStringContainsString('2026-09-20,20,60.00%,100.00', $csv);
+        $this->assertStringNotContainsString('Impressions', $csv);
+        $this->assertStringNotContainsString('900.00', $csv);
+        $response = $this->get(route('admin.reporting.websites.show', $empty))->assertOk()->assertSee('No finalized reports for these dates');
+        $this->fixture('reports-admin-website-empty', $response);
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->get()->map->getAttributes()->all());
+        $response = $this->get(route('admin.reporting.websites.index'))->assertOk()->assertSee('New website')->assertSee('Other website');
+        $this->fixture('reports-admin-websites', $response);
+        $this->get(route('admin.reporting.websites.index', ['q' => $site->primary_domain]))->assertOk()
+            ->assertViewHas('sites', fn ($sites) => $sites->total() === 1 && $sites->first()->id === $site->id);
+        $this->get(route('admin.reporting.websites.index', ['q' => $publisher->display_name]))->assertOk()
+            ->assertViewHas('sites', fn ($sites) => $sites->total() === 3);
+        $this->get(route('admin.reporting.websites.index', ['q' => ['invalid']]))->assertSessionHasErrors('q');
+        $this->get(route('admin.reporting.websites.show', ['site' => $site, 'metrics' => ['invalid']]))->assertSessionHasErrors('metrics.0');
+        $site->delete();
+        $this->get(route('admin.reporting.websites.show', $site))->assertNotFound();
+    }
+
+    public function test_admin_website_directory_has_bounded_pagination_and_permission_checks(): void
+    {
+        [$admin, $user, $publisher] = $this->context();
+        for ($i = 0; $i < 25; $i++) {
+            $this->makeSiteFor($publisher, $user, ['display_name' => 'Website '.$i]);
+        }
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $this->get(route('admin.reporting.websites.index'))->assertOk()
+            ->assertViewHas('sites', fn ($sites) => $sites->total() === 26 && $sites->count() === 24);
+        $this->get(route('admin.reporting.websites.index', ['page' => 2]))->assertOk()
+            ->assertViewHas('sites', fn ($sites) => $sites->count() === 2);
+        $permission = \App\Models\Permission::where('name', 'reporting.admin.view')->firstOrFail();
+        $admin->roles()->firstOrFail()->permissions()->detach($permission);
+        $this->actingAs($admin->fresh());
+        $this->get(route('admin.reporting.websites.index'))->assertForbidden();
+        $this->get(route('admin.reporting.websites.show', \App\Models\Site::firstOrFail()))->assertForbidden();
+    }
+
     private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void
     {
         if (getenv('HORUS_UI_FIXTURES') !== '1') {

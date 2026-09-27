@@ -17,6 +17,10 @@ class ReportingServiceProvider extends ServiceProvider
             Route::middleware('horus')->group(function (): void {
                 Route::get('/admin/reporting', [AdminReportingController::class, 'index'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.index');
+                Route::get('/admin/reporting/websites', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'index'])
+                    ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.index');
+                Route::get('/admin/reporting/websites/{site}', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'show'])
+                    ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.show');
                 Route::post('/admin/reporting/connections', [AdminReportingController::class, 'storeConnection'])
                     ->middleware('permission:reporting.sources.manage')->name('admin.reporting.connections.store');
                 Route::patch('/admin/reporting/connections/{reportSourceConnection}/status', [AdminReportingController::class, 'connectionStatus'])

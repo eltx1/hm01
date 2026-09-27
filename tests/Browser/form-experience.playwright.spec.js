@@ -122,6 +122,60 @@ test('publisher daily and website rows show exactly the selected metrics without
     }
 });
 
+test('admin can find a website and read all selected daily metrics in both themes', async ({ page }, info) => {
+    await open(page, 'reports-admin-websites');
+    const cards = page.getByRole('region', { name: 'Website performance reports' });
+    // A labelled section is exposed as a region, including new sites without reports.
+    await expect(cards.locator('.admin-website-card')).toHaveCount(3);
+    const link = page.getByRole('link', { name: 'View report for Example publishing', exact: true });
+    const target = new URL(await link.getAttribute('href'));
+    expect(target.searchParams.get('from')).toBe('2026-09-01');
+    expect(target.searchParams.get('to')).toBe('2026-09-21');
+    expect(target.searchParams.get('metrics[0]')).toBe('impressions');
+    await page.getByRole('searchbox', { name: 'Find a website' }).fill('Example publishing');
+    const search = await page.getByRole('search').evaluate(form => new FormData(form).get('q'));
+    expect(search).toBe('Example publishing');
+    for (const theme of ['dark', 'light']) {
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.screenshot({ path: info.outputPath(`reports-admin-websites-${theme}.png`), fullPage: true });
+        if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+    }
+    await page.unroute('**/*');
+    await page.evaluate(() => localStorage.clear());
+    await open(page, 'reports-admin-website');
+    await expect(page.getByRole('heading', { name: 'Example publishing', exact: true })).toBeVisible();
+    const totals = page.getByRole('region', { name: 'Website revenue totals' });
+    await expect(totals).toContainText('100.00');
+    await expect(totals).toContainText('70.00');
+    await expect(totals).toContainText('30.00');
+    const daily = page.getByRole('region', { name: 'Website daily performance', exact: true });
+    for (const theme of ['dark', 'light']) {
+        if (page.viewportSize().width <= 600) {
+            await expect(daily.locator('dt')).toHaveText(['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', 'Unfilled impressions']);
+            await expect(daily.locator('dd')).toHaveText(['1,000', '20', '2.00%', '100.00 USD', '60.00%', '25']);
+            for (const value of await daily.locator('dt, dd').all()) await expect(value).toBeVisible();
+        } else {
+            await expect(daily.locator('tbody tr td')).toHaveText(['1,000', '20', '2.00%', '100.00', '60.00%', '25', '100.00']);
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.screenshot({ path: info.outputPath(`reports-admin-website-${theme}.png`), fullPage: true });
+        if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+    }
+    await page.getByText('Customize columns', { exact: false }).click();
+    await page.getByLabel('Clicks', { exact: true }).uncheck();
+    const [download] = await Promise.all([
+        page.waitForRequest(request => new URL(request.url()).searchParams.get('export') === 'csv'),
+        page.getByRole('button', { name: 'Download CSV' }).click(),
+    ]);
+    const csv = new URL(download.url());
+    expect(csv.pathname).toBe(target.pathname);
+    expect(csv.searchParams.getAll('metrics[]')).not.toContain('clicks');
+    expect(csv.searchParams.get('from')).toBe('2026-09-01');
+    await page.unroute('**/*');
+    await open(page, 'reports-admin-website-empty');
+    await expect(page.getByText('No finalized reports for these dates', { exact: true })).toBeVisible();
+});
+
 test('publisher report explains mixed and missing data without showing gross revenue', async ({ page }, info) => {
     await open(page, 'reports-publisher-mixed');
     await expect(page.locator('.publisher-earnings-value')).toContainText('105.00');
