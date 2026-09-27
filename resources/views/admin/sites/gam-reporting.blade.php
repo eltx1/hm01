@@ -1,5 +1,8 @@
 @php($reportBinding = $site->currentGamReportBinding)
 <article id="reporting" class="workspace-section">
+    @if(auth()->user()->isHorusAdministrator() && auth()->user()->hasPermission('reporting.admin.view'))
+        <p><a class="hm-button-primary" href="{{ route('admin.reporting.websites.show', $site) }}">View full website report →</a></p>
+    @endif
     @if($todayReport ?? null)
         <section id="today-report" aria-labelledby="today-report-heading">
             <div class="workspace-heading"><div><p class="eyebrow">{{ $site->primary_domain }} · Estimated performance</p><h2 id="today-report-heading">Today so far</h2><p class="muted">{{ $todayReport['date'] }} · {{ $todayReport['timezone'] }} · {{ $todayReport['currency'] }}</p></div><span class="pill">Estimated</span></div>
@@ -20,9 +23,6 @@
                 <p role="status">Today's report has not arrived yet. Figures will appear after the next successful automatic import.</p>
             @endif
             <p class="muted">{{ $todayReport['refresh_enabled'] ? 'Updated automatically every hour. Google data may be delayed.' : 'Automatic refresh is paused for this reporting connection.' }} These are the latest imported estimates, not live counters or finalized payout amounts.</p>
-            @if(auth()->user()->hasPermission('reporting.admin.view'))
-                <a class="hm-button-secondary button-link" href="{{ route('admin.reporting.index', ['currency' => $todayReport['currency']]) }}">View completed-day reports</a>
-            @endif
         </section>
     @endif
     <div class="workspace-heading"><div><p class="eyebrow">Website reporting</p><h2>Connect an Ad Manager ad unit</h2><p class="muted">Choose an account and an ad unit. Reports, publisher revenue share and financial statements use this website's reporting source automatically.</p></div></div>

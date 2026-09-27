@@ -283,6 +283,7 @@ class ReportPerformanceMetricsTest extends TestCase
         $this->get(route('admin.reporting.websites.show', $site))->assertForbidden();
         $this->get(route('admin.reporting.websites.show', ['site' => $site, 'export' => 'csv']))->assertForbidden();
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee(route('admin.reporting.websites.show', $site), false);
         $before = DailyReport::withoutGlobalScopes()->get()->map->getAttributes()->all();
         $response = $this->get(route('admin.reporting.websites.show', $site))->assertOk()
             ->assertSee('Gross revenue')->assertSee('Publisher earnings')->assertSee('Horus margin')
