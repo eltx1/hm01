@@ -1,5 +1,5 @@
 @props(['rows', 'metrics', 'currency', 'labelKey' => 'label', 'label' => 'Date', 'revenueKey' => 'earnings_minor', 'revenueLabel' => 'Your earnings', 'caption' => 'Performance details'])
-<div class="table-wrap report-performance-table" tabindex="0" role="region" aria-label="{{ $caption }}">
+<div class="table-wrap report-performance-table {{ $label === 'Date' ? 'report-performance-table--date' : '' }}" tabindex="0" role="region" aria-label="{{ $caption }}">
     <table>
         <caption class="sr-only">{{ $caption }} · {{ $currency }}</caption>
         <thead><tr><th scope="col">{{ $label }}</th>

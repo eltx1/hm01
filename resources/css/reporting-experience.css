@@ -22,7 +22,8 @@
 .report-performance-table { max-width: 100%; overflow-x: auto; margin-top: .8rem; }
 .report-performance-table table { min-width: 42rem; width: 100%; font-variant-numeric: tabular-nums; }
 .report-performance-table th, .report-performance-table td { text-align: end; white-space: nowrap; }
-.report-performance-table th:first-child { text-align: start; max-width: 17rem; white-space: normal; overflow-wrap: anywhere; }
+.report-performance-table th:first-child { text-align: start; min-width: 8rem; max-width: 17rem; white-space: normal; overflow-wrap: anywhere; }
+.report-performance-table--date th:first-child { white-space: nowrap; overflow-wrap: normal; }
 .report-performance-table:focus-visible { outline: 2px solid var(--hm-gold); outline-offset: 2px; }
 @media (max-width: 1100px) { .report-quality-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .report-quality-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .report-quality-metric strong { font-size: 1.2rem; } }

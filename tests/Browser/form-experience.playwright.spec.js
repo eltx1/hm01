@@ -29,6 +29,8 @@ for (const name of ['reports-publisher', 'reports-admin']) {
         page.on('pageerror', error => errors.push(error.message));
         await open(page, name);
         await expect(page.getByRole('region', { name: name === 'reports-publisher' ? 'Daily publisher performance' : 'Daily admin performance', exact: true })).toBeVisible();
+        const dateCell = page.getByRole('region', { name: name === 'reports-publisher' ? 'Daily publisher performance' : 'Daily admin performance', exact: true }).locator('tbody th').first();
+        expect((await dateCell.boundingBox()).height).toBeLessThan(55);
         await page.getByText('Customize columns', { exact: false }).click();
         await page.getByLabel('Clicks', { exact: true }).uncheck();
         const form = page.getByRole('form', { name: 'Reporting period' });

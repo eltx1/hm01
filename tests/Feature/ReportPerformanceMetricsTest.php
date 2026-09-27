@@ -143,7 +143,9 @@ class ReportPerformanceMetricsTest extends TestCase
         foreach (['publisher.reporting.index', 'publisher.finance.overview'] as $route) {
             $response = $this->get(route($route))->assertOk()->assertSee('Active View')->assertSee('60.00%')
                 ->assertSee('Unfilled impressions')->assertSee('Customize columns')->assertDontSee('PRIVATE OTHER PUBLISHER');
-            $this->fixture('reports-publisher', $response);
+            if ($route === 'publisher.reporting.index') {
+                $this->fixture('reports-publisher', $response);
+            }
             $csv = $this->get(route($route, ['export' => 'csv', 'metrics' => ['clicks', 'ecpm_minor', 'viewability_bp']]))->assertOk()->streamedContent();
             $this->assertStringContainsString('Publisher earnings', $csv);
             $this->assertStringContainsString('70.00', $csv);
