@@ -2,8 +2,8 @@
 
 namespace App\Http\Requests;
 
-use Carbon\CarbonImmutable;
 use App\Services\Reporting\PerformanceMetrics;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 

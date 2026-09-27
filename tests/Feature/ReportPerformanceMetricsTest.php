@@ -87,7 +87,7 @@ class ReportPerformanceMetricsTest extends TestCase
         $statement = PublisherStatement::withoutGlobalScopes()->where('publisher_id', $publisher->id)->sole();
         $before = $statement->getAttributes();
         $this->assertSame(20000, (int) $statement->publisher_earnings_minor);
-        $this->assertSame(ReportImportStatus::Failed, $this->import($context, ['unfilled_impressions' => 123])->status);
+        $this->assertSame(ReportImportStatus::BlockedClosedPeriod, $this->import($context, ['unfilled_impressions' => 123])->status);
         $this->assertSame($before, $statement->fresh()->getAttributes());
     }
 

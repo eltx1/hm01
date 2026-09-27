@@ -191,9 +191,11 @@ final class GamReportConnector implements ReportSourceConnectorInterface
         $connection->update(['configuration' => $configuration]);
 
         $totals = [];
-        foreach (['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks', 'gross_revenue_minor', ...\App\Services\Reporting\PerformanceMetrics::COUNTERS] as $field) {
+        foreach (['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks', 'gross_revenue_minor'] as $field) {
             $totals[$field] = array_sum(array_column($rows, $field));
         }
+        $totals += collect(app(PerformanceMetrics::class)->counters(collect($rows)))
+            ->only(PerformanceMetrics::COUNTERS)->all();
 
         return [
             'external_report_id' => 'gam:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
