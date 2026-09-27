@@ -19,9 +19,20 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ReportingController extends Controller
 {
-    public function index(ReportPeriodRequest $request, PublisherFinanceService $finance): View|StreamedResponse
+    public function index(ReportPeriodRequest $request): View|StreamedResponse
     {
-        return $this->overview($request, $finance);
+        $publisher = $this->publisher($request);
+        $performance = app(PublisherPerformanceService::class)->summary(
+            $publisher, $request->validated('from'), $request->validated('to'),
+        );
+        if ($request->validated('export') === 'csv') {
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics(), $performance['currency'], true);
+        }
+
+        return view('publisher.reporting.index', [
+            'performance' => $performance,
+            'reportMetrics' => $request->selectedMetrics(),
+        ]);
     }
 
     public function overview(ReportPeriodRequest $request, PublisherFinanceService $finance): View|StreamedResponse

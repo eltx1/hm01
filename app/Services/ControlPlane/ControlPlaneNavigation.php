@@ -81,7 +81,9 @@ final class ControlPlaneNavigation
                 // Statements, payout history, and payment details remain one
                 // click away as workspace tabs inside this destination. Avoid
                 // duplicating the same finance workspace in the sidebar.
-                $this->item('Reports & earnings', 'publisher.finance.overview', 'finance.publisher.view_own', [
+                $this->item('Reports & earnings',
+                    $permissions->contains('reporting.publisher.view') ? 'publisher.reporting.index' : 'publisher.finance.overview',
+                    $permissions->contains('reporting.publisher.view') ? 'reporting.publisher.view' : 'finance.publisher.view_own', [
                     'publisher.finance.*', 'publisher.reporting.*',
                 ]),
             ]),

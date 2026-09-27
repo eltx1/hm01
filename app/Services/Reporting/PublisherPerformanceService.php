@@ -44,6 +44,7 @@ final class PublisherPerformanceService
         return [
             ...app(PerformanceMetrics::class)->summarize($rows, 'publisher_earnings_minor'),
             'earnings_minor' => $earnings,
+            'has_estimates' => $rows->contains('finality', ReportFinality::Estimated),
             'estimated_minor' => (int) $rows->where('finality', ReportFinality::Estimated)->sum('publisher_earnings_minor'),
             'finalized_minor' => (int) $rows->where('finality', ReportFinality::Finalized)->sum('publisher_earnings_minor'),
         ];
