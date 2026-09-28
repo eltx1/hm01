@@ -2,6 +2,7 @@
 
 use App\Enums\OrganizationType;
 use App\Enums\RoleName;
+use App\Models\User;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -66,6 +67,9 @@ return new class extends Migration
             // bootstrap owners that still belong to the Horus Media organization.
             $bootstrapOwnerIds = DB::table('audit_logs')
                 ->where('event', 'bootstrap.super_admin.created')
+                ->where('actor_type', User::class)
+                ->where('auditable_type', User::class)
+                ->whereColumn('actor_id', 'auditable_id')
                 ->whereNotNull('auditable_id')
                 ->pluck('auditable_id')
                 ->filter()
