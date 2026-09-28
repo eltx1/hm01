@@ -204,4 +204,5 @@
     </section>
 @endif
 <x-responsive-bundle-codes :site="$site" />
+<x-video-placement-codes :site="$site" />
 @endsection
