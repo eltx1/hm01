@@ -89,8 +89,12 @@ final class PlacementPresetBuilder
 
         if ($quickMount) {
             $settings = (array) ($data['format_settings'] ?? []);
-            $settings['autoMount'] = true;
-            $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
+            $settings['autoMount'] = (bool) ($choice['quickAutoMount'] ?? true);
+            if ($settings['autoMount']) {
+                $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
+            } else {
+                unset($settings['autoMountTarget']);
+            }
             $data['format_settings'] = $settings;
 
             $metadata = (array) ($data['metadata'] ?? []);
