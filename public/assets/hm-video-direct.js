@@ -345,6 +345,19 @@
             disqualified: false,
             granted: false,
             closedDispatched: false,
+            contentMode: false,
+            contentStarted: false,
+            contentEnded: false,
+            contentFailed: false,
+            preRollRequested: false,
+            midRollRequested: false,
+            postRollRequested: false,
+            adBreakPending: false,
+            currentBreak: null,
+            adRules: false,
+            floating: false,
+            wasInlineVisible: false,
+            contentListeners: [],
         };
         if (closeButton && closeButton.addEventListener) closeButton.addEventListener('click', function () {
             destroyPlayer(player, 'dismissed');
@@ -361,6 +374,10 @@
         if (player.rewarded && player.container.style) player.container.style.display = 'none';
         if (player.intersectionObserver && player.intersectionObserver.disconnect) player.intersectionObserver.disconnect();
         if (player.resizeHandler && window.removeEventListener) window.removeEventListener('resize', player.resizeHandler);
+        (player.contentListeners || []).forEach(function (entry) {
+            try { if (entry[0] && entry[0].removeEventListener) entry[0].removeEventListener(entry[1], entry[2]); } catch (error) {}
+        });
+        player.contentListeners = [];
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
@@ -400,6 +417,352 @@
             }
             surface = surface.parentNode;
         }
+    }
+
+
+    function placementSurface(source) {
+        var surface = source && source.container ? source.container : source;
+        var fallback = surface;
+        while (surface && surface.getAttribute) {
+            if (surface.getAttribute('data-placement')) return surface;
+            fallback = surface;
+            surface = surface.parentNode;
+        }
+        return fallback;
+    }
+
+    function importantStyle(style, name, value) {
+        if (!style) return;
+        if (style.setProperty) style.setProperty(name, value, 'important');
+        else style[name.replace(/-([a-z])/g, function (_, letter) { return letter.toUpperCase(); })] = value;
+    }
+
+    function validContentUrl(value) {
+        try {
+            var url = new URL(String(value || ''));
+            return url.protocol === 'https:' ? url.href : '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function floatContentPlayer(player) {
+        if (!player || player.destroyed || !player.contentMode || player.floating) return;
+        var surface = placementSurface(player);
+        if (!surface || !surface.style) return;
+        player.floating = true;
+        surface.setAttribute('data-hm-floating-video-active', '1');
+        surface.setAttribute('data-hm-video-floating-state', 'floating');
+        importantStyle(surface.style, 'position', 'fixed');
+        importantStyle(surface.style, 'z-index', '2147483000');
+        importantStyle(surface.style, 'right', '16px');
+        importantStyle(surface.style, 'left', 'auto');
+        importantStyle(surface.style, 'top', 'auto');
+        importantStyle(surface.style, 'transform', 'none');
+        importantStyle(surface.style, 'margin', '0');
+        importantStyle(surface.style, 'width', 'min(400px, calc(100vw - 32px))');
+        importantStyle(surface.style, 'max-width', 'calc(100vw - 32px)');
+        importantStyle(surface.style, 'aspect-ratio', '16 / 9');
+        importantStyle(surface.style, 'box-sizing', 'border-box');
+        importantStyle(surface.style, 'background', '#000');
+        importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
+        surface.style.bottom = 'calc(16px + env(safe-area-inset-bottom, 0px))';
+        try {
+            if (typeof window.CustomEvent === 'function' && window.dispatchEvent) {
+                window.dispatchEvent(new window.CustomEvent('horus:video-floated', {
+                    detail: { placementId: String(surface.getAttribute('data-placement') || player.container.id || '') },
+                }));
+            }
+        } catch (error) {}
+    }
+
+    function recordVideoError(player, error, stage) {
+        var message = String(error && error.message || error || 'Unknown IMA error').slice(0, 240);
+        var code = error && typeof error.getErrorCode === 'function' ? error.getErrorCode() : '';
+        var vastCode = error && typeof error.getVastErrorCode === 'function' ? error.getVastErrorCode() : '';
+        var surface = player.container;
+        while (surface && surface.getAttribute) {
+            surface.setAttribute('data-hm-video-error', message);
+            surface.setAttribute('data-hm-video-error-code', String(code));
+            surface.setAttribute('data-hm-video-vast-error-code', String(vastCode));
+            surface.setAttribute('data-hm-video-error-stage', stage);
+            if (surface.getAttribute('data-placement')) break;
+            surface = surface.parentNode;
+        }
+    }
+
+    function cleanupContentAdRuntime(player) {
+        window.clearTimeout(player.startupTimer);
+        try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
+        try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
+        try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
+        player.adsManager = null;
+        player.adsLoader = null;
+        player.displayContainer = null;
+        player.adBreakPending = false;
+        player.currentBreak = null;
+    }
+
+    function finishContentPlayer(player, reason) {
+        if (!player || player.destroyed) return;
+        var surface = placementSurface(player);
+        if (surface && surface.style) surface.style.display = 'none';
+        destroyPlayer(player, reason || 'completed');
+    }
+
+    function markContentPlaying(player) {
+        if (!player || player.destroyed || player.contentFailed) return;
+        player.contentStarted = true;
+        setStatus(player.container, 'content-playing');
+    }
+
+    function resumeContent(player) {
+        if (!player || player.destroyed || player.contentEnded) return;
+        if (player.contentFailed) {
+            finishContentPlayer(player, 'content-error');
+            return;
+        }
+        try {
+            var playResult = player.video && player.video.play ? player.video.play() : null;
+            if (playResult && typeof playResult.then === 'function') {
+                playResult.then(function () { markContentPlaying(player); }).catch(function (error) {
+                    player.contentFailed = true;
+                    player.container.setAttribute('data-hm-video-content-error', 'playback');
+                    recordVideoError(player, error, 'content-playback');
+                    finishContentPlayer(player, 'content-error');
+                });
+            } else {
+                markContentPlaying(player);
+            }
+        } catch (error) {
+            player.contentFailed = true;
+            player.container.setAttribute('data-hm-video-content-error', 'playback');
+            recordVideoError(player, error, 'content-playback');
+            finishContentPlayer(player, 'content-error');
+        }
+    }
+
+    function finishContentAdBreak(player, position) {
+        if (!player || player.destroyed) return;
+        cleanupContentAdRuntime(player);
+        if (position === 'postroll' || player.contentEnded) {
+            finishContentPlayer(player, 'completed');
+            return;
+        }
+        resumeContent(player);
+    }
+
+    function failContentAdBreak(player, error, stage, position) {
+        if (!player || player.destroyed) return;
+        recordVideoError(player, error, stage);
+        cleanupContentAdRuntime(player);
+        if (position === 'postroll' || player.contentEnded) {
+            finishContentPlayer(player, 'completed');
+            return;
+        }
+        // A missing/failed ad must never prevent Horus-owned content from playing.
+        // Conversely, if the content source itself failed, the already-attempted
+        // VAST preroll remains valid from the runtime perspective and the surface
+        // can close cleanly after that attempt.
+        resumeContent(player);
+    }
+
+    function requestContentAdBreak(player, ima, vastUrl, position) {
+        if (!player || player.destroyed || player.adBreakPending) return;
+        if (player.adRules && position !== 'preroll') return;
+        player.adBreakPending = true;
+        player.currentBreak = position;
+        if (player.contentStarted && player.video && player.video.pause) {
+            try { player.video.pause(); } catch (error) {}
+        }
+        cleanupContentAdRuntime(player);
+        player.adBreakPending = true;
+        player.currentBreak = position;
+        setStatus(player.container, 'requesting-' + position);
+
+        player.startupTimer = window.setTimeout(function () {
+            failContentAdBreak(player, new Error('Video ad break did not start in time'), 'startup-timeout', position);
+        }, 15000);
+
+        try {
+            player.displayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
+            player.displayContainer.initialize();
+            player.adsLoader = new ima.AdsLoader(player.displayContainer);
+            player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
+                if (player.destroyed || player.currentBreak !== position) return;
+                try {
+                    var settings = new ima.AdsRenderingSettings();
+                    settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
+                    player.adsManager = event.getAdsManager(player.video, settings);
+                    var adTypes = ima.AdEvent.Type;
+                    if (position === 'preroll' && player.adsManager && typeof player.adsManager.getCuePoints === 'function') {
+                        try {
+                            var cuePoints = player.adsManager.getCuePoints() || [];
+                            if (cuePoints.length > 0) {
+                                player.adRules = true;
+                                player.container.setAttribute('data-hm-video-ad-rules', '1');
+                            }
+                        } catch (error) {}
+                    }
+                    player.adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
+                        var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
+                        failContentAdBreak(player, error, 'playback-' + position, position);
+                    });
+                    player.adsManager.addEventListener(adTypes.LOADED, function () {
+                        setStatus(player.container, 'loaded-' + position);
+                    });
+                    player.adsManager.addEventListener(adTypes.STARTED, function () {
+                        if (player.destroyed) return;
+                        window.clearTimeout(player.startupTimer);
+                        setStatus(player.container, 'started');
+                    });
+                    if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
+                        try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
+                    });
+                    if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
+                        if (!player.destroyed && !player.contentEnded) resumeContent(player);
+                    });
+                    if (adTypes.ALL_ADS_COMPLETED) player.adsManager.addEventListener(adTypes.ALL_ADS_COMPLETED, function () {
+                        if (player.destroyed) return;
+                        if (player.adRules) {
+                            window.clearTimeout(player.startupTimer);
+                            player.adBreakPending = false;
+                            player.currentBreak = null;
+                            if (player.contentEnded) finishContentPlayer(player, 'completed');
+                            else resumeContent(player);
+                            return;
+                        }
+                        finishContentAdBreak(player, position);
+                    });
+                    var dimensions = playerDimensions(player.container, player.size);
+                    player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
+                    if (player.adsManager.setVolume) player.adsManager.setVolume(0);
+                    player.adsManager.start();
+                    player.resizeHandler = function () {
+                        if (!player.adsManager || player.destroyed) return;
+                        var resized = playerDimensions(player.container, player.size);
+                        player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
+                    };
+                    if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);
+                } catch (error) {
+                    failContentAdBreak(player, error, 'manager-' + position, position);
+                }
+            }, false);
+            player.adsLoader.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
+                var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
+                failContentAdBreak(player, error, 'request-' + position, position);
+            }, false);
+
+            var request = new ima.AdsRequest();
+            var dimensions = playerDimensions(player.container, player.size);
+            request.adTagUrl = resolvedVastUrl(vastUrl, player, dimensions, position);
+            request.linearAdSlotWidth = dimensions[0];
+            request.linearAdSlotHeight = dimensions[1];
+            request.nonLinearAdSlotWidth = dimensions[0];
+            request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
+            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(true);
+            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(true);
+            player.adsLoader.requestAds(request);
+        } catch (error) {
+            failContentAdBreak(player, error, 'initialization-' + position, position);
+        }
+    }
+
+    function listenContent(player, target, name, callback) {
+        if (!target || !target.addEventListener) return;
+        target.addEventListener(name, callback);
+        player.contentListeners.push([target, name, callback]);
+    }
+
+    function prepareContentPlayer(player, ima, vastUrl, contentUrl) {
+        if (!player || player.destroyed) return;
+        if (state.active && state.active !== player && !state.active.destroyed) {
+            setStatus(player.container, 'duplicate');
+            finishContentPlayer(player, 'duplicate');
+            return;
+        }
+        state.active = player;
+        player.contentMode = true;
+        player.contentUrl = contentUrl;
+        player.video.autoplay = false;
+        player.video.muted = true;
+        player.video.controls = true;
+        player.video.preload = 'metadata';
+        player.video.setAttribute('muted', '');
+        player.video.setAttribute('controls', '');
+        player.video.setAttribute('preload', 'metadata');
+        player.video.setAttribute('aria-label', 'Accompanying video content');
+        var surface = placementSurface(player);
+        if (surface && surface.style && !player.floating) surface.style.position = 'relative';
+
+        listenContent(player, player.video, 'error', function () {
+            player.contentFailed = true;
+            player.container.setAttribute('data-hm-video-content-error', 'load');
+        });
+        listenContent(player, player.video, 'timeupdate', function () {
+            if (player.destroyed || player.adRules || player.midRollRequested || player.adBreakPending || !player.contentStarted || player.contentEnded) return;
+            var duration = Number(player.video.duration || 0);
+            var current = Number(player.video.currentTime || 0);
+            var ratio = Number(player.container.getAttribute('data-hm-video-mid-roll-ratio') || 0.5);
+            ratio = Number.isFinite(ratio) ? Math.max(0.1, Math.min(0.9, ratio)) : 0.5;
+            if (duration > 1 && current / duration >= ratio) {
+                player.midRollRequested = true;
+                requestContentAdBreak(player, ima, vastUrl, 'midroll');
+            }
+        });
+        listenContent(player, player.video, 'ended', function () {
+            if (player.destroyed || player.contentEnded) return;
+            player.contentEnded = true;
+            if (player.adRules) {
+                try {
+                    if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete();
+                    else finishContentPlayer(player, 'completed');
+                } catch (error) {
+                    finishContentPlayer(player, 'completed');
+                }
+                return;
+            }
+            if (!player.postRollRequested) {
+                player.postRollRequested = true;
+                requestContentAdBreak(player, ima, vastUrl, 'postroll');
+            }
+        });
+
+        // Set the content source only after listeners exist. A broken CDN/video
+        // must not suppress the preroll request; its error is recorded while the
+        // VAST path remains independently eligible to run.
+        player.video.src = contentUrl;
+        player.container.setAttribute('data-hm-video-content-mode', 'accompanying');
+        setStatus(player.container, 'content-ready');
+
+        function beginPreroll() {
+            if (player.destroyed || player.preRollRequested) return;
+            player.preRollRequested = true;
+            requestContentAdBreak(player, ima, vastUrl, 'preroll');
+        }
+
+        if (typeof window.IntersectionObserver !== 'function') {
+            beginPreroll();
+            return;
+        }
+        player.intersectionObserver = new window.IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                var ratio = Number(entry.intersectionRatio || 0);
+                if (entry.isIntersecting && ratio >= 0.5) {
+                    player.wasInlineVisible = true;
+                    beginPreroll();
+                    return;
+                }
+                if (player.wasInlineVisible && !player.floating && (!entry.isIntersecting || ratio <= 0.01)) {
+                    floatContentPlayer(player);
+                    if (player.intersectionObserver && player.intersectionObserver.disconnect) {
+                        player.intersectionObserver.disconnect();
+                        player.intersectionObserver = null;
+                    }
+                }
+            });
+        }, { threshold: [0, 0.5] });
+        player.intersectionObserver.observe(player.container);
     }
 
     function startAds(player, ima, vastUrl) {
@@ -491,24 +854,11 @@
 
     function failVideo(player, error, stage) {
         if (!player || player.destroyed) return;
-        var message = String(error && error.message || error || 'Unknown IMA error').slice(0, 240);
-        var code = error && typeof error.getErrorCode === 'function' ? error.getErrorCode() : '';
-        var vastCode = error && typeof error.getVastErrorCode === 'function' ? error.getVastErrorCode() : '';
-        // Keep the diagnosis on the permanent placement before Loader removes
-        // the failed candidate. No ad requests or telemetry are sent here.
-        var surface = player.container;
-        while (surface && surface.getAttribute) {
-            surface.setAttribute('data-hm-video-error', message);
-            surface.setAttribute('data-hm-video-error-code', String(code));
-            surface.setAttribute('data-hm-video-vast-error-code', String(vastCode));
-            surface.setAttribute('data-hm-video-error-stage', stage);
-            if (surface.getAttribute('data-placement')) break;
-            surface = surface.parentNode;
-        }
+        recordVideoError(player, error, stage);
         destroyPlayer(player, 'error');
     }
 
-    function resolvedVastUrl(value, player, dimensions) {
+    function resolvedVastUrl(value, player, dimensions, breakPosition) {
         // GAM's tag generator emits placeholders, not a ready-to-request URL.
         // Expand known placeholders at request time without changing third-party tags.
         var tag = new URL(value);
@@ -526,7 +876,15 @@
         // sz identifies eligible inventory; it is not the CSS player size.
         // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
         if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
-        if (!player.rewarded) tag.searchParams.set('plcmt', '4');
+        if (!player.rewarded) {
+            tag.searchParams.set('plcmt', player.contentMode ? '2' : '4');
+            if (player.contentMode && breakPosition) {
+                tag.searchParams.set('vpos', breakPosition);
+                tag.searchParams.set('vconp', '1');
+                var duration = Number(player.video && player.video.duration || 0);
+                if (Number.isFinite(duration) && duration > 0) tag.searchParams.set('vid_d', String(Math.max(1, Math.round(duration))));
+            }
+        }
         return tag.href;
     }
 
@@ -662,11 +1020,16 @@
         }
         var rewarded = rewardedMode(container);
         var player = rewarded ? null : createPlayer(container);
+        var contentUrl = rewarded ? '' : validContentUrl(container.getAttribute('data-hm-video-content-url'));
         setStatus(container, 'loading-sdk');
         loadSdk().then(function (ima) {
             if (rewarded) {
                 if (container.getAttribute('data-hm-video-runtime-state') !== 'dismissed') prepareRewarded(container, ima, vastUrl);
+            } else if (!player.destroyed && contentUrl) {
+                prepareContentPlayer(player, ima, vastUrl, contentUrl);
             } else if (!player.destroyed) {
+                // Fail-open compatibility: if the platform content source is
+                // absent, the VAST request still runs through the legacy player.
                 waitUntilViewable(player, ima, vastUrl);
             }
         }).catch(function (error) {
