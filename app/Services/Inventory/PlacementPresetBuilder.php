@@ -240,9 +240,16 @@ final class PlacementPresetBuilder
         ]);
 
         $settings = (array) ($data['format_settings'] ?? []);
-        $settings['autoMount'] = data_get($placement->metadata, 'responsive_bundle') !== 'v1';
-        if (! $settings['autoMount']) $settings['contentAlignment'] = 'center';
-        $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
+        $bundleMember = data_get($placement->metadata, 'responsive_bundle') === 'v1';
+        $settings['autoMount'] = ! $bundleMember && (bool) ($choice['quickAutoMount'] ?? true);
+        if ($bundleMember) {
+            $settings['contentAlignment'] = 'center';
+        }
+        if ($settings['autoMount']) {
+            $settings['autoMountTarget'] = (string) ($choice['quickMount'] ?? $this->defaultQuickMountTarget($preset));
+        } else {
+            unset($settings['autoMountTarget']);
+        }
         $data['format_settings'] = $settings;
 
         $metadata = (array) ($data['metadata'] ?? []);
