@@ -221,6 +221,30 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertDatabaseHas('global_settings', ['key' => 'supply_chain.manager_domain']);
     }
 
+    public function test_video_permission_migration_repairs_all_registered_super_admin_permissions(): void
+    {
+        $superRole = \App\Models\Role::whereNull('organization_id')
+            ->where('name', RoleName::SuperAdmin->value)
+            ->firstOrFail();
+        $settingsManage = \App\Models\Permission::where('name', 'settings.manage')->firstOrFail();
+
+        $superRole->permissions()->detach($settingsManage->id);
+        $this->assertDatabaseMissing('role_permissions', [
+            'role_id' => $superRole->id,
+            'permission_id' => $settingsManage->id,
+        ]);
+
+        $migration = require database_path('migrations/2026_09_28_210000_add_video_player_manage_permission.php');
+        $migration->up();
+
+        foreach (\App\Models\Permission::query()->pluck('id') as $permissionId) {
+            $this->assertDatabaseHas('role_permissions', [
+                'role_id' => $superRole->id,
+                'permission_id' => $permissionId,
+            ]);
+        }
+    }
+
     public function test_migration_is_reversible_and_missing_table_falls_back_safely(): void
     {
         $migration = require database_path('migrations/2026_08_10_230000_create_global_settings_table.php');
