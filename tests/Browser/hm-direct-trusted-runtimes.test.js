@@ -550,6 +550,8 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     assert.equal(requestUrl.searchParams.get('url'), 'https://publisher.example/article');
     assert.equal(requestUrl.searchParams.get('description_url'), 'https://publisher.example/article');
     assert.notEqual(requestUrl.searchParams.get('correlator'), '123');
+    const pageCorrelator = requestUrl.searchParams.get('correlator');
+    assert.match(pageCorrelator, /^\d+$/);
 
     const video = runtime.created.find((node) => node.tagName === 'VIDEO');
     assert.ok(video);
@@ -569,6 +571,7 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     requestUrl = new URL(runtime.requested[1].adTagUrl);
     assert.equal(requestUrl.searchParams.get('vpos'), 'midroll');
     assert.equal(requestUrl.searchParams.get('vid_d'), '100');
+    assert.equal(requestUrl.searchParams.get('correlator'), pageCorrelator);
 
     runtime.managers[1].emit('all-ads-completed');
     await tick();
@@ -576,6 +579,7 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     assert.equal(runtime.requested.length, 3);
     requestUrl = new URL(runtime.requested[2].adTagUrl);
     assert.equal(requestUrl.searchParams.get('vpos'), 'postroll');
+    assert.equal(requestUrl.searchParams.get('correlator'), pageCorrelator);
 
     runtime.managers[2].emit('all-ads-completed');
     assert.equal(attributes['data-hm-video-status'], 'completed');
@@ -686,7 +690,7 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('iu'), '/123/video');
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
-    assert.equal(url.searchParams.get('plcmt'), '4');
+    assert.equal(url.searchParams.get('plcmt'), null);
     assert.equal(url.searchParams.get('sz'), '400x300');
     assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
