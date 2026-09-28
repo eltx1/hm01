@@ -3,7 +3,6 @@
 namespace App\Services\ControlPlane;
 
 use App\Enums\OrganizationType;
-use App\Models\Permission;
 use App\Models\User;
 use Illuminate\Support\Collection;
 
@@ -12,9 +11,7 @@ final class ControlPlaneNavigation
     public function for(User $user): array
     {
         $user->loadMissing('roles.permissions');
-        $permissions = $user->isSuperAdministrator()
-            ? Permission::query()->pluck('name')->unique()
-            : $user->roles->flatMap->permissions->pluck('name')->unique();
+        $permissions = $user->roles->flatMap->permissions->pluck('name')->unique();
 
         $groups = match ($user->organization?->type) {
             OrganizationType::HorusMedia => $this->administrator($permissions),
