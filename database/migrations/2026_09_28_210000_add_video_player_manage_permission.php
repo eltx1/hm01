@@ -42,6 +42,23 @@ return new class extends Migration
                 'permission_id' => $permissionId,
             ]);
         }
+
+        // Repair any historical permission drift on the platform-owner role.
+        // SUPER_ADMIN must include every permission currently registered,
+        // including permissions introduced by dedicated feature migrations.
+        $superAdminRoleId = DB::table('roles')
+            ->whereNull('organization_id')
+            ->where('name', RoleName::SuperAdmin->value)
+            ->value('id');
+
+        if ($superAdminRoleId) {
+            foreach (DB::table('permissions')->pluck('id') as $registeredPermissionId) {
+                DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $superAdminRoleId,
+                    'permission_id' => $registeredPermissionId,
+                ]);
+            }
+        }
     }
 
     public function down(): void
