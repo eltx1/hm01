@@ -44,6 +44,7 @@ final class SettingsController extends Controller
     public function update(Request $request, string $key): RedirectResponse
     {
         $definition = $this->registry->get($key);
+        $this->authorizeSettingManagement($request, $key);
         $data = $request->validate([
             'value' => ['nullable'],
             'reason' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:500'],
@@ -69,6 +70,7 @@ final class SettingsController extends Controller
     public function reset(Request $request, string $key): RedirectResponse
     {
         $definition = $this->registry->get($key);
+        $this->authorizeSettingManagement($request, $key);
         $data = $request->validate([
             'reason' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:500'],
             'current_password' => [$definition->highImpact ? 'required' : 'nullable', 'string', 'max:255'],
@@ -88,6 +90,15 @@ final class SettingsController extends Controller
         $this->queueSupplyChainPublication($key, $request, 'SETTING_RESET');
 
         return back()->with('status', 'Setting reset to its configured fallback.');
+    }
+
+    private function authorizeSettingManagement(Request $request, string $key): void
+    {
+        $user = $request->user();
+        $allowed = $user?->hasPermission('settings.manage') === true
+            || (str_starts_with($key, 'video_player.') && $user?->hasPermission('video_player.manage') === true);
+
+        abort_unless($allowed, 403);
     }
 
     private function queueSupplyChainPublication(string $key, Request $request, string $event): void
