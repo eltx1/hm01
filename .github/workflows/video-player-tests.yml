@@ -1,0 +1,45 @@
+name: Video player regression
+
+on:
+  pull_request:
+    paths:
+      - 'public/assets/hm-video*.js'
+      - 'scripts/*video*'
+      - 'scripts/transform-loader-placement-presets.mjs'
+      - 'app/Services/Inventory/*Video*'
+      - 'app/Services/Inventory/PlacementPreset*'
+      - 'app/Services/Demand/CustomThirdPartyTagConnector.php'
+      - 'app/Services/Settings/**'
+      - 'tests/Browser/*video*'
+      - 'tests/Browser/hm-direct-trusted-runtimes.test.js'
+      - '.github/workflows/video-player-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-player-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test video and placement lifecycle
+        run: node --test tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/hm-loader-placement-presets.test.js
+      - name: Package exact reviewed source for reproducible diagnosis
+        if: always()
+        run: git archive HEAD --format=tar --output="$RUNNER_TEMP/horus-video-source.tar"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: horus-video-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/horus-video-source.tar
+          retention-days: 3

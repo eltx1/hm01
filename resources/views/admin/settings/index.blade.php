@@ -42,7 +42,7 @@
                         @elseif($definition->type === 'enum')
                             <label>Value<select name="value">@foreach($definition->allowedValues as $option)<option value="{{ $option }}" @selected($row['value'] === $option)>{{ $option }}</option>@endforeach</select></label>
                         @else
-                            <label>Value<input type="{{ $definition->type === 'integer' ? 'number' : ($definition->type === 'email' ? 'email' : 'text') }}" name="value" value="{{ $row['value'] }}" @if(!in_array('nullable', $definition->rules, true)) required @endif></label>
+                            <label>Value<input type="{{ $definition->type === 'integer' ? 'number' : ($definition->type === 'email' ? 'email' : ($definition->type === 'url' ? 'url' : 'text')) }}" name="value" value="{{ $row['value'] }}" @if(!in_array('nullable', $definition->rules, true)) required @endif></label>
                         @endif
                         @if($definition->highImpact)
                             <label>Reason<textarea name="reason" required maxlength="500" placeholder="Why this high-impact change is required"></textarea></label>

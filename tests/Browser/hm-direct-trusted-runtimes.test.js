@@ -215,6 +215,7 @@ function runVideo(selectedContainer, options = {}) {
     const windowListeners = {};
     const dispatched = [];
     const storage = new Map(Object.entries(options.storage || {}));
+    const intersectionObservers = [];
 
     function mediaElement(tag) {
         const attributes = {};
@@ -232,12 +233,28 @@ function runVideo(selectedContainer, options = {}) {
             autoplay: false,
             playsInline: false,
             paused: false,
+            controls: false,
+            preload: '',
+            src: '',
+            currentTime: 0,
+            duration: Number(options.contentDuration || 100),
             setAttribute(name, value) { attributes[name] = String(value); },
             getAttribute(name) { return attributes[name] ?? null; },
             appendChild(child) { child.parentNode = this; childNodes.push(child); return child; },
             addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
+            removeEventListener(name, callback) {
+                const list = listeners[name] || [];
+                const index = list.indexOf(callback);
+                if (index >= 0) list.splice(index, 1);
+            },
+            emit(name, event = {}) { (listeners[name] || []).slice().forEach((callback) => callback(event)); },
             click() { (listeners.click || []).forEach((callback) => callback({ isTrusted: options.trustedClick !== false, preventDefault() {}, stopPropagation() {} })); },
             pause() { this.paused = true; },
+            play() {
+                this.paused = false;
+                if (options.contentPlayRejects) return Promise.reject(new Error('content-play-failed'));
+                return Promise.resolve();
+            },
         };
     }
 
@@ -247,6 +264,8 @@ function runVideo(selectedContainer, options = {}) {
         COMPLETE: 'complete',
         SKIPPED: 'skipped',
         ALL_ADS_COMPLETED: 'all-ads-completed',
+        CONTENT_PAUSE_REQUESTED: 'content-pause-requested',
+        CONTENT_RESUME_REQUESTED: 'content-resume-requested',
     };
     class AdsManager {
         constructor() {
@@ -266,27 +285,47 @@ function runVideo(selectedContainer, options = {}) {
             this.emit(adEventTypes.STARTED);
         }
         resize(width, height, mode) { this.resized = [width, height, mode]; }
+        getCuePoints() { return options.cuePoints || []; }
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
-        constructor() { this.listeners = {}; loaders.push(this); }
+        constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.pendingManager = null; loaders.push(this); }
         destroy() { this.destroyed = true; }
+        contentComplete() { this.contentCompleteCalled = true; }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
-        requestAds(request) {
-            requested.push(request);
-            const manager = new AdsManager();
+        emitManagerLoaded() {
+            const manager = this.pendingManager;
+            if (!manager) return;
+            this.pendingManager = null;
             (this.listeners['ads-manager-loaded'] || []).forEach((callback) => callback({
                 getAdsManager() { return manager; },
             }));
+        }
+        requestAds(request) {
+            requested.push(request);
+            this.pendingManager = new AdsManager();
+            if (!options.deferManagerLoad) this.emitManagerLoaded();
         }
     }
     class AdsRequest {
         setAdWillAutoPlay(value) { this.willAutoPlay = value; }
         setAdWillPlayMuted(value) { this.willPlayMuted = value; }
+        setContinuousPlayback(value) { this.continuousPlayback = value; }
     }
     class IntersectionObserver {
-        constructor(callback, options) { this.callback = callback; this.options = options; this.disconnected = false; }
-        observe(target) { this.target = target; this.callback([{ isIntersecting: true, intersectionRatio: 0.6 }]); }
+        constructor(callback, observerOptions) {
+            this.callback = callback;
+            this.options = observerOptions;
+            this.disconnected = false;
+            intersectionObservers.push(this);
+        }
+        observe(target) {
+            this.target = target;
+            if (options.autoIntersect !== false) this.callback([{ target, isIntersecting: true, intersectionRatio: 0.6 }]);
+        }
+        emit(ratio, isIntersecting = ratio > 0) {
+            if (!this.disconnected) this.callback([{ target: this.target, isIntersecting, intersectionRatio: ratio }]);
+        }
         disconnect() { this.disconnected = true; }
     }
     class MutationObserver {
@@ -354,7 +393,7 @@ function runVideo(selectedContainer, options = {}) {
     };
     sandbox.window = sandbox;
     vm.runInNewContext(videoSource, sandbox, { filename: 'hm-video-direct.js' });
-    return { sandbox, requested, managers, loaders, displays, created, dispatched, storage };
+    return { sandbox, requested, managers, loaders, displays, created, dispatched, storage, intersectionObservers };
 }
 
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
@@ -487,6 +526,317 @@ test('Horus video runtime plays a VAST URL only after viewability and exposes de
     assert.equal(floatingSurfaceAttributes['data-hm-placement-dismissed'], '1');
 });
 
+
+test('accompanying content requests pre, mid, and post VAST breaks and declares GAM placement accurately', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&url=https%3A%2F%2Fold.example%2Fpage&description_url=https%3A%2F%2Fold.example%2Fpage&correlator=123&sz=400x225').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-inline-to-floating': '1',
+        'data-hm-video-mid-roll-ratio': '0.5',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+        'data-hm-video-sizes': '[[400,225],[320,180]]',
+        'data-hm-video-muted': '1',
+        'data-hm-video-autoplay': '1',
+    };
+    const target = container(attributes, 'hm-content-video');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { contentDuration: 100 });
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    let requestUrl = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(requestUrl.searchParams.get('plcmt'), '2');
+    assert.equal(requestUrl.searchParams.get('vpos'), 'preroll');
+    assert.equal(requestUrl.searchParams.get('vconp'), '1');
+    assert.equal(requestUrl.searchParams.get('vpa'), 'auto');
+    assert.equal(requestUrl.searchParams.get('vpmute'), '1');
+    assert.equal(requestUrl.searchParams.get('url'), 'https://publisher.example/article');
+    assert.equal(requestUrl.searchParams.get('description_url'), 'https://publisher.example/article');
+    assert.notEqual(requestUrl.searchParams.get('correlator'), '123');
+    const pageCorrelator = requestUrl.searchParams.get('correlator');
+    assert.match(pageCorrelator, /^\d+$/);
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    assert.ok(video);
+    assert.equal(video.src, 'https://cdn.horusmedia.net/content/horus.mp4');
+    assert.equal(attributes['data-hm-video-content-mode'], 'accompanying');
+
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.loaders[0].contentCompleteCalled, true);
+    assert.equal(runtime.requested[0].contentDuration, 100);
+    assert.equal(runtime.requested[0].continuousPlayback, false);
+
+    video.currentTime = 50;
+    video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 2);
+    requestUrl = new URL(runtime.requested[1].adTagUrl);
+    assert.equal(requestUrl.searchParams.get('vpos'), 'midroll');
+    assert.equal(requestUrl.searchParams.get('vid_d'), '100');
+    assert.equal(requestUrl.searchParams.get('correlator'), pageCorrelator);
+
+    runtime.managers[1].emit('all-ads-completed');
+    await tick();
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 3);
+    requestUrl = new URL(runtime.requested[2].adTagUrl);
+    assert.equal(requestUrl.searchParams.get('vpos'), 'postroll');
+    assert.equal(requestUrl.searchParams.get('correlator'), pageCorrelator);
+
+    runtime.managers[2].emit('all-ads-completed');
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(target.style.display, 'none');
+});
+
+test('GAM ad-rules requests keep accompanying metadata but let the ad server own vpos', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_rule=1&output=vmap&sz=400x225').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-ad-rules');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { contentDuration: 120, cuePoints: [0, 60, -1] });
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    const url = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(url.searchParams.get('plcmt'), '2');
+    assert.equal(url.searchParams.get('ad_rule'), '1');
+    assert.equal(url.searchParams.get('vpos'), null);
+    assert.equal(url.searchParams.get('vid_d'), '120');
+    assert.equal(url.searchParams.get('vconp'), '1');
+});
+
+test('slow VAST responses cannot autoplay after inline viewability falls below 50 percent', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=slow').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-inline-to-floating': '1',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-slow');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { autoIntersect: false, deferManagerLoad: true });
+    await tick();
+
+    const observer = runtime.intersectionObservers[0];
+    observer.emit(0.6, true);
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.managers[0].started, false);
+
+    observer.emit(0.2, true);
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(runtime.managers[0].started, false);
+    assert.equal(attributes['data-hm-video-status'], 'waiting-ad-viewability');
+
+    observer.emit(0.6, true);
+    assert.equal(runtime.managers[0].started, true);
+    assert.equal(attributes['data-hm-video-status'], 'started');
+});
+
+test('accompanying content failure never suppresses the VAST preroll request', async () => {
+    const vastUrl = 'https://video.example.com/vast?slot=content-failure';
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from(vastUrl).toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/missing.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-failure');
+    const runtime = runVideo(target, { autoIntersect: false });
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    assert.ok(video);
+    video.emit('error');
+    assert.equal(attributes['data-hm-video-content-error'], 'load');
+    assert.equal(runtime.requested.length, 0);
+
+    runtime.intersectionObservers[0].emit(0.6, true);
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.requested[0].adTagUrl, vastUrl);
+    assert.equal(runtime.managers[0].started, true);
+
+    runtime.managers[0].emit('all-ads-completed');
+    assert.equal(attributes['data-hm-video-status'], 'content-error');
+    assert.equal(target.style.display, 'none');
+});
+
+test('pre-request content failure still requests GAM VAST without falsely declaring accompanying content', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&plcmt=2&vpos=preroll&vid_d=60&sz=400x225').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/missing.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-fail-open-gam');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { autoIntersect: false });
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    video.emit('error');
+    runtime.intersectionObservers[0].emit(0.6, true);
+
+    assert.equal(runtime.requested.length, 1);
+    const url = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(url.searchParams.get('iu'), '/123/video');
+    assert.equal(url.searchParams.get('plcmt'), null);
+    assert.equal(url.searchParams.get('vpos'), null);
+    assert.equal(url.searchParams.get('vid_d'), null);
+    assert.equal(runtime.managers[0].started, true);
+});
+
+test('late platform video failure closes cleanly after preroll instead of leaving a dead player', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=late-content-failure').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-late-failure');
+    const runtime = runVideo(target);
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    video.emit('error');
+
+    assert.equal(attributes['data-hm-video-content-error'], 'playback');
+    assert.equal(attributes['data-hm-video-status'], 'content-error');
+    assert.equal(target.style.display, 'none');
+});
+
+test('accompanying content floats only after it was visible inline and then scrolls out of view', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=float').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-inline-to-floating': '1',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-float');
+    target.clientWidth = 400;
+    const surfaceAttributes = { 'data-placement': 'quick_video_floating' };
+    const surface = {
+        style: {},
+        parentNode: null,
+        getAttribute(name) { return surfaceAttributes[name] ?? null; },
+        setAttribute(name, value) { surfaceAttributes[name] = String(value); },
+    };
+    target.parentNode = surface;
+
+    const runtime = runVideo(target, { autoIntersect: false });
+    await tick();
+    const observer = runtime.intersectionObservers[0];
+    observer.emit(0.6, true);
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(surfaceAttributes['data-hm-floating-video-active'], undefined);
+
+    observer.emit(0, false);
+    assert.equal(surfaceAttributes['data-hm-floating-video-active'], '1');
+    assert.equal(surfaceAttributes['data-hm-video-floating-state'], 'floating');
+    assert.equal(surface.style.position, 'fixed');
+    assert.equal(surface.style.right, '16px');
+    assert.match(surface.style.width, /400px/);
+    assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:video-floated').length, 1);
+    assert.ok(runtime.managers[0].resized);
+});
+
+test('IMA ad-rules schedule disables duplicate manual midrolls and receives contentComplete', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vmap').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-mid-roll-ratio': '0.5',
+    };
+    const target = container(attributes, 'hm-content-vmap');
+    const runtime = runVideo(target, { contentDuration: 100, cuePoints: [0, 50, -1] });
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(attributes['data-hm-video-ad-rules'], '1');
+    runtime.managers[0].emit('content-pause-requested');
+    runtime.managers[0].emit('content-resume-requested');
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    video.currentTime = 60;
+    video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 1);
+
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.loaders[0].contentCompleteCalled, true);
+});
+
+
+
+test('IMA ad playback cannot trigger content-ended handling on the shared video element', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=shared-element').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-shared-element');
+    const runtime = runVideo(target, { contentDuration: 100 });
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    runtime.managers[0].emit('content-pause-requested');
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(target.style.display, 'block');
+
+    runtime.managers[0].emit('content-resume-requested');
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpos'), null);
+});
+
+test('ad-rules content without a postroll closes when content completes', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vmap?ad_rule=1').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-vmap-no-post');
+    const runtime = runVideo(target, { contentDuration: 100, cuePoints: [0, 50] });
+    await tick();
+
+    assert.equal(attributes['data-hm-video-ad-rules'], '1');
+    runtime.managers[0].emit('content-pause-requested');
+    runtime.managers[0].emit('content-resume-requested');
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    video.emit('ended');
+
+    assert.equal(runtime.loaders[0].contentCompleteCalled, true);
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(target.style.display, 'none');
+});
+
 test('GAM VAST templates resolve page macros and declare actual floating playback', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
@@ -501,7 +851,7 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('iu'), '/123/video');
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
-    assert.equal(url.searchParams.get('plcmt'), '4');
+    assert.equal(url.searchParams.get('plcmt'), null);
     assert.equal(url.searchParams.get('sz'), '400x300');
     assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 225);

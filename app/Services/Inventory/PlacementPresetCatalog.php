@@ -29,7 +29,7 @@ final class PlacementPresetCatalog
             'side_rail_right' => ['label' => 'Right Side Rail', 'summary' => 'Desktop-only vertical rail on wide screens.', 'badge' => 'Desktop', 'group' => 'Edge', 'format' => 'side_rail', 'type' => PlacementType::Sticky->value, 'mount' => 'automatic', 'quick' => true],
             'side_rail_left' => ['label' => 'Left Side Rail', 'summary' => 'Desktop-only vertical rail on wide screens.', 'badge' => 'Desktop', 'group' => 'Edge', 'format' => 'side_rail', 'type' => PlacementType::Sticky->value, 'mount' => 'automatic', 'quick' => true],
             'video_outstream' => ['label' => 'Outstream / In-read Video', 'summary' => 'Responsive 16:9 video surface for outstream or in-read provider tags.', 'badge' => 'Video', 'group' => 'Video', 'format' => 'video_outstream', 'type' => PlacementType::Video->value, 'mount' => 'in-page', 'quick' => true],
-            'video_floating' => ['label' => 'Floating Video', 'summary' => 'Responsive floating 16:9 video surface near the lower viewport edge.', 'badge' => 'Auto mount', 'group' => 'Video', 'format' => 'video_floating', 'type' => PlacementType::Video->value, 'mount' => 'automatic', 'quick' => true],
+            'video_floating' => ['label' => 'Inline → Floating Video', 'summary' => 'Accompanying 16:9 content player placed by the publisher inside page content, then floated to the lower-right only after the user scrolls it out of view.', 'badge' => 'Publisher DIV', 'group' => 'Video', 'format' => 'video_floating', 'type' => PlacementType::Video->value, 'mount' => 'in-page', 'quick' => true, 'quickAutoMount' => false],
             'native_infeed' => ['label' => 'Native In-feed / Fluid', 'summary' => 'Fluid native surface for an article or feed position. Use a provider adapter or Advanced setup.', 'badge' => 'Fluid', 'group' => 'Native', 'format' => 'native_infeed', 'type' => PlacementType::Native->value, 'mount' => 'in-page', 'quick' => false],
             'native_recommendation' => ['label' => 'Native Recommendation Widget', 'summary' => 'Fluid recommendation/content-discovery surface, usually near article end.', 'badge' => 'Provider managed', 'group' => 'Native', 'format' => 'native_recommendation', 'type' => PlacementType::Native->value, 'mount' => 'in-page', 'quick' => false],
             'interstitial' => ['label' => 'Interstitial / Full-screen', 'summary' => 'Viewport-level interstitial surface. Provider support and lifecycle controls are required.', 'badge' => 'Provider managed', 'group' => 'High impact', 'format' => 'web_interstitial', 'type' => PlacementType::Interstitial->value, 'mount' => 'provider-managed', 'quick' => false],
@@ -213,10 +213,11 @@ final class PlacementPresetCatalog
         return [
             'sizes' => array_merge($this->fixed($fixed), $this->responsive('MOBILE', 0, 0, 767, 65535, [[320, 180]]), $this->responsive('DESKTOP', 768, 0, null, null, $fixed)),
             'format_settings' => [
-                'autoMount' => $floating,
-                'reserveSpace' => ! $floating,
+                'autoMount' => false,
+                'reserveSpace' => true,
                 'responsive' => true,
-                'position' => $floating ? 'bottom_right' : 'inline',
+                'position' => $floating ? 'inline_to_bottom_right' : 'inline',
+                'floatingPosition' => $floating ? 'bottom_right' : null,
                 'closeable' => $floating,
                 'closeOutside' => $floating,
                 'singleActiveVideo' => true,

@@ -51,7 +51,10 @@ final class PlacementPresetResponsiveSizesTest extends TestCase
 
         $floating = $this->preset('videoOutstream', true);
         $this->assertSame([[400, 225], [320, 180]], $this->sizes($floating, 'ALL'));
-        $this->assertSame('bottom_right', $floating['format_settings']['position']);
+        $this->assertSame('inline_to_bottom_right', $floating['format_settings']['position']);
+        $this->assertSame('bottom_right', $floating['format_settings']['floatingPosition']);
+        $this->assertFalse($floating['format_settings']['autoMount']);
+        $this->assertTrue($floating['format_settings']['reserveSpace']);
         $this->assertTrue($floating['format_settings']['mutedAutoplay']);
         $rewarded = $this->preset('rewardedVideo');
         $this->assertTrue($rewarded['format_settings']['requireUserActivation']);

@@ -40,6 +40,8 @@ class GlobalSettingsGovernanceTest extends TestCase
     {
         $registry = app(TypedSettingsRegistry::class);
         $this->assertArrayHasKey('supply_chain.manager_domain', $registry->all());
+        $this->assertArrayHasKey('video_player.content_url', $registry->all());
+        $this->assertSame('url', $registry->get('video_player.content_url')->type);
         $this->assertSame('domain', $registry->get('supply_chain.manager_domain')->type);
         $this->assertTrue($registry->get('supply_chain.manager_domain')->highImpact);
         $this->expectException(ValidationException::class);
@@ -52,6 +54,16 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertSame(14, $registry->normalize('supply_chain.ads_txt_fresh_for_days', '14'));
         $this->assertSame('example.com', $registry->normalize('supply_chain.manager_domain', 'HTTPS://Example.COM'));
         $this->assertSame('ops@example.com', $registry->normalize('supply_chain.contact_email', 'OPS@EXAMPLE.COM'));
+        $this->assertSame(
+            'https://cdn.horusmedia.net/content/horus.mp4',
+            $registry->normalize('video_player.content_url', 'https://cdn.horusmedia.net/content/horus.mp4')
+        );
+        try {
+            $registry->normalize('video_player.content_url', 'http://cdn.horusmedia.net/content/horus.mp4');
+            $this->fail('Non-HTTPS platform video URL was accepted.');
+        } catch (ValidationException) {
+            $this->assertTrue(true);
+        }
 
         foreach ([0, 91] as $invalid) {
             try {

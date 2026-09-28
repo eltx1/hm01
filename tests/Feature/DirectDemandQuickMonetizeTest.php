@@ -240,6 +240,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
     {
         $this->seed(AdFormatSeeder::class);
         $this->bindPublicProviderDns();
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content/horus-media.mp4']);
         $vastUrl = 'https://vast.vendor.net/tag?placement=floating&v=4';
 
         $this->adminSession()
@@ -259,7 +260,10 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
 
         $this->assertSame('VIDEO', $placement->type->value);
-        $this->assertSame('bottom_right', data_get($placement->format_settings, 'position'));
+        $this->assertSame('inline_to_bottom_right', data_get($placement->format_settings, 'position'));
+        $this->assertSame('bottom_right', data_get($placement->format_settings, 'floatingPosition'));
+        $this->assertFalse((bool) data_get($placement->format_settings, 'autoMount'));
+        $this->assertTrue((bool) data_get($placement->format_settings, 'reserveSpace'));
         $this->assertTrue((bool) data_get($placement->format_settings, 'closeable'));
         $this->assertTrue((bool) data_get($placement->format_settings, 'singleActiveVideo'));
         $this->assertSame($vastUrl, $widget->direct_tag_template);
@@ -277,8 +281,14 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             data_get($candidate, 'tag.scripts.0.url'),
         );
         $this->assertSame($vastUrl, base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-vast-url'), true));
+        $this->assertSame('https://cdn.horusmedia.net/content/horus-media.mp4', data_get($candidate, 'tag.container.attributes.data-hm-video-content-url'));
+        $this->assertSame('accompanying', data_get($candidate, 'tag.container.attributes.data-hm-video-content-mode'));
+        $this->assertSame('pre,mid,post', data_get($candidate, 'tag.container.attributes.data-hm-video-breaks'));
+        $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-inline-to-floating'));
         $this->assertSame(['VIDEO', 'OUTSTREAM'], data_get($candidate, 'tag.render.allowedFormats'));
         $this->assertGreaterThanOrEqual(15_000, (int) data_get($candidate, 'tag.render.timeoutMs'));
+        $this->assertStringContainsString('data-hm-video-status="content-ready"', (string) data_get($candidate, 'tag.render.successSelector'));
+        $this->assertStringContainsString('data-hm-video-status="content-playing"', (string) data_get($candidate, 'tag.render.successSelector'));
         $this->assertStringContainsString('data-hm-video-status="started"', (string) data_get($candidate, 'tag.render.successSelector'));
     }
 
@@ -1010,14 +1020,68 @@ HTML;
         $this->assertSame([$this->gptTag()], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
     }
 
+    public function test_existing_quick_floating_video_is_migrated_to_manual_inline_first_surface(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $legacy = app(PlacementPresetBuilder::class)->create(
+            $this->site,
+            'video_floating',
+            $this->admin,
+            [],
+            false,
+            true,
+        );
+
+        $settings = (array) $legacy->format_settings;
+        $settings['autoMount'] = true;
+        $settings['autoMountTarget'] = 'body_end';
+        $settings['reserveSpace'] = false;
+        $settings['position'] = 'bottom_right';
+        unset($settings['floatingPosition']);
+        $legacy->update(['format_settings' => $settings]);
+
+        $migration = require database_path('migrations/2026_09_28_150000_migrate_quick_floating_video_to_inline_accompanying.php');
+        $migration->up();
+
+        $migrated = $legacy->fresh();
+        $this->assertFalse((bool) data_get($migrated->format_settings, 'autoMount'));
+        $this->assertNull(data_get($migrated->format_settings, 'autoMountTarget'));
+        $this->assertTrue((bool) data_get($migrated->format_settings, 'reserveSpace'));
+        $this->assertSame('inline_to_bottom_right', data_get($migrated->format_settings, 'position'));
+        $this->assertSame('bottom_right', data_get($migrated->format_settings, 'floatingPosition'));
+
+        $migration->down();
+        $rolledBack = $legacy->fresh();
+        $this->assertTrue((bool) data_get($rolledBack->format_settings, 'autoMount'));
+        $this->assertSame('body_end', data_get($rolledBack->format_settings, 'autoMountTarget'));
+        $this->assertFalse((bool) data_get($rolledBack->format_settings, 'reserveSpace'));
+        $this->assertSame('bottom_right', data_get($rolledBack->format_settings, 'position'));
+        $this->assertNull(data_get($rolledBack->format_settings, 'floatingPosition'));
+    }
+
     public function test_admin_and_owner_can_copy_each_code_but_another_publisher_cannot_access_them(): void
     {
         $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new',
+            'placement_id' => null,
+            'placement_preset' => 'video_floating',
+            'tag' => 'https://vast.vendor.net/tag?slot=publisher-code',
+        ]))->assertSessionHasNoErrors();
+        $video = Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_video_floating')
+            ->firstOrFail();
+
         foreach (['admin.demand.quick.create', 'admin.sites.inventory.index', 'publisher.sites.show'] as $route) {
             if ($route === 'publisher.sites.show') $this->actingAs($this->publisherUser);
             $response = $this->get(route($route, ['site' => $this->site->id]))->assertOk();
             foreach ($this->responsiveUnits() as $unit) $response->assertSee($unit->installationCode());
+            if (in_array($route, ['admin.demand.quick.create', 'publisher.sites.show'], true)) {
+                $response->assertSee($video->installationCode());
+            }
             $response->assertDontSee('googletag.defineSlot');
         }
         $org = $this->makeOrganization(OrganizationType::Publisher, 'Another publisher');
