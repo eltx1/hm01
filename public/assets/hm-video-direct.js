@@ -363,6 +363,8 @@
             pendingAdStart: null,
             requestCorrelator: String(Date.now()),
             contentListeners: [],
+            contentEndedHandler: null,
+            contentEndedAttached: false,
         };
         if (closeButton && closeButton.addEventListener) closeButton.addEventListener('click', function () {
             destroyPlayer(player, 'dismissed');
@@ -659,9 +661,23 @@
                     });
                     if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
                         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
+                        // IMA may temporarily use the content video element for ad
+                        // playback. Do not interpret an ad media "ended" event as
+                        // the publisher content reaching its end.
+                        if (player.contentEndedAttached && player.video && player.video.removeEventListener && player.contentEndedHandler) {
+                            try { player.video.removeEventListener('ended', player.contentEndedHandler); } catch (error) {}
+                            player.contentEndedAttached = false;
+                        }
                     });
                     if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
-                        if (!player.destroyed && !player.contentEnded) resumeContent(player);
+                        if (player.destroyed || player.contentEnded) return;
+                        if (!player.contentEndedAttached && player.video && player.video.addEventListener && player.contentEndedHandler) {
+                            try {
+                                player.video.addEventListener('ended', player.contentEndedHandler);
+                                player.contentEndedAttached = true;
+                            } catch (error) {}
+                        }
+                        resumeContent(player);
                     });
                     if (adTypes.ALL_ADS_COMPLETED) player.adsManager.addEventListener(adTypes.ALL_ADS_COMPLETED, function () {
                         if (player.destroyed) return;
@@ -763,8 +779,8 @@
                 requestContentAdBreak(player, ima, vastUrl, 'midroll');
             }
         });
-        listenContent(player, player.video, 'ended', function () {
-            if (player.destroyed || player.contentEnded) return;
+        player.contentEndedHandler = function () {
+            if (player.destroyed || player.contentEnded || player.adBreakPending) return;
             player.contentEnded = true;
             if (player.adRules) {
                 try {
@@ -787,7 +803,9 @@
                 player.postRollRequested = true;
                 requestContentAdBreak(player, ima, vastUrl, 'postroll');
             }
-        });
+        };
+        listenContent(player, player.video, 'ended', player.contentEndedHandler);
+        player.contentEndedAttached = true;
 
         // Set the content source only after listeners exist. A broken CDN/video
         // must not suppress the preroll request; its error is recorded while the
