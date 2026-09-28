@@ -23,6 +23,7 @@ class GlobalSettingsGovernanceTest extends TestCase
     use InteractsWithIdentity, RefreshDatabase;
 
     private $admin;
+    private $adOps;
     private $publisher;
 
     protected function setUp(): void
@@ -32,6 +33,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->seed(SettingsAccessSeeder::class);
         $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Settings');
         $this->admin = $this->makeUser($horus, RoleName::OperationsAdmin, ['password' => Hash::make('SettingsPass123!')]);
+        $this->adOps = $this->makeUser($horus, RoleName::AdOpsAdmin, ['password' => Hash::make('AdOpsPass123!')]);
         $publisherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Publisher Settings');
         $this->publisher = $this->makeUser($publisherOrg, RoleName::PublisherAdmin);
     }
@@ -167,6 +169,45 @@ class GlobalSettingsGovernanceTest extends TestCase
 
         $this->actingAs($this->publisher)->get('/admin/settings')->assertForbidden();
         $this->actingAs($this->publisher)->put('/admin/settings/reporting.retry_delay_minutes', ['value' => 10])->assertForbidden();
+    }
+
+    public function test_ad_ops_can_manage_only_the_platform_video_setting_from_the_settings_ui(): void
+    {
+        $this->assertTrue($this->adOps->hasPermission('settings.view'));
+        $this->assertTrue($this->adOps->hasPermission('video_player.manage'));
+        $this->assertFalse($this->adOps->hasPermission('settings.manage'));
+
+        $videoRoute = route('admin.settings.update', ['key' => 'video_player.content_url']);
+        $response = $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.settings.index'))
+            ->assertOk()
+            ->assertSee('Platform accompanying video URL')
+            ->assertSee('video_player.content_url')
+            ->assertSee($videoRoute, false)
+            ->assertSee('CHANGE VIDEO PLAYER CONTENT URL');
+
+        $response->assertSee('Save setting');
+
+        $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put($videoRoute, [
+                'value' => 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+                'reason' => 'Enable accompanying content for video demand testing',
+                'current_password' => 'AdOpsPass123!',
+                'impact_confirmation' => 'CHANGE VIDEO PLAYER CONTENT URL',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('global_settings', [
+            'key' => 'video_player.content_url',
+            'value' => 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+        ]);
+
+        $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.settings.update', ['key' => 'reporting.retry_delay_minutes']), ['value' => 60])
+            ->assertForbidden();
     }
 
     public function test_high_impact_change_requires_reason_password_and_exact_confirmation(): void
