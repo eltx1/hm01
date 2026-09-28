@@ -232,6 +232,20 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'data-hm-video-muted' => $rewarded ? '0' : '1',
             'data-hm-video-autoplay' => $rewarded ? '0' : '1',
         ];
+        if (! $rewarded) {
+            $contentUrl = trim((string) config('horus.video_content_url'));
+            if ($contentUrl !== ''
+                && filter_var($contentUrl, FILTER_VALIDATE_URL)
+                && strtolower((string) parse_url($contentUrl, PHP_URL_SCHEME)) === 'https') {
+                $attributes['data-hm-video-content-url'] = $contentUrl;
+                $attributes['data-hm-video-content-mode'] = 'accompanying';
+                $attributes['data-hm-video-breaks'] = 'pre,mid,post';
+                $attributes['data-hm-video-mid-roll-ratio'] = '0.5';
+                if (($formatSettings['floatingPosition'] ?? null) === 'bottom_right') {
+                    $attributes['data-hm-video-inline-to-floating'] = '1';
+                }
+            }
+        }
         if ($rewarded) {
             $attributes += [
                 'data-hm-video-rewarded' => '1',
@@ -241,7 +255,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         }
         $successSelector = $rewarded
             ? '#'.$containerId.'[data-hm-video-status="reward-ready"], #'.$containerId.'[data-hm-video-status="reward-capped"]'
-            : '#'.$containerId.'[data-hm-video-status="started"]';
+            : '#'.$containerId.'[data-hm-video-status="content-ready"], #'.$containerId.'[data-hm-video-status="content-playing"], #'.$containerId.'[data-hm-video-status="started"]';
 
         return [
             'recipeVersion' => 1,
