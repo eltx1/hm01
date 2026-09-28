@@ -493,6 +493,10 @@
 
     function cleanupContentAdRuntime(player) {
         window.clearTimeout(player.startupTimer);
+        if (player.resizeHandler && window.removeEventListener) {
+            try { window.removeEventListener('resize', player.resizeHandler); } catch (error) {}
+            player.resizeHandler = null;
+        }
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
