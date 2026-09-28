@@ -215,6 +215,7 @@ function runVideo(selectedContainer, options = {}) {
     const windowListeners = {};
     const dispatched = [];
     const storage = new Map(Object.entries(options.storage || {}));
+    const intersectionObservers = [];
 
     function mediaElement(tag) {
         const attributes = {};
@@ -232,12 +233,28 @@ function runVideo(selectedContainer, options = {}) {
             autoplay: false,
             playsInline: false,
             paused: false,
+            controls: false,
+            preload: '',
+            src: '',
+            currentTime: 0,
+            duration: Number(options.contentDuration || 100),
             setAttribute(name, value) { attributes[name] = String(value); },
             getAttribute(name) { return attributes[name] ?? null; },
             appendChild(child) { child.parentNode = this; childNodes.push(child); return child; },
             addEventListener(name, callback) { (listeners[name] ||= []).push(callback); },
+            removeEventListener(name, callback) {
+                const list = listeners[name] || [];
+                const index = list.indexOf(callback);
+                if (index >= 0) list.splice(index, 1);
+            },
+            emit(name, event = {}) { (listeners[name] || []).slice().forEach((callback) => callback(event)); },
             click() { (listeners.click || []).forEach((callback) => callback({ isTrusted: options.trustedClick !== false, preventDefault() {}, stopPropagation() {} })); },
             pause() { this.paused = true; },
+            play() {
+                this.paused = false;
+                if (options.contentPlayRejects) return Promise.reject(new Error('content-play-failed'));
+                return Promise.resolve();
+            },
         };
     }
 
@@ -247,6 +264,8 @@ function runVideo(selectedContainer, options = {}) {
         COMPLETE: 'complete',
         SKIPPED: 'skipped',
         ALL_ADS_COMPLETED: 'all-ads-completed',
+        CONTENT_PAUSE_REQUESTED: 'content-pause-requested',
+        CONTENT_RESUME_REQUESTED: 'content-resume-requested',
     };
     class AdsManager {
         constructor() {
@@ -266,11 +285,13 @@ function runVideo(selectedContainer, options = {}) {
             this.emit(adEventTypes.STARTED);
         }
         resize(width, height, mode) { this.resized = [width, height, mode]; }
+        getCuePoints() { return options.cuePoints || []; }
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
-        constructor() { this.listeners = {}; loaders.push(this); }
+        constructor() { this.listeners = {}; this.contentCompleteCalled = false; loaders.push(this); }
         destroy() { this.destroyed = true; }
+        contentComplete() { this.contentCompleteCalled = true; }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
         requestAds(request) {
             requested.push(request);
@@ -285,8 +306,19 @@ function runVideo(selectedContainer, options = {}) {
         setAdWillPlayMuted(value) { this.willPlayMuted = value; }
     }
     class IntersectionObserver {
-        constructor(callback, options) { this.callback = callback; this.options = options; this.disconnected = false; }
-        observe(target) { this.target = target; this.callback([{ isIntersecting: true, intersectionRatio: 0.6 }]); }
+        constructor(callback, observerOptions) {
+            this.callback = callback;
+            this.options = observerOptions;
+            this.disconnected = false;
+            intersectionObservers.push(this);
+        }
+        observe(target) {
+            this.target = target;
+            if (options.autoIntersect !== false) this.callback([{ target, isIntersecting: true, intersectionRatio: 0.6 }]);
+        }
+        emit(ratio, isIntersecting = ratio > 0) {
+            if (!this.disconnected) this.callback([{ target: this.target, isIntersecting, intersectionRatio: ratio }]);
+        }
         disconnect() { this.disconnected = true; }
     }
     class MutationObserver {
@@ -354,7 +386,7 @@ function runVideo(selectedContainer, options = {}) {
     };
     sandbox.window = sandbox;
     vm.runInNewContext(videoSource, sandbox, { filename: 'hm-video-direct.js' });
-    return { sandbox, requested, managers, loaders, displays, created, dispatched, storage };
+    return { sandbox, requested, managers, loaders, displays, created, dispatched, storage, intersectionObservers };
 }
 
 test('isolated Direct Demand runtime preserves placement dimensions and sandboxing', async () => {
