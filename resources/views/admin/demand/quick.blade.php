@@ -59,6 +59,7 @@
 
 @if($codeSite = $sites->firstWhere('id', $selectedSiteId))
     <x-responsive-bundle-codes :site="$codeSite" />
+    <x-video-placement-codes :site="$codeSite" />
 @endif
 
 <article class="workspace-section">
@@ -218,7 +219,7 @@
                 ? 'Paste /NetworkCode/AdUnitCode. Horus uses official GPT Rewarded: the visitor opts in and content access follows Google’s reward grant event. No display sizes are applied.'
                 : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.')
             : (video
-                ? 'A plain VAST/VMAP URL runs in the Horus video player. Complete provider code keeps its provider-managed lifecycle.'
+                ? 'A plain VAST/VMAP URL runs in the Horus accompanying-content player. For Inline → Floating Video, copy the generated DIV into the publisher page; Horus starts inline there and floats only after the visitor scrolls it away. The platform content video is controlled globally by Horus Media.'
                 : 'Paste the complete supported GPT or third-party tag. A supported script-only tag is also accepted. Its declared sizes are checked against this placement. Choose GAM ad unit path above if you only have the unit path.');
         sizeHelp.textContent = key === 'responsive_display'
             ? 'Responsive supports 13 sizes: 970×250, 970×90, 728×90, 468×60, 336×280, 320×100, 320×50, 300×600, 300×250, 300×100, 300×50, 250×250 and 200×200. Each request uses only sizes that fit its device and container; 300×600 is tablet/desktop only.'
