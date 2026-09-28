@@ -21,6 +21,12 @@ final class TypedSettingsRegistry
                 'Public product/company name shown by Horus Media.', 'PUBLIC'
             ),
             new SettingDefinition(
+                'video_player.content_url', 'VIDEO PLAYER', 'Platform accompanying video URL', 'url', 'horus.video_content_url',
+                ['nullable', 'url', 'max:2048', 'regex:/^https:\\/\\//i'], [],
+                'HTTPS content video used by Horus video placements before they transition from inline playback to floating playback. Publishers continue to supply only their VAST URL.',
+                'PUBLIC', true, false
+            ),
+            new SettingDefinition(
                 'advertiser_campaigns.enabled', 'ADVERTISER CAMPAIGNS', 'Advertiser Campaigns Enabled', 'boolean', 'campaigns.advertiser_campaigns_enabled',
                 ['required', 'boolean'], [],
                 'Controls whether normal Advertiser users may create or submit Direct Advertiser campaigns. Delivery still requires an eligible GAM-backed capability.',
