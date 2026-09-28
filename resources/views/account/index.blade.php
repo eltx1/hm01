@@ -22,7 +22,7 @@
     <article>
         <p class="eyebrow">Access role</p>
         <h3>{{ $user->roles->pluck('name')->join(', ') ?: 'No role assigned' }}</h3>
-        <p>{{ $user->isSuperAdministrator() ? 'Full Horus Media platform owner access.' : 'Access is controlled by the roles assigned to this account.' }}</p>
+        <p>{{ $user->hasRole(\App\Enums\RoleName::SuperAdmin->value) ? 'Horus Media super administrator role.' : 'Access is controlled by the roles assigned to this account.' }}</p>
     </article>
     <article>
         <p class="eyebrow">Active sessions</p>
