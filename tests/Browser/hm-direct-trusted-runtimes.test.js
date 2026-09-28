@@ -786,6 +786,27 @@ test('IMA ad-rules schedule disables duplicate manual midrolls and receives cont
     assert.equal(runtime.loaders[0].contentCompleteCalled, true);
 });
 
+
+test('ad-rules content without a postroll closes when content completes', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vmap?ad_rule=1').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-vmap-no-post');
+    const runtime = runVideo(target, { contentDuration: 100, cuePoints: [0, 50] });
+    await tick();
+
+    assert.equal(attributes['data-hm-video-ad-rules'], '1');
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    video.emit('ended');
+
+    assert.equal(runtime.loaders[0].contentCompleteCalled, true);
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(target.style.display, 'none');
+});
+
 test('GAM VAST templates resolve page macros and declare actual floating playback', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
