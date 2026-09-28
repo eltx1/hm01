@@ -739,7 +739,14 @@
 
         listenContent(player, player.video, 'error', function () {
             player.contentFailed = true;
-            player.container.setAttribute('data-hm-video-content-error', 'load');
+            player.container.setAttribute('data-hm-video-content-error', player.contentStarted ? 'playback' : 'load');
+            // Before preroll, keep the surface alive so the independent VAST
+            // request can still run when the placement becomes viewable. After
+            // an ad break has completed, a later content failure must not leave
+            // a dead player pinned on the publisher page.
+            if (player.preRollRequested && !player.adBreakPending) {
+                finishContentPlayer(player, 'content-error');
+            }
         });
         listenContent(player, player.video, 'timeupdate', function () {
             if (player.destroyed || player.adRules || player.midRollRequested || player.adBreakPending || !player.contentStarted || player.contentEnded) return;
