@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { applyPlacementPresetTransform } from '../../scripts/transform-loader-placement-presets.mjs';
 
 const fixture = `
 (function () {
+    function nodeList(selector) { return document.querySelectorAll(selector); }
     function eligibleElements(config) {
         var nodes = [];
         return nodes;
@@ -55,7 +57,7 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /bottom_right/);
     assert.match(transformed, /data-hm-floating-video-active/);
     assert.match(transformed, /horus:video-floated/);
-    assert.match(transformed, /__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__/);
+    assert.match(transformed, /__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V2__/);
     assert.match(transformed, /settings\.singleActiveVideo !== false/);
     assert.match(transformed, /function setImportantStyle\(style, name, value\)/);
     assert.match(transformed, /style\.setProperty\(name, value, 'important'\)/);
@@ -123,6 +125,13 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /attachDirectResponsiveMapping\(container, entry\);/);
     assert.doesNotMatch(transformed, /formatSettings\.position === 'top' \? 'top' : 'bottom'/);
 
+    assert.match(transformed, /function clearanceViewport\(\)/);
+    assert.match(transformed, /function placementMayOccupyViewport\(anchor\)/);
+    assert.match(transformed, /function observeClearanceSurfaces\(tracker, anchor\)/);
+    assert.match(transformed, /window\.visualViewport/);
+    assert.match(transformed, /window\.addEventListener\('scroll', tracker\.schedule, true\)/);
+    assert.match(transformed, /'width', 'height', 'hidden'/);
+
     const twice = applyPlacementPresetTransform(transformed);
     assert.equal(twice, transformed);
     assert.equal((twice.match(/function autoMountPlacementElements\(config\)/g) || []).length, 1);
@@ -135,4 +144,126 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.equal((twice.match(/applyPlacementPresetPresentation\(item\.element, item\.placement, placementFormatSettings\(item\.placement\)\);/g) || []).length, 1);
     assert.equal((twice.match(/attachDirectResponsiveMapping\(container, entry\);/g) || []).length, 1);
     assert.equal((twice.match(/alignDirectContentContainer\(container, entry\);/g) || []).length, 1);
+});
+
+
+test('floating video clearance reserves live sticky iframe space before wrapper status becomes rendered', () => {
+    const transformed = applyPlacementPresetTransform(fixture)
+        .replace('})();', 'window.__hmRunEligible = eligibleElements;})();');
+
+    function styleObject() {
+        const values = {};
+        return {
+            setProperty(name, value) { values[name] = String(value); this[name] = String(value); },
+            getPropertyValue(name) { return values[name] || ''; },
+        };
+    }
+
+    const iframeRect = { top: 700, bottom: 800, left: 35, right: 355, width: 320, height: 100 };
+    const iframe = {
+        tagName: 'IFRAME',
+        isConnected: true,
+        style: styleObject(),
+        addEventListener() {},
+        getBoundingClientRect() { return { ...iframeRect }; },
+        getAttribute() { return null; },
+    };
+    const stickyAttributes = {
+        'data-placement': 'sticky_bottom',
+        'data-hm-status': 'direct-demand',
+    };
+    const sticky = {
+        tagName: 'DIV',
+        isConnected: true,
+        style: styleObject(),
+        getAttribute(name) { return stickyAttributes[name] ?? null; },
+        setAttribute(name, value) { stickyAttributes[name] = String(value); },
+        querySelectorAll() { return [iframe]; },
+        getBoundingClientRect() { return { top: 800, bottom: 800, left: 0, right: 390, width: 0, height: 0 }; },
+    };
+    const floatingAttributes = {
+        'data-placement': 'video_floating',
+        'data-hm-floating-video-active': '1',
+    };
+    const floating = {
+        tagName: 'DIV',
+        isConnected: true,
+        style: styleObject(),
+        getAttribute(name) { return floatingAttributes[name] ?? null; },
+        setAttribute(name, value) { floatingAttributes[name] = String(value); },
+        querySelectorAll() { return []; },
+        getBoundingClientRect() { return { top: 480, bottom: 681, left: 16, right: 374, width: 358, height: 201 }; },
+    };
+
+    const resizeObservers = [];
+    class ResizeObserver {
+        constructor(callback) { this.callback = callback; this.observed = []; resizeObservers.push(this); }
+        observe(node) { this.observed.push(node); }
+        disconnect() {}
+    }
+    class MutationObserver {
+        constructor(callback) { this.callback = callback; }
+        observe() {}
+        disconnect() {}
+    }
+
+    const document = {
+        documentElement: { clientWidth: 390, clientHeight: 800 },
+        body: { appendChild() {} },
+        querySelector() { return null; },
+        querySelectorAll(selector) {
+            if (selector === '[data-hm-floating-video-active="1"]') return [floating];
+            if (selector === '.hm-ad[data-placement], .hm-native[data-placement]') return [floating, sticky];
+            return [];
+        },
+        createElement() { return { style: styleObject(), setAttribute() {}, appendChild() {} }; },
+    };
+    const window = {
+        innerWidth: 390,
+        innerHeight: 800,
+        document,
+        ResizeObserver,
+        MutationObserver,
+        visualViewport: {
+            width: 390,
+            height: 800,
+            addEventListener() {},
+            removeEventListener() {},
+        },
+        requestAnimationFrame(callback) { callback(); return 1; },
+        setTimeout(callback) { callback(); return 1; },
+        addEventListener() {},
+        removeEventListener() {},
+    };
+    const sandbox = { window, document };
+    vm.runInNewContext(transformed, sandbox, { filename: 'placement-clearance-runtime.js' });
+
+    const config = {
+        placements: [
+            {
+                code: 'sticky_bottom',
+                type: 'STICKY',
+                enabled: true,
+                status: 'active',
+                format: { settings: { autoMount: false, position: 'bottom' } },
+            },
+            {
+                code: 'video_floating',
+                type: 'VIDEO',
+                enabled: true,
+                status: 'active',
+                format: { settings: { autoMount: false, position: 'inline_to_bottom_right' } },
+            },
+        ],
+    };
+
+    window.__hmRunEligible(config);
+    assert.equal(floating.style.bottom, '116px');
+    assert.ok(resizeObservers[0].observed.includes(iframe), 'provider iframe should be resize-observed');
+
+    iframeRect.top = 650;
+    iframeRect.height = 150;
+    iframeRect.bottom = 800;
+    resizeObservers[0].callback();
+    assert.equal(floating.style.bottom, '166px');
 });
