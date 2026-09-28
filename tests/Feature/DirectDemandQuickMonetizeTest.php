@@ -1023,11 +1023,26 @@ HTML;
     public function test_admin_and_owner_can_copy_each_code_but_another_publisher_cannot_access_them(): void
     {
         $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload())->assertSessionHasNoErrors();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new',
+            'placement_id' => null,
+            'placement_preset' => 'video_floating',
+            'tag' => 'https://vast.vendor.net/tag?slot=publisher-code',
+        ]))->assertSessionHasNoErrors();
+        $video = Placement::withoutGlobalScopes()
+            ->where('site_id', $this->site->id)
+            ->where('code', 'quick_video_floating')
+            ->firstOrFail();
+
         foreach (['admin.demand.quick.create', 'admin.sites.inventory.index', 'publisher.sites.show'] as $route) {
             if ($route === 'publisher.sites.show') $this->actingAs($this->publisherUser);
             $response = $this->get(route($route, ['site' => $this->site->id]))->assertOk();
             foreach ($this->responsiveUnits() as $unit) $response->assertSee($unit->installationCode());
+            if (in_array($route, ['admin.demand.quick.create', 'publisher.sites.show'], true)) {
+                $response->assertSee($video->installationCode());
+            }
             $response->assertDontSee('googletag.defineSlot');
         }
         $org = $this->makeOrganization(OrganizationType::Publisher, 'Another publisher');
