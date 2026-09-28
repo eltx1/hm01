@@ -931,7 +931,9 @@
         if (!player.rewarded && player.contentMode) {
             tag.searchParams.set('plcmt', '2');
             if (breakPosition) {
-                tag.searchParams.set('vpos', breakPosition);
+                var adRulesRequest = tag.searchParams.get('ad_rule') === '1';
+                if (!adRulesRequest) tag.searchParams.set('vpos', breakPosition);
+                else tag.searchParams.delete('vpos');
                 tag.searchParams.set('vconp', '1');
                 var duration = Number(player.video && player.video.duration || 0);
                 if (Number.isFinite(duration) && duration > 0) tag.searchParams.set('vid_d', String(Math.max(1, Math.round(duration))));
