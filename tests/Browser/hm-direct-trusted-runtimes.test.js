@@ -673,6 +673,30 @@ test('accompanying content failure never suppresses the VAST preroll request', a
     assert.equal(target.style.display, 'none');
 });
 
+test('late platform video failure closes cleanly after preroll instead of leaving a dead player', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=late-content-failure').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-late-failure');
+    const runtime = runVideo(target);
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    video.emit('error');
+
+    assert.equal(attributes['data-hm-video-content-error'], 'playback');
+    assert.equal(attributes['data-hm-video-status'], 'content-error');
+    assert.equal(target.style.display, 'none');
+});
+
 test('accompanying content floats only after it was visible inline and then scrolls out of view', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
