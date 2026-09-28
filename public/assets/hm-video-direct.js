@@ -930,12 +930,13 @@
         if (player.contentMode || !correlator || /^\[timestamp\]$/i.test(correlator)) {
             tag.searchParams.set('correlator', String(player.requestCorrelator || Date.now()));
         }
+        var accompanyingAvailable = player.contentMode && !player.contentFailed;
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
         tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
         // sz identifies eligible inventory; it is not the CSS player size.
         // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
         if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
-        if (!player.rewarded && player.contentMode) {
+        if (!player.rewarded && accompanyingAvailable) {
             tag.searchParams.set('plcmt', '2');
             if (breakPosition) {
                 var adRulesRequest = tag.searchParams.get('ad_rule') === '1';
@@ -945,11 +946,17 @@
                 var duration = Number(player.video && player.video.duration || 0);
                 if (Number.isFinite(duration) && duration > 0) tag.searchParams.set('vid_d', String(Math.max(1, Math.round(duration))));
             }
-        } else if (!player.rewarded && tag.searchParams.get('plcmt') === '4') {
-            // Legacy Horus used plcmt=4 for standalone requests. Current Google
-            // inventory classification is derived by the supported inventory path,
-            // so do not synthesize an obsolete placement declaration here.
-            tag.searchParams.delete('plcmt');
+        } else if (!player.rewarded) {
+            // If the platform content has already failed, the fail-open VAST
+            // request still runs but must not claim Accompanying Content. Also
+            // remove Horus' historical standalone plcmt=4 declaration.
+            if (player.contentMode && player.contentFailed) {
+                tag.searchParams.delete('plcmt');
+                tag.searchParams.delete('vpos');
+                tag.searchParams.delete('vid_d');
+            } else if (tag.searchParams.get('plcmt') === '4') {
+                tag.searchParams.delete('plcmt');
+            }
         }
         return tag.href;
     }
