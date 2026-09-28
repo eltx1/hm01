@@ -4,7 +4,6 @@ namespace App\Models;
 
 use App\Enums\AccountStatus;
 use App\Enums\OrganizationType;
-use App\Enums\RoleName;
 use App\Enums\UserStatus;
 use Database\Factories\UserFactory;
 use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
@@ -164,28 +163,11 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function hasRole(string $role): bool
     {
-        if ($this->relationLoaded('roles')) {
-            return $this->roles->contains('name', $role);
-        }
-
-        return $this->roles()->where('name', $role)->exists();
-    }
-
-    public function isSuperAdministrator(): bool
-    {
-        return $this->isHorusAdministrator() && $this->hasRole(RoleName::SuperAdmin->value);
+        return $this->roles->contains('name', $role);
     }
 
     public function hasPermission(string $permission): bool
     {
-        // SUPER_ADMIN is the platform owner role. Its authority must not depend
-        // on a potentially stale role_permissions pivot after new permissions
-        // are introduced. The database pivot is still repaired for reporting/UI,
-        // but runtime authorization remains fail-safe for the owner role.
-        if ($this->isSuperAdministrator()) {
-            return true;
-        }
-
         if ($this->relationLoaded('roles') && $this->roles->every(fn (Role $role): bool => $role->relationLoaded('permissions'))) {
             return $this->roles->contains(fn (Role $role): bool => $role->permissions->contains('name', $permission));
         }
