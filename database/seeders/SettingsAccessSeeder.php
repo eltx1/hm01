@@ -19,12 +19,26 @@ final class SettingsAccessSeeder extends Seeder
             ['name' => 'settings.manage'],
             ['display_name' => 'Manage global settings', 'group' => 'settings'],
         );
+        $videoPlayerManage = Permission::query()->updateOrCreate(
+            ['name' => 'video_player.manage'],
+            ['display_name' => 'Manage platform video player', 'group' => 'settings'],
+        );
 
         foreach ([RoleName::SuperAdmin, RoleName::OperationsAdmin] as $roleName) {
-            Role::query()->whereNull('organization_id')->where('name', $roleName->value)->first()?->permissions()->syncWithoutDetaching([$view->id, $manage->id]);
+            Role::query()->whereNull('organization_id')->where('name', $roleName->value)->first()?->permissions()->syncWithoutDetaching([
+                $view->id,
+                $manage->id,
+                $videoPlayerManage->id,
+            ]);
         }
-        foreach ([RoleName::AdOpsAdmin, RoleName::FinanceAdmin] as $roleName) {
-            Role::query()->whereNull('organization_id')->where('name', $roleName->value)->first()?->permissions()->syncWithoutDetaching([$view->id]);
-        }
+
+        Role::query()->whereNull('organization_id')->where('name', RoleName::AdOpsAdmin->value)->first()?->permissions()->syncWithoutDetaching([
+            $view->id,
+            $videoPlayerManage->id,
+        ]);
+
+        Role::query()->whereNull('organization_id')->where('name', RoleName::FinanceAdmin->value)->first()?->permissions()->syncWithoutDetaching([
+            $view->id,
+        ]);
     }
 }
