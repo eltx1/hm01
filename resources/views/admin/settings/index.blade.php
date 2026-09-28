@@ -22,6 +22,7 @@
         <tbody>
         @foreach($rows as $row)
             @php($definition = $row['definition'])
+            @php($canManage = auth()->user()?->hasPermission('settings.manage') === true || (str_starts_with($definition->key, 'video_player.') && auth()->user()?->hasPermission('video_player.manage') === true))
             <tr>
                 <td>
                     <strong>{{ $definition->label }}</strong><br>
@@ -35,7 +36,7 @@
                     <span class="muted">Fallback: {{ is_bool($row['default']) ? ($row['default'] ? 'true' : 'false') : ($row['default'] ?? '—') }}</span>
                 </td>
                 <td>
-                    @can('settings.manage')
+                    @if($canManage)
                     <form method="POST" action="{{ route('admin.settings.update', ['key' => $definition->key]) }}" class="safe-submit">@csrf @method('PUT')
                         @if($definition->type === 'boolean')
                             <label>Value<select name="value"><option value="1" @selected((bool)$row['value'])>Enabled</option><option value="0" @selected(!(bool)$row['value'])>Disabled</option></select></label>
@@ -61,7 +62,7 @@
                         <button type="submit">Reset to fallback</button>
                     </form>
                     @endif
-                    @else<span class="muted">Read only</span>@endcan
+                    @else<span class="muted">Read only</span>@endif
                 </td>
                 <td>{{ $row['changed_at'] ?: 'Never overridden' }}<br><span class="muted">{{ $row['changed_by'] ?: 'Config fallback' }}</span></td>
             </tr>
