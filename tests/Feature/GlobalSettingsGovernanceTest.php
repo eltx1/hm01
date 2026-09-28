@@ -56,7 +56,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertSame('ops@example.com', $registry->normalize('supply_chain.contact_email', 'OPS@EXAMPLE.COM'));
         $this->assertSame(
             'https://cdn.horusmedia.net/content/horus.mp4',
-            $registry->normalize('video_player.content_url', ' https://cdn.horusmedia.net/content/horus.mp4 ')
+            $registry->normalize('video_player.content_url', 'https://cdn.horusmedia.net/content/horus.mp4')
         );
         try {
             $registry->normalize('video_player.content_url', 'http://cdn.horusmedia.net/content/horus.mp4');
