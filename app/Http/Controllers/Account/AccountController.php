@@ -12,6 +12,7 @@ final class AccountController extends Controller
     public function __invoke(Request $request, AccountSessionService $sessions): View
     {
         $user = $request->user();
+        $user->loadMissing('roles');
         $activeSessions = $sessions->sessionsFor(
             $user,
             $request->session()->getId(),
