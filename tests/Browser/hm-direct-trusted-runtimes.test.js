@@ -787,6 +787,32 @@ test('IMA ad-rules schedule disables duplicate manual midrolls and receives cont
 });
 
 
+
+test('IMA ad playback cannot trigger content-ended handling on the shared video element', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=shared-element').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+    };
+    const target = container(attributes, 'hm-content-shared-element');
+    const runtime = runVideo(target, { contentDuration: 100 });
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    runtime.managers[0].emit('content-pause-requested');
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(target.style.display, 'block');
+
+    runtime.managers[0].emit('content-resume-requested');
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpos'), null);
+});
+
 test('ad-rules content without a postroll closes when content completes', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
