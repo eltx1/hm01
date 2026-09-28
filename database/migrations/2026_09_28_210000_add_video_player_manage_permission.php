@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\OrganizationType;
 use App\Enums\RoleName;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +57,37 @@ return new class extends Migration
                 DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $superAdminRoleId,
                     'permission_id' => $registeredPermissionId,
+                ]);
+            }
+
+            // The bootstrap command records the original platform owner in the
+            // immutable audit trail. If a later role edit accidentally detached
+            // SUPER_ADMIN from that account, restore the role only for audited
+            // bootstrap owners that still belong to the Horus Media organization.
+            $bootstrapOwnerIds = DB::table('audit_logs')
+                ->where('event', 'bootstrap.super_admin.created')
+                ->whereNotNull('auditable_id')
+                ->pluck('auditable_id')
+                ->filter()
+                ->unique();
+
+            foreach ($bootstrapOwnerIds as $userId) {
+                $isActiveHorusOwner = DB::table('users')
+                    ->join('organizations', 'organizations.id', '=', 'users.organization_id')
+                    ->where('users.id', $userId)
+                    ->whereNull('users.deleted_at')
+                    ->whereNull('organizations.deleted_at')
+                    ->where('organizations.type', OrganizationType::HorusMedia->value)
+                    ->exists();
+
+                if (! $isActiveHorusOwner) {
+                    continue;
+                }
+
+                DB::table('user_roles')->insertOrIgnore([
+                    'user_id' => $userId,
+                    'role_id' => $superAdminRoleId,
+                    'assigned_by' => $userId,
                 ]);
             }
         }
