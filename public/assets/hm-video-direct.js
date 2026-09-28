@@ -660,6 +660,7 @@
                         setStatus(player.container, 'started');
                     });
                     if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
+                        if (player.adRules) player.adBreakPending = true;
                         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
                         // IMA may temporarily use the content video element for ad
                         // playback. Do not interpret an ad media "ended" event as
@@ -671,6 +672,10 @@
                     });
                     if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
                         if (player.destroyed || player.contentEnded) return;
+                        if (player.adRules) {
+                            player.adBreakPending = false;
+                            player.currentBreak = null;
+                        }
                         if (!player.contentEndedAttached && player.video && player.video.addEventListener && player.contentEndedHandler) {
                             try {
                                 player.video.addEventListener('ended', player.contentEndedHandler);
