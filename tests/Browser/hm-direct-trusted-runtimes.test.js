@@ -289,16 +289,22 @@ function runVideo(selectedContainer, options = {}) {
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
-        constructor() { this.listeners = {}; this.contentCompleteCalled = false; loaders.push(this); }
+        constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.pendingManager = null; loaders.push(this); }
         destroy() { this.destroyed = true; }
         contentComplete() { this.contentCompleteCalled = true; }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
-        requestAds(request) {
-            requested.push(request);
-            const manager = new AdsManager();
+        emitManagerLoaded() {
+            const manager = this.pendingManager;
+            if (!manager) return;
+            this.pendingManager = null;
             (this.listeners['ads-manager-loaded'] || []).forEach((callback) => callback({
                 getAdsManager() { return manager; },
             }));
+        }
+        requestAds(request) {
+            requested.push(request);
+            this.pendingManager = new AdsManager();
+            if (!options.deferManagerLoad) this.emitManagerLoaded();
         }
     }
     class AdsRequest {
@@ -584,6 +590,36 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     runtime.managers[2].emit('all-ads-completed');
     assert.equal(attributes['data-hm-video-status'], 'completed');
     assert.equal(target.style.display, 'none');
+});
+
+test('slow VAST responses cannot autoplay after inline viewability falls below 50 percent', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=slow').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-inline-to-floating': '1',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-slow');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { autoIntersect: false, deferManagerLoad: true });
+    await tick();
+
+    const observer = runtime.intersectionObservers[0];
+    observer.emit(0.6, true);
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.managers[0].started, false);
+
+    observer.emit(0.2, true);
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(runtime.managers[0].started, false);
+    assert.equal(attributes['data-hm-video-status'], 'waiting-ad-viewability');
+
+    observer.emit(0.6, true);
+    assert.equal(runtime.managers[0].started, true);
+    assert.equal(attributes['data-hm-video-status'], 'started');
 });
 
 test('accompanying content failure never suppresses the VAST preroll request', async () => {
