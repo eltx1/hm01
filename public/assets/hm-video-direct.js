@@ -379,11 +379,6 @@
         });
         player.contentListeners = [];
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
-        // IMA requires contentComplete() when the same ad tag is requested
-        // again with a new AdsManager; otherwise later legitimate breaks can be
-        // treated as accidental duplicates. VMAP/ad-rules never enters this
-        // cleanup path between scheduled breaks.
-        try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
@@ -509,6 +504,10 @@
             player.resizeHandler = null;
         }
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
+        // IMA requires contentComplete() before reusing the same ad tag for a
+        // later legitimate manual break. Ad-rules/VMAP keep their AdsLoader
+        // alive and therefore never enter this cleanup path between breaks.
+        try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
         player.adsManager = null;
