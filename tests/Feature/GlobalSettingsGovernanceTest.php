@@ -194,10 +194,10 @@ class GlobalSettingsGovernanceTest extends TestCase
             ])
             ->assertRedirect();
 
-        $this->assertDatabaseHas('global_settings', [
-            'key' => 'video_player.content_url',
-            'value' => 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
-        ]);
+        $this->assertSame(
+            'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+            GlobalSetting::query()->findOrFail('video_player.content_url')->value,
+        );
 
         $this->actingAs($this->adOps)
             ->withSession(['two_factor_passed_at' => now()->timestamp])
