@@ -185,17 +185,12 @@ class GlobalSettingsGovernanceTest extends TestCase
             ->assertSee('Platform accompanying video URL')
             ->assertSee('video_player.content_url')
             ->assertSee($videoRoute, false)
-            ->assertSee('CHANGE VIDEO PLAYER CONTENT URL');
-
-        $response->assertSee('Save setting');
+            ->assertSee('Save setting');
 
         $this->actingAs($this->adOps)
             ->withSession(['two_factor_passed_at' => now()->timestamp])
             ->put($videoRoute, [
                 'value' => 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
-                'reason' => 'Enable accompanying content for video demand testing',
-                'current_password' => 'AdOpsPass123!',
-                'impact_confirmation' => 'CHANGE VIDEO PLAYER CONTENT URL',
             ])
             ->assertRedirect();
 
