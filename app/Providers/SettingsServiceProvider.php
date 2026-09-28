@@ -38,10 +38,10 @@ final class SettingsServiceProvider extends ServiceProvider
             Route::post('/thoth/providers/{provider}/test', [ThothSettingsController::class, 'test'])
                 ->middleware(['permission:thoth.settings.manage', 'throttle:sensitive'])->name('admin.thoth.connections.test');
             Route::put('/{key}', [SettingsController::class, 'update'])->where('key', '[A-Za-z0-9._-]+')
-                ->middleware(['permission:settings.manage', 'throttle:sensitive'])
+                ->middleware(['permission:settings.view', 'throttle:sensitive'])
                 ->name('admin.settings.update');
             Route::delete('/{key}', [SettingsController::class, 'reset'])->where('key', '[A-Za-z0-9._-]+')
-                ->middleware(['permission:settings.manage', 'throttle:sensitive'])
+                ->middleware(['permission:settings.view', 'throttle:sensitive'])
                 ->name('admin.settings.reset');
         });
     }
