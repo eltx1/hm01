@@ -111,14 +111,58 @@ const HELPERS = `    function placementFormatSettings(placement) {
         });
         installFloatingVideoClearance(config);
         if (window.addEventListener) {
-            window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V1__ = config;
-            if (!window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__) {
-                window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__ = true;
+            window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V2__ = config;
+            if (!window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V2__) {
+                window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V2__ = true;
                 window.addEventListener('horus:video-floated', function () {
-                    installFloatingVideoClearance(window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V1__ || config);
+                    installFloatingVideoClearance(window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V2__ || config);
                 });
             }
         }
+    }
+
+    function clearanceViewport() {
+        var width = Number(window.innerWidth || document.documentElement && document.documentElement.clientWidth || 0);
+        var height = Number(window.innerHeight || document.documentElement && document.documentElement.clientHeight || 0);
+        var visual = window.visualViewport;
+        if (visual) {
+            var visualWidth = Number(visual.width || 0);
+            var visualHeight = Number(visual.height || 0);
+            if (visualWidth > 0) width = width > 0 ? Math.min(width, visualWidth) : visualWidth;
+            if (visualHeight > 0) height = height > 0 ? Math.min(height, visualHeight) : visualHeight;
+        }
+        return { width: width, height: height };
+    }
+
+    function placementMayOccupyViewport(anchor) {
+        if (!anchor || !anchor.getAttribute || anchor.isConnected === false) return false;
+        if (anchor.getAttribute('data-hm-placement-dismissed') === '1') return false;
+        var status = String(anchor.getAttribute('data-hm-status') || '').toLowerCase();
+        return ['empty', 'failed', 'invalid', 'ineligible', 'dismissed'].indexOf(status) === -1;
+    }
+
+    function clearanceSurfaces(anchor) {
+        var surfaces = [anchor];
+        if (!anchor || !anchor.querySelectorAll) return surfaces;
+        Array.prototype.forEach.call(anchor.querySelectorAll('iframe, ins, [data-hm-gpt-direct="1"], [data-hm-isolated-direct="1"]'), function (surface) {
+            if (surfaces.indexOf(surface) === -1) surfaces.push(surface);
+        });
+        return surfaces;
+    }
+
+    function observeClearanceSurfaces(tracker, anchor) {
+        if (!tracker || !anchor) return;
+        clearanceSurfaces(anchor).forEach(function (surface) {
+            if (tracker.observed.indexOf(surface) !== -1) return;
+            tracker.observed.push(surface);
+            if (tracker.resize) {
+                try { tracker.resize.observe(surface); } catch (error) {}
+            }
+            if (String(surface.tagName || '').toUpperCase() === 'IFRAME' && surface.addEventListener && !surface.__hmClearanceLoadBound) {
+                surface.__hmClearanceLoadBound = true;
+                try { surface.addEventListener('load', tracker.schedule); } catch (error) {}
+            }
+        });
     }
 
     function installFloatingVideoClearance(config) {
@@ -127,39 +171,67 @@ const HELPERS = `    function placementFormatSettings(placement) {
             return placement.type === 'STICKY' && placement.enabled && placement.status === 'active'
                 && String(settings.position || 'bottom').toLowerCase() === 'bottom';
         }).map(function (placement) { return placement.code; });
+
         Array.prototype.forEach.call(nodeList('[data-hm-floating-video-active="1"]'), function (floating) {
             if (!floating.getBoundingClientRect) return;
             var tracker = floating.__hmClearance;
             if (!tracker) {
-                tracker = floating.__hmClearance = { anchors: [], frame: null, stopped: false };
+                tracker = floating.__hmClearance = { anchors: [], observed: [], frame: null, stopped: false };
                 tracker.update = function () {
                     tracker.frame = null;
                     if (floating.isConnected === false || floating.getAttribute('data-hm-placement-dismissed') === '1') {
                         tracker.stopped = true;
                         if (tracker.resize) tracker.resize.disconnect();
                         if (tracker.mutations) tracker.mutations.disconnect();
-                        if (window.removeEventListener) window.removeEventListener('resize', tracker.schedule);
+                        if (window.removeEventListener) {
+                            window.removeEventListener('resize', tracker.schedule);
+                            window.removeEventListener('scroll', tracker.schedule, true);
+                        }
+                        if (window.visualViewport && window.visualViewport.removeEventListener) {
+                            window.visualViewport.removeEventListener('resize', tracker.schedule);
+                            window.visualViewport.removeEventListener('scroll', tracker.schedule);
+                        }
                         return;
                     }
+
+                    var viewport = clearanceViewport();
+                    var viewportHeight = viewport.height;
                     var bounds = floating.getBoundingClientRect();
-                    var viewportHeight = Number(window.innerHeight || document.documentElement.clientHeight || 0);
                     var occupied = 0;
+
                     tracker.anchors.forEach(function (anchor) {
-                        if (anchor.isConnected === false || anchor.getAttribute('data-hm-placement-dismissed') === '1' || !placementRendered(anchor)) return;
-                        // Provider frames can overflow a zero-height wrapper.
-                        // Measure their DOM rectangles without accessing frame content.
-                        var surfaces = [anchor].concat(Array.prototype.slice.call(anchor.querySelectorAll('iframe')));
-                        surfaces.forEach(function (surface) {
+                        if (!placementMayOccupyViewport(anchor)) return;
+                        observeClearanceSurfaces(tracker, anchor);
+                        clearanceSurfaces(anchor).forEach(function (surface) {
+                            if (!surface || !surface.getBoundingClientRect) return;
                             var rect = surface.getBoundingClientRect();
                             if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= viewportHeight) return;
                             if (rect.right <= bounds.left || rect.left >= bounds.right) return;
-                            occupied = Math.max(occupied, viewportHeight - rect.top);
+                            occupied = Math.max(occupied, Math.max(0, viewportHeight - rect.top));
                         });
                     });
-                    var bottom = occupied > 0 ? String(Math.ceil(occupied) + 16) + 'px' : 'calc(16px + env(safe-area-inset-bottom, 0px))';
+
+                    var bottom = occupied > 0
+                        ? String(Math.ceil(occupied) + 16) + 'px'
+                        : 'calc(16px + env(safe-area-inset-bottom, 0px))';
                     tracker.bottom = bottom;
                     if (!floating.style.getPropertyValue || floating.style.getPropertyValue('bottom') !== bottom) {
                         setImportantStyle(floating.style, 'bottom', bottom);
+                    }
+
+                    // On very short mobile viewports, keep the entire 16:9
+                    // floating player above the sticky instead of allowing a
+                    // second overlap at the top edge.
+                    if (viewport.width > 0 && viewportHeight > 0) {
+                        var normalWidth = Math.min(400, Math.max(1, viewport.width - 32));
+                        var bottomPixels = occupied > 0 ? Math.ceil(occupied) + 16 : 16;
+                        var availableHeight = Math.max(1, viewportHeight - bottomPixels - 16);
+                        var widthForHeight = Math.floor(availableHeight * 16 / 9);
+                        var safeWidth = Math.max(120, Math.min(normalWidth, widthForHeight));
+                        var widthValue = safeWidth < normalWidth ? String(safeWidth) + 'px' : 'min(400px, calc(100vw - 32px))';
+                        if (!floating.style.getPropertyValue || floating.style.getPropertyValue('width') !== widthValue) {
+                            setImportantStyle(floating.style, 'width', widthValue);
+                        }
                     }
                 };
                 tracker.schedule = function () {
@@ -168,18 +240,35 @@ const HELPERS = `    function placementFormatSettings(placement) {
                 };
                 if (typeof window.ResizeObserver === 'function') tracker.resize = new window.ResizeObserver(tracker.schedule);
                 if (typeof window.MutationObserver === 'function') {
-                    tracker.mutations = new window.MutationObserver(tracker.schedule);
-                    tracker.mutations.observe(floating, { attributes: true, attributeFilter: ['data-hm-placement-dismissed', 'style', 'class'] });
+                    tracker.mutations = new window.MutationObserver(function () {
+                        tracker.anchors.forEach(function (anchor) { observeClearanceSurfaces(tracker, anchor); });
+                        tracker.schedule();
+                    });
+                    tracker.mutations.observe(floating, {
+                        attributes: true,
+                        attributeFilter: ['data-hm-placement-dismissed', 'style', 'class']
+                    });
                 }
-                if (window.addEventListener) window.addEventListener('resize', tracker.schedule);
+                if (window.addEventListener) {
+                    window.addEventListener('resize', tracker.schedule);
+                    window.addEventListener('scroll', tracker.schedule, true);
+                }
+                if (window.visualViewport && window.visualViewport.addEventListener) {
+                    window.visualViewport.addEventListener('resize', tracker.schedule);
+                    window.visualViewport.addEventListener('scroll', tracker.schedule);
+                }
             }
             if (tracker.stopped) return;
+
             Array.prototype.forEach.call(nodeList('.hm-ad[data-placement], .hm-native[data-placement]'), function (anchor) {
                 if (bottomCodes.indexOf(anchor.getAttribute('data-placement')) === -1 || tracker.anchors.indexOf(anchor) !== -1) return;
                 tracker.anchors.push(anchor);
-                if (tracker.resize) tracker.resize.observe(anchor);
+                observeClearanceSurfaces(tracker, anchor);
                 if (tracker.mutations) tracker.mutations.observe(anchor, {
-                    attributes: true, attributeFilter: ['data-hm-status', 'data-hm-placement-dismissed', 'style', 'class'], childList: true, subtree: true
+                    attributes: true,
+                    attributeFilter: ['data-hm-status', 'data-hm-placement-dismissed', 'style', 'class', 'width', 'height', 'hidden'],
+                    childList: true,
+                    subtree: true
                 });
             });
             tracker.update();
