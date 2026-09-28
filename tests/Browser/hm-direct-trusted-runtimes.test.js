@@ -592,6 +592,29 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     assert.equal(target.style.display, 'none');
 });
 
+test('GAM ad-rules requests keep accompanying metadata but let the ad server own vpos', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_rule=1&output=vmap&sz=400x225').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-ad-rules');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { contentDuration: 120, cuePoints: [0, 60, -1] });
+    await tick();
+
+    assert.equal(runtime.requested.length, 1);
+    const url = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(url.searchParams.get('plcmt'), '2');
+    assert.equal(url.searchParams.get('ad_rule'), '1');
+    assert.equal(url.searchParams.get('vpos'), null);
+    assert.equal(url.searchParams.get('vid_d'), '120');
+    assert.equal(url.searchParams.get('vconp'), '1');
+});
+
 test('slow VAST responses cannot autoplay after inline viewability falls below 50 percent', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
