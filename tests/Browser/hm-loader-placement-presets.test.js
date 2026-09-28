@@ -54,6 +54,8 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /Do not guess a "middle"/);
     assert.match(transformed, /bottom_right/);
     assert.match(transformed, /data-hm-floating-video-active/);
+    assert.match(transformed, /horus:video-floated/);
+    assert.match(transformed, /__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__/);
     assert.match(transformed, /settings\.singleActiveVideo !== false/);
     assert.match(transformed, /function setImportantStyle\(style, name, value\)/);
     assert.match(transformed, /style\.setProperty\(name, value, 'important'\)/);
