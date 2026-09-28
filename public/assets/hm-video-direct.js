@@ -468,6 +468,12 @@
         importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
         surface.style.bottom = 'calc(16px + env(safe-area-inset-bottom, 0px))';
         try {
+            if (player.adsManager && player.adsManager.resize) {
+                var dimensions = playerDimensions(player.container, player.size);
+                player.adsManager.resize(dimensions[0], dimensions[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal');
+            }
+        } catch (error) {}
+        try {
             if (typeof window.CustomEvent === 'function' && window.dispatchEvent) {
                 window.dispatchEvent(new window.CustomEvent('horus:video-floated', {
                     detail: { placementId: String(surface.getAttribute('data-placement') || player.container.id || '') },
@@ -871,12 +877,12 @@
         page.hash = '';
         ['url', 'description_url'].forEach(function (name) {
             var current = tag.searchParams.get(name);
-            if (!current || /^\[(?:referrer_url|description_url)\]$/i.test(current)) tag.searchParams.set(name, page.href);
+            if (player.contentMode || !current || /^\[(?:referrer_url|description_url)\]$/i.test(current)) tag.searchParams.set(name, page.href);
         });
         var correlator = tag.searchParams.get('correlator');
-        if (!correlator || /^\[timestamp\]$/i.test(correlator)) tag.searchParams.set('correlator', String(Date.now()));
+        if (player.contentMode || !correlator || /^\[timestamp\]$/i.test(correlator)) tag.searchParams.set('correlator', String(Date.now()));
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
-        tag.searchParams.set('vpa', player.video.autoplay ? 'auto' : 'click');
+        tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
         // sz identifies eligible inventory; it is not the CSS player size.
         // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
         if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
