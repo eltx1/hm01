@@ -110,6 +110,15 @@ const HELPERS = `    function placementFormatSettings(placement) {
             applyPlacementPresetPresentation(element, placement, settings);
         });
         installFloatingVideoClearance(config);
+        if (window.addEventListener) {
+            window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V1__ = config;
+            if (!window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__) {
+                window.__HORUS_FLOATING_VIDEO_CLEARANCE_LISTENER_V1__ = true;
+                window.addEventListener('horus:video-floated', function () {
+                    installFloatingVideoClearance(window.__HORUS_FLOATING_VIDEO_CLEARANCE_CONFIG_V1__ || config);
+                });
+            }
+        }
     }
 
     function installFloatingVideoClearance(config) {
