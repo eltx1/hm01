@@ -357,6 +357,8 @@
             adRules: false,
             floating: false,
             wasInlineVisible: false,
+            visibleRatio: 0,
+            pendingAdStart: null,
             requestCorrelator: String(Date.now()),
             contentListeners: [],
         };
@@ -379,6 +381,7 @@
             try { if (entry[0] && entry[0].removeEventListener) entry[0].removeEventListener(entry[1], entry[2]); } catch (error) {}
         });
         player.contentListeners = [];
+        player.pendingAdStart = null;
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
@@ -447,6 +450,24 @@
         }
     }
 
+    function releasePendingAdStart(player) {
+        if (!player || player.destroyed || typeof player.pendingAdStart !== 'function') return false;
+        if (!player.rewarded && !player.floating && Number(player.visibleRatio || 0) < 0.5) return false;
+        var start = player.pendingAdStart;
+        player.pendingAdStart = null;
+        try { start(); return true; } catch (error) { return false; }
+    }
+
+    function startAdManagerWhenViewable(player, start) {
+        if (!player || player.destroyed || typeof start !== 'function') return;
+        if (player.rewarded || player.floating || Number(player.visibleRatio || 0) >= 0.5 || typeof window.IntersectionObserver !== 'function') {
+            start();
+            return;
+        }
+        player.pendingAdStart = start;
+        setStatus(player.container, 'waiting-ad-viewability');
+    }
+
     function floatContentPlayer(player) {
         if (!player || player.destroyed || !player.contentMode || player.floating) return;
         var surface = placementSurface(player);
@@ -468,6 +489,7 @@
         importantStyle(surface.style, 'background', '#000');
         importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
         importantStyle(surface.style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
+        releasePendingAdStart(player);
         try {
             if (player.adsManager && player.adsManager.resize) {
                 var dimensions = playerDimensions(player.container, player.size);
@@ -652,7 +674,9 @@
                     var dimensions = playerDimensions(player.container, player.size);
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (player.adsManager.setVolume) player.adsManager.setVolume(0);
-                    player.adsManager.start();
+                    startAdManagerWhenViewable(player, function () {
+                        if (!player.destroyed && player.adsManager) player.adsManager.start();
+                    });
                     player.resizeHandler = function () {
                         if (!player.adsManager || player.destroyed) return;
                         var resized = playerDimensions(player.container, player.size);
@@ -766,9 +790,11 @@
         player.intersectionObserver = new window.IntersectionObserver(function (entries) {
             entries.forEach(function (entry) {
                 var ratio = Number(entry.intersectionRatio || 0);
+                player.visibleRatio = Math.max(0, Math.min(1, ratio));
                 if (entry.isIntersecting && ratio >= 0.5) {
                     player.wasInlineVisible = true;
                     beginPreroll();
+                    releasePendingAdStart(player);
                     return;
                 }
                 if (player.wasInlineVisible && !player.floating && (!entry.isIntersecting || ratio <= 0.01)) {
@@ -817,6 +843,10 @@
                     if (player.destroyed) return;
                     window.clearTimeout(player.startupTimer);
                     setStatus(player.container, 'started');
+                    if (!player.contentMode && !player.rewarded && player.intersectionObserver && player.intersectionObserver.disconnect) {
+                        player.intersectionObserver.disconnect();
+                        player.intersectionObserver = null;
+                    }
                 });
                 if (player.rewarded && adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, function () {
                     player.completedAds += 1;
@@ -840,7 +870,9 @@
                 var dimensions = playerDimensions(player.container, player.size);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                 if (player.adsManager.setVolume) player.adsManager.setVolume(player.rewarded ? 1 : 0);
-                player.adsManager.start();
+                startAdManagerWhenViewable(player, function () {
+                    if (!player.destroyed && player.adsManager) player.adsManager.start();
+                });
                 player.resizeHandler = function () {
                     if (!player.adsManager || player.destroyed) return;
                     var resized = playerDimensions(player.container, player.size);
@@ -915,16 +947,19 @@
 
     function waitUntilViewable(player, ima, vastUrl) {
         if (typeof window.IntersectionObserver !== 'function') {
+            player.visibleRatio = 1;
             startAds(player, ima, vastUrl);
             return;
         }
         player.intersectionObserver = new window.IntersectionObserver(function (entries) {
-            var visible = entries.some(function (entry) { return entry.isIntersecting && Number(entry.intersectionRatio || 0) >= 0.5; });
-            if (!visible) return;
-            player.intersectionObserver.disconnect();
-            player.intersectionObserver = null;
-            startAds(player, ima, vastUrl);
-        }, { threshold: [0.5] });
+            var ratio = 0;
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) ratio = Math.max(ratio, Number(entry.intersectionRatio || 0));
+            });
+            player.visibleRatio = Math.max(0, Math.min(1, ratio));
+            if (player.visibleRatio >= 0.5 && !player.started) startAds(player, ima, vastUrl);
+            releasePendingAdStart(player);
+        }, { threshold: [0, 0.5] });
         setStatus(player.container, 'waiting-viewability');
         player.intersectionObserver.observe(player.container);
     }
