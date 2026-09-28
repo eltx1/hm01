@@ -370,6 +370,7 @@
             destroyPlayer(player, 'dismissed');
         });
         container.__hmDestroy = function (reason) { destroyPlayer(player, reason || 'dismissed'); };
+        installVideoViewport(player);
         return player;
     }
 
@@ -401,6 +402,7 @@
             finishReading(player.container);
         }
         if (!player.rewarded && reason) hideFloatingSurface(player);
+        if (player.viewport) player.viewport.stop();
         if (state.active === player) state.active = null;
     }
 
@@ -472,14 +474,198 @@
         setStatus(player.container, 'waiting-ad-viewability');
     }
 
+    // Layout is independent of content/VAST availability. Observe the inline
+    // position before loading IMA so a slow SDK cannot lose the scroll history.
+    function installVideoViewport(player) {
+        if (!player || player.rewarded || player.viewport) return;
+        var surface = placementSurface(player);
+        var floatingValue = player.container.getAttribute('data-hm-video-inline-to-floating');
+        player.inlineToFloating = floatingValue === '1' || (floatingValue !== '0' && surface && surface.getAttribute('data-hm-video-inline-to-floating') === '1');
+        var layout = player.viewport = { surface: surface, anchor: null, portal: false, frame: null, stopped: false, onVisible: null, scrolled: false };
+        var initialScrollY = Number(window.scrollY || window.pageYOffset || 0);
+        var initialScrollX = Number(window.scrollX || window.pageXOffset || 0);
+
+        function write(style, property, value) {
+            if (!style || (style.getPropertyValue && style.getPropertyValue(property) === value)) return;
+            importantStyle(style, property, value);
+        }
+        function viewportBox() {
+            var visual = window.visualViewport;
+            var top = Number(visual && visual.offsetTop || 0), left = Number(visual && visual.offsetLeft || 0);
+            return { top: top, left: left,
+                bottom: top + Number(visual && visual.height || window.innerHeight || document.documentElement.clientHeight || 0),
+                right: left + Number(visual && visual.width || window.innerWidth || document.documentElement.clientWidth || 0) };
+        }
+        function geometry(node) {
+            if (!node || !node.getBoundingClientRect) return null;
+            var rect = node.getBoundingClientRect(), view = viewportBox();
+            var clip = { top: Math.max(view.top, rect.top), bottom: Math.min(view.bottom, rect.bottom), left: Math.max(view.left, rect.left), right: Math.min(view.right, rect.right) };
+            var hidden = node.isConnected === false || !(rect.width > 0 && rect.height > 0);
+            // getBoundingClientRect alone ignores clipping by scroll/overflow
+            // ancestors. Keep the fallback as conservative as IntersectionObserver.
+            if (window.getComputedStyle) {
+                for (var parent = node, depth = 0; parent && parent.nodeType === 1 && depth < 64; parent = parent.parentElement, depth++) {
+                    var css = window.getComputedStyle(parent);
+                    if (css.display === 'none' || css.visibility === 'hidden' || Number(css.opacity) === 0) hidden = true;
+                    if (parent !== node && parent !== document.body && parent !== document.documentElement && parent.getBoundingClientRect) {
+                        var bounds = parent.getBoundingClientRect();
+                        if (/(auto|scroll|hidden|clip)/.test(css.overflowX)) { clip.left = Math.max(clip.left, bounds.left); clip.right = Math.min(clip.right, bounds.right); }
+                        if (/(auto|scroll|hidden|clip)/.test(css.overflowY)) { clip.top = Math.max(clip.top, bounds.top); clip.bottom = Math.min(clip.bottom, bounds.bottom); }
+                    }
+                }
+            }
+            var ratio = hidden ? 0 : Math.max(0, clip.right - clip.left) * Math.max(0, clip.bottom - clip.top) / (rect.width * rect.height);
+            return { rect: rect, clip: clip, view: view, hidden: hidden, ratio: Math.min(1, ratio) };
+        }
+        layout.reserve = function () {
+            if (layout.anchor || !surface || !surface.parentNode || !surface.parentNode.insertBefore || !surface.getBoundingClientRect) return;
+            var bounds = surface.getBoundingClientRect();
+            var anchor = document.createElement('div');
+            anchor.setAttribute('data-hm-video-placeholder', '1');
+            anchor.setAttribute('aria-hidden', 'true');
+            anchor.style.cssText = 'display:block;box-sizing:border-box;padding:0;border:0;pointer-events:none;';
+            write(anchor.style, 'width', Math.max(1, bounds.width) + 'px');
+            write(anchor.style, 'max-width', '100%');
+            write(anchor.style, 'height', Math.max(1, bounds.height) + 'px');
+            if (window.getComputedStyle) {
+                var css = window.getComputedStyle(surface);
+                ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(function (name) { write(anchor.style, name, css.getPropertyValue(name)); });
+            }
+            surface.parentNode.insertBefore(anchor, surface);
+            layout.anchor = anchor;
+        };
+        // A transform/contain on a publisher ancestor changes the containing
+        // block of position:fixed. Escape it BEFORE IMA creates its iframe, never
+        // by reparenting a playing ad. The placeholder retains the inline slot.
+        if (player.inlineToFloating && surface && document.body && surface.parentNode && window.getComputedStyle) {
+            var needsPortal = false;
+            for (var parent = surface.parentElement; parent && parent !== document.body && parent !== document.documentElement; parent = parent.parentElement) {
+                var css = window.getComputedStyle(parent);
+                if (['transform', 'perspective', 'filter', 'backdropFilter', 'translate', 'rotate', 'scale'].some(function (name) { return css[name] && css[name] !== 'none'; })
+                    || /(layout|paint|strict|content)/.test(css.contain || '') || /(transform|filter|perspective)/.test(css.willChange || '') || css.contentVisibility === 'auto') {
+                    needsPortal = true; break;
+                }
+            }
+            if (needsPortal) {
+                layout.reserve();
+                if (layout.anchor) {
+                    document.body.appendChild(surface);
+                    layout.portal = true;
+                    surface.setAttribute('data-hm-video-portal', '1');
+                }
+            }
+        }
+        function notify() {
+            if (player.destroyed || layout.stopped || document.visibilityState === 'hidden' || player.visibleRatio < 0.5) return;
+            if (layout.onVisible) { var ready = layout.onVisible; layout.onVisible = null; ready(); }
+            releasePendingAdStart(player);
+        }
+        function accept(ratio, data) {
+            player.visibleRatio = Math.max(0, Math.min(1, ratio));
+            if (!player.floating && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
+            var outside = data ? !data.hidden && (data.rect.bottom <= data.view.top + 1 || data.rect.top >= data.view.bottom - 1) : ratio <= 0.01;
+            if (!player.floating && player.inlineToFloating && player.wasInlineVisible && outside && (layout.scrolled || !data)) {
+                layout.reserve();
+                floatContentPlayer(player);
+                var floated = geometry(surface);
+                player.visibleRatio = floated ? floated.ratio : 1;
+            }
+            notify();
+        }
+        layout.update = function () {
+            layout.frame = null;
+            if (layout.stopped || player.destroyed) return;
+            if (surface && (surface.isConnected === false || surface.getAttribute('data-hm-placement-dismissed') === '1') || layout.anchor && layout.anchor.isConnected === false) {
+                destroyPlayer(player, 'dismissed'); return;
+            }
+            layout.scrolled = layout.scrolled || Number(window.scrollY || window.pageYOffset || 0) !== initialScrollY || Number(window.scrollX || window.pageXOffset || 0) !== initialScrollX;
+            var data = geometry(player.floating ? surface : layout.anchor || player.container);
+            if (!data) { notify(); return; }
+            if (layout.portal && !player.floating) {
+                var rect = data.rect, clip = data.clip;
+                write(surface.style, 'position', 'fixed'); write(surface.style, 'margin', '0');
+                write(surface.style, 'top', rect.top + 'px'); write(surface.style, 'left', rect.left + 'px');
+                write(surface.style, 'right', 'auto'); write(surface.style, 'bottom', 'auto');
+                write(surface.style, 'width', rect.width + 'px'); write(surface.style, 'height', rect.height + 'px');
+                write(surface.style, 'visibility', data.hidden || data.ratio <= 0 ? 'hidden' : 'visible');
+                write(surface.style, 'clip-path', data.ratio >= 0.999 ? 'none' : 'inset(' + Math.max(0, clip.top - rect.top) + 'px ' + Math.max(0, rect.right - clip.right) + 'px ' + Math.max(0, rect.bottom - clip.bottom) + 'px ' + Math.max(0, clip.left - rect.left) + 'px)');
+            }
+            accept(data.ratio, data);
+            if (player.adsManager && player.adsManager.resize) {
+                var size = playerDimensions(player.container, player.size), signature = size.join('x');
+                if (layout.size !== signature) {
+                    layout.size = signature;
+                    try { player.adsManager.resize(size[0], size[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal'); } catch (error) {}
+                }
+            }
+        };
+        layout.schedule = function (event) {
+            if (layout.stopped || player.destroyed) return;
+            if (event && event.type === 'scroll') layout.scrolled = true;
+            if (layout.frame !== null) return;
+            layout.frame = window.requestAnimationFrame ? window.requestAnimationFrame(layout.update) : window.setTimeout(layout.update, 16);
+        };
+        layout.ready = function (callback) { layout.onVisible = callback; layout.update(); };
+        layout.stop = function () {
+            layout.stopped = true; layout.onVisible = null;
+            if (layout.frame !== null) {
+                if (window.cancelAnimationFrame) window.cancelAnimationFrame(layout.frame);
+                else window.clearTimeout(layout.frame);
+            }
+            if (layout.resize) layout.resize.disconnect();
+            if (window.removeEventListener) {
+                window.removeEventListener('scroll', layout.schedule, true);
+                window.removeEventListener('resize', layout.schedule);
+                window.removeEventListener('orientationchange', layout.schedule);
+            }
+            if (document.removeEventListener) document.removeEventListener('visibilitychange', layout.schedule);
+            if (window.visualViewport && window.visualViewport.removeEventListener) {
+                window.visualViewport.removeEventListener('resize', layout.schedule);
+                window.visualViewport.removeEventListener('scroll', layout.schedule);
+            }
+            if (layout.anchor && layout.anchor.parentNode) layout.anchor.parentNode.removeChild(layout.anchor);
+            if (layout.portal && surface && surface.parentNode) surface.parentNode.removeChild(surface);
+        };
+        if (window.addEventListener) {
+            window.addEventListener('scroll', layout.schedule, { passive: true, capture: true });
+            window.addEventListener('resize', layout.schedule, { passive: true });
+            window.addEventListener('orientationchange', layout.schedule, { passive: true });
+        }
+        if (document.addEventListener) document.addEventListener('visibilitychange', layout.schedule);
+        if (window.visualViewport && window.visualViewport.addEventListener) {
+            window.visualViewport.addEventListener('resize', layout.schedule, { passive: true });
+            window.visualViewport.addEventListener('scroll', layout.schedule, { passive: true });
+        }
+        if (typeof window.ResizeObserver === 'function') {
+            layout.resize = new window.ResizeObserver(layout.schedule);
+            layout.resize.observe(player.container);
+            if (layout.anchor) layout.resize.observe(layout.anchor);
+        }
+        if (typeof window.IntersectionObserver === 'function') {
+            player.intersectionObserver = new window.IntersectionObserver(function (entries) {
+                if (layout.stopped || player.destroyed) return;
+                // Real layout is remeasured on scroll as well as observer events.
+                // Ratio-only delivery also supports non-layout SDK test adapters.
+                if ((layout.anchor || player.container).getBoundingClientRect) { layout.update(); return; }
+                entries.forEach(function (entry) { accept(entry.isIntersecting ? Number(entry.intersectionRatio || 0) : 0, null); });
+            }, { threshold: [0, 0.01, 0.5, 1] });
+            player.intersectionObserver.observe(layout.anchor || player.container);
+        }
+        layout.update();
+    }
+
     function floatContentPlayer(player) {
-        if (!player || player.destroyed || !player.contentMode || player.floating) return;
+        if (!player || player.destroyed || !player.inlineToFloating || player.floating) return;
         var surface = placementSurface(player);
         if (!surface || !surface.style) return;
         player.floating = true;
         surface.setAttribute('data-hm-floating-video-active', '1');
         surface.setAttribute('data-hm-video-floating-state', 'floating');
         importantStyle(surface.style, 'position', 'fixed');
+        importantStyle(surface.style, 'height', 'auto');
+        importantStyle(surface.style, 'min-height', '0');
+        importantStyle(surface.style, 'visibility', 'visible');
+        importantStyle(surface.style, 'clip-path', 'none');
         importantStyle(surface.style, 'z-index', '2147483000');
         importantStyle(surface.style, 'right', '16px');
         importantStyle(surface.style, 'left', 'auto');
@@ -760,7 +946,7 @@
         player.video.setAttribute('preload', 'metadata');
         player.video.setAttribute('aria-label', 'Accompanying video content');
         var surface = placementSurface(player);
-        if (surface && surface.style && !player.floating) surface.style.position = 'relative';
+        if (surface && surface.style && !player.floating && !(player.viewport && player.viewport.portal)) surface.style.position = 'relative';
 
         listenContent(player, player.video, 'error', function () {
             player.contentFailed = true;
@@ -825,30 +1011,7 @@
             requestContentAdBreak(player, ima, vastUrl, 'preroll');
         }
 
-        if (typeof window.IntersectionObserver !== 'function') {
-            beginPreroll();
-            return;
-        }
-        player.intersectionObserver = new window.IntersectionObserver(function (entries) {
-            entries.forEach(function (entry) {
-                var ratio = Number(entry.intersectionRatio || 0);
-                player.visibleRatio = Math.max(0, Math.min(1, ratio));
-                if (entry.isIntersecting && ratio >= 0.5) {
-                    player.wasInlineVisible = true;
-                    beginPreroll();
-                    releasePendingAdStart(player);
-                    return;
-                }
-                if (player.wasInlineVisible && !player.floating && (!entry.isIntersecting || ratio <= 0.01)) {
-                    floatContentPlayer(player);
-                    if (player.intersectionObserver && player.intersectionObserver.disconnect) {
-                        player.intersectionObserver.disconnect();
-                        player.intersectionObserver = null;
-                    }
-                }
-            });
-        }, { threshold: [0, 0.5] });
-        player.intersectionObserver.observe(player.container);
+        player.viewport.ready(beginPreroll);
     }
 
     function startAds(player, ima, vastUrl) {
@@ -885,10 +1048,8 @@
                     if (player.destroyed) return;
                     window.clearTimeout(player.startupTimer);
                     setStatus(player.container, 'started');
-                    if (!player.contentMode && !player.rewarded && player.intersectionObserver && player.intersectionObserver.disconnect) {
-                        player.intersectionObserver.disconnect();
-                        player.intersectionObserver = null;
-                    }
+                    // Keep viewport observation alive for the ad-only fallback.
+                    // A loaded ad still has to transition when the reader scrolls.
                 });
                 if (player.rewarded && adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, function () {
                     player.completedAds += 1;
@@ -997,22 +1158,8 @@
     }
 
     function waitUntilViewable(player, ima, vastUrl) {
-        if (typeof window.IntersectionObserver !== 'function') {
-            player.visibleRatio = 1;
-            startAds(player, ima, vastUrl);
-            return;
-        }
-        player.intersectionObserver = new window.IntersectionObserver(function (entries) {
-            var ratio = 0;
-            entries.forEach(function (entry) {
-                if (entry.isIntersecting) ratio = Math.max(ratio, Number(entry.intersectionRatio || 0));
-            });
-            player.visibleRatio = Math.max(0, Math.min(1, ratio));
-            if (player.visibleRatio >= 0.5 && !player.started) startAds(player, ima, vastUrl);
-            releasePendingAdStart(player);
-        }, { threshold: [0, 0.5] });
         setStatus(player.container, 'waiting-viewability');
-        player.intersectionObserver.observe(player.container);
+        player.viewport.ready(function () { startAds(player, ima, vastUrl); });
     }
 
     function rewardText(container, attribute, fallback) {
