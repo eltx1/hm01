@@ -673,6 +673,33 @@ test('accompanying content failure never suppresses the VAST preroll request', a
     assert.equal(target.style.display, 'none');
 });
 
+test('pre-request content failure still requests GAM VAST without falsely declaring accompanying content', async () => {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&plcmt=2&vpos=preroll&vid_d=60&sz=400x225').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/missing.mp4',
+        'data-hm-video-content-mode': 'accompanying',
+        'data-hm-video-width': '400',
+        'data-hm-video-height': '225',
+    };
+    const target = container(attributes, 'hm-content-fail-open-gam');
+    target.clientWidth = 400;
+    const runtime = runVideo(target, { autoIntersect: false });
+    await tick();
+
+    const video = runtime.created.find((node) => node.tagName === 'VIDEO');
+    video.emit('error');
+    runtime.intersectionObservers[0].emit(0.6, true);
+
+    assert.equal(runtime.requested.length, 1);
+    const url = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(url.searchParams.get('iu'), '/123/video');
+    assert.equal(url.searchParams.get('plcmt'), null);
+    assert.equal(url.searchParams.get('vpos'), null);
+    assert.equal(url.searchParams.get('vid_d'), null);
+    assert.equal(runtime.managers[0].started, true);
+});
+
 test('late platform video failure closes cleanly after preroll instead of leaving a dead player', async () => {
     const attributes = {
         'data-hm-video-direct': '1',
