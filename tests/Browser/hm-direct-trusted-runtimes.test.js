@@ -304,6 +304,7 @@ function runVideo(selectedContainer, options = {}) {
     class AdsRequest {
         setAdWillAutoPlay(value) { this.willAutoPlay = value; }
         setAdWillPlayMuted(value) { this.willPlayMuted = value; }
+        setContinuousPlayback(value) { this.continuousPlayback = value; }
     }
     class IntersectionObserver {
         constructor(callback, observerOptions) {
@@ -558,6 +559,9 @@ test('accompanying content requests pre, mid, and post VAST breaks and declares 
     runtime.managers[0].emit('all-ads-completed');
     await tick();
     assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.loaders[0].contentCompleteCalled, true);
+    assert.equal(runtime.requested[0].contentDuration, 100);
+    assert.equal(runtime.requested[0].continuousPlayback, false);
 
     video.currentTime = 50;
     video.emit('timeupdate');
