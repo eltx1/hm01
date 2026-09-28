@@ -23,6 +23,7 @@ class GlobalSettingsGovernanceTest extends TestCase
     use InteractsWithIdentity, RefreshDatabase;
 
     private $admin;
+    private $adOps;
     private $publisher;
 
     protected function setUp(): void
@@ -32,6 +33,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->seed(SettingsAccessSeeder::class);
         $horus = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Settings');
         $this->admin = $this->makeUser($horus, RoleName::OperationsAdmin, ['password' => Hash::make('SettingsPass123!')]);
+        $this->adOps = $this->makeUser($horus, RoleName::AdOpsAdmin, ['password' => Hash::make('AdOpsPass123!')]);
         $publisherOrg = $this->makeOrganization(OrganizationType::Publisher, 'Publisher Settings');
         $this->publisher = $this->makeUser($publisherOrg, RoleName::PublisherAdmin);
     }
@@ -169,6 +171,40 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->actingAs($this->publisher)->put('/admin/settings/reporting.retry_delay_minutes', ['value' => 10])->assertForbidden();
     }
 
+    public function test_ad_ops_can_manage_only_the_platform_video_setting_from_the_settings_ui(): void
+    {
+        $this->assertTrue($this->adOps->hasPermission('settings.view'));
+        $this->assertTrue($this->adOps->hasPermission('video_player.manage'));
+        $this->assertFalse($this->adOps->hasPermission('settings.manage'));
+
+        $videoRoute = route('admin.settings.update', ['key' => 'video_player.content_url']);
+        $response = $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.settings.index'))
+            ->assertOk()
+            ->assertSee('Platform accompanying video URL')
+            ->assertSee('video_player.content_url')
+            ->assertSee($videoRoute, false)
+            ->assertSee('Save setting');
+
+        $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put($videoRoute, [
+                'value' => 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+            ])
+            ->assertRedirect();
+
+        $this->assertSame(
+            'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+            GlobalSetting::query()->findOrFail('video_player.content_url')->value,
+        );
+
+        $this->actingAs($this->adOps)
+            ->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.settings.update', ['key' => 'reporting.retry_delay_minutes']), ['value' => 60])
+            ->assertForbidden();
+    }
+
     public function test_high_impact_change_requires_reason_password_and_exact_confirmation(): void
     {
         $route = route('admin.settings.update', ['key' => 'supply_chain.manager_domain']);
@@ -183,6 +219,30 @@ class GlobalSettingsGovernanceTest extends TestCase
                 'impact_confirmation' => 'CHANGE SUPPLY CHAIN MANAGER DOMAIN',
             ])->assertRedirect();
         $this->assertDatabaseHas('global_settings', ['key' => 'supply_chain.manager_domain']);
+    }
+
+    public function test_video_permission_migration_repairs_all_registered_super_admin_permissions(): void
+    {
+        $superRole = \App\Models\Role::whereNull('organization_id')
+            ->where('name', RoleName::SuperAdmin->value)
+            ->firstOrFail();
+        $settingsManage = \App\Models\Permission::where('name', 'settings.manage')->firstOrFail();
+
+        $superRole->permissions()->detach($settingsManage->id);
+        $this->assertDatabaseMissing('role_permissions', [
+            'role_id' => $superRole->id,
+            'permission_id' => $settingsManage->id,
+        ]);
+
+        $migration = require database_path('migrations/2026_09_28_210000_add_video_player_manage_permission.php');
+        $migration->up();
+
+        foreach (\App\Models\Permission::query()->pluck('id') as $permissionId) {
+            $this->assertDatabaseHas('role_permissions', [
+                'role_id' => $superRole->id,
+                'permission_id' => $permissionId,
+            ]);
+        }
     }
 
     public function test_migration_is_reversible_and_missing_table_falls_back_safely(): void

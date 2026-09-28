@@ -46,6 +46,31 @@ class SuperAdministratorCommandTest extends TestCase
         $this->assertNull($user->two_factor_confirmed_at);
     }
 
+    public function test_video_permission_migration_restores_audited_bootstrap_owner_role(): void
+    {
+        $this->artisan('horus:create-super-admin', ['email' => 'owner-repair@horusmedia.net', '--name' => 'Horus Owner'])
+            ->expectsQuestion('Password (minimum 14 characters, mixed case, number, symbol)', 'Secure-Password-2026!')
+            ->expectsQuestion('Confirm password', 'Secure-Password-2026!')
+            ->assertSuccessful();
+
+        $user = User::where('email', 'owner-repair@horusmedia.net')->firstOrFail();
+        $superRole = \App\Models\Role::whereNull('organization_id')
+            ->where('name', RoleName::SuperAdmin->value)
+            ->firstOrFail();
+
+        $user->roles()->detach($superRole->id);
+        $user->unsetRelation('roles');
+        $this->assertFalse($user->hasRole(RoleName::SuperAdmin->value));
+
+        $migration = require database_path('migrations/2026_09_28_210000_add_video_player_manage_permission.php');
+        $migration->up();
+
+        $user->unsetRelation('roles');
+        $this->assertTrue($user->hasRole(RoleName::SuperAdmin->value));
+        $this->assertTrue($user->hasPermission('settings.manage'));
+        $this->assertTrue($user->hasPermission('roles.view'));
+    }
+
     public function test_initial_super_administrator_rejects_a_weak_password(): void
     {
         $this->artisan('horus:create-super-admin', ['email' => 'weak-owner@horusmedia.net', '--name' => 'Weak Owner'])
