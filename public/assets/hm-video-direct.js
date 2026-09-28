@@ -379,6 +379,11 @@
         });
         player.contentListeners = [];
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
+        // IMA requires contentComplete() when the same ad tag is requested
+        // again with a new AdsManager; otherwise later legitimate breaks can be
+        // treated as accidental duplicates. VMAP/ad-rules never enters this
+        // cleanup path between scheduled breaks.
+        try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
@@ -670,8 +675,11 @@
             request.linearAdSlotHeight = dimensions[1];
             request.nonLinearAdSlotWidth = dimensions[0];
             request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
+            var contentDuration = Number(player.video && player.video.duration || 0);
+            if (Number.isFinite(contentDuration) && contentDuration > 0) request.contentDuration = contentDuration;
             if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(true);
             if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(true);
+            if (request.setContinuousPlayback) request.setContinuousPlayback(false);
             player.adsLoader.requestAds(request);
         } catch (error) {
             failContentAdBreak(player, error, 'initialization-' + position, position);
