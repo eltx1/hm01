@@ -22,7 +22,7 @@ final class TypedSettingsRegistry
             ),
             new SettingDefinition(
                 'video_player.content_url', 'VIDEO PLAYER', 'Platform accompanying video URL', 'url', 'horus.video_content_url',
-                ['nullable', 'url', 'max:2048', 'regex:/^https:\\/\\//i'], [],
+                ['nullable', 'url', 'max:1800', 'regex:/^https:\\/\\//i'], [],
                 'HTTPS content video used by Horus video placements before they transition from inline playback to floating playback. Publishers continue to supply only their VAST URL.',
                 'PUBLIC', true, false
             ),
