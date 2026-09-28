@@ -355,6 +355,8 @@
             adBreakPending: false,
             currentBreak: null,
             adRules: false,
+            adRuleCuePoints: [],
+            adRulesHasPostroll: false,
             floating: false,
             wasInlineVisible: false,
             visibleRatio: 0,
@@ -637,6 +639,8 @@
                             var cuePoints = player.adsManager.getCuePoints() || [];
                             if (cuePoints.length > 0) {
                                 player.adRules = true;
+                                player.adRuleCuePoints = cuePoints.slice ? cuePoints.slice() : cuePoints;
+                                player.adRulesHasPostroll = cuePoints.some ? cuePoints.some(function (point) { return Number(point) === -1; }) : false;
                                 player.container.setAttribute('data-hm-video-ad-rules', '1');
                             }
                         } catch (error) {}
@@ -765,10 +769,18 @@
             if (player.adRules) {
                 try {
                     if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete();
-                    else finishContentPlayer(player, 'completed');
+                    else {
+                        finishContentPlayer(player, 'completed');
+                        return;
+                    }
                 } catch (error) {
                     finishContentPlayer(player, 'completed');
+                    return;
                 }
+                // contentComplete() triggers a scheduled post-roll when one exists.
+                // If the ad-rules response has no post-roll cue, there is no later
+                // terminal event to own teardown, so close the finished surface now.
+                if (!player.adRulesHasPostroll) finishContentPlayer(player, 'completed');
                 return;
             }
             if (!player.postRollRequested) {
