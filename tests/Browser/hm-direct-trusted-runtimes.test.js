@@ -776,6 +776,8 @@ test('IMA ad-rules schedule disables duplicate manual midrolls and receives cont
 
     assert.equal(runtime.requested.length, 1);
     assert.equal(attributes['data-hm-video-ad-rules'], '1');
+    runtime.managers[0].emit('content-pause-requested');
+    runtime.managers[0].emit('content-resume-requested');
     const video = runtime.created.find((node) => node.tagName === 'VIDEO');
     video.currentTime = 60;
     video.emit('timeupdate');
@@ -825,6 +827,8 @@ test('ad-rules content without a postroll closes when content completes', async 
     await tick();
 
     assert.equal(attributes['data-hm-video-ad-rules'], '1');
+    runtime.managers[0].emit('content-pause-requested');
+    runtime.managers[0].emit('content-resume-requested');
     const video = runtime.created.find((node) => node.tagName === 'VIDEO');
     video.emit('ended');
 
