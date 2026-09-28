@@ -233,6 +233,9 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'data-hm-video-autoplay' => $rewarded ? '0' : '1',
         ];
         if (! $rewarded) {
+            if (($formatSettings['floatingPosition'] ?? null) === 'bottom_right') {
+                $attributes['data-hm-video-inline-to-floating'] = '1';
+            }
             $contentUrl = trim((string) config('horus.video_content_url'));
             if ($contentUrl !== ''
                 && filter_var($contentUrl, FILTER_VALIDATE_URL)
@@ -241,9 +244,6 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
                 $attributes['data-hm-video-content-mode'] = 'accompanying';
                 $attributes['data-hm-video-breaks'] = 'pre,mid,post';
                 $attributes['data-hm-video-mid-roll-ratio'] = '0.5';
-                if (($formatSettings['floatingPosition'] ?? null) === 'bottom_right') {
-                    $attributes['data-hm-video-inline-to-floating'] = '1';
-                }
             }
         }
         if ($rewarded) {

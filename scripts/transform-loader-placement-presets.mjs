@@ -472,6 +472,10 @@ const HELPERS = `    function placementFormatSettings(placement) {
 
     function applyPlacementPresetPresentation(element, placement, settings) {
         settings = settings || placementFormatSettings(placement);
+        if (placement && placement.type === 'VIDEO' && element && element.setAttribute) {
+            var inlineFloating = String(settings.position || '') === 'inline_to_bottom_right' || String(settings.floatingPosition || '') === 'bottom_right';
+            element.setAttribute('data-hm-video-inline-to-floating', inlineFloating ? '1' : '0');
+        }
         applyContentAlignment(element, placement, settings);
         applyStickyPosition(element, placement, settings);
         ensurePlacementCloseControl(element, settings);
