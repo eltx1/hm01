@@ -1020,6 +1020,45 @@ HTML;
         $this->assertSame([$this->gptTag()], DemandWidget::withoutGlobalScopes()->get()->pluck('direct_tag_template')->unique()->values()->all());
     }
 
+    public function test_existing_quick_floating_video_is_migrated_to_manual_inline_first_surface(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $legacy = app(PlacementPresetBuilder::class)->create(
+            $this->site,
+            'video_floating',
+            $this->admin,
+            [],
+            false,
+            true,
+        );
+
+        $settings = (array) $legacy->format_settings;
+        $settings['autoMount'] = true;
+        $settings['autoMountTarget'] = 'body_end';
+        $settings['reserveSpace'] = false;
+        $settings['position'] = 'bottom_right';
+        unset($settings['floatingPosition']);
+        $legacy->update(['format_settings' => $settings]);
+
+        $migration = require database_path('migrations/2026_09_28_150000_migrate_quick_floating_video_to_inline_accompanying.php');
+        $migration->up();
+
+        $migrated = $legacy->fresh();
+        $this->assertFalse((bool) data_get($migrated->format_settings, 'autoMount'));
+        $this->assertNull(data_get($migrated->format_settings, 'autoMountTarget'));
+        $this->assertTrue((bool) data_get($migrated->format_settings, 'reserveSpace'));
+        $this->assertSame('inline_to_bottom_right', data_get($migrated->format_settings, 'position'));
+        $this->assertSame('bottom_right', data_get($migrated->format_settings, 'floatingPosition'));
+
+        $migration->down();
+        $rolledBack = $legacy->fresh();
+        $this->assertTrue((bool) data_get($rolledBack->format_settings, 'autoMount'));
+        $this->assertSame('body_end', data_get($rolledBack->format_settings, 'autoMountTarget'));
+        $this->assertFalse((bool) data_get($rolledBack->format_settings, 'reserveSpace'));
+        $this->assertSame('bottom_right', data_get($rolledBack->format_settings, 'position'));
+        $this->assertNull(data_get($rolledBack->format_settings, 'floatingPosition'));
+    }
+
     public function test_admin_and_owner_can_copy_each_code_but_another_publisher_cannot_access_them(): void
     {
         $this->seed(AdFormatSeeder::class);
