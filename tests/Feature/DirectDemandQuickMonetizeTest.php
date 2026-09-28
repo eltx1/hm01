@@ -240,6 +240,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
     {
         $this->seed(AdFormatSeeder::class);
         $this->bindPublicProviderDns();
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content/horus-media.mp4']);
         $vastUrl = 'https://vast.vendor.net/tag?placement=floating&v=4';
 
         $this->adminSession()
@@ -259,7 +260,10 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $account = DemandAccount::withoutGlobalScopes()->firstOrFail();
 
         $this->assertSame('VIDEO', $placement->type->value);
-        $this->assertSame('bottom_right', data_get($placement->format_settings, 'position'));
+        $this->assertSame('inline_to_bottom_right', data_get($placement->format_settings, 'position'));
+        $this->assertSame('bottom_right', data_get($placement->format_settings, 'floatingPosition'));
+        $this->assertFalse((bool) data_get($placement->format_settings, 'autoMount'));
+        $this->assertTrue((bool) data_get($placement->format_settings, 'reserveSpace'));
         $this->assertTrue((bool) data_get($placement->format_settings, 'closeable'));
         $this->assertTrue((bool) data_get($placement->format_settings, 'singleActiveVideo'));
         $this->assertSame($vastUrl, $widget->direct_tag_template);
@@ -277,8 +281,14 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             data_get($candidate, 'tag.scripts.0.url'),
         );
         $this->assertSame($vastUrl, base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-vast-url'), true));
+        $this->assertSame('https://cdn.horusmedia.net/content/horus-media.mp4', data_get($candidate, 'tag.container.attributes.data-hm-video-content-url'));
+        $this->assertSame('accompanying', data_get($candidate, 'tag.container.attributes.data-hm-video-content-mode'));
+        $this->assertSame('pre,mid,post', data_get($candidate, 'tag.container.attributes.data-hm-video-breaks'));
+        $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-inline-to-floating'));
         $this->assertSame(['VIDEO', 'OUTSTREAM'], data_get($candidate, 'tag.render.allowedFormats'));
         $this->assertGreaterThanOrEqual(15_000, (int) data_get($candidate, 'tag.render.timeoutMs'));
+        $this->assertStringContainsString('data-hm-video-status="content-ready"', (string) data_get($candidate, 'tag.render.successSelector'));
+        $this->assertStringContainsString('data-hm-video-status="content-playing"', (string) data_get($candidate, 'tag.render.successSelector'));
         $this->assertStringContainsString('data-hm-video-status="started"', (string) data_get($candidate, 'tag.render.successSelector'));
     }
 
