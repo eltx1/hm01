@@ -357,6 +357,7 @@
             adRules: false,
             floating: false,
             wasInlineVisible: false,
+            requestCorrelator: String(Date.now()),
             contentListeners: [],
         };
         if (closeButton && closeButton.addEventListener) closeButton.addEventListener('click', function () {
@@ -466,7 +467,7 @@
         importantStyle(surface.style, 'box-sizing', 'border-box');
         importantStyle(surface.style, 'background', '#000');
         importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
-        surface.style.bottom = 'calc(16px + env(safe-area-inset-bottom, 0px))';
+        importantStyle(surface.style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
         try {
             if (player.adsManager && player.adsManager.resize) {
                 var dimensions = playerDimensions(player.container, player.size);
@@ -887,20 +888,27 @@
             if (player.contentMode || !current || /^\[(?:referrer_url|description_url)\]$/i.test(current)) tag.searchParams.set(name, page.href);
         });
         var correlator = tag.searchParams.get('correlator');
-        if (player.contentMode || !correlator || /^\[timestamp\]$/i.test(correlator)) tag.searchParams.set('correlator', String(Date.now()));
+        if (player.contentMode || !correlator || /^\[timestamp\]$/i.test(correlator)) {
+            tag.searchParams.set('correlator', String(player.requestCorrelator || Date.now()));
+        }
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
         tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
         // sz identifies eligible inventory; it is not the CSS player size.
         // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
         if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
-        if (!player.rewarded) {
-            tag.searchParams.set('plcmt', player.contentMode ? '2' : '4');
-            if (player.contentMode && breakPosition) {
+        if (!player.rewarded && player.contentMode) {
+            tag.searchParams.set('plcmt', '2');
+            if (breakPosition) {
                 tag.searchParams.set('vpos', breakPosition);
                 tag.searchParams.set('vconp', '1');
                 var duration = Number(player.video && player.video.duration || 0);
                 if (Number.isFinite(duration) && duration > 0) tag.searchParams.set('vid_d', String(Math.max(1, Math.round(duration))));
             }
+        } else if (!player.rewarded && tag.searchParams.get('plcmt') === '4') {
+            // Legacy Horus used plcmt=4 for standalone requests. Current Google
+            // inventory classification is derived by the supported inventory path,
+            // so do not synthesize an obsolete placement declaration here.
+            tag.searchParams.delete('plcmt');
         }
         return tag.href;
     }
