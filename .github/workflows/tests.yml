@@ -116,6 +116,8 @@ jobs:
         run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
       - name: Install Chromium and WebKit
         run: npx playwright install --with-deps chromium webkit
+      - name: Build current minified Loader for distribution-level startup checks
+        run: npm run build:loader
       - name: Execute deterministic Traffic Gate real-browser matrix
         run: npx playwright test --config=playwright.traffic-gate.config.js
       - name: Preserve dashboard theme previews
