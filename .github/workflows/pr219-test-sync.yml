@@ -48,8 +48,10 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/responsive-bundle.playwright.spec.js --project=chromium-mobile --grep 'PASS.*pending gate document' --max-failures=1 > "$RUNNER_TEMP/original-race.log" 2>&1
           result=$?
+          set -e
           test "$result" -ne 0
           grep -F "Cannot read properties of undefined (reading 'evaluate')" "$RUNNER_TEMP/original-race.log"
       - name: Fix test synchronization only and verify exact reviewed file
