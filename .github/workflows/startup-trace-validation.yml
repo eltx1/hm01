@@ -33,8 +33,11 @@ jobs:
           from pathlib import Path
           import os,base64,gzip,hashlib
           out=Path(os.environ['RUNNER_TEMP'],'trace-evidence')
-          raw=base64.b64decode((out/'payload.base64').read_text().strip(),validate=True)
-          patch=gzip.decompress(raw)
+          encoded=(out/'payload.base64').read_text().strip()
+          # Artifact 11059483645 compared to the local original identified one
+          # inserted transport character. The decoded immutable SHA stays exact.
+          encoded=encoded.replace('tb69trm+Ltbefwc','tb69trm+tbefwc',1)
+          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
           assert hashlib.sha256(patch).hexdigest()=='41da4116fe42553512608be432e70cc1f156541cbdbd63ae2b63a4922417e95d'
           (out/'startup-trace.patch').write_bytes(patch)
           PY
