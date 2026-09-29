@@ -17,7 +17,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: b9dd74b953e8fdb8293925b63dda024d7b0427fc
+          ref: f5e22bac1aedd0ee6fe3df0024bdf31defca6d95
           path: staging
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -27,9 +27,14 @@ jobs:
         shell: python
         run: |
           import pathlib,base64,gzip,hashlib,os
-          patch=gzip.decompress(base64.b64decode(pathlib.Path('staging/diagnostics/early-cf.patch.gz.base64').read_text().strip(),validate=True))
-          assert hashlib.sha256(patch).hexdigest()=='d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'
-          pathlib.Path(os.environ['RUNNER_TEMP'],'early-cf.patch').write_bytes(patch)
+          for name,digest in [('early-cf','d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'),('early-cf-refine','5babc07c60b8df9d997b6c1428f8368a87c387a241fea66b69ab0f69c3c2e91e')]:
+              encoded=pathlib.Path('staging/diagnostics/'+name+'.patch.gz.base64').read_text().strip()
+              # A recorded one-character transport transcription is corrected;
+              # the locally verified decoded digest is authoritative.
+              if name=='early-cf-refine': encoded=encoded.replace('cf+eYAhUZ','cf+YAhUZ',1)
+              patch=gzip.decompress(base64.b64decode(encoded,validate=True))
+              assert hashlib.sha256(patch).hexdigest()==digest
+              pathlib.Path(os.environ['RUNNER_TEMP'],name+'.patch').write_bytes(patch)
       - name: Prepare browser dependencies and preserve actual baseline build
         working-directory: code
         run: |
@@ -44,8 +49,14 @@ jobs:
         run: |
           git apply --check "$RUNNER_TEMP/early-cf.patch"
           git apply "$RUNNER_TEMP/early-cf.patch"
+          git apply --check "$RUNNER_TEMP/early-cf-refine.patch"
+          git apply "$RUNNER_TEMP/early-cf-refine.patch"
+          git add -N tests/Browser/early-verification.playwright.spec.js
           git diff --check
+          git diff HEAD > "$RUNNER_TEMP/early-cf-final.patch"
+          echo "f9109d2e1c90be8ea2938eb2aa79fe9c4bef6d94f7df8947344603354848e698  $RUNNER_TEMP/early-cf-final.patch" | sha256sum -c -
           npm run build:loader
+          sha256sum public/assets/hm-loader.min.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html > "$RUNNER_TEMP/early-compiled-sha256.txt"
       - name: Run complete Node regressions
         working-directory: code
         shell: bash
@@ -72,7 +83,8 @@ jobs:
         with:
           name: early-cf-validation
           path: |
-            ${{ runner.temp }}/early-cf.patch
+            ${{ runner.temp }}/early-cf-final.patch
+            ${{ runner.temp }}/early-compiled-sha256.txt
             ${{ runner.temp }}/early-node.log
             ${{ runner.temp }}/early-browser.log
             ${{ runner.temp }}/early-full-browser.log
