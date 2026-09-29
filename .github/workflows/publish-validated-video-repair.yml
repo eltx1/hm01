@@ -1,0 +1,64 @@
+name: Publish validated video review correction
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/publish-validated-video-repair.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Require the exact successful validation job
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo={owner:context.repo.owner,repo:context.repo.repo};
+            const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36583213317});
+            if(run.path!=='.github/workflows/gpt-preload-reuse-validation.yml'||run.head_sha!=='0d1fdece84c6f2616163ce6a6ea3efb920a3fda1'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
+            const {data:job}=await github.rest.actions.getJobForWorkflowRun({...repo,job_id:109456548789});
+            if(job.run_id!==run.id||job.name!=='validate'||job.conclusion!=='success')throw new Error('Validation was not successful');
+      - uses: actions/checkout@v6
+        with:
+          ref: b15ea613fcefeb1ae08da8a3535ef6ee87484199
+      - uses: actions/download-artifact@v8
+        with:
+          name: gpt-preload-reuse-validation
+          path: validated
+          run-id: 36583213317
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Apply the validated patch and add the reported public reproduction site
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch=validated/_temp/gpt-preload-reuse.patch
+          echo "4ce4b028be8cb3bea2c303c8fc727b08fa433c9b406a064366d9b5a773d58df0  $patch" | sha256sum -c -
+          branch=fix/video-playback-recovery-review-20260929
+          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = b15ea613fcefeb1ae08da8a3535ef6ee87484199
+          git apply --check "$patch"
+          git apply "$patch"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/video-playback-source-audit.yml')
+          s=p.read_text();old="['lordai.net','secretmagic.space','aleph1.online']"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"['lordai.net','secretmagic.space','aleph1.online','natega.bluekl.com']"))
+          PY
+          git add public/assets/hm-loader.js scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/hm-loader-direct-preparation.test.js tests/Browser/startup-recovery.playwright.spec.js tests/Browser/traffic-gate-loader.playwright.spec.js .github/workflows/video-playback-source-audit.yml
+          python - <<'PY'
+          import subprocess
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          expected={'public/assets/hm-loader.js','scripts/transform-loader-direct-preparation.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/hm-loader-direct-preparation.test.js','tests/Browser/startup-recovery.playwright.spec.js','tests/Browser/traffic-gate-loader.playwright.spec.js','.github/workflows/video-playback-source-audit.yml'}
+          assert paths==expected
+          PY
+          git diff --cached --check
+          git diff --cached --stat
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Reuse matching GPT preloads and include reported publisher in read-only audit'
+          git push origin "HEAD:refs/heads/$branch"
