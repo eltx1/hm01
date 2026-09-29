@@ -1,0 +1,103 @@
+name: Isolated video recovery validation
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/video-recovery-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 26c0bb461d44745c12d6d1610358d8d2766ee95a
+          path: staging
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 7aa1e88fa2b4f4bb896dad1f2143afe0d18bbfb6
+          path: code
+          persist-credentials: false
+      - name: Validate and apply the reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, base64, gzip, hashlib, os
+          packed=pathlib.Path('staging/diagnostics/video-recovery.patch.gz.base64').read_bytes()
+          patch=gzip.decompress(base64.b64decode(packed))
+          assert hashlib.sha256(patch).hexdigest() == 'ffd4fff9a525990a252ffa7eadaf57c9988e5da89a91ae34a6fd660feef80ce1', 'Patch checksum mismatch'
+          pathlib.Path(os.environ['RUNNER_TEMP']+'/video-recovery.patch').write_bytes(patch)
+          PY
+          cd code
+          git apply --check "$RUNNER_TEMP/video-recovery.patch"
+          git apply "$RUNNER_TEMP/video-recovery.patch"
+          git add public/assets/hm-video-direct.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/video-inline-floating.playwright.spec.js tests/Browser/fixtures/content-playback.mp4.base64
+          git diff --cached --stat
+          git diff --cached --binary > "$RUNNER_TEMP/validated-video-recovery.patch"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: code/package-lock.json
+      - name: Install test dependencies
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Run all Loader and runtime regressions
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:browser 2>&1 | tee "$RUNNER_TEMP/video-node-tests.log"
+      - name: Decode real video frames and validate existing browser matrix
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js 2>&1 | tee "$RUNNER_TEMP/video-browser-tests.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: video-recovery-validation
+          path: |
+            ${{ runner.temp }}/validated-video-recovery.patch
+            ${{ runner.temp }}/video-node-tests.log
+            ${{ runner.temp }}/video-browser-tests.log
+            code/test-results
+          retention-days: 7
+          if-no-files-found: error
+  publish-review-branch:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 7aa1e88fa2b4f4bb896dad1f2143afe0d18bbfb6
+      - uses: actions/download-artifact@v8
+        with:
+          name: video-recovery-validation
+          path: ${{ runner.temp }}/validated
+      - name: Publish only the tested source and regression files
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="$(find "$RUNNER_TEMP/validated" -name validated-video-recovery.patch -type f -print -quit)"
+          test -s "$patch"
+          git apply --check "$patch"
+          git apply "$patch"
+          git switch -c fix/video-playback-recovery-20260929
+          git add public/assets/hm-video-direct.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/video-inline-floating.playwright.spec.js tests/Browser/fixtures/content-playback.mp4.base64
+          test "$(git diff --cached --name-only | wc -l)" -eq 4
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve content playback across IMA errors and teardown races'
+          git push origin HEAD:refs/heads/fix/video-playback-recovery-20260929
+          git rev-parse HEAD
