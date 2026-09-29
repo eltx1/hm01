@@ -1,0 +1,82 @@
+name: Isolated video startup validation
+on:
+  push:
+    branches: [prepare/video-startup-20260929]
+    paths: [.github/workflows/validate-video-startup-patch.yml, ops/temporary/startup-patch-*.b64]
+permissions:
+  contents: write
+concurrency:
+  group: isolated-video-startup-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: payload
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: c5c83f6811e04d4c0386ecd28d6a2e07ce586ea8
+          path: source
+      - name: Verify bounded patch and paths
+        run: |
+          mkdir -p proof
+          python3 - <<'PY'
+          import base64,gzip,hashlib,pathlib
+          root=pathlib.Path('payload/ops/temporary')
+          text=''.join((root/('startup-patch-'+str(n)+'.b64')).read_text().strip() for n in range(4))
+          patch=gzip.decompress(base64.b64decode(text,validate=True))
+          assert len(patch)<100000
+          assert hashlib.sha256(patch).hexdigest()=='6784560ce82d05316af679868cba35a9bb8b979a6b641cdd394e64b1e34d12c6'
+          pathlib.Path('proof/source.patch').write_bytes(patch)
+          PY
+          cd source
+          git apply --check ../proof/source.patch
+          git apply ../proof/source.patch
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Dependencies and full Node regression suite
+        working-directory: source
+        run: |
+          set -eo pipefail
+          npm ci
+          npm run test:browser 2>&1 | tee ../proof/node-tests.log
+      - name: Install approved CI browser runner
+        working-directory: source
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Actual minified Loader startup matrix with gate and Click Guard
+        working-directory: source
+        run: |
+          set -eo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js video-startup.playwright.spec.js 2>&1 | tee ../proof/startup-browsers.log
+      - name: Preserve validated source tree without preparation files
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git add playwright.traffic-gate.config.js public/assets/hm-video-direct.js scripts/build-loader.mjs scripts/transform-loader-video-mount-history.mjs tests/Browser/helpers/build-startup-loader.mjs tests/Browser/helpers/video-startup-cases.mjs tests/Browser/hm-loader-video-mount-history.test.js tests/Browser/video-startup.playwright.spec.js
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = 8
+          git diff --cached --stat | tee ../proof/changes.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Validate pre-runtime video scroll continuity and parallel startup'
+          git push origin HEAD:refs/heads/validated/video-startup-20260929
+          git rev-parse HEAD > ../proof/commit.txt
+          git rev-parse HEAD^{tree} > ../proof/tree.txt
+          cat ../proof/tree.txt
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: horus-startup-validation
+          path: |
+            proof/
+            source/test-results/
+          retention-days: 3
