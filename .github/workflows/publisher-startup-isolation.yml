@@ -1,0 +1,52 @@
+name: Publisher startup isolation timing
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/publisher-startup-isolation.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 79f6a679699e1ca3612575b34e894636ac75b96f
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: b11c78c8fa13fc8565314e4d087c1ddbd13bda1c
+          path: staging
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: publisher-startup-static
+          run-id: 36595466968
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: snapshot
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Set up isolated browser only
+        run: |
+          mkdir -p probe/diagnostics probe/tests/Browser/helpers
+          cp staging/diagnostics/publisher-startup-probe.mjs probe/diagnostics/
+          cp app/tests/Browser/helpers/startup-preparation-fixture.js probe/tests/Browser/helpers/
+          printf '{"type":"module","private":true}' > probe/package.json
+          npm install --prefix probe --ignore-scripts --no-package-lock playwright@1.62.1
+          cd probe
+          npx playwright install --with-deps chromium
+      - name: Record requests without transmitting auctions or impressions
+        run: |
+          cd probe
+          SNAPSHOT_DIR="$GITHUB_WORKSPACE/snapshot" APP_DIR="$GITHUB_WORKSPACE/app" node diagnostics/publisher-startup-probe.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: publisher-startup-isolation-timing
+          path: probe/publisher-startup-probe.json
+          retention-days: 3
+          if-no-files-found: error
