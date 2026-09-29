@@ -1155,3 +1155,70 @@ test('one placement initialization exception cannot cancel the other independent
     assert.equal(h.metrics.directScripts, 0, 'failed slot is not retried as a side effect of another engine');
     h.sandbox.HorusMediaLoader._resetForTests();
 });
+
+test('duplicate permanent embeds share one pre-DOM config read and one verification attempt', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+    runtime.reevaluateLoader();
+    await runtime.flush();
+    assert.equal(runtime.metrics.configFetches, 1, 'duplicate evaluation must not start a second static boot');
+    assert.equal(runtime.metrics.globalFetches, 1);
+    assert.equal(runtime.metrics.gateFrames, 1);
+    runtime.sendGate('PASS');
+    runtime.domReady();
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assert.equal(runtime.metrics.gptScripts, 1);
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+
+test('local trace distinguishes verified PASS from token progress and ignores spoofed progress', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 1 });
+    const boot = h.sandbox.HorusMediaLoader.boot();
+    await h.flush();
+    const phases = () => h.sandbox.HorusMediaLoader.getStartupTrace().events.map(e => e.phase);
+    h.sendGate('PROGRESS', { phase: 'token', token: 'never-log-me' }, { origin: 'https://attacker.example' });
+    h.sendGate('PROGRESS', { phase: 'verify' }, { nonce: 'wrong-nonce' });
+    assert.equal(phases().includes('CF token'), false);
+    assert.equal(phases().includes('CF verify'), false);
+    h.sendGate('PROGRESS', { phase: 'token', token: 'never-log-me' });
+    h.sendGate('PROGRESS', { phase: 'verify', success: true });
+    assert.equal(phases().includes('CF pass'), false);
+    assert.equal(h.metrics.gamRequests, 0);
+    assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PENDING');
+    h.sendGate('PASS');
+    await boot;
+    assert.equal(h.metrics.gamRequests, 1);
+    const names = phases();
+    assert.ok(names.indexOf('CF start') < names.indexOf('CF token'));
+    assert.ok(names.indexOf('CF token') < names.indexOf('CF verify'));
+    assert.ok(names.indexOf('CF verify') < names.indexOf('CF pass'));
+    assert.ok(names.indexOf('CF pass') < names.indexOf('Horus start'));
+    assert.equal(JSON.stringify(h.sandbox.HorusMediaLoader.getStartupTrace()).includes('never-log-me'), false);
+    h.sandbox.HorusMediaLoader._resetForTests();
+});
+
+test('throwing console does not block verification, requests or content admission', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 1 });
+    h.sandbox.console = { info() {}, log() { throw new Error('console unavailable'); } };
+    const boot = h.sandbox.HorusMediaLoader.boot();
+    await h.flush();
+    h.sendGate('PASS');
+    await boot;
+    assert.equal(h.metrics.gamRequests, 1);
+    assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
+    h.sandbox.HorusMediaLoader._resetForTests();
+});
+
+test('explicit verification rejection is distinct from a technical timeout in the local trace', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 1 });
+    const boot = h.sandbox.HorusMediaLoader.boot();
+    await h.flush();
+    h.sendGate('ERROR', { category: 'VERIFICATION_REJECTED' });
+    await boot;
+    assert.equal(h.metrics.gamRequests, 0);
+    const names = h.sandbox.HorusMediaLoader.getStartupTrace().events.map(e => e.phase);
+    assert.equal(names.includes('CF reject'), true);
+    assert.equal(names.includes('CF pass'), false);
+    assert.equal(names.includes('Horus start'), false);
+    h.sandbox.HorusMediaLoader._resetForTests();
+});

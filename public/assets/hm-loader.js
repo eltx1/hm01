@@ -775,13 +775,17 @@
         if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
         if (state.gptPromise) return state.gptPromise;
 
+        if (typeof startupTrace === 'function') startupTrace('GPT load');
         var gptUrl = config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
         state.gptPromise = loadExternalScript(
             'script[data-hm-gpt="1"]',
             'data-hm-gpt',
             gptUrl,
             gptScriptCrossOrigin(gptUrl)
-        ).then(function () { return ensureGoogletagQueue(); });
+        ).then(function () {
+            if (typeof startupTrace === 'function') startupTrace('GPT fetched');
+            return ensureGoogletagQueue();
+        });
         return state.gptPromise;
     }
 
@@ -1790,6 +1794,8 @@ function nativeDefinition(config, code) {
                     }
                     try {
                         var pubads = googletag.pubads();
+                        if (typeof startupTrace === 'function') startupTrace('GPT ready');
+                        if (typeof traceGptService === 'function') traceGptService(pubads);
                         var privacy = state.privacyDecision || {};
                         var privacySignals = config.privacy && config.privacy.signals || {};
                         var unifiedConfig = typeof googletag.setConfig === 'function';
@@ -2057,6 +2063,7 @@ function nativeDefinition(config, code) {
             return null;
         }
 
+        if (typeof startupTrace === 'function') startupTrace('Core handoff');
         window.__HM_RELEASE_DELEGATED__ = true;
         var replacement = document.createElement('script');
         replacement.async = true;
@@ -2096,6 +2103,7 @@ function nativeDefinition(config, code) {
                 settled = true;
                 window.clearTimeout(timeout);
                 if (error) {
+                    if (typeof startupTrace === 'function') startupTrace('Core error');
                     // A timed-out or failed replacement must stay fail-closed even
                     // if the browser completes its download later or publisher
                     // code requests a forced refresh against the old runtime.
@@ -2116,6 +2124,7 @@ function nativeDefinition(config, code) {
 
             replacement.onload = function () {
                 if (settled) return;
+                if (typeof startupTrace === 'function') startupTrace('Core ready');
                 loadCompleted = true;
                 window.clearTimeout(timeout);
                 restoreAutobootFlag();

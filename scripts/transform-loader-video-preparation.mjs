@@ -177,7 +177,7 @@ export function applyVideoPreparationTransform(input) {
     source = source.replace(deny, '        stopInlineVideoPreparation();\n' + deny);
     // Observe already-present publisher slots while configuration is in flight.
     // Unknown zero-area slots never gain anchor eligibility before config.
-    const early = '        if (!siteKey || !window.fetch || earlyBootPreparation || state.booting) return;';
+    const early = '        if (!siteKey || !window.fetch || state.earlyBootPreparation || state.booting) return;';
     const boot = '        if (state.booting && !options.force) return state.booting;';
     if (!source.includes(early) || !source.includes(boot)) throw new Error('Missing early and ordinary boot boundaries');
     [early, boot].forEach(function (hook) {

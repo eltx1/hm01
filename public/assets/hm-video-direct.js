@@ -90,6 +90,17 @@
     }
     // END SHARED REWARDED PROMPT
 
+    // Optional local diagnostic hook. Never transmit data or alter authorization.
+    function tracePhase(phase, container, detail) {
+        try {
+            var loader = window.HorusMediaLoader;
+            if (!loader || typeof loader.trace !== 'function') return;
+            var fields = Object.assign({}, detail || {});
+            if (container && typeof loader.traceSlot === 'function') fields.slot = loader.traceSlot(container);
+            loader.trace(phase, fields);
+        } catch (error) { /* Diagnostics must not change playback or requests. */ }
+    }
+
     var STATE_KEY = '__HORUS_VIDEO_DIRECT_RUNTIME_V1__';
     var SDK_URL = 'https://imasdk.googleapis.com/js/sdkloader/ima3.js';
     var SELECTOR = '[data-hm-video-direct="1"]';
@@ -719,6 +730,7 @@
         var message = String(error && error.message || error || 'Unknown IMA error').slice(0, 240);
         var code = error && typeof error.getErrorCode === 'function' ? error.getErrorCode() : '';
         var vastCode = error && typeof error.getVastErrorCode === 'function' ? error.getVastErrorCode() : '';
+        tracePhase(Number(code) === 303 || Number(code) === 1009 ? 'VAST no-fill' : 'VAST error', player.container, { code: Number(code), position: player.currentBreak });
         var surface = player.container;
         while (surface && surface.getAttribute) {
             surface.setAttribute('data-hm-video-error', message);
@@ -783,6 +795,7 @@
 
     function markContentPlaying(player) {
         if (!player || player.destroyed || player.contentFailed || player.adMediaActive) return;
+        tracePhase('Video content', player.container);
         player.contentStarted = true;
         player.container.setAttribute('data-hm-video-detail', '');
         setStatus(player.container, 'content-playing');
@@ -905,7 +918,8 @@
                     player.adsManager.addEventListener(adTypes.STARTED, function () {
                         if (!currentRequest()) return;
                         window.clearTimeout(player.startupTimer);
-                        setStatus(player.container, 'started');
+                        tracePhase('Video start', player.container, { position: player.currentBreak });
+                    setStatus(player.container, 'started');
                     });
                     if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
                         if (!currentRequest()) return;
@@ -970,6 +984,7 @@
             if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(true);
             if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(true);
             if (request.setContinuousPlayback) request.setContinuousPlayback(false);
+            tracePhase('VAST call', player.container, { position: player.currentBreak });
             player.adsLoader.requestAds(request);
         } catch (error) {
             if (currentRequest()) failContentAdBreak(player, error, 'initialization-' + position, position);
@@ -1104,6 +1119,7 @@
                 player.adsManager.addEventListener(adTypes.STARTED, function () {
                     if (player.destroyed) return;
                     window.clearTimeout(player.startupTimer);
+                    tracePhase('Video start', player.container, { position: player.currentBreak });
                     setStatus(player.container, 'started');
                     // Keep viewport observation alive for the ad-only fallback.
                     // A loaded ad still has to transition when the reader scrolls.
@@ -1155,6 +1171,7 @@
             request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
             if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.video.autoplay === true);
             if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.video.muted === true);
+            tracePhase('VAST call', player.container, { position: player.currentBreak });
             player.adsLoader.requestAds(request);
             if (player.rewarded) rewardEvent(player.container, 'horus:rewarded-opened', {});
         } catch (error) {

@@ -21,15 +21,18 @@ const internalSdk = 'https://securepubads.g.doubleclick.net/pagead/managed/js/gp
 function installGptFixture() {
     // Only the provider boundary is fake. Both Horus adapters and the Loader,
     // its real gate frame, Click Guard, layout and lazy eligibility run intact.
-    const queue = window.googletag?.cmd || [], slots = new Map(), listeners = new Set();
-    const pubads = { addEventListener(name, fn) { if (name === 'slotRenderEnded') listeners.add(fn); },
-        removeEventListener(name, fn) { listeners.delete(fn); } };
+    const queue = window.googletag?.cmd || [], slots = new Map(), listeners = new Map();
+    const pubads = { addEventListener(name, fn) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(fn); },
+        removeEventListener(name, fn) { listeners.get(name)?.delete(fn); } };
+    const emit = (name, event) => [...(listeners.get(name) || [])].forEach(fn => fn(event));
     window.googletag = { apiReady: true, cmd: { push(fn) { fn(); } }, pubads: () => pubads,
         defineSlot(path, sizes, id) { const slot = { id, addService() { return this; } }; slots.set(id, slot); return slot; },
         enableServices() {}, destroySlots() {}, display(id) {
             window.dependencyMetrics.requests++;
             window.dependencyMetrics.requestAt = performance.now();
-            queueMicrotask(() => [...listeners].forEach(fn => fn({ slot: slots.get(id), isEmpty: false, size: [300, 250] })));
+            const event = { slot: slots.get(id), isEmpty: false, size: [300, 250] };
+            emit('slotRequested', event);
+            queueMicrotask(() => { emit('slotResponseReceived', event); emit('slotRenderEnded', event); emit('slotOnload', event); });
         },
     };
     window.dependencyMetrics.readyAt = performance.now();
@@ -182,6 +185,37 @@ for (const mode of ['composed', 'minified']) {
         expect(await page.evaluate(() => window.dependencyMetrics.sdkExecutions)).toBe(0);
         expect(await page.evaluate(() => window.dependencyMetrics.requests)).toBe(0);
         await page.locator('[data-placement="display"]').scrollIntoViewIfNeeded();
+        await expect.poll(() => page.evaluate(() => window.dependencyMetrics.requests)).toBe(1);
+    });
+}
+
+for (const mode of ['composed', 'minified']) {
+    test(`${mode}: local startup trace separates token, verified pass and actual display request while video is held`, async ({ page }) => {
+        const run = await open(page, { delay: 'video', minified: mode === 'minified' });
+        await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getStartupTrace().events.some(e => e.phase === 'GPT onload'))).toBe(true);
+        const trace = await page.evaluate(() => window.HorusMediaLoader.getStartupTrace());
+        const phases = trace.events.map(e => e.phase);
+        for (const name of ['Horus init','CFG ready','CF start','CF token','CF verify','CF pass','Horus start','GPT call','GPT request','GPT response','GPT render','GPT onload']) expect(phases).toContain(name);
+        for (const [a,b] of [['CF token','CF verify'],['CF verify','CF pass'],['CF pass','Horus start'],['Horus start','GPT request'],['GPT request','GPT response'],['GPT response','GPT render'],['GPT render','GPT onload']]) {
+            expect(phases.indexOf(a)).toBeLessThan(phases.indexOf(b));
+        }
+        expect(phases).not.toContain('Video start');
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        const events = trace.events.filter(e => ['GPT call','GPT request','GPT response','GPT render','GPT onload'].includes(e.phase));
+        expect(new Set(events.map(e => e.slot)).size).toBe(1);
+        expect(JSON.stringify(trace)).not.toContain('fixture-token');
+        expect(JSON.stringify(trace)).not.toContain('pageNonce');
+        expect(JSON.stringify(trace)).not.toContain('http');
+        run.release();
+    });
+    test(`${mode}: no local PASS or monetization event before server verification`, async ({ page }) => {
+        const run = await open(page, { delay: 'verification', minified: mode === 'minified' });
+        await expect.poll(() => run.counts.verifies).toBe(1);
+        const phases = await page.evaluate(() => window.HorusMediaLoader.getStartupTrace().events.map(e => e.phase));
+        expect(phases).toContain('CF token'); expect(phases).toContain('CF verify');
+        for (const name of ['CF pass','Horus start','GPT request','VAST call']) expect(phases).not.toContain(name);
+        expect(await page.evaluate(() => window.dependencyMetrics.requests)).toBe(0);
+        run.release();
         await expect.poll(() => page.evaluate(() => window.dependencyMetrics.requests)).toBe(1);
     });
 }

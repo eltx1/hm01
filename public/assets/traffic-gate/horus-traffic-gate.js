@@ -17,6 +17,7 @@
     const TYPES = Object.freeze({
         hello: 'HORUS_TRAFFIC_GATE_HELLO',
         ready: 'HORUS_TRAFFIC_GATE_READY',
+        progress: 'HORUS_TRAFFIC_GATE_PROGRESS',
         pass: 'HORUS_TRAFFIC_GATE_PASS',
         error: 'HORUS_TRAFFIC_GATE_ERROR',
         timeout: 'HORUS_TRAFFIC_GATE_TIMEOUT',
@@ -253,6 +254,7 @@
         }
 
         if (retries < MAX_RETRIES && widgetId !== null && typeof window.turnstile?.reset === 'function') {
+            post(TYPES.progress, { phase: 'retry' });
             retries += 1;
             retryTimer = setTimeout(() => {
                 retryTimer = null;
@@ -275,6 +277,7 @@
             fail('INVALID_VERIFICATION_TOKEN');
             return;
         }
+        post(TYPES.progress, { phase: 'token' });
         verificationPending = true;
         const requestId = window.crypto.randomUUID();
         for (let attempt = 0; attempt < 2 && !terminal; attempt += 1) {
@@ -282,6 +285,7 @@
             const requestTimer = setTimeout(() => verificationController?.abort(), 4000);
             let retryable = true;
             try {
+                post(TYPES.progress, { phase: 'verify' });
                 const response = await fetch('https://siteverify.horusmedia.net/verify', {
                     method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
                     signal: verificationController.signal,

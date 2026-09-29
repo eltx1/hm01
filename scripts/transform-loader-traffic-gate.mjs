@@ -1,3 +1,4 @@
+import { startupTraceRuntime } from './loader-startup-trace.mjs';
 const MARKER = 'var TRAFFIC_GATE_PROTOCOL_VERSION = 2;';
 
 function replaceOnce(source, search, replacement, label) {
@@ -11,7 +12,7 @@ function replaceOnce(source, search, replacement, label) {
 const trafficGateRuntime = String.raw`
     // Start static work and isolated verification early. Ad initialization and CMP
     // discovery keep their DOM boundary, including CMPs installed later by the page.
-    var earlyBootPreparation = null;
+    state.earlyBootPreparation = state.earlyBootPreparation || null;
     var EARLY_PREPARATION_MAX_AGE_MS = 5000;
 
     function nextPreparationGeneration() {
@@ -77,7 +78,9 @@ const trafficGateRuntime = String.raw`
     }
 
     function fetchBootPreparation(script, siteKey, force) {
-        return Promise.all([fetchGlobalControl(script, force), fetchConfig(script, siteKey, force)]).then(function (prepared) {
+        var attempt = state.configTraceAttempt = Number(state.configTraceAttempt || 0) + 1;
+        startupTrace('CFG start', { attempt: attempt });
+        return Promise.all([traceStartupWait(fetchGlobalControl(script, force), 'controls', 'CFG ready', attempt), traceStartupWait(fetchConfig(script, siteKey, force), 'config', 'CFG ready', attempt)]).then(function (prepared) {
             var config = prepared[1];
             config.controls = mergeControls(config.controls || {}, prepared[0] || {});
             return config;
@@ -143,10 +146,11 @@ const trafficGateRuntime = String.raw`
     function startEarlyBootPreparation() {
         var script = findScript();
         var siteKey = scriptData(script, 'siteKey');
-        if (!siteKey || !window.fetch || earlyBootPreparation || state.booting) return;
+        if (!siteKey || !window.fetch || state.earlyBootPreparation || state.booting) return;
         var generation = nextPreparationGeneration();
         var preparation = { script: script, siteKey: siteKey, startedAt: Date.now(), promise: null };
-        earlyBootPreparation = preparation;
+        state.earlyBootPreparation = preparation;
+        startupTrace('Horus init');
         preparation.promise = fetchBootPreparation(script, siteKey, false).then(function (config) {
             if (generation === state.preparationGeneration
                 && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) {
@@ -162,8 +166,8 @@ const trafficGateRuntime = String.raw`
     }
 
     function takeBootPreparation(script, siteKey, force) {
-        var preparation = earlyBootPreparation;
-        earlyBootPreparation = null;
+        var preparation = state.earlyBootPreparation;
+        state.earlyBootPreparation = null;
         if (!force && preparation && preparation.script === script && preparation.siteKey === siteKey
             && Date.now() - preparation.startedAt <= EARLY_PREPARATION_MAX_AGE_MS) {
             return preparation.promise.then(function (config) {
@@ -370,6 +374,7 @@ const trafficGateRuntime = String.raw`
     }
 
     function trafficGateBlock(reason) {
+        startupTrace('CF reject', { attempt: state.gateTraceAttempt });
         trafficGateSetState(TRAFFIC_GATE_STATES.blocked, reason || 'DENIED');
         trafficGateCleanup();
         settleTrafficGateDecision();
@@ -378,6 +383,7 @@ const trafficGateRuntime = String.raw`
     function trafficGateTechnicalFailure(stateName, reason, retryAtDomReady) {
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
+        startupTrace(stateName === TRAFFIC_GATE_STATES.timeout ? 'CF timeout' : (reason === 'VERIFICATION_REJECTED' ? 'CF reject' : 'CF error'), { attempt: state.gateTraceAttempt });
         trafficGateSetState(stateName, reason);
         gate.retryAtDomReady = retryAtDomReady !== false;
         trafficGateCleanup();
@@ -420,8 +426,16 @@ const trafficGateRuntime = String.raw`
         if (message.protocolVersion !== TRAFFIC_GATE_PROTOCOL_VERSION) return;
         if (message.pageNonce !== gate.pageNonce) return;
         var type = String(message.type || '');
-        if (type === 'HORUS_TRAFFIC_GATE_READY') return;
+        if (type === 'HORUS_TRAFFIC_GATE_READY') { startupTrace('CF ready', { attempt: state.gateTraceAttempt }); return; }
+        if (type === 'HORUS_TRAFFIC_GATE_PROGRESS') {
+            // Origin, source, nonce and protocol were verified above. Progress
+            // is diagnostic only: it cannot settle or extend authorization.
+            var phases = { token: 'CF token', verify: 'CF verify', retry: 'CF retry' };
+            if (Object.prototype.hasOwnProperty.call(phases, message.phase)) startupTrace(phases[message.phase], { attempt: state.gateTraceAttempt });
+            return;
+        }
         if (type === 'HORUS_TRAFFIC_GATE_PASS' && message.serverVerified === true) {
+            startupTrace('CF pass', { attempt: state.gateTraceAttempt });
             trafficGateAllow(TRAFFIC_GATE_STATES.passed, 'PASS');
             return;
         }
@@ -434,7 +448,7 @@ const trafficGateRuntime = String.raw`
             // attempt. An explicit server rejection is authoritative and is not
             // a loading failure. Every new attempt still needs fresh verification.
             var preparationFailed = message.category !== 'VERIFICATION_REJECTED';
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, 'TURNSTILE_ERROR', preparationFailed);
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, message.category === 'VERIFICATION_REJECTED' ? 'VERIFICATION_REJECTED' : 'TURNSTILE_ERROR', preparationFailed);
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_TIMEOUT') {
@@ -462,6 +476,8 @@ const trafficGateRuntime = String.raw`
 
         gate.started = true;
         gate.startedAt = Date.now();
+        state.gateTraceAttempt = Number(state.gateTraceAttempt || 0) + 1;
+        startupTrace('CF start', { attempt: state.gateTraceAttempt });
         trafficGateSetState(TRAFFIC_GATE_STATES.booting, null);
         var decision = trafficGateDecisionPromise();
         // Establish the bounded availability deadline before any operation
@@ -590,9 +606,15 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
         if (!siteKey || !window.fetch) return Promise.resolve([]);
         if (state.booting && !options.force) return state.booting;
+        // Logging is passive: report an outstanding prerequisite, never turn a
+        // slow request into permission or start a replacement auction.
+        var traceWait = window.setTimeout(function () {
+            if (!state.adInitializationStarted) startupTrace('Horus wait', { resource: trafficGateAllowsMonetization() ? (state.privacyDecision ? 'core' : 'privacy') : 'policy' });
+        }, 5000);
 
         // Static configuration and global controls are independent preparation.
         // Neither waits for Turnstile or CMP resolution.
+        startupTrace('Horus init');
         var generation = nextPreparationGeneration();
         var bootPromise = takeBootPreparation(script, siteKey, Boolean(options.force)).then(function (config) {
             if (generation !== state.preparationGeneration) return [];
@@ -624,6 +646,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             });
             var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation);
             var privacyPromise = resolvePrivacy(config).then(function (decision) {
+                startupTrace(decision.blocked ? 'Privacy reject' : 'Privacy ready');
                 if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {
                     prepareStaticConnections(config, true);
                 }
@@ -640,6 +663,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         }).finally(function () {
             // A delegated release can replace the shared boot slot while this
             // Promise is still pending. Never clear the newer owner's Promise.
+            window.clearTimeout(traceWait);
             if (state.booting === bootPromise) state.booting = null;
         });
         state.booting = bootPromise;
@@ -662,7 +686,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "    var CLICK_GUARD_MAX_TIMEOUT_MS = 2147483647;\n",
-        "    var CLICK_GUARD_MAX_TIMEOUT_MS = 2147483647;\n" + trafficGateRuntime,
+        "    var CLICK_GUARD_MAX_TIMEOUT_MS = 2147483647;\n" + startupTraceRuntime + trafficGateRuntime,
         'runtime insertion',
     );
 
@@ -704,7 +728,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "    function scan(config) {\n        state.adInitializationStarted = true;\n        if (!canRequestAds(config)) return Promise.resolve([]);\n",
-        "    function scan(config) {\n        if (!canRequestAds(config)) return Promise.resolve([]);\n        state.adInitializationStarted = true;\n",
+        "    function scan(config) {\n        if (!canRequestAds(config)) return Promise.resolve([]);\n        if (!state.adInitializationStarted) startupTrace('Horus start');\n        state.adInitializationStarted = true;\n",
         'scan gate',
     );
 
@@ -718,7 +742,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "        getConfig: function () { return state.config; },\n        _resetForTests: function () {\n",
-        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        _resetForTests: function () {\n",
+        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        getStartupTrace: startupSnapshot,\n        trace: startupTrace,\n        traceGpt: traceGptService,\n        traceSlot: startupSlotNumber,\n        _resetForTests: function () {\n",
         'public local state accessor',
     );
 
@@ -732,7 +756,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "            state.adInitializationStarted = false;\n            state.servicesEnabled = false;\n",
-        "            state.adInitializationStarted = false;\n            earlyBootPreparation = null;\n            state.earlyTrafficGatePreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
+        "            state.adInitializationStarted = false;\n            state.earlyBootPreparation = null;\n            state.earlyTrafficGatePreparation = null;\n            state.monetizationStartPromise = null;\n            resetTrafficGateRuntimeForTests();\n            state.servicesEnabled = false;\n",
         'test reset',
     );
 
