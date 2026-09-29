@@ -1,0 +1,53 @@
+name: Read-only deployed video content health
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/deployed-video-content-health.yml]
+permissions:
+  contents: read
+jobs:
+  content-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check the exact public content source found in the trusted production audit
+        shell: python
+        run: |
+          import urllib.request,urllib.error,json,hashlib,pathlib,subprocess,shutil
+          url='https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4'
+          result={'release_sha':'79f6a679699e1ca3612575b34e894636ac75b96f','audit_run_id':36590221641,'content_url':url,'live_ad_requests':0,'mutations':0}
+          failed=False
+          try:
+              req=urllib.request.Request(url,headers={'Range':'bytes=0-1023'})
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  prefix=r.read(1024)
+                  result['range']={'status':r.status,'type':r.headers.get('Content-Type'),'content_range':r.headers.get('Content-Range'),'prefix_hex':prefix[:24].hex()}
+              with urllib.request.urlopen(url,timeout=20) as r:
+                  data=r.read(4000001)
+                  result['full']={'status':r.status,'type':r.headers.get('Content-Type'),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+              assert len(data)<=4000000 and data[4:8]==b'ftyp','Not a bounded MP4 response'
+              pathlib.Path('existing-content.mp4').write_bytes(data)
+              if shutil.which('ffprobe'):
+                  p=subprocess.run(['ffprobe','-v','error','-show_entries','stream=codec_name,codec_type,width,height,pix_fmt:format=duration','-of','json','existing-content.mp4'],capture_output=True,text=True,timeout=20)
+                  assert p.returncode==0,p.stderr[:500]
+                  result['media']=json.loads(p.stdout)
+              if shutil.which('ffmpeg'):
+                  p=subprocess.run(['ffmpeg','-v','error','-i','existing-content.mp4','-t','2','-f','null','-'],capture_output=True,text=True,timeout=20)
+                  result['native_decode_exit_code']=p.returncode
+                  assert p.returncode==0,p.stderr[:500]
+              result['result']='PASS'
+          except Exception as e:
+              failed=True
+              result['result']='PROBE_FAILED'
+              result['error']=str(e)[:500]
+              if isinstance(e,urllib.error.HTTPError):result['http_status']=e.code
+          pathlib.Path('content-health.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result,indent=2))
+          if failed:raise SystemExit(1)
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: deployed-video-content-health
+          path: content-health.json
+          retention-days: 7
+          if-no-files-found: error
