@@ -1,0 +1,68 @@
+name: Read-only origin video configuration
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/video-origin-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  video-settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - name: Read selected public runtime settings without mutation
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && php" <<'PHP'
+          <?php
+          require 'vendor/autoload.php';
+          $app = require 'bootstrap/app.php';
+          $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+          function safeUrl($url) {
+              $p = parse_url((string)$url);
+              return ($p['scheme'] ?? '').'://'.($p['host'] ?? '').($p['path'] ?? '');
+          }
+          $global = (string) config('horus.video_content_url');
+          echo json_encode(['release'=>trim((string)@file_get_contents('.horus-release')),'configured_content_url'=>$global ? safeUrl($global) : null,'runtime_sha256'=>hash_file('sha256','public/assets/hm-video-direct.js')],JSON_UNESCAPED_SLASHES).PHP_EOL;
+          $sites = App\Models\Site::withoutGlobalScopes()->whereIn('domain',['lordai.net','secretmagic.space','aleph1.online'])->get(['id','domain','public_key']);
+          foreach ($sites as $site) {
+              $config = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment','production')->orderByDesc('version')->first();
+              $result=['domain'=>$site->domain,'siteKey'=>$site->public_key,'version'=>$config?->version,'videos'=>[]];
+              $walk = function($value) use (&$walk,&$result) {
+                  if (!is_array($value)) return;
+                  if (($value['data-hm-video-direct'] ?? '') === '1') {
+                      $item=$value;
+                      if (isset($item['data-hm-vast-url'])) {
+                          $tag=base64_decode($item['data-hm-vast-url']);
+                          unset($item['data-hm-vast-url']);
+                          $item['vast_endpoint']=safeUrl($tag);
+                          parse_str(parse_url($tag,PHP_URL_QUERY) ?? '',$params);
+                          $item['vast_parameters']=array_intersect_key($params,array_flip(['iu','sz','plcmt','vpos','ad_rule','vpa','vpmute','url','description_url']));
+                      }
+                      if (isset($item['data-hm-video-content-url'])) $item['data-hm-video-content-url']=safeUrl($item['data-hm-video-content-url']);
+                      $result['videos'][]=$item;
+                  }
+                  foreach ($value as $child) if (is_array($child)) $walk($child);
+              };
+              $walk($config?->payload ?? []);
+              echo json_encode($result,JSON_UNESCAPED_SLASHES).PHP_EOL;
+          }
+          PHP
