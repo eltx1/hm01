@@ -1,0 +1,69 @@
+name: Apply reviewed video policy patch
+on:
+  push:
+    branches: ['automation/apply-video-policy-20260929']
+    paths: ['.reviewed-video-policy/**', '.github/workflows/apply-reviewed-video-policy.yml']
+permissions:
+  contents: write
+concurrency:
+  group: apply-reviewed-video-policy-20260929
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'eltx1/hm01' && github.actor == 'eltx1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: 4591910380b50e9b778ff2ded9be8fe286250b17
+      TARGET_BRANCH: fix/video-live-serving-policy
+    steps:
+      - uses: actions/checkout@v6
+      - name: Decode and verify reviewed patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, os, pathlib, shutil
+          root = pathlib.Path('.reviewed-video-policy')
+          encoded = ''.join((root / f'payload-{i}.txt').read_text().strip() for i in range(4))
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          expected = '4fa3a2b877401bbda08a0f16e8f0d3fa14fed71e48fc42f1678f0882cf6755cb'
+          assert hashlib.sha256(patch).hexdigest() == expected, 'reviewed patch checksum mismatch'
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          (temp / 'reviewed-video-policy.patch').write_bytes(patch)
+          shutil.copyfile(root / 'manifest.json', temp / 'reviewed-video-manifest.json')
+          PY
+      - name: Apply only to expected review branch base
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$TARGET_BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$BASE_SHA"
+          git switch -c reviewed-video-policy "$BASE_SHA"
+          git apply --check "$RUNNER_TEMP/reviewed-video-policy.patch"
+          git apply "$RUNNER_TEMP/reviewed-video-policy.patch"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          manifest = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'reviewed-video-manifest.json').read_text())
+          for path, expected in manifest.items():
+              actual = subprocess.check_output(['git', 'hash-object', path], text=True).strip()
+              assert actual == expected, f'reviewed content mismatch: {path}'
+          subprocess.run(['git', 'add', '--', *manifest], check=True)
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          assert sorted(changed) == sorted(manifest), 'unexpected changed paths'
+          PY
+          git diff --cached --check
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Check syntax and focused security regressions
+        run: |
+          node --check public/assets/hm-loader.js
+          node --check public/assets/hm-video-direct.js
+          node --check tests/Browser/video-serving-policy.playwright.spec.js
+          node --test tests/Browser/hm-loader-click-guard.test.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/hm-loader-shadow-click-guard.test.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/traffic-gate-siteverify-worker.test.js tests/Browser/hm-loader-placement-presets.test.js
+      - name: Commit reviewed code to review branch without force
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Enforce live serving policy across VAST and VMAP playback' -m 'Recheck central Cloudflare, privacy, serving and Click Guard admission for every video request and deferred start; stop scheduled advertising on revocation, preserve healthy content and floating layout, and add combined security/browser regressions.'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          printf 'Reviewed source commit: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

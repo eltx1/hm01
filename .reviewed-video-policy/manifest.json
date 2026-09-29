@@ -1,0 +1,12 @@
+{
+  "docs/VIDEO_SERVING_POLICY.md": "738e9c0007c535cb41cd8fd83c0e6dbfa3631f61",
+  "playwright.traffic-gate.config.js": "50e24917c6364d595a10890a89809e42f84d4a8b",
+  "public/assets/hm-loader.js": "30b401ee688779e896b05a954577592deb2b3793",
+  "public/assets/hm-video-direct.js": "ed4cb206a9d4a17d5a6624d463786fac9ee32bf9",
+  "scripts/transform-loader-traffic-gate.mjs": "b0a0d4839b5a999b76dfce6b31b65df30577ed51",
+  "tests/Browser/helpers/video-serving-policy-fixture.js": "aad36dc6f6639c94ee1f48942fc21e0746ab4f03",
+  "tests/Browser/hm-direct-trusted-runtimes.test.js": "d820e156ec5e7226e37b1f6210735864ceac9f33",
+  "tests/Browser/rewarded-reading.playwright.spec.js": "ecad36f68049fa6d59ede28aa38db4228ea66931",
+  "tests/Browser/video-inline-floating.playwright.spec.js": "a0085bc74a10fca26fae33282f351a427b53eeb4",
+  "tests/Browser/video-serving-policy.playwright.spec.js": "cd02250c3110313102fcce607b38b8cd5f62f5fb"
+}
