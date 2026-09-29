@@ -1,0 +1,69 @@
+name: Validate publisher duplicate loader recovery
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/publisher-duplicate-loader-validation.yml]
+permissions:
+  contents: read
+jobs:
+  duplicate-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 002bfca816627c7c7e0786456d89499fea7cf664
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Add an isolated reproduction of the reported double embed
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tests/Browser/startup-recovery.playwright.spec.js')
+          p.write_text(p.read_text()+'''
+          for (const mode of ['composed', 'minified']) {
+              test(`${mode}: duplicate publisher loader before and after PASS retains one player and one ad per placement`, async ({page}) => {
+                  const run = await open(page, {parallel:true, quickEmbed:true, emptyDiv:true, delay:'verification', minified:mode==='minified'});
+                  await expect.poll(() => run.counts.verifies).toBe(1);
+                  await page.evaluate(() => { window.__HM_DISABLE_AUTOBOOT__ = false; });
+                  await page.addScriptTag({content:mode==='minified' ? minified : composed});
+                  expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+                  expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(0);
+                  expect(await page.locator('[data-placement="quick_video_floating"]').evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(1);
+                  run.release();
+                  await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+                  await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+                  await page.evaluate(() => { window.originalPlayer = document.querySelector('[data-hm-video-direct]').__hmVideoPlayer; });
+                  await page.addScriptTag({content:mode==='minified' ? minified : composed});
+                  await page.evaluate(async () => { await window.HorusMediaLoader.boot(); });
+                  expect(await page.evaluate(() => window.originalPlayer === document.querySelector('[data-hm-video-direct]').__hmVideoPlayer)).toBe(true);
+                  expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
+                  expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+                  expect(run.counts.verifies).toBe(1);
+                  expect(run.counts.gpt).toBe(1);
+                  expect(run.counts.sdk).toBe(1);
+              });
+          }
+          ''')
+      - name: Install test-only dependencies and build the real distribution
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+      - name: Validate real browser duplicate embed without live ad requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/startup-recovery.playwright.spec.js --grep 'duplicate publisher loader' | tee "$RUNNER_TEMP/duplicate-publisher-loader.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: duplicate-publisher-loader-validation
+          path: |
+            ${{ runner.temp }}/duplicate-publisher-loader.log
+            test-results/**/error-context.md
+          retention-days: 7
