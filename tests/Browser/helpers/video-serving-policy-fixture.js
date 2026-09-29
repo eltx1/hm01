@@ -29,12 +29,15 @@ export function securityConfig(options = {}) {
 }
 
 export function publisherPage(options = {}) {
+    // The test injects the composed Loader after installing its offline media
+    // boundary. Keep the real CDN script origin as inert metadata: configBase()
+    // derives the static config origin from script.src, not from the publisher.
     return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     html,body{margin:0;overflow-anchor:none} article{max-width:640px;margin:auto} #before{height:${options.belowFold ? 1400 : 80}px}
     [data-placement="video"]{width:320px;max-width:100%;min-height:180px} #tail{height:4000px}
     ${options.transformed ? 'article{transform:translateZ(0);contain:paint;overflow:hidden}' : ''}
     </style></head><body><article><div id="before"></div><div class="hm-ad" data-placement="video"></div><div id="tail">Article remains readable</div></article>
-    <script id="loader" data-site-key="VIDEO_SECURITY_MATRIX" data-config-version="1"></script></body></html>`;
+    <script id="loader" type="application/json" src="https://cdn.horusmedia.net/assets/hm-loader.min.js" data-site-key="VIDEO_SECURITY_MATRIX" data-config-version="1" data-debug="1"></script></body></html>`;
 }
 
 export function initializeTestMedia(options) {
