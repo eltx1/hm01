@@ -1,0 +1,101 @@
+name: Validate startup trace and single preparation
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/startup-trace-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c5617d2edce83be6a2333241d32c588df6725628
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: b4613a257c8ad8ccf83c6760662174ed8ec6c112
+          path: staging
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Verify exact patch and baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trace-evidence"
+          cp staging/diagnostics/startup-trace.patch.gz.base64 "$RUNNER_TEMP/trace-evidence/payload.base64"
+          python - <<'PY'
+          from pathlib import Path
+          import os,base64,gzip,hashlib
+          out=Path(os.environ['RUNNER_TEMP'],'trace-evidence')
+          raw=base64.b64decode((out/'payload.base64').read_text().strip(),validate=True)
+          patch=gzip.decompress(raw)
+          assert hashlib.sha256(patch).hexdigest()=='41da4116fe42553512608be432e70cc1f156541cbdbd63ae2b63a4922417e95d'
+          (out/'startup-trace.patch').write_bytes(patch)
+          PY
+          cd code
+          git apply --check "$RUNNER_TEMP/trace-evidence/startup-trace.patch"
+          git apply "$RUNNER_TEMP/trace-evidence/startup-trace.patch"
+          git diff --check
+          node --test tests/Browser/*.test.js | tee "$RUNNER_TEMP/trace-evidence/node.log"
+      - name: Install isolated browser dependencies and compile production loader
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+      - name: Execute complete real-browser matrix without paid ad endpoints
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js | tee "$RUNNER_TEMP/trace-evidence/browsers.log"
+          sha256sum public/assets/hm-loader.min.js public/assets/hm-gpt-direct.js public/assets/hm-video-direct.js public/assets/traffic-gate/horus-traffic-gate.js > "$RUNNER_TEMP/trace-evidence/compiled-sha256.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: startup-trace-validation
+          path: ${{ runner.temp }}/trace-evidence
+          retention-days: 7
+          if-no-files-found: error
+  publish-review:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c5617d2edce83be6a2333241d32c588df6725628
+      - uses: actions/download-artifact@v8
+        with:
+          name: startup-trace-validation
+          path: validated
+      - name: Publish validated source only to the exact review branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '41da4116fe42553512608be432e70cc1f156541cbdbd63ae2b63a4922417e95d  validated/startup-trace.patch' | sha256sum -c -
+          branch=fix/startup-trace-single-preparation-20260929
+          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = c5617d2edce83be6a2333241d32c588df6725628
+          git apply --check validated/startup-trace.patch
+          git apply validated/startup-trace.patch
+          git add public/assets/hm-loader.js public/assets/hm-gpt-direct.js public/assets/hm-video-direct.js public/assets/traffic-gate/horus-traffic-gate.js scripts/loader-startup-trace.mjs scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-traffic-gate.mjs scripts/transform-loader-video-preparation.mjs tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/hm-startup-trace.test.js tests/Browser/traffic-gate.test.js tests/Browser/gpt-dependencies.playwright.spec.js
+          python - <<'PY'
+          import subprocess
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          expected={'public/assets/hm-loader.js','public/assets/hm-gpt-direct.js','public/assets/hm-video-direct.js','public/assets/traffic-gate/horus-traffic-gate.js','scripts/loader-startup-trace.mjs','scripts/transform-loader-direct-preparation.mjs','scripts/transform-loader-traffic-gate.mjs','scripts/transform-loader-video-preparation.mjs','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/hm-startup-trace.test.js','tests/Browser/traffic-gate.test.js','tests/Browser/gpt-dependencies.playwright.spec.js'}
+          assert paths==expected
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Share early startup preparation and expose bounded local verification/ad traces'
+          git push origin "HEAD:refs/heads/$branch"
