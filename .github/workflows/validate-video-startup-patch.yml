@@ -2,7 +2,7 @@ name: Isolated video startup validation
 on:
   push:
     branches: [prepare/video-startup-20260929]
-    paths: [.github/workflows/validate-video-startup-patch.yml, ops/temporary/startup-patch-*.b64]
+    paths: [.github/workflows/validate-video-startup-patch.yml, ops/temporary/startup-patch-*.b64, ops/temporary/fix-startup-race.py]
 permissions:
   contents: write
 concurrency:
@@ -59,6 +59,7 @@ jobs:
           });
           ''')
           PY
+          python3 ../payload/ops/temporary/fix-startup-race.py
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
