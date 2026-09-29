@@ -17,7 +17,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: d4c9644038b193dc24f00ba46590f69114edb7ff
+          ref: 0b7844afa3ec3af4b602a81ad3e9316971349efa
           path: staging
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -27,7 +27,7 @@ jobs:
         shell: python
         run: |
           import pathlib,base64,gzip,hashlib,os
-          pairs=[('early-cf','d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'),('early-cf-refine','5babc07c60b8df9d997b6c1428f8368a87c387a241fea66b69ab0f69c3c2e91e'),('early-cf-origin','7835cd3e7a6e1f1d9f1536eb71b02450cae18c69ce0e1ea84b2175357861bc26'),('early-cf-ready-only','dbf32faea97b1eb3ba1bd57491b4b39ff3e6c4884fedb23a4d784535aa64b280')]
+          pairs=[('early-cf','d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'),('early-cf-refine','5babc07c60b8df9d997b6c1428f8368a87c387a241fea66b69ab0f69c3c2e91e'),('early-cf-origin','7835cd3e7a6e1f1d9f1536eb71b02450cae18c69ce0e1ea84b2175357861bc26'),('early-cf-ready-only','dbf32faea97b1eb3ba1bd57491b4b39ff3e6c4884fedb23a4d784535aa64b280'),('early-cf-sdk-safety','82de9e664c51e058b36b07875f4bdd328016e7f7f4315cbd35489d49d860b317')]
           for name,digest in pairs:
               encoded=pathlib.Path('staging/diagnostics/'+name+'.patch.gz.base64').read_text().strip()
               if name=='early-cf-refine': encoded=encoded.replace('cf+eYAhUZ','cf+YAhUZ',1)
@@ -48,14 +48,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in early-cf early-cf-refine early-cf-origin early-cf-ready-only; do
+          for name in early-cf early-cf-refine early-cf-origin early-cf-ready-only early-cf-sdk-safety; do
             git apply --check "$RUNNER_TEMP/$name.patch"
             git apply "$RUNNER_TEMP/$name.patch"
           done
           git add -N tests/Browser/early-verification.playwright.spec.js
           git diff --check
           git diff HEAD -- playwright.traffic-gate.config.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html scripts/loader-startup-trace.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/early-verification.playwright.spec.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/traffic-gate.test.js > "$RUNNER_TEMP/early-cf-final.patch"
-          echo "9c076d26d96a8ec7f4047c7aadb1125e3817b653a3425efb4f09cf38d3fa180b  $RUNNER_TEMP/early-cf-final.patch" | sha256sum -c -
+          echo "3998056baf740fc283022c1d2352d2a02feca0bece9ef21bd6f8e2b3fd668cc2  $RUNNER_TEMP/early-cf-final.patch" | sha256sum -c -
           npm run build:loader
           sha256sum public/assets/hm-loader.min.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html > "$RUNNER_TEMP/early-compiled-sha256.txt"
       - name: Run complete Node regressions
@@ -64,6 +64,12 @@ jobs:
         run: |
           set -euo pipefail
           node --test tests/Browser/*.test.js | tee "$RUNNER_TEMP/early-node.log"
+      - name: Preserve the existing SDK-failure and late-CMP behavior
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/traffic-gate-loader.playwright.spec.js --grep 'early verification and parallel Turnstile' --max-failures=2 | tee "$RUNNER_TEMP/early-existing-recovery.log"
       - name: Run early verification browser matrix and controlled comparison
         working-directory: code
         shell: bash
@@ -72,7 +78,7 @@ jobs:
           HM_EARLY_BASELINE_HTML: ${{ runner.temp }}/early-baseline-gate.html
         run: |
           set -euo pipefail
-          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/early-verification.playwright.spec.js --max-failures=4 | tee "$RUNNER_TEMP/early-browser.log"
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/early-verification.playwright.spec.js --max-failures=2 | tee "$RUNNER_TEMP/early-browser.log"
       - name: Run existing full browser suite without weakening assertions
         working-directory: code
         shell: bash
@@ -87,6 +93,7 @@ jobs:
             ${{ runner.temp }}/early-cf-final.patch
             ${{ runner.temp }}/early-compiled-sha256.txt
             ${{ runner.temp }}/early-node.log
+            ${{ runner.temp }}/early-existing-recovery.log
             ${{ runner.temp }}/early-browser.log
             ${{ runner.temp }}/early-full-browser.log
             code/test-results/**/error-context.md
