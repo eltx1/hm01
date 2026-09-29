@@ -81,9 +81,9 @@ jobs:
               };
               $configured = (string) config('horus.video_content_url');
               $report = ['schema_version'=>1, 'release_sha'=>$release, 'runtime_sha256'=>hash_file('sha256','public/assets/hm-video-direct.js'), 'platform_content_configured'=>$configured !== '', 'platform_content_url'=>$safeUrl($configured), 'sites'=>[]];
-              // Only the owner's named public reproduction sites. No other tenant,
+              // Only named public reproduction sites. No unrelated tenant,
               // user, payment, credential, click-history or reporting data is read.
-              $sites = App\Models\Site::withoutGlobalScopes()->whereIn('primary_domain',['lordai.net','secretmagic.space','aleph1.online'])->get(['id','primary_domain','public_key']);
+              $sites = App\Models\Site::withoutGlobalScopes()->whereIn('primary_domain',['lordai.net','secretmagic.space','aleph1.online','natega.bluekl.com'])->get(['id','primary_domain','public_key']);
               foreach ($sites as $site) {
                   $version = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment',App\Enums\ConfigEnvironment::Production->value)->orderByDesc('version')->first();
                   $videos = [];
