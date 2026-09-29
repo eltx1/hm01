@@ -8,62 +8,36 @@ permissions:
 jobs:
   public-delivery:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Read public HTML, configuration, and content bytes without executing ads
+      - name: Read immutable public snapshot, never VAST or tracking
         shell: python
         run: |
-          import urllib.request, urllib.parse, urllib.error, json, pathlib, re, hashlib, base64
+          import urllib.request, urllib.parse, json, pathlib, hashlib, base64
           out=pathlib.Path('video-public-probe'); out.mkdir()
-          ua='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
-          def get(url,name):
-              try:
-                  req=urllib.request.Request(url,headers={'User-Agent':ua,'Accept':'*/*'})
-                  with urllib.request.urlopen(req,timeout=20) as response:
-                      data=response.read(3000000)
-                      print(json.dumps({'url':url,'status':response.status,'type':response.headers.get('Content-Type'),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}))
-                  (out/name).write_bytes(data)
-                  return data.decode('utf8',errors='replace')
-              except urllib.error.HTTPError as e:
-                  print(json.dumps({'url':url,'status':e.code,'cf_mitigated':e.headers.get('cf-mitigated'),'server':e.headers.get('server'),'type':e.headers.get('content-type'),'prefix':e.read(160).decode('utf8',errors='replace')})); return ''
-              except Exception as e:
-                  print(json.dumps({'url':url,'error':str(e)})); return ''
-          keys={'hm_ircll0vkqq54jvt9gz85mrh2'}
-          for domain in ['lordai.net','secretmagic.space','aleph1.online']:
-              html=get('https://'+domain+'/',domain+'.html')
-              keys.update(re.findall(r'hm_[a-z0-9]{20,40}',html))
-          print('DISCOVERED_KEYS',json.dumps(sorted(keys)))
-          media=set()
-          for key in sorted(keys):
-              root='https://cdn.horusmedia.net/configs/'+key+'/'
-              manifest=get(root+'manifest.json',key+'-manifest.json')
-              raw=get(root+'production.json',key+'-production.json')
-              try: config=json.loads(raw)
-              except Exception: continue
+          root='https://91ba8e4b.horus-media-cdn.pages.dev/'
+          path='configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json'
+          try:
+              with urllib.request.urlopen(root+path,timeout=25) as r: data=r.read(3000000)
+              digest=hashlib.sha256(data).hexdigest()
+              print('SNAPSHOT_SHA256',digest)
+              if digest!='676153d88e1abefb4408821a164ef0a1d266e6e6a60077a7afe80de167a45a21': raise ValueError('snapshot mismatch')
+              (out/'production.json').write_bytes(data)
               def walk(node):
                   if isinstance(node,dict):
                       if node.get('data-hm-video-direct')=='1':
-                          details={k:v for k,v in node.items() if k!='data-hm-vast-url'}
-                          tag=base64.b64decode(node.get('data-hm-vast-url','')).decode('utf8',errors='replace')
-                          p=urllib.parse.urlsplit(tag)
-                          details['vast_endpoint']=p.scheme+'://'+p.netloc+p.path
-                          details['vast_parameters']={k:v for k,v in urllib.parse.parse_qs(p.query).items() if k in ['iu','sz','plcmt','vpos','ad_rule','vpa','vpmute']}
-                          print('VIDEO_RECIPE',json.dumps(details))
-                          if node.get('data-hm-video-content-url'): media.add(node['data-hm-video-content-url'])
+                          safe={k:v for k,v in node.items() if k!='data-hm-vast-url'}
+                          p=urllib.parse.urlsplit(base64.b64decode(node.get('data-hm-vast-url','')).decode())
+                          safe['vast_endpoint']=p.scheme+'://'+p.netloc+p.path
+                          safe['vast_parameters']={k:v for k,v in urllib.parse.parse_qs(p.query).items() if k in ['iu','sz','plcmt','vpos','ad_rule','vpa','vpmute']}
+                          print('VIDEO_RECIPE',json.dumps(safe))
                       for v in node.values(): walk(v)
                   elif isinstance(node,list):
                       for v in node: walk(v)
-              walk(config)
-          for i,url in enumerate(sorted(media)):
-              p=urllib.parse.urlsplit(url)
-              if p.scheme!='https': continue
-              try:
-                  req=urllib.request.Request(url,headers={'User-Agent':ua,'Range':'bytes=0-1023'})
-                  with urllib.request.urlopen(req,timeout=20) as r:
-                      data=r.read(1024)
-                      print('MEDIA_RESPONSE',json.dumps({'url':url,'status':r.status,'type':r.headers.get('Content-Type'),'range':r.headers.get('Content-Range'),'length':r.headers.get('Content-Length'),'prefix_hex':data[:24].hex()}))
-              except Exception as e: print('MEDIA_ERROR',json.dumps({'url':url,'error':str(e)}))
-          get('https://cdn.horusmedia.net/delivery-manifest.json','delivery-manifest.json')
+              walk(json.loads(data))
+          except Exception as e:
+              print('SNAPSHOT_READ_ERROR',str(e))
+              (out/'error.txt').write_text(str(e))
       - uses: actions/upload-artifact@v4
         with:
           name: video-public-probe
