@@ -1,0 +1,137 @@
+name: PR219 public artifact verification
+on:
+  push:
+    branches: [diagnostic/pr219-public-artifacts-20260930]
+    paths: [.github/workflows/diagnostic-pr219-public-artifacts.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: diagnostic-pr219-public-artifacts
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      EXPECTED_RELEASE: 9a7bbbddbc7c080d006cfd05662badebe2177ac5
+    steps:
+      - name: Wait for the existing production verification without deploying or mutating anything
+        id: live
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const expected = process.env.EXPECTED_RELEASE;
+            for (let attempt = 0; attempt < 44; attempt++) {
+              const {data} = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner, repo: context.repo.repo,
+                head_sha: expected, event: 'workflow_run', per_page: 30
+              });
+              const run = data.workflow_runs.find(r =>
+                r.path === '.github/workflows/verify-production-live.yml' &&
+                r.name === 'Verify production live' && r.head_branch === 'main' &&
+                r.head_sha === expected && r.head_repository?.id === context.payload.repository.id);
+              if (run?.status === 'completed') {
+                if (run.conclusion !== 'success') throw new Error('Production verification did not succeed; no live claim is made.');
+                core.setOutput('run_id', String(run.id));
+                core.info(`Using successful production verification ${run.id} for ${expected}`);
+                return;
+              }
+              core.info(`Waiting for exact-release production verification (${attempt + 1}/44)`);
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            }
+            throw new Error('Bounded wait expired; exact-release live verification remains unconfirmed.');
+      - name: Download the existing immutable live proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: proof
+          run-id: ${{ steps.live.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Check exact Pages and public aliases using static GETs only
+        env:
+          VERIFY_RUN_ID: ${{ steps.live.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import concurrent.futures, datetime, hashlib, json, os, pathlib, re
+          import urllib.request, urllib.error, urllib.parse
+          proof = {}
+          for line in pathlib.Path('proof/live-proof.env').read_text().splitlines():
+              key, sep, value = line.partition('=')
+              if sep:
+                  if key in proof:
+                      raise SystemExit('Duplicate proof key')
+                  proof[key] = value
+          assert proof.get('schema_version') == '1'
+          assert proof.get('release_sha') == os.environ['EXPECTED_RELEASE']
+          assert proof.get('verify_run_id') == os.environ['VERIFY_RUN_ID']
+          pages = proof.get('pages_deployment_url', '').rstrip('/')
+          assert re.fullmatch(r'https://[a-z0-9]+\.horus-media-cdn\.pages\.dev', pages)
+          loader = '20cf4978f20111c1bf6af5cc9f3876f05d6ccaacce6116d62dd4e301bbd902a2'
+          gate = '3c988113c916ee29ba1579ca081713a386c6417625fa233ca25d0a1fc62e5397'
+          html = '447d39abad836f01ffa3468cdd18e11c1c0d02ad889158bb79dfd3539aea47b1'
+          assert proof.get('lordai_loader_sha256') == loader
+          targets = [
+              ('pages-loader', pages + '/hm-loader.js', loader, True),
+              ('pages-gate-document', pages + '/traffic-gate/?protocol=2', html, True),
+              ('pages-gate-script', pages + '/assets/traffic-gate/horus-traffic-gate.js?v=2', gate, True),
+              ('verify-gate-document', 'https://verify.horusmedia.net/traffic-gate/?protocol=2', html, False),
+              ('verify-gate-script', 'https://verify.horusmedia.net/assets/traffic-gate/horus-traffic-gate.js?v=2', gate, False),
+              ('cdn-loader', 'https://cdn.horusmedia.net/hm-loader.js', loader, False),
+              ('cdn-fingerprinted-loader', 'https://cdn.horusmedia.net/assets/loader/hm-loader.20cf4978f20111c1.min.js', loader, False),
+          ]
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          output = pathlib.Path('evidence')
+          output.mkdir(exist_ok=True)
+          def inspect(target):
+              name, url, expected, mandatory = target
+              row = {'name': name, 'url': url, 'expected_sha256': expected, 'mandatory_exact_pages': mandatory}
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Horus-Static-Artifact-Verification/1.0', 'Accept-Encoding': 'identity'})
+                  with urllib.request.build_opener(NoRedirect).open(req, timeout=20) as response:
+                      body = response.read(2000001)
+                      if len(body) > 2000000:
+                          raise ValueError('Oversized static response')
+                      row.update(status=response.status, bytes=len(body), sha256=hashlib.sha256(body).hexdigest())
+                      row['headers'] = {k: response.headers.get(k) for k in ('Content-Type', 'Cache-Control', 'Age', 'CF-Cache-Status', 'CF-Mitigated') if response.headers.get(k)}
+                      row['match'] = response.status == 200 and row['sha256'] == expected
+                      row['outcome'] = 'exact_match' if row['match'] else 'mismatch'
+                      if row['match']:
+                          (output / (name + '.body')).write_bytes(body)
+              except urllib.error.HTTPError as error:
+                  row.update(status=error.code, match=False, outcome='probe_denied' if error.code == 403 else 'http_error')
+                  row['headers'] = {k: error.headers.get(k) for k in ('Content-Type', 'Cache-Control', 'CF-Mitigated') if error.headers.get(k)}
+              except Exception as error:
+                  row.update(match=False, outcome='transport_error', error_type=type(error).__name__)
+              return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              results = list(pool.map(inspect, targets))
+          report = {
+              'schema': 1, 'release_sha': os.environ['EXPECTED_RELEASE'],
+              'verify_run_id': os.environ['VERIFY_RUN_ID'], 'diagnostic_run_id': os.environ['GITHUB_RUN_ID'],
+              'checked_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'proof': proof, 'results': results,
+              'exact_pages_verified': all(row['match'] for row in results if row['mandatory_exact_pages']),
+              'public_aliases_verified': all(row['match'] for row in results if not row['mandatory_exact_pages']),
+              'limits': 'Static GETs only; no SDK execution, token submission, VAST/GPT auction, impression, WAF mutation or production write. A denied automated probe does not establish blocking of real visitors.'
+          }
+          (output / 'public-artifact-report.json').write_text(json.dumps(report, indent=2))
+          (output / 'live-proof.env').write_bytes(pathlib.Path('proof/live-proof.env').read_bytes())
+          print(json.dumps(report, indent=2))
+          if not report['exact_pages_verified']:
+              raise SystemExit('Exact Pages artifact check failed; inspect the evidence.')
+          if not report['public_aliases_verified']:
+              print('::warning::Some public aliases could not be byte-verified from this runner; do not claim real-visitor verification.')
+          PY
+      - name: Retain read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr219-public-artifact-evidence
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn
