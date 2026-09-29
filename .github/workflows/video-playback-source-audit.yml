@@ -1,0 +1,116 @@
+name: Audit deployed video sources
+
+on:
+  workflow_run:
+    workflows: [Verify production live]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: horus-video-source-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+      VERIFY_RUN_ID: ${{ github.event.workflow_run.id }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - name: Require trusted successful main verification
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const {data: run} = await github.rest.actions.getWorkflowRun({owner:context.repo.owner,repo:context.repo.repo,run_id:Number(process.env.VERIFY_RUN_ID)});
+            if (run.name !== 'Verify production live' || run.path !== '.github/workflows/verify-production-live.yml' || run.conclusion !== 'success' || run.head_branch !== 'main' || run.head_sha !== process.env.EXPECTED_SHA || run.head_repository.id !== context.payload.repository.id || !/^[a-f0-9]{40}$/.test(process.env.EXPECTED_SHA)) throw new Error('Untrusted verification run');
+      - uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/video-live-proof
+          run-id: ${{ env.VERIFY_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check immutable release proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/video-live-proof/live-proof.env"
+          test -s "$proof"
+          grep -Fxq "release_sha=$EXPECTED_SHA" "$proof"
+          grep -Fxq "verify_run_id=$VERIFY_RUN_ID" "$proof"
+      - name: Read selected public video configuration without mutation
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' php" > "$RUNNER_TEMP/video-source-audit.json" <<'PHP'
+          <?php
+          try {
+              $marker = (string) file_get_contents('.horus-release');
+              preg_match('/^release_id=([a-f0-9]{40})$/m', $marker, $match);
+              $release = $match[1] ?? '';
+              if (!hash_equals((string) getenv('HM_EXPECTED_SHA'), $release)) throw new RuntimeException('Release mismatch');
+              require 'vendor/autoload.php';
+              $app = require 'bootstrap/app.php';
+              $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+              $safeUrl = static function ($value) {
+                  $parts = parse_url((string) $value);
+                  if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])) return null;
+                  return 'https://'.$parts['host'].(isset($parts['port']) ? ':'.$parts['port'] : '').($parts['path'] ?? '/');
+              };
+              $configured = (string) config('horus.video_content_url');
+              $report = ['schema_version'=>1, 'release_sha'=>$release, 'runtime_sha256'=>hash_file('sha256','public/assets/hm-video-direct.js'), 'platform_content_configured'=>$configured !== '', 'platform_content_url'=>$safeUrl($configured), 'sites'=>[]];
+              // Only the owner's named public reproduction sites. No other tenant,
+              // user, payment, credential, click-history or reporting data is read.
+              $sites = App\Models\Site::withoutGlobalScopes()->whereIn('primary_domain',['lordai.net','secretmagic.space','aleph1.online'])->get(['id','primary_domain','public_key']);
+              foreach ($sites as $site) {
+                  $version = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment','production')->orderByDesc('version')->first();
+                  $videos = [];
+                  $walk = function ($node) use (&$walk,&$videos,$safeUrl) {
+                      if (!is_array($node)) return;
+                      if (($node['data-hm-video-direct'] ?? '') === '1') {
+                          $item = ['rewarded'=>($node['data-hm-video-rewarded'] ?? '') === '1', 'has_vast'=>!empty($node['data-hm-vast-url']), 'has_content'=>!empty($node['data-hm-video-content-url']), 'content_url'=>$safeUrl($node['data-hm-video-content-url'] ?? ''), 'inline_to_floating'=>($node['data-hm-video-inline-to-floating'] ?? '') === '1', 'width'=>$node['data-hm-video-width'] ?? null, 'height'=>$node['data-hm-video-height'] ?? null];
+                          $videos[hash('sha256',json_encode($item))] = $item;
+                      }
+                      foreach ($node as $child) if (is_array($child)) $walk($child);
+                  };
+                  $walk($version?->payload ?? []);
+                  $report['sites'][] = ['domain'=>$site->primary_domain, 'site_key'=>$site->public_key, 'config_version'=>$version?->version, 'config_status'=>$version?->status?->value, 'videos'=>array_values($videos)];
+              }
+              // URLs are already public serving metadata. Strip all query strings,
+              // fragments and userinfo; never emit VAST tags or request tracking.
+              echo json_encode($report,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR).PHP_EOL;
+          } catch (Throwable $error) {
+              echo json_encode(['schema_version'=>1,'error'=>'Video source audit failed','type'=>get_class($error)]).PHP_EOL;
+              exit(1);
+          }
+          PHP
+          jq -e '.schema_version == 1 and (.sites | type == "array") and (.runtime_sha256 | test("^[a-f0-9]{64}$"))' "$RUNNER_TEMP/video-source-audit.json" >/dev/null
+      - name: Retain sanitized diagnostic evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: video-source-audit-${{ env.EXPECTED_SHA }}
+          path: ${{ runner.temp }}/video-source-audit.json
+          retention-days: 7
+          if-no-files-found: error
