@@ -71,14 +71,14 @@ const gpt = `(() => {
     queue.forEach(fn => fn());
 })();`;
 
-async function open(page, { count = 6, gated = false, blocked = false, expanded = false, creativeSizes = null } = {}) {
+async function open(page, { count = 6, gated = false, blocked = false, expanded = false, creativeSizes = null, gateDocumentReady = null } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
     if (creativeSizes) await page.addInitScript(sizes => { window.testCreativeSizes = sizes; }, creativeSizes);
     if (blocked) await page.addInitScript(site => {
         localStorage.setItem('hm:click-guard:v2:' + site, JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + 3600000 }));
     }, SITE);
-    await page.route('**/*', route => {
+    await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.origin === 'https://publisher.example') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}article{width:calc(100% - 32px);max-width:${expanded ? 1100 : 760}px;margin:auto}.hm-ad{float:left;text-align:left;margin-left:0}.hm-direct-google-gpt{margin-right:0}.slot-position{display:flow-root;max-width:100%}</style><body><article><h1>Publisher article</h1>${codes.slice(0, count).map((code, i) => `<section class="slot-position" style="width:${expanded ? [1000, 700, 350, 240, 600, 320][i] + 'px' : '100%'}"><p>Content at chosen position</p><div class="hm-ad" data-placement="${code}" style="${expanded && i === 2 ? 'padding:0 16px' : ''}"></div></section>`).join('')}</article><script src="${CDN}/hm-loader.js" data-site-key="${SITE}" data-config-base="${CDN}/configs" data-environment="production" data-config-version="1"></script></body></html>` });
         if (url.origin === CDN) {
@@ -88,11 +88,12 @@ async function open(page, { count = 6, gated = false, blocked = false, expanded 
             if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated, expanded).controls }) });
             return route.fulfill({ status: 404, body: '' });
         }
+        if (url.origin === GATE && gateDocumentReady) await gateDocumentReady;
         if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin); });</script>` });
         if (url.href === 'https://securepubads.g.doubleclick.net/tag/js/gpt.js') return route.fulfill({ contentType: 'application/javascript', body: gpt });
         return route.abort('blockedbyclient');
     });
-    await page.goto('https://publisher.example/article');
+    await page.goto('https://publisher.example/article', { waitUntil: gateDocumentReady ? 'domcontentloaded' : 'load' });
     await expect.poll(() => page.evaluate(() => window.HorusMediaLoader?.getConfig?.()?.configVersion)).toBe(1);
     return requests;
 }
@@ -200,16 +201,26 @@ test('Click Guard blocks provider loading for all six units', async ({ page }) =
     expect(await page.evaluate(() => window.testSlots || [])).toHaveLength(0);
 });
 
-for (const outcome of ['PASS', 'DENIED']) {
-    test(`Traffic Gate ${outcome} governs all six units and rejects a forged parent message`, async ({ page }) => {
-        const requests = await open(page, { gated: true });
+for (const outcome of ['PASS', 'DENIED']) for (const holdDocument of [false, true]) {
+    test(`Traffic Gate ${outcome} governs all six units and rejects a forged parent message${holdDocument ? ' with pending gate document' : ''}`, async ({ page }) => {
+        let releaseDocument;
+        const gateDocumentReady = holdDocument ? new Promise(resolve => { releaseDocument = resolve; }) : null;
+        const requests = await open(page, { gated: true, gateDocumentReady });
         await expect(page.locator('iframe[data-hm-traffic-gate]')).toHaveCount(1);
-        const frame = page.frames().find(frame => frame.url().startsWith(GATE));
+        // Resolve the current iframe on every operation, not a possibly absent
+        // Frame captured before navigation commits. Authorization assertions stay unchanged.
+        const frame = page.frameLocator('iframe[data-hm-traffic-gate]').locator('html');
+        if (holdDocument) {
+            // An iframe element may exist while its network document is still pending.
+            expect(page.frames().some(frame => frame.url().startsWith(GATE))).toBe(false);
+            expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);
+            releaseDocument();
+        }
         await expect.poll(() => frame.evaluate(() => typeof window.reply)).toBe('function');
         await page.evaluate(() => window.postMessage({ type: 'HORUS_TRAFFIC_GATE_PASS', protocolVersion: 1, pageNonce: 'forged' }, '*'));
         await page.waitForTimeout(200);
         expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);
-        await frame.evaluate(outcome => window.reply('HORUS_TRAFFIC_GATE_' + outcome), outcome);
+        await frame.evaluate((_html, outcome) => window.reply('HORUS_TRAFFIC_GATE_' + outcome), outcome);
         if (outcome === 'PASS') {
             await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
         } else {
