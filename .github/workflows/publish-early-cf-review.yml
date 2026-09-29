@@ -21,8 +21,8 @@ jobs:
             const repo={owner:context.repo.owner,repo:context.repo.repo};
             let passed=false;
             for(let attempt=0;attempt<48;attempt++) {
-              const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36637685496});
-              if(run.head_sha!=='6e4f38ca5e3d1cca6fac3c0acda2bd645317d9da'||run.path!=='.github/workflows/early-cf-validation.yml'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
+              const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36638431829});
+              if(run.head_sha!=='bea4841125d620ce7c0b0e79c2f651bacea35d90'||run.path!=='.github/workflows/early-cf-validation.yml'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
               if(run.status==='completed') {
                 if(run.conclusion!=='success')throw new Error('Validation failed; no review update permitted');
                 const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id});
@@ -39,14 +39,14 @@ jobs:
         with:
           name: early-cf-validation
           path: validated
-          run-id: 36637685496
+          run-id: 36638431829
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Fast-forward the empty review branch with only validated source
         shell: bash
         run: |
           set -euo pipefail
           patch=validated/_temp/early-cf-final.patch
-          echo "804834528aff55d199dded6eb8df4e7bc4dac27915a87798e1e312660df4ba8c  $patch" | sha256sum -c -
+          echo "9c076d26d96a8ec7f4047c7aadb1125e3817b653a3425efb4f09cf38d3fa180b  $patch" | sha256sum -c -
           branch=fix/early-verification-preparation-20260930
           base=3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$base"
@@ -62,5 +62,5 @@ jobs:
           git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Warm isolated verification documents alongside configuration without early authorization'
+          git commit -m 'Warm only ready verification documents alongside configuration without early authorization'
           git push origin "HEAD:refs/heads/$branch"
