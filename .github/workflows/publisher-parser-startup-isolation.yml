@@ -1,0 +1,67 @@
+name: Publisher parser startup isolation
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/publisher-parser-startup-isolation.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 79f6a679699e1ca3612575b34e894636ac75b96f
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: e6a723a1b98d5032fdb252995c2e719f2a77b553
+          path: staging
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: publisher-startup-static
+          run-id: 36595466968
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: snapshot
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Use the real permanent async embed and instrument DOM/load boundaries
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('probe/diagnostics/publisher-startup-probe.mjs');p.parent.mkdir(parents=True)
+          s=Path('staging/diagnostics/publisher-startup-probe.mjs').read_text()
+          s=s.replace("['video-held','gpt-adapter-held','normal']", "['video-held','gpt-adapter-held','page-load-held','normal']")
+          s=s.replace("await page.exposeFunction('probeMark',mark);", "await page.exposeFunction('probeMark',mark);\n await page.addInitScript({content:'('+initializeTestMedia.toString()+')({}); delete window.__HM_DISABLE_AUTOBOOT__;'});\n page.on('domcontentloaded',()=>mark('dom-ready','event'));\n page.on('load',()=>mark('window-load','event'));")
+          s=s.replace('window.__HM_DISABLE_AUTOBOOT__=true;', 'window.__HM_DISABLE_AUTOBOOT__=false;')
+          s=s.replace('type="application/json" src="https://cdn.horusmedia.net/hm-loader.js"', 'async src="https://cdn.horusmedia.net/hm-loader.js"')
+          s=s.replace('</main><script id="loader"', '</main><img src="https://creative.example/block-load"><script id="loader"')
+          s=s.replace("if(u.origin==='https://creative.example')", "if(u.href==='https://creative.example/block-load'&&scenario==='page-load-held')await hold;\n  if(u.origin==='https://creative.example')")
+          s=s.replace(' await page.evaluate(initializeTestMedia,{});','')
+          s=s.replace(" await page.addScriptTag({content:files.get('hm-loader.js')});",'')
+          s=s.replace(" await page.evaluate(()=>{window.HorusMediaLoader.boot({script:document.getElementById('loader')});});",'')
+          p.write_text(s)
+      - name: Set up isolated browser
+        run: |
+          mkdir -p probe/tests/Browser/helpers
+          cp app/tests/Browser/helpers/startup-preparation-fixture.js probe/tests/Browser/helpers/
+          printf '{"type":"module","private":true}' > probe/package.json
+          npm install --prefix probe --ignore-scripts --no-package-lock playwright@1.62.1
+          cd probe
+          npx playwright install --with-deps chromium
+      - name: Record timing without transmitting auctions or impressions
+        run: |
+          cd probe
+          SNAPSHOT_DIR="$GITHUB_WORKSPACE/snapshot" APP_DIR="$GITHUB_WORKSPACE/app" node diagnostics/publisher-startup-probe.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: publisher-parser-startup-isolation
+          path: probe/publisher-startup-probe.json
+          retention-days: 3
+          if-no-files-found: error
