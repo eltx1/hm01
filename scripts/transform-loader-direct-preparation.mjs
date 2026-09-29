@@ -34,7 +34,8 @@ const HELPER = String.raw`
                 prepared[kind] = true;
                 addPreparationHint('preload', approvedUrl, 'script');
                 if (kind === 'gpt' && !(window.googletag && (window.googletag.apiReady || window.googletag.pubadsReady))) {
-                    addPreparationHint('preload', 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', 'script');
+                    // The GPT adapter consumes an anonymous-CORS script, not a classic no-CORS preload.
+                    addPreparationHint('preload', 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', 'script', 'anonymous');
                 }
                 if (kind === 'video' && !(window.google && window.google.ima && window.google.ima.AdsLoader)) {
                     addPreparationHint('preload', 'https://imasdk.googleapis.com/js/sdkloader/ima3.js', 'script');

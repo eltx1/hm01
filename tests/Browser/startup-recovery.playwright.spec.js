@@ -54,7 +54,9 @@ async function open(page, options = {}) {
         const headers = { 'Cache-Control': 'public, max-age=3600' };
         if (url.origin === 'https://reader.example') return route.fulfill({ contentType: 'text/html', body: publisherPage(options) });
         if (url.origin === 'https://securepubads.g.doubleclick.net' && url.pathname === '/tag/js/gpt.js') {
-            return route.fulfill({ headers, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });
+            // Match the public SDK response, including its anonymous CORS support.
+            counts.gpt = (counts.gpt || 0) + 1;
+            return route.fulfill({ headers: { ...headers, 'Access-Control-Allow-Origin': '*' }, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });
         }
         if (url.origin === 'https://cdn.horusmedia.net') {
             if (url.pathname.includes('/runtime/gpt/')) return route.fulfill({ headers, contentType: 'application/javascript', body: gptRuntime });
@@ -245,5 +247,25 @@ for (const mode of ['composed', 'minified']) {
         await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
         await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
         await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
+    });
+}
+
+
+for (const mode of ['composed', 'minified']) {
+    test(`${mode}: Direct GPT reuses its anonymous preload after PASS without a second SDK fetch`, async ({ page }) => {
+        const run = await open(page, { parallel: true, delay: 'verification', minified: mode === 'minified' });
+        await expect.poll(() => run.counts.verifies).toBe(1);
+        await expect.poll(() => run.counts.gpt).toBe(1);
+        const hint = page.locator('link[rel="preload"][href="https://securepubads.g.doubleclick.net/tag/js/gpt.js"]');
+        await expect(hint).toHaveCount(1);
+        await expect(hint).toHaveAttribute('crossorigin', 'anonymous');
+        expect(await page.evaluate(() => window.googletag?.apiReady || false)).toBe(false);
+        expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(0);
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        run.release();
+        await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+        await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+        expect(run.counts.gpt).toBe(1);
+        await expect(page.locator('script[data-hm-gpt-library]')).toHaveAttribute('crossorigin', 'anonymous');
     });
 }

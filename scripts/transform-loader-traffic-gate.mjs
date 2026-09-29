@@ -69,10 +69,10 @@ const trafficGateRuntime = String.raw`
             if (url.protocol !== 'https:' || url.username || url.password || url.port
                 || ['securepubads.g.doubleclick.net', 'pagead2.googlesyndication.com'].indexOf(url.hostname) === -1
                 || url.pathname !== '/tag/js/gpt.js') return;
-            // Match the classic script's existing fetch mode. A preload downloads
+            // Match the selected GPT script's fetch mode. A preload downloads
             // bytes without running GPT or any publisher-owned googletag queue.
             // Slot definition, script execution and requests stay behind PASS/CMP.
-            addPreparationHint('preload', url.href, 'script');
+            addPreparationHint('preload', url.href, 'script', gptScriptCrossOrigin(url.href));
         } catch (error) {}
     }
 

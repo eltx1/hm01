@@ -723,7 +723,18 @@
         return window.pbjs;
     }
 
-    function loadExternalScript(selector, marker, url) {
+    function gptScriptCrossOrigin(url) {
+        try {
+            var parsed = new URL(String(url));
+            // Standard GPT uses anonymous CORS in both independent adapters.
+            // Preserve the classic mode of manual limited-ads/custom SDK URLs.
+            return parsed.protocol === 'https:' && !parsed.username && !parsed.password
+                && !parsed.port && parsed.hostname === 'securepubads.g.doubleclick.net'
+                && parsed.pathname === '/tag/js/gpt.js' ? 'anonymous' : null;
+        } catch (error) { return null; }
+    }
+
+    function loadExternalScript(selector, marker, url, crossOrigin) {
         return new Promise(function (resolve, reject) {
             try {
                 if (new URL(url, window.location.href).hostname === 'app.horusmedia.net') {
@@ -748,6 +759,7 @@
             tag.async = true;
             tag.src = url;
             tag.setAttribute(marker, '1');
+            if (crossOrigin) tag.setAttribute('crossorigin', crossOrigin);
             tag.onload = function () {
                 tag.setAttribute('data-hm-loaded', '1');
                 resolve();
@@ -763,10 +775,12 @@
         if (googletag.apiReady || googletag.pubadsReady) return Promise.resolve(googletag);
         if (state.gptPromise) return state.gptPromise;
 
+        var gptUrl = config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
         state.gptPromise = loadExternalScript(
             'script[data-hm-gpt="1"]',
             'data-hm-gpt',
-            config.gpt && config.gpt.url || 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'
+            gptUrl,
+            gptScriptCrossOrigin(gptUrl)
         ).then(function () { return ensureGoogletagQueue(); });
         return state.gptPromise;
     }

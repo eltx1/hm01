@@ -248,7 +248,7 @@ for (const { serverPass, requiresConsent, consentBlocked, earlyLibraryFailure, r
             }
             if (url.href === selected.gpt.url) {
                 counts.library++;
-                return route.fulfill({ contentType: 'application/javascript', headers: { 'Cache-Control': 'public, max-age=3600' }, body: gptStub() });
+                return route.fulfill({ contentType: 'application/javascript', headers: { 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' }, body: gptStub() });
             }
             unexpected.push(url.href);
             return route.abort('blockedbyclient');
@@ -354,7 +354,7 @@ test('BALANCED late PASS after initial recovery starts GAM + Prebid GAM bridge o
             if (url.pathname.includes('/cdn-cgi/challenge-platform/')) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>challenge</title>' });
         }
         if (url.origin === 'https://securepubads.g.doubleclick.net' && url.pathname === '/tag/js/gpt.js') {
-            return route.fulfill({ status: 200, contentType: 'application/javascript', body: gptStub() });
+            return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' }, contentType: 'application/javascript', body: gptStub() });
         }
         return route.abort('blockedbyclient');
     });
@@ -420,7 +420,7 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
             if (url.pathname.includes('/cdn-cgi/challenge-platform/')) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>challenge</title>' });
         }
         if (url.origin === 'https://securepubads.g.doubleclick.net' && url.pathname === '/tag/js/gpt.js') {
-            return route.fulfill({ status: 200, contentType: 'application/javascript', body: gptStub() });
+            return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' }, contentType: 'application/javascript', body: gptStub() });
         }
         return route.abort('blockedbyclient');
     });
