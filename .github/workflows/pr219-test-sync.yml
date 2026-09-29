@@ -1,0 +1,102 @@
+name: PR219 pending-frame regression
+on:
+  push:
+    branches: [diagnostic/early-cf-20260930]
+    paths: [.github/workflows/pr219-test-sync.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 6cc1ba1d8a89c1acffdbfba74ab5421dc39a1cee
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install isolated browser test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+      - name: Add deterministic pending-document fixture without fixing original synchronization
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tests/Browser/responsive-bundle.playwright.spec.js')
+          s=p.read_text()
+          pairs=[
+          ("creativeSizes = null } = {})", "creativeSizes = null, gateDocumentReady = null } = {})"),
+          ("await page.route('**/*', route => {", "await page.route('**/*', async route => {"),
+          ("        if (url.origin === GATE) return route.fulfill(", "        if (url.origin === GATE && gateDocumentReady) await gateDocumentReady;\n        if (url.origin === GATE) return route.fulfill("),
+          ("await page.goto('https://publisher.example/article');", "await page.goto('https://publisher.example/article', { waitUntil: gateDocumentReady ? 'domcontentloaded' : 'load' });"),
+          ("for (const outcome of ['PASS', 'DENIED']) {", "for (const outcome of ['PASS', 'DENIED']) for (const holdDocument of [false, true]) {"),
+          ("Traffic Gate ${outcome} governs all six units and rejects a forged parent message`", "Traffic Gate ${outcome} governs all six units and rejects a forged parent message${holdDocument ? ' with pending gate document' : ''}`"),
+          ("        const requests = await open(page, { gated: true });", "        let releaseDocument;\n        const gateDocumentReady = holdDocument ? new Promise(resolve => { releaseDocument = resolve; }) : null;\n        const requests = await open(page, { gated: true, gateDocumentReady });"),
+          ("        await expect.poll(() => frame.evaluate(() => typeof window.reply)).toBe('function');", "        if (holdDocument) {\n            // An iframe element may exist while its network document is still pending.\n            expect(page.frames().some(frame => frame.url().startsWith(GATE))).toBe(false);\n            expect(requests.filter(url => /runtime\\/gpt|doubleclick/.test(url))).toHaveLength(0);\n            releaseDocument();\n        }\n        await expect.poll(() => frame.evaluate(() => typeof window.reply)).toBe('function');")
+          ]
+          for old,new in pairs:
+              assert s.count(old)==1, old
+              s=s.replace(old,new)
+          p.write_text(s)
+      - name: Require reproduction of the exact original undefined-frame failure
+        shell: bash
+        run: |
+          set -uo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/responsive-bundle.playwright.spec.js --project=chromium-mobile --grep 'PASS.*pending gate document' --max-failures=1 > "$RUNNER_TEMP/original-race.log" 2>&1
+          result=$?
+          test "$result" -ne 0
+          grep -F "Cannot read properties of undefined (reading 'evaluate')" "$RUNNER_TEMP/original-race.log"
+      - name: Fix test synchronization only and verify exact reviewed file
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib
+          p=Path('tests/Browser/responsive-bundle.playwright.spec.js')
+          s=p.read_text()
+          pairs=[
+          ("        const frame = page.frames().find(frame => frame.url().startsWith(GATE));", "        // Resolve the current iframe on every operation, not a possibly absent\n        // Frame captured before navigation commits. Authorization assertions stay unchanged.\n        const frame = page.frameLocator('iframe[data-hm-traffic-gate]').locator('html');"),
+          ("await frame.evaluate(outcome => window.reply('HORUS_TRAFFIC_GATE_' + outcome), outcome);", "await frame.evaluate((_html, outcome) => window.reply('HORUS_TRAFFIC_GATE_' + outcome), outcome);")
+          ]
+          for old,new in pairs:
+              assert s.count(old)==1, old
+              s=s.replace(old,new)
+          assert hashlib.sha256(s.encode()).hexdigest()=='b983dc969d1a32362455e4c86d9e49143d4e23fa35e7c39ef0bbf2e71b204fc9'
+          p.write_text(s)
+      - name: Repeat unchanged security assertions with immediate and held documents on all browsers
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/responsive-bundle.playwright.spec.js --grep 'Traffic Gate.*governs all six' --repeat-each=3 | tee "$RUNNER_TEMP/fixed-race.log"
+          git diff --check
+          sha256sum public/assets/hm-loader.min.js public/assets/traffic-gate/horus-traffic-gate.js > "$RUNNER_TEMP/runtime-hashes.txt"
+          echo '20cf4978f20111c1bf6af5cc9f3876f05d6ccaacce6116d62dd4e301bbd902a2  public/assets/hm-loader.min.js' | sha256sum -c -
+      - name: Publish validated test tree to isolated result branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/fix/early-verification-preparation-20260930 | cut -f1)" = 6cc1ba1d8a89c1acffdbfba74ab5421dc39a1cee
+          git add tests/Browser/responsive-bundle.playwright.spec.js
+          test "$(git diff --cached --name-only)" = tests/Browser/responsive-bundle.playwright.spec.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Test pending verification document navigation without capturing absent frames'
+          git push origin HEAD:refs/heads/diagnostic/pr219-tested-frame-sync
+          git show -s --format='commit=%H%ntree=%T' HEAD | tee "$RUNNER_TEMP/tested-tree.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr219-frame-sync-proof
+          path: |
+            ${{ runner.temp }}/original-race.log
+            ${{ runner.temp }}/fixed-race.log
+            ${{ runner.temp }}/runtime-hashes.txt
+            ${{ runner.temp }}/tested-tree.txt
+            tests/Browser/responsive-bundle.playwright.spec.js
+          retention-days: 7
+          if-no-files-found: error
