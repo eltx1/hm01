@@ -169,12 +169,17 @@ function createHarness(config, {
     readyState = 'complete',
     autoboot = false,
     deferFirstConfig = false,
+    deferFirstControls = false,
+    deferGateDocument = false,
+    warmFrameFailure = false,
 } = {}) {
     const metrics = {
         fetches: [],
         configFetches: 0,
         globalFetches: 0,
         gateFrames: 0,
+        warmFrames: 0,
+        warmFrameRemovals: 0,
         gateFrameRemovals: 0,
         hellos: [],
         gptScripts: 0,
@@ -283,7 +288,16 @@ function createHarness(config, {
             onload: null,
             onerror: null,
             innerHTML: '',
-            setAttribute(name, value) { attributes[name] = String(value); },
+            setAttribute(name, value) {
+                // A parked document becomes the SAME active frame, not a new
+                // append/navigation. Account for that DOM attribute transition.
+                if (name === 'data-hm-traffic-gate' && String(value) === '1'
+                    && attributes[name] !== '1' && this.parentNode) {
+                    metrics.gateFrames += 1;
+                    gateFrame = this;
+                }
+                attributes[name] = String(value);
+            },
             getAttribute(name) { return attributes[name] ?? null; },
             addEventListener(name, callback) { if (name === 'load') this.onload = callback; if (name === 'error') this.onerror = callback; },
             removeEventListener() {},
@@ -318,19 +332,28 @@ function createHarness(config, {
     const originalRootAppend = root.appendChild.bind(root);
     root.appendChild = (node) => {
         originalRootAppend(node);
-        if (node.getAttribute?.('data-hm-traffic-gate') === '1') {
-            metrics.gateFrames += 1;
-            gateFrame = node;
-            queueMicrotask(() => {
-                if (iframeFailure) node.onerror?.(new Error('blocked'));
-                else node.onload?.();
-            });
+        const parked = node.getAttribute?.('data-hm-traffic-gate-document') === '1';
+        const active = node.getAttribute?.('data-hm-traffic-gate') === '1';
+        if (active || parked) {
+            if (active) { metrics.gateFrames += 1; gateFrame = node; }
+            if (parked) { metrics.warmFrames += 1; metrics.warmFrame = node; }
+            const finish = () => {
+                if (iframeFailure || (parked && warmFrameFailure)) node.onerror?.(new Error('blocked'));
+                else {
+                    if (parked) sandbox.dispatchEvent({type:'message', origin:GATE_ORIGIN, source:node.contentWindow,
+                        data:{type:'HORUS_TRAFFIC_GATE_DOCUMENT_READY', protocolVersion:2}});
+                    node.onload?.();
+                }
+            };
+            if (deferGateDocument && parked) metrics.releaseGateDocument = finish;
+            else queueMicrotask(finish);
         }
         return node;
     };
     const originalRootRemove = root.removeChild.bind(root);
     root.removeChild = (node) => {
         if (node.getAttribute?.('data-hm-traffic-gate') === '1') metrics.gateFrameRemovals += 1;
+        else if (node.getAttribute?.('data-hm-traffic-gate-document') === '1') metrics.warmFrameRemovals += 1;
         return originalRootRemove(node);
     };
 
@@ -448,6 +471,9 @@ function createHarness(config, {
             metrics.fetches.push(String(url));
             if (String(url).includes('/_global/control.json')) {
                 metrics.globalFetches += 1;
+                if (deferFirstControls && metrics.globalFetches === 1) {
+                    return new Promise(resolve => { metrics.releaseFirstControls = () => resolve({ ok: true, json: async () => ({ controls: structuredClone(globalControls) }) }); });
+                }
                 return { ok: true, json: async () => ({ schemaVersion: 2, controls: structuredClone(globalControls) }) };
             }
             metrics.configFetches += 1;
@@ -1026,7 +1052,7 @@ test('nonce comes from browser crypto, HELLO is bounded, iframe is non-visible, 
     assert.deepEqual(Object.keys(hello.payload).sort(), ['pageNonce', 'protocolVersion', 'sitePublicKey', 'type']);
     assert.match(hello.payload.pageNonce, /^[a-f0-9]{48}$/);
     assert.equal(hello.targetOrigin, GATE_ORIGIN);
-    assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/?protocol=2`);
+    assert.equal(runtime.gateFrame.src, `${GATE_ORIGIN}/traffic-gate/?protocol=2#prepare`);
     assert.equal(runtime.gateFrame.style.values.left, '-10000px');
     assert.equal(runtime.gateFrame.style.values['pointer-events'], 'none');
 
@@ -1221,4 +1247,106 @@ test('explicit verification rejection is distinct from a technical timeout in th
     assert.equal(names.includes('CF pass'), false);
     assert.equal(names.includes('Horus start'), false);
     h.sandbox.HorusMediaLoader._resetForTests();
+});
+
+
+test('verification document loads alongside pending config without HELLO, nonce, challenge or ads', async () => {
+    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, deferFirstConfig: true, timerScale: 1 });
+    await runtime.flush();
+    assert.equal(runtime.metrics.warmFrames, 1);
+    assert.equal(runtime.metrics.gateFrames, 0);
+    assert.equal(runtime.metrics.hellos.length, 0);
+    assertNoMonetization(runtime.metrics);
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().started, false);
+    const frame = runtime.metrics.warmFrame;
+    // Even a forged verified message from the parked frame cannot release ads.
+    runtime.sandbox.dispatchEvent({ type: 'message', origin: GATE_ORIGIN, source: frame.contentWindow,
+        data: {type: 'HORUS_TRAFFIC_GATE_PASS', protocolVersion: 2, serverVerified: true, pageNonce: 'fake-nonce'} });
+    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'BOOTING');
+    runtime.reevaluateLoader();
+    assert.equal(runtime.metrics.warmFrames, 1);
+    runtime.metrics.releaseFirstConfig();
+    await runtime.flush();
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assert.equal(runtime.gateFrame, frame);
+    assert.equal(runtime.metrics.hellos.length, 1);
+    assertNoMonetization(runtime.metrics);
+    runtime.domReady();
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+    assert.equal(runtime.metrics.configFetches, 1);
+});
+
+test('slow global controls cannot be bypassed by a warmed frame or expose HELLO early', async () => {
+    const runtime = createHarness(baseConfig(), {readyState:'loading', autoboot:true, deferFirstControls:true, timerScale:1});
+    await runtime.flush();
+    assert.equal(runtime.metrics.warmFrames, 1);
+    assert.equal(runtime.metrics.hellos.length, 0);
+    runtime.setGlobalControls({...openControls(), adServingDisabled:true});
+    runtime.metrics.releaseFirstControls();
+    await runtime.flush();
+    assert.equal(runtime.metrics.warmFrameRemovals, 1);
+    assert.equal(runtime.metrics.hellos.length, 0);
+    runtime.domReady();
+    await runtime.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(runtime.metrics);
+});
+
+test('a warm document without readiness never delays the ordinary verification transport', async () => {
+    const runtime = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await runtime.flush();
+    assert.equal(runtime.metrics.warmFrames, 1);
+    assert.equal(runtime.metrics.gateFrames, 1);
+    assert.notEqual(runtime.gateFrame, runtime.metrics.warmFrame);
+    assert.equal(runtime.metrics.warmFrameRemovals, 1);
+    assert.equal(runtime.metrics.hellos.length, 1, 'normal handshake starts without waiting for the silent warm frame');
+    assertNoMonetization(runtime.metrics);
+    runtime.metrics.releaseGateDocument();
+    assert.equal(runtime.metrics.hellos.length, 1, 'late discarded readiness cannot send another HELLO');
+    runtime.sendGate('PASS');
+    await boot;
+    assert.equal(runtime.metrics.gamRequests, 1);
+});
+
+test('failed or stale document warmup falls back to the ordinary bounded verification', async () => {
+    for (const mode of ['failed','stale','removed','changed-source']) {
+        const runtime = createHarness(baseConfig(), {readyState:'loading', autoboot:true,
+            deferFirstConfig:true, warmFrameFailure:mode==='failed', timerScale:1});
+        await runtime.flush();
+        if (mode==='stale') runtime.elapse(6000);
+        if (mode==='removed') runtime.metrics.warmFrame.parentNode.removeChild(runtime.metrics.warmFrame);
+        if (mode==='changed-source') runtime.metrics.warmFrame.src='https://untrusted.example/';
+        runtime.metrics.releaseFirstConfig();
+        runtime.domReady();
+        const boot = runtime.sandbox.HorusMediaLoader.boot();
+        await runtime.flush();
+        assert.equal(runtime.metrics.gateFrames, 1, mode);
+        assert.notEqual(runtime.gateFrame, runtime.metrics.warmFrame, mode);
+        assert.equal(runtime.metrics.hellos.length, 1, mode);
+        assertNoMonetization(runtime.metrics);
+        runtime.sendGate('PASS');
+        await boot;
+        assert.equal(runtime.metrics.gamRequests, 1, mode);
+        assert.equal(runtime.metrics.warmFrames, 1, mode);
+    }
+});
+
+
+test('a late error from discarded preparation cannot reset the ordinary active deadline', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, warmFrameFailure:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const startedAt = gate.startedAt, deadline = gate.maxTimer;
+    h.metrics.releaseGateDocument(); await h.flush();
+    assert.equal(h.metrics.warmFrames, 1);
+    assert.equal(h.metrics.gateFrames, 1);
+    assert.equal(h.metrics.hellos.length, 1);
+    assert.equal(gate.startedAt, startedAt);
+    assert.equal(gate.maxTimer, deadline);
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gamRequests, 1);
 });
