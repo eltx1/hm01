@@ -7,11 +7,11 @@ permissions:
   contents: write
 concurrency:
   group: isolated-video-startup-validation
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -36,6 +36,29 @@ jobs:
           cd source
           git apply --check ../proof/source.patch
           git apply ../proof/source.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/Browser/helpers/video-startup-cases.mjs')
+          s=p.read_text(); old="privacy: { mode: 'AUTO', requireConsentBeforeAds: true, cmp: { timeoutMs: 100, actionOnTimeout: options.privacyBlocked"
+          assert old in s
+          s=s.replace(old,"privacy: { mode: options.privacyBlocked ? 'STRICT' : 'AUTO', requireConsentBeforeAds: true, cmp: { timeoutMs: 100, actionOnTimeout: options.privacyBlocked")
+          p.write_text(s)
+          Path('tests/Browser/video-startup.playwright.spec.js').write_text('''import { test } from '@playwright/test';
+          import { startupCases } from './helpers/video-startup-cases.mjs';
+          for (const entry of startupCases) test(entry.name, async ({ page }) => {
+              page.on('pageerror', error => console.error('FIXTURE PAGE ERROR', error.message));
+              try { await entry.run(page); }
+              catch (error) {
+                  console.error('STARTUP DIAGNOSTIC', await page.evaluate(() => {
+                      const s = window.__HORUS_MEDIA_LOADER_STATE__ || {};
+                      return { metrics: window.startupMetrics, gate: s.trafficGate && { status:s.trafficGate.status, reason:s.trafficGate.reason }, privacy:s.privacyDecision,
+                          booting:!!s.booting, config:!!s.config, html:document.querySelector('[data-placement="video"]')?.outerHTML, scrollY:scrollY };
+                  }).catch(() => 'page unavailable'));
+                  throw error;
+              }
+          });
+          ''')
+          PY
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -56,7 +79,7 @@ jobs:
         working-directory: source
         run: |
           set -eo pipefail
-          npx playwright test --config=playwright.traffic-gate.config.js video-startup.playwright.spec.js 2>&1 | tee ../proof/startup-browsers.log
+          npx playwright test --config=playwright.traffic-gate.config.js video-startup.playwright.spec.js --max-failures=1 2>&1 | tee ../proof/startup-browsers.log
       - name: Preserve validated source tree without preparation files
         working-directory: source
         run: |
