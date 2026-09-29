@@ -45,7 +45,7 @@ async function open(page, options = {}) {
     config.directDemand.placements.display = { enabled: true, candidates: [{ network: 'TEST_GPT', tag: {
         executionMode: 'STRUCTURED', scripts: [{ url: 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.0123456789abcdef.js' }],
         container: { element: 'div', id: 'display-runtime', attributes: { 'data-hm-gpt-direct': '1',
-            'data-hm-gpt-ad-unit-path': '/123/display', 'data-hm-gpt-sizes': '[[300,250]]' } },
+            'data-hm-gpt-ad-unit-path': '/123/display', 'data-hm-gpt-inner-id': 'display-provider', 'data-hm-gpt-sizes': '[[300,250]]' } },
         initialization: { type: 'NONE' },
         render: { timeoutMs: 20000, successSelector: '#display-runtime[data-hm-gpt-runtime-state="rendered"]' },
     } }] };
