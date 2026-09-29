@@ -1,0 +1,59 @@
+name: Validate WebKit independent startup
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/parallel-webkit-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: b15ea613fcefeb1ae08da8a3535ef6ee87484199
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Correct only the offline SDK response and collect failure diagnostics
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tests/Browser/startup-recovery.playwright.spec.js')
+          s=p.read_text()
+          old="return route.fulfill({ headers, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });"
+          new="// Match the public GPT SDK's anonymous-CORS script response.\n            return route.fulfill({ headers: { ...headers, 'Access-Control-Allow-Origin': '*' }, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new))
+          import subprocess,os
+          Path(os.environ['RUNNER_TEMP'],'fixture-cors.patch').write_bytes(subprocess.check_output(['git','diff','--',str(p)]))
+          s=p.read_text().replace('async function open(page, options = {}) {', '''async function open(page, options = {}) {
+              page.on('pageerror', error => console.log('FIXTURE_PAGE_ERROR', error.message));
+              page.on('requestfailed', request => console.log('FIXTURE_FAILED_RESOURCE', request.url(), request.failure()?.errorText));
+              page.on('console', message => { if (message.type() === 'error') console.log('FIXTURE_CONSOLE_ERROR', message.text()); });''')
+          p.write_text(s)
+      - name: Install test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps webkit
+          npm run build:loader
+      - name: Validate composed and minified startup on WebKit desktop and mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/startup-recovery.playwright.spec.js --project=webkit-desktop --project=webkit-mobile --reporter=line | tee "$RUNNER_TEMP/webkit-startup.log"
+      - name: Preserve diagnostics and the exact minimal correction
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: webkit-independent-startup-validation
+          path: |
+            ${{ runner.temp }}/fixture-cors.patch
+            ${{ runner.temp }}/webkit-startup.log
+            test-results/**/error-context.md
+          retention-days: 7
+          if-no-files-found: error
