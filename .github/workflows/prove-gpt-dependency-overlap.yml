@@ -1,0 +1,97 @@
+name: Prove GPT dependency overlap
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/prove-gpt-dependency-overlap.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: b7ccb2416ccb3eda88d042b6f48f371168200732
+          fetch-depth: 6
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 0d98537d61701d87c60eb0cb484f4ee6d0302ca7
+          path: staging
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: publisher-startup-static
+          run-id: 36595466968
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: snapshot
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install isolated browser dependencies
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          mkdir -p "$GITHUB_WORKSPACE/evidence" diagnostics
+          cp "$GITHUB_WORKSPACE/staging/diagnostics/publisher-startup-probe.mjs" diagnostics/
+      - name: Reproduce the exact old dependency wait
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/transform-loader-direct-preparation.mjs "$RUNNER_TEMP/repaired-transform.mjs"
+          git show 79f6a679699e1ca3612575b34e894636ac75b96f:scripts/transform-loader-direct-preparation.mjs > scripts/transform-loader-direct-preparation.mjs
+          npm run build:loader
+          cp public/assets/hm-loader.min.js "$GITHUB_WORKSPACE/evidence/baseline-loader.js"
+          set +e
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/gpt-dependencies.playwright.spec.js --project=chromium-desktop --grep 'GPT internal dependency starts' --reporter=json > "$GITHUB_WORKSPACE/evidence/baseline-tests.json"
+          status=$?
+          set -e
+          test "$status" = 1
+          python - <<'PY'
+          import json,os,pathlib,re
+          report=json.loads(pathlib.Path(os.environ['GITHUB_WORKSPACE'],'evidence/baseline-tests.json').read_text())
+          assert report['stats']['unexpected']==2 and not report.get('errors'), report['stats']
+          errors=[]
+          def walk(suite):
+              for spec in suite.get('specs',[]):
+                  for test in spec['tests']:
+                      for result in test['results']:
+                          errors.extend(result.get('errors',[]))
+              for child in suite.get('suites',[]): walk(child)
+          for suite in report['suites']: walk(suite)
+          assert len(errors)==2
+          for error in errors:
+              message=re.sub(r'\x1b\[[0-9;]*m','',error['message'])
+              assert 'Expected: 1' in message and 'Received: 0' in message, message
+          PY
+          SNAPSHOT_DIR="$GITHUB_WORKSPACE/snapshot" APP_DIR="$PWD" node diagnostics/publisher-startup-probe.mjs > "$GITHUB_WORKSPACE/evidence/baseline-real-gpt.log"
+          mv publisher-startup-probe.json "$GITHUB_WORKSPACE/evidence/baseline-real-gpt.json"
+      - name: Verify repaired source and both composed and minified browser paths
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/repaired-transform.mjs" scripts/transform-loader-direct-preparation.mjs
+          git diff --exit-code -- scripts/transform-loader-direct-preparation.mjs
+          npm run build:loader
+          node --test tests/Browser/*.test.js > "$GITHUB_WORKSPACE/evidence/node-tests.log"
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/gpt-dependencies.playwright.spec.js --reporter=json > "$GITHUB_WORKSPACE/evidence/repaired-tests.json"
+          cp public/assets/hm-loader.min.js "$GITHUB_WORKSPACE/evidence/repaired-loader.js"
+          cp public/assets/hm-loader.min.js "$GITHUB_WORKSPACE/snapshot/hm-loader.js"
+          SNAPSHOT_DIR="$GITHUB_WORKSPACE/snapshot" APP_DIR="$PWD" node diagnostics/publisher-startup-probe.mjs > "$GITHUB_WORKSPACE/evidence/repaired-real-gpt.log"
+          mv publisher-startup-probe.json "$GITHUB_WORKSPACE/evidence/repaired-real-gpt.json"
+          git diff 79f6a679699e1ca3612575b34e894636ac75b96f HEAD -- scripts/transform-loader-direct-preparation.mjs tests/Browser/hm-loader-direct-dependencies.test.js tests/Browser/gpt-dependencies.playwright.spec.js playwright.traffic-gate.config.js > "$GITHUB_WORKSPACE/evidence/reviewed.patch"
+      - name: Preserve inspectable evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpt-dependency-overlap-evidence
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error
