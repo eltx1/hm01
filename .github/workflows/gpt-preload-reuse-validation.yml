@@ -1,0 +1,105 @@
+name: Validate GPT preload reuse and video recovery
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/gpt-preload-reuse-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: b15ea613fcefeb1ae08da8a3535ef6ee87484199
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 28bf502fb81c890fc4e8bf31512bdceaf01bd816
+          path: staging
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Verify and apply only the reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,gzip,hashlib,pathlib,os
+          data=gzip.decompress(base64.b64decode(pathlib.Path('staging/diagnostics/gpt-preload-reuse.patch.gz.base64').read_text().strip(),validate=True))
+          assert hashlib.sha256(data).hexdigest()=='4ce4b028be8cb3bea2c303c8fc727b08fa433c9b406a064366d9b5a773d58df0'
+          pathlib.Path(os.environ['RUNNER_TEMP'],'gpt-preload-reuse.patch').write_bytes(data)
+          PY
+          cd code
+          git apply --check "$RUNNER_TEMP/gpt-preload-reuse.patch"
+          git apply "$RUNNER_TEMP/gpt-preload-reuse.patch"
+          git diff --check
+      - name: Install isolated browser build dependencies
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+      - name: Execute complete Node and real-browser regression suites
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/Browser/*.test.js | tee "$RUNNER_TEMP/preload-node.log"
+          npx playwright test --config=playwright.traffic-gate.config.js | tee "$RUNNER_TEMP/preload-browsers.log"
+      - name: Save inspectable source and validation results
+        if: always()
+        shell: bash
+        run: |
+          cd code
+          tar --exclude=.git --exclude=node_modules --exclude=test-results --exclude=playwright-report -czf "$RUNNER_TEMP/preload-reviewed-source.tar.gz" .
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gpt-preload-reuse-validation
+          path: |
+            ${{ runner.temp }}/gpt-preload-reuse.patch
+            ${{ runner.temp }}/preload-node.log
+            ${{ runner.temp }}/preload-browsers.log
+            ${{ runner.temp }}/preload-reviewed-source.tar.gz
+            code/test-results/**/error-context.md
+          retention-days: 7
+          if-no-files-found: error
+  publish-review:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: b15ea613fcefeb1ae08da8a3535ef6ee87484199
+      - uses: actions/download-artifact@v8
+        with:
+          name: gpt-preload-reuse-validation
+          path: validated
+      - name: Fast-forward only the existing review branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '4ce4b028be8cb3bea2c303c8fc727b08fa433c9b406a064366d9b5a773d58df0  validated/gpt-preload-reuse.patch' | sha256sum -c -
+          branch=fix/video-playback-recovery-review-20260929
+          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = b15ea613fcefeb1ae08da8a3535ef6ee87484199
+          git apply --check validated/gpt-preload-reuse.patch
+          git apply validated/gpt-preload-reuse.patch
+          git add public/assets/hm-loader.js scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/hm-loader-direct-preparation.test.js tests/Browser/startup-recovery.playwright.spec.js tests/Browser/traffic-gate-loader.playwright.spec.js
+          python - <<'PY'
+          import subprocess
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert paths=={'public/assets/hm-loader.js','scripts/transform-loader-direct-preparation.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/hm-loader-direct-preparation.test.js','tests/Browser/startup-recovery.playwright.spec.js','tests/Browser/traffic-gate-loader.playwright.spec.js'}
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Match GPT preload credentials across adapters and verify one SDK fetch after PASS'
+          git push origin "HEAD:refs/heads/$branch"
