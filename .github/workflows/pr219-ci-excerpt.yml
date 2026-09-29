@@ -1,0 +1,37 @@
+name: PR219 bounded CI failure evidence
+on:
+  push:
+    branches: [diagnostic/early-cf-20260930]
+    paths: [.github/workflows/pr219-ci-excerpt.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs');
+            const repo={owner:context.repo.owner,repo:context.repo.repo};
+            const {data:job}=await github.rest.actions.getJobForWorkflowRun({...repo,job_id:109650924397});
+            if(job.run_id!==36640358039)throw new Error('Unexpected job');
+            const response=await github.rest.actions.downloadJobLogsForWorkflowRun({...repo,job_id:job.id});
+            const text=typeof response.data==='string'?response.data:Buffer.from(response.data).toString('utf8');
+            const lines=text.replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++)if(/(?:[1-9][0-9]* failed|\bFAIL\b|not ok |AssertionError|Error:|##\[error\])/.test(lines[i])){
+              for(let j=Math.max(0,i-8);j<Math.min(lines.length,i+24);j++)selected.add(j);
+            }
+            const excerpt=[...selected].sort((a,b)=>a-b).map(i=>`${i+1}: ${lines[i]}`).join('\n').slice(-24000);
+            fs.writeFileSync('ci-failure.txt',excerpt||lines.slice(-160).join('\n'));
+            console.log('Failed steps: '+JSON.stringify(job.steps.filter(x=>x.conclusion==='failure').map(x=>x.name)));
+            console.log(excerpt||lines.slice(-160).join('\n'));
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pr219-ci-failure-excerpt
+          path: ci-failure.txt
+          retention-days: 7
+          if-no-files-found: error
