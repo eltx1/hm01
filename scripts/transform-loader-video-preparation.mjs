@@ -35,7 +35,11 @@ const RUNTIME = String.raw`
         }
         var prep = state.inlineVideoPreparation;
         if (!config && prep) return;
-        if (prep && prep.config && prep.config !== config) { stopInlineVideoPreparation(); prep = null; }
+        // Refetch and release handoff can parse a new object for the SAME
+        // snapshot. Retain only layout history in that case; a real revision
+        // invalidates it even if the caller mutates the original object.
+        var snapshot = config ? JSON.stringify(config) : null;
+        if (prep && prep.snapshot && prep.snapshot !== snapshot) { stopInlineVideoPreparation(); prep = null; }
         var eligible = config ? Object.create(null) : null;
         (config && config.placements || []).forEach(function (placement) {
             var settings = placementFormatSettings(placement);
@@ -47,8 +51,8 @@ const RUNTIME = String.raw`
         });
         if (config && !Object.keys(eligible).length) { stopInlineVideoPreparation(); return; }
         if (!document.querySelectorAll) return;
-        if (prep) { prep.config = config; prep.eligible = eligible; prep.discover(); return; }
-        prep = state.inlineVideoPreparation = { config: config, eligible: eligible, records: [], frame: null, stopped: false, discovering: false };
+        if (prep) { prep.config = config; prep.snapshot = snapshot; prep.eligible = eligible; prep.discover(); return; }
+        prep = state.inlineVideoPreparation = { config: config, snapshot: snapshot, eligible: eligible, records: [], frame: null, stopped: false, discovering: false };
         prep.stop = function () { if (state.inlineVideoPreparation === prep) stopInlineVideoPreparation(); };
         function geometry(node) {
             if (!node || !node.getBoundingClientRect || node.isConnected === false || document.visibilityState === 'hidden') return null;

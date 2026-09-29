@@ -10,6 +10,7 @@ import { securityConfig, publisherPage, initializeTestMedia, imaFixture } from '
 const source = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
 const composed = [applyTrafficGateTransform, applyShadowClickGuardTransform, applyPlacementPresetTransform,
     applyDirectPreparationTransform, applyVideoPreparationTransform].reduce((s, f) => f(s), source);
+const minified = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const gateHtml = await readFile(new URL('../../public/traffic-gate/index.html', import.meta.url), 'utf8');
 const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-traffic-gate.js', import.meta.url), 'utf8');
@@ -51,14 +52,14 @@ async function open(page, options = {}) {
     await page.goto('https://reader.example/article');
     await page.evaluate(initializeTestMedia, options);
     if (options.noObserver) await page.evaluate(() => { window.IntersectionObserver = undefined; });
-    await page.addScriptTag({ content: composed });
+    await page.addScriptTag({ content: options.minified ? minified : composed });
     await page.evaluate(() => { window.HorusMediaLoader.boot({ script: document.getElementById('loader') }); });
     return { counts, release };
 }
 
-for (const delay of ['config', 'verification', 'runtime', 'sdk']) {
-    test(`scroll before ${delay} readiness starts one floating ad without returning to the slot`, async ({ page }) => {
-        const run = await open(page, { delay, transformed: true });
+for (const mode of ['composed', 'minified']) for (const delay of ['config', 'verification', 'runtime', 'sdk']) {
+    test(`${mode}: scroll before ${delay} readiness starts one floating ad without returning to the slot`, async ({ page }) => {
+        const run = await open(page, { delay, transformed: true, minified: mode === 'minified' });
         const surface = page.locator('[data-placement="video"]');
         await expect.poll(() => surface.evaluate(el => !!el.__hmInlineVideoHistory?.wasInlineVisible || !!el.querySelector('[data-hm-video-direct]')?.__hmVideoPlayer?.wasInlineVisible)).toBe(true);
         await page.evaluate(() => window.scrollTo(0, 1800));
@@ -144,3 +145,22 @@ test('a denied page cleans up the empty Quick embed without running any ad libra
     expect(await page.evaluate(() => window.videoMetrics.runtimeExecutions)).toBe(0);
     expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
 });
+
+for (const mode of ['composed', 'minified']) {
+    test(`${mode}: identical config refetch during verification retains early scroll history`, async ({ page }) => {
+        const run = await open(page, { delay: 'verification', transformed: true, minified: mode === 'minified' });
+        const surface = page.locator('[data-placement="video"]');
+        await expect.poll(() => run.counts.verifies).toBe(1);
+        await expect.poll(() => surface.evaluate(el => el.__hmInlineVideoHistory?.wasInlineVisible)).toBe(true);
+        await page.evaluate(() => { window.startupSnapshot = window.__HORUS_MEDIA_LOADER_STATE__.config; window.scrollTo(0, 1800); });
+        await expect.poll(() => surface.evaluate(el => el.__hmInlineVideoHistory?.scrolled)).toBe(true);
+        await page.evaluate(() => { window.HorusMediaLoader.boot({ script: document.getElementById('loader'), force: true }); });
+        await expect.poll(() => page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.config !== window.startupSnapshot)).toBe(true);
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        run.release();
+        await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
+        expect(run.counts.verifies).toBe(1);
+    });
+}

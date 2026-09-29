@@ -136,14 +136,14 @@ for (const change of ['disconnected', 'dismissed', 'renamed', 'config-replaced',
         if (change === 'disconnected') h.node.isConnected = false;
         if (change === 'dismissed') h.node.setAttribute('data-hm-placement-dismissed', '1');
         if (change === 'renamed') h.node.setAttribute('data-placement', 'different');
-        if (change === 'config-replaced') h.context.prep(structuredClone(c), false);
+        if (change === 'config-replaced') h.context.prep({ ...structuredClone(c), configVersion: 2 }, false);
         if (change === 'stopped') h.context.stopPrep();
         assert.equal(oldHistory.take(), null);
     });
 }
 test('expired observer cleanup cannot tear down a newer configuration observer', () => {
     const h = harness(), c = config(); h.context.prep(c, false); const expire = h.timers[0];
-    h.context.prep(structuredClone(c), false); const newHistory = h.node.__hmInlineVideoHistory;
+    h.context.prep({ ...structuredClone(c), configVersion: 2 }, false); const newHistory = h.node.__hmInlineVideoHistory;
     expire(); assert.equal(h.node.__hmInlineVideoHistory, newHistory);
 });
 test('the two production transforms are idempotent and require real boundaries', () => {
@@ -178,4 +178,24 @@ test('handoff never removes a stronger style installed by the live player', () =
     h.node.__hmInlineVideoHistory.take();
     assert.equal(h.node.style.getPropertyPriority('aspect-ratio'), 'important');
     assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '16 / 9');
+});
+
+// Config GETs parse fresh objects even when the server snapshot is unchanged.
+// Geometry history must survive this, without carrying any PASS or ad permission.
+test('identical config refetch preserves observed inline history after a scroll', () => {
+    const h = harness(), c = config();
+    h.context.prep(c, false); const history = h.node.__hmInlineVideoHistory;
+    h.scroll(1800);
+    h.context.prep(structuredClone(c), false);
+    assert.equal(h.node.__hmInlineVideoHistory, history);
+    assert.deepEqual(JSON.parse(JSON.stringify(history.take())), { wasInlineVisible: true, scrolled: true });
+    assert.equal(h.scripts.length, 0);
+});
+
+test('in-place config revision invalidates old geometry history', () => {
+    const h = harness(), c = config(); h.context.prep(c, false);
+    const history = h.node.__hmInlineVideoHistory; h.scroll(1800);
+    c.configVersion = 2; h.context.prep(c, false);
+    assert.equal(history.take(), null);
+    assert.equal(h.node.__hmInlineVideoHistory.take().wasInlineVisible, false);
 });
