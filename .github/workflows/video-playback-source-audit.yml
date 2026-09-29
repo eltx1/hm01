@@ -85,7 +85,7 @@ jobs:
               // user, payment, credential, click-history or reporting data is read.
               $sites = App\Models\Site::withoutGlobalScopes()->whereIn('primary_domain',['lordai.net','secretmagic.space','aleph1.online'])->get(['id','primary_domain','public_key']);
               foreach ($sites as $site) {
-                  $version = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment','production')->orderByDesc('version')->first();
+                  $version = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment',App\Enums\ConfigEnvironment::Production->value)->orderByDesc('version')->first();
                   $videos = [];
                   $walk = function ($node) use (&$walk,&$videos,$safeUrl) {
                       if (!is_array($node)) return;
