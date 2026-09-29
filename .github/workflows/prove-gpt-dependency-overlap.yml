@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: b7ccb2416ccb3eda88d042b6f48f371168200732
+          ref: 5cd933f0d2f51b9d47b6196765de84fda3262b34
           fetch-depth: 6
           path: code
           persist-credentials: false
@@ -81,7 +81,7 @@ jobs:
           git diff --exit-code -- scripts/transform-loader-direct-preparation.mjs
           npm run build:loader
           node --test tests/Browser/*.test.js > "$GITHUB_WORKSPACE/evidence/node-tests.log"
-          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/gpt-dependencies.playwright.spec.js --reporter=json > "$GITHUB_WORKSPACE/evidence/repaired-tests.json"
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/gpt-dependencies.playwright.spec.js --max-failures=3 --reporter=json > "$GITHUB_WORKSPACE/evidence/repaired-tests.json"
           cp public/assets/hm-loader.min.js "$GITHUB_WORKSPACE/evidence/repaired-loader.js"
           cp public/assets/hm-loader.min.js "$GITHUB_WORKSPACE/snapshot/hm-loader.js"
           SNAPSHOT_DIR="$GITHUB_WORKSPACE/snapshot" APP_DIR="$PWD" node diagnostics/publisher-startup-probe.mjs > "$GITHUB_WORKSPACE/evidence/repaired-real-gpt.log"
