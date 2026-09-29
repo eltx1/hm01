@@ -77,13 +77,128 @@ const trafficGateRuntime = String.raw`
         } catch (error) {}
     }
 
+    // Warm only the fixed first-party verification document. A parked frame
+    // receives NO HELLO, nonce or site key, so it cannot render a challenge,
+    // verify a token or authorize any engine. Its existing HELLO/config checks
+    // still own verification after site/global policy is known.
+    function createTrafficGateFrame(origin) {
+        var iframe = document.createElement('iframe');
+        iframe.src = origin + '/traffic-gate/?protocol=2';
+        iframe.title = 'Horus client traffic gate';
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.setAttribute('tabindex', '-1');
+        iframe.setAttribute('loading', 'eager');
+        if (iframe.style && iframe.style.setProperty) {
+            iframe.style.setProperty('position', 'fixed');
+            iframe.style.setProperty('width', '1px');
+            iframe.style.setProperty('height', '1px');
+            iframe.style.setProperty('left', '-10000px');
+            iframe.style.setProperty('top', '-10000px');
+            iframe.style.setProperty('border', '0');
+            iframe.style.setProperty('opacity', '0');
+            iframe.style.setProperty('pointer-events', 'none');
+        }
+        return iframe;
+    }
+
+    function clearTrafficGateDocumentListener(preparation) {
+        if (!preparation) return;
+        window.clearTimeout(preparation.timer);
+        if (preparation.listener && window.removeEventListener) window.removeEventListener('message', preparation.listener, false);
+        preparation.listener = null;
+    }
+
+    function discardTrafficGateDocument() {
+        var preparation = state.trafficGateDocumentPreparation;
+        state.trafficGateDocumentPreparation = null;
+        if (!preparation) return;
+        clearTrafficGateDocumentListener(preparation);
+        var iframe = preparation.iframe;
+        iframe.onload = iframe.onerror = null;
+        try { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); } catch (error) {}
+    }
+
+    function prepareTrafficGateDocument(script, siteKey, force) {
+        if (force) { discardTrafficGateDocument(); return; }
+        if (state.trafficGateDocumentAttempted || state.config || trafficGateRuntimeState().started
+            || window.__HM_RELEASE_HANDOFF_FAILED__ || window.__HM_RELEASE_DELEGATED__
+            || !/^[A-Za-z0-9_-]{3,64}$/.test(String(siteKey || ''))
+            || environmentName(script) !== 'production') return;
+        try {
+            var page = new URL(window.location.href);
+            if (page.protocol !== 'https:' || page.port || page.username || page.password) return;
+            var parent = document.body || document.documentElement;
+            if (!parent || !parent.appendChild) return;
+            state.trafficGateDocumentAttempted = true;
+            var preparation = { iframe: createTrafficGateFrame('https://verify.horusmedia.net'),
+                script: script, siteKey: siteKey, startedAt: Date.now(), loaded: false, ready: false, timer: null, listener: null };
+            state.trafficGateDocumentPreparation = preparation;
+            // This fragment changes no HTTP resource or permission. The gate
+            // replies with a constant script-readiness signal, never a result.
+            preparation.iframe.src += '#prepare';
+            preparation.listener = function (event) {
+                if (event.origin !== 'https://verify.horusmedia.net' || event.source !== preparation.iframe.contentWindow
+                    || !event.data || event.data.type !== 'HORUS_TRAFFIC_GATE_DOCUMENT_READY'
+                    || event.data.protocolVersion !== 2) return;
+                preparation.ready = true;
+                if (window.removeEventListener) window.removeEventListener('message', preparation.listener, false);
+                preparation.listener = null;
+            };
+            if (window.addEventListener) window.addEventListener('message', preparation.listener, false);
+            preparation.iframe.setAttribute('data-hm-traffic-gate-document', '1');
+            preparation.iframe.onload = function () {
+                if (state.trafficGateDocumentPreparation !== preparation) return;
+                preparation.loaded = true;
+                startupTrace('CF prepared');
+            };
+            preparation.iframe.onerror = function () {
+                if (state.trafficGateDocumentPreparation === preparation) discardTrafficGateDocument();
+            };
+            // This bounds unused speculative work only. No verification deadline
+            // begins, expires or gets extended by warming the document.
+            preparation.timer = window.setTimeout(function () {
+                if (state.trafficGateDocumentPreparation === preparation) discardTrafficGateDocument();
+            }, EARLY_PREPARATION_MAX_AGE_MS);
+            startupTrace('CF prepare');
+            parent.appendChild(preparation.iframe);
+        } catch (error) { discardTrafficGateDocument(); }
+    }
+
+    function takeTrafficGateDocument(config) {
+        var preparation = state.trafficGateDocumentPreparation;
+        if (!preparation) return null;
+        if (preparation.siteKey !== config.siteKey || preparation.script !== findScript()
+            || Date.now() - preparation.startedAt > EARLY_PREPARATION_MAX_AGE_MS
+            || !preparation.iframe.parentNode
+            || preparation.iframe.src !== 'https://verify.horusmedia.net/traffic-gate/?protocol=2#prepare'
+            || !preparation.ready) {
+            // Optional preparation must NEVER become a new wait. If the gate
+            // script is not already known ready, start the ordinary transport
+            // now, including engines which emit no event for a failed iframe.
+            startupTrace('CF cold');
+            discardTrafficGateDocument();
+            return null;
+        }
+        state.trafficGateDocumentPreparation = null;
+        clearTrafficGateDocumentListener(preparation);
+        return preparation;
+    }
+
     function fetchBootPreparation(script, siteKey, force) {
+        prepareTrafficGateDocument(script, siteKey, force);
         var attempt = state.configTraceAttempt = Number(state.configTraceAttempt || 0) + 1;
         startupTrace('CFG start', { attempt: attempt });
         return Promise.all([traceStartupWait(fetchGlobalControl(script, force), 'controls', 'CFG ready', attempt), traceStartupWait(fetchConfig(script, siteKey, force), 'config', 'CFG ready', attempt)]).then(function (prepared) {
             var config = prepared[1];
             config.controls = mergeControls(config.controls || {}, prepared[0] || {});
+            var gate = trafficGateSettings(config);
+            if (!hostAllowed(currentHostname(), config.allowedHostnames) || config.status !== 'active'
+                || config.immediatePause || servingDisabled(config) || !gate.enabled || !gate.valid
+                || effectiveControls(config).trafficGateDisabled) discardTrafficGateDocument();
             return config;
+        }, function (error) {
+            discardTrafficGateDocument();
+            throw error;
         });
     }
 
@@ -463,6 +578,7 @@ const trafficGateRuntime = String.raw`
         gate.settings = settings;
 
         if (controls.adServingDisabled || controls.trafficGateDisabled || !settings.enabled) {
+            discardTrafficGateDocument();
             trafficGateSetState(TRAFFIC_GATE_STATES.disabled, controls.trafficGateDisabled ? 'EMERGENCY_DISABLED' : 'NOT_REQUIRED');
             trafficGateCleanup();
             settleTrafficGateDecision();
@@ -495,23 +611,10 @@ const trafficGateRuntime = String.raw`
         }
 
         var iframe;
+        var preparation = takeTrafficGateDocument(config);
         try {
-            iframe = document.createElement('iframe');
-            iframe.src = settings.origin + TRAFFIC_GATE_PATH + '?protocol=2';
-            iframe.title = 'Horus client traffic gate';
-            iframe.setAttribute('aria-hidden', 'true');
-            iframe.setAttribute('tabindex', '-1');
+            iframe = preparation ? preparation.iframe : createTrafficGateFrame(settings.origin);
             iframe.setAttribute('data-hm-traffic-gate', '1');
-            if (iframe.style && iframe.style.setProperty) {
-                iframe.style.setProperty('position', 'fixed');
-                iframe.style.setProperty('width', '1px');
-                iframe.style.setProperty('height', '1px');
-                iframe.style.setProperty('left', '-10000px');
-                iframe.style.setProperty('top', '-10000px');
-                iframe.style.setProperty('border', '0');
-                iframe.style.setProperty('opacity', '0');
-                iframe.style.setProperty('pointer-events', 'none');
-            }
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED', true);
             return decision;
@@ -520,9 +623,11 @@ const trafficGateRuntime = String.raw`
         gate.iframe = iframe;
         gate.messageListener = trafficGateMessageListener;
         if (window.addEventListener) window.addEventListener('message', gate.messageListener, false);
+        var helloSent = false;
         iframe.onload = function () {
             var current = trafficGateRuntimeState();
-            if (!current.iframe || current.iframe !== iframe || !iframe.contentWindow) return;
+            if (current.iframe !== iframe || !iframe.contentWindow || helloSent) return;
+            helloSent = true;
             try {
                 iframe.contentWindow.postMessage({
                     type: 'HORUS_TRAFFIC_GATE_HELLO',
@@ -535,16 +640,24 @@ const trafficGateRuntime = String.raw`
             }
         };
         iframe.onerror = function () {
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
+            if (trafficGateRuntimeState().iframe === iframe) trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
         };
 
         trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
         gate.initialTimer = window.setTimeout(trafficGateOnInitialWait, settings.initialWaitMs);
         trafficGateEnsureMaxTimer();
         try {
-            var parent = document.body || document.documentElement;
-            if (!parent || !parent.appendChild) throw new Error('No frame parent');
-            parent.appendChild(iframe);
+            if (preparation) {
+                // Attach the normal, nonce-bound listener before HELLO. Never
+                // reappend a warmed iframe: moving it reloads its document.
+                // The source-bound ping proves the existing message listener
+                // is installed; do not wait for iframe load or its preloads.
+                iframe.onload();
+            } else {
+                var parent = document.body || document.documentElement;
+                if (!parent || !parent.appendChild) throw new Error('No frame parent');
+                parent.appendChild(iframe);
+            }
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED', true);
         }
@@ -556,6 +669,8 @@ const trafficGateRuntime = String.raw`
     }
 
     function resetTrafficGateRuntimeForTests() {
+        discardTrafficGateDocument();
+        state.trafficGateDocumentAttempted = false;
         trafficGateCleanup();
         state.trafficGate = freshTrafficGateRuntime();
     }

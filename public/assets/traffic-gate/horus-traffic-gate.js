@@ -453,4 +453,13 @@
 
     setState(STATES.booting);
     window.addEventListener('message', onParentMessage, false);
+    // A readiness ping for a speculative first-party document. It contains no
+    // nonce, site key, token, URL or verification result; the parent must still
+    // send the ordinary bound HELLO after its configuration is authorized.
+    if (window.location.origin === GATE_ORIGIN && window.location.hash === '#prepare') {
+        try {
+            const preparationOrigin = parsedHttpsOrigin(new URL(document.referrer).origin);
+            if (preparationOrigin) window.parent.postMessage({ type: 'HORUS_TRAFFIC_GATE_DOCUMENT_READY', protocolVersion: PROTOCOL_VERSION }, preparationOrigin.origin);
+        } catch { /* Warming is optional; normal verification remains authoritative. */ }
+    }
 })();

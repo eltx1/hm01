@@ -41,6 +41,8 @@ function createHarness({
     deferConfig = false,
     deferLibrary = false,
     libraryError = false,
+    documentPreparation = false,
+    hideReferrer = false,
 } = {}) {
     const messages = [];
     const verificationCalls = [];
@@ -82,6 +84,7 @@ function createHarness({
     };
 
     const document = {
+        referrer: hideReferrer ? '' : parentOrigin + '/',
         documentElement: { dataset: {} },
         head: {
             appendChild(script) {
@@ -146,7 +149,7 @@ function createHarness({
     });
     context.window = {
         crypto: { randomUUID: () => 'd4b420a9-217b-413b-bf1d-8bf0a1825a7d' },
-        location: { origin: GATE_ORIGIN },
+        location: { origin: GATE_ORIGIN, hash: documentPreparation ? '#prepare' : '' },
         parent,
         turnstile: undefined,
         addEventListener(type, callback) {
@@ -382,4 +385,28 @@ test('two transient failures terminate without an unbounded request loop', async
     await harness.runTimer(1500);
     assert.equal(harness.verificationCalls.length, 2);
     assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_ERROR');
+});
+
+
+test('parked document readiness sends no secret and does not start a challenge or verify', async () => {
+    const h = createHarness({documentPreparation:true});
+    assert.equal(h.messages.length, 1);
+    assert.equal(h.messages[0].payload.type, 'HORUS_TRAFFIC_GATE_DOCUMENT_READY');
+    assert.equal(h.messages[0].targetOrigin, 'https://publisher.example');
+    assert.deepEqual(Object.keys(h.messages[0].payload).sort(), ['protocolVersion','type']);
+    assert.equal(h.scriptRequests.length, 0);
+    assert.equal(h.renderCount, 0);
+    assert.equal(h.verificationCalls.length, 0);
+    await h.hello();
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+});
+
+
+test('missing preparation referrer sends no wildcard message and preserves normal HELLO', async () => {
+    const h = createHarness({documentPreparation:true, hideReferrer:true});
+    assert.equal(h.messages.length, 0);
+    assert.equal(h.renderCount, 0);
+    assert.equal(h.verificationCalls.length, 0);
+    await h.hello();
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
 });
