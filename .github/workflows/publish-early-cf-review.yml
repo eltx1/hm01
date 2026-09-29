@@ -1,0 +1,66 @@
+name: Publish validated early verification review
+on:
+  push:
+    branches: [diagnostic/early-cf-20260930]
+    paths: [.github/workflows/publish-early-cf-review.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Require the exact completed successful validation
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo={owner:context.repo.owner,repo:context.repo.repo};
+            let passed=false;
+            for(let attempt=0;attempt<48;attempt++) {
+              const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36637685496});
+              if(run.head_sha!=='6e4f38ca5e3d1cca6fac3c0acda2bd645317d9da'||run.path!=='.github/workflows/early-cf-validation.yml'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
+              if(run.status==='completed') {
+                if(run.conclusion!=='success')throw new Error('Validation failed; no review update permitted');
+                const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id});
+                if(jobs.jobs.length!==1||jobs.jobs[0].conclusion!=='success')throw new Error('Unexpected validation jobs');
+                passed=true;break;
+              }
+              await new Promise(r=>setTimeout(r,15000));
+            }
+            if(!passed)throw new Error('Validation is not complete; no review update permitted');
+      - uses: actions/checkout@v6
+        with:
+          ref: 3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
+      - uses: actions/download-artifact@v8
+        with:
+          name: early-cf-validation
+          path: validated
+          run-id: 36637685496
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fast-forward the empty review branch with only validated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch=validated/_temp/early-cf-final.patch
+          echo "804834528aff55d199dded6eb8df4e7bc4dac27915a87798e1e312660df4ba8c  $patch" | sha256sum -c -
+          branch=fix/early-verification-preparation-20260930
+          base=3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$base"
+          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = "$base"
+          git apply --check "$patch"
+          git apply "$patch"
+          git add playwright.traffic-gate.config.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html scripts/loader-startup-trace.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/early-verification.playwright.spec.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/traffic-gate.test.js
+          python - <<'PY'
+          import subprocess
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert paths=={'playwright.traffic-gate.config.js','public/assets/traffic-gate/horus-traffic-gate.js','public/traffic-gate/index.html','scripts/loader-startup-trace.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/early-verification.playwright.spec.js','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/traffic-gate.test.js'}
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Warm isolated verification documents alongside configuration without early authorization'
+          git push origin "HEAD:refs/heads/$branch"
