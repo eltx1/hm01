@@ -1,0 +1,22 @@
+name: Early verification source snapshot
+on:
+  push:
+    branches: [diagnostic/early-cf-20260930]
+    paths: [.github/workflows/early-cf-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
+          persist-credentials: false
+      - run: git archive --format=tar.gz HEAD > "$RUNNER_TEMP/source.tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: early-cf-base-source
+          path: ${{ runner.temp }}/source.tar.gz
+          retention-days: 3
