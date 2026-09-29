@@ -1,0 +1,81 @@
+name: Validate early verification dependencies
+on:
+  push:
+    branches: [diagnostic/early-cf-20260930]
+    paths: [.github/workflows/early-cf-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: b9dd74b953e8fdb8293925b63dda024d7b0427fc
+          path: staging
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Verify candidate bytes
+        shell: python
+        run: |
+          import pathlib,base64,gzip,hashlib,os
+          patch=gzip.decompress(base64.b64decode(pathlib.Path('staging/diagnostics/early-cf.patch.gz.base64').read_text().strip(),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'
+          pathlib.Path(os.environ['RUNNER_TEMP'],'early-cf.patch').write_bytes(patch)
+      - name: Prepare browser dependencies and preserve actual baseline build
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+          cp public/assets/hm-loader.min.js "$RUNNER_TEMP/early-baseline.js"
+          cp public/traffic-gate/index.html "$RUNNER_TEMP/early-baseline-gate.html"
+      - name: Apply reviewed changes and build candidate
+        working-directory: code
+        run: |
+          git apply --check "$RUNNER_TEMP/early-cf.patch"
+          git apply "$RUNNER_TEMP/early-cf.patch"
+          git diff --check
+          npm run build:loader
+      - name: Run complete Node regressions
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/Browser/*.test.js | tee "$RUNNER_TEMP/early-node.log"
+      - name: Run early verification browser matrix and controlled comparison
+        working-directory: code
+        shell: bash
+        env:
+          HM_EARLY_BASELINE: ${{ runner.temp }}/early-baseline.js
+          HM_EARLY_BASELINE_HTML: ${{ runner.temp }}/early-baseline-gate.html
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/early-verification.playwright.spec.js --max-failures=4 | tee "$RUNNER_TEMP/early-browser.log"
+      - name: Run existing full browser suite without weakening assertions
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js | tee "$RUNNER_TEMP/early-full-browser.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: early-cf-validation
+          path: |
+            ${{ runner.temp }}/early-cf.patch
+            ${{ runner.temp }}/early-node.log
+            ${{ runner.temp }}/early-browser.log
+            ${{ runner.temp }}/early-full-browser.log
+            code/test-results/**/error-context.md
+          retention-days: 7
+          if-no-files-found: error
