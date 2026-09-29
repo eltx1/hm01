@@ -1,0 +1,74 @@
+name: Ad serving control-plane read-only
+on:
+  push:
+    branches: [diagnostics/ad-serving-incident-20260929]
+    paths: [.github/workflows/ad-serving-controlplane-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'horus-media-cdn' }}
+    steps:
+      - name: GET-only Cloudflare and authoritative published assets
+        run: |
+          mkdir -p incident-control
+          python3 - <<'PY'
+          import urllib.request, urllib.error, urllib.parse, json, os, pathlib, hashlib, re
+          out=pathlib.Path('incident-control'); report=[]
+          def api(path):
+            token=os.environ.get('CF_TOKEN','')
+            if not token: return {'success':False,'errors':[{'message':'credential unavailable'}]}
+            req=urllib.request.Request('https://api.cloudflare.com/client/v4/'+path,headers={'Authorization':'Bearer '+token},method='GET')
+            try:
+              with urllib.request.urlopen(req,timeout=15) as r: return json.load(r)
+            except urllib.error.HTTPError as e:
+              return {'success':False,'status':e.code}
+            except Exception as e: return {'success':False,'error':type(e).__name__}
+          account=os.environ.get('CF_ACCOUNT',''); project=os.environ['CF_PROJECT']
+          p=api('accounts/'+account+'/pages/projects/'+project)
+          result=p.get('result') or {}; dep=result.get('canonical_deployment') or result.get('latest_deployment') or {}
+          base=dep.get('url','')
+          report.append({'check':'pages','success':p.get('success'), 'production_branch':result.get('production_branch'), 'domains':result.get('domains'), 'deployment_url':base, 'commit':dep.get('deployment_trigger',{}).get('metadata',{}).get('commit_hash'),'status':dep.get('latest_stage',{}).get('status')})
+          if urllib.parse.urlsplit(base).scheme=='https' and urllib.parse.urlsplit(base).hostname.endswith('.'+project+'.pages.dev'):
+            paths={'root-manifest':'/delivery-manifest.json','config':'/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json','control':'/configs/_global/control.json','loader':'/hm-loader.js','gate':'/traffic-gate/'}
+            for name,path in paths.items():
+              try:
+                with urllib.request.urlopen(base+path,timeout=15) as r: data=r.read(1500000); status=r.status; typ=r.headers.get('Content-Type')
+                (out/(name+'.body')).write_bytes(data)
+                entry={'asset':name,'status':status,'type':typ,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+                if name in ['config','control']:
+                  j=json.loads(data); entry['public_settings']= {k:j.get(k) for k in ['siteKey','configVersion','status','controls','clickGuard','trafficGate','loaderRelease']}
+                report.append(entry)
+              except Exception as e: report.append({'asset':name,'error':str(e)})
+          z=api('zones?name=horusmedia.net')
+          report.append({'check':'zone-read','success':z.get('success'),'status':z.get('status')})
+          if z.get('success'):
+            for zone in z.get('result',[]):
+              for path in ['rulesets/phases/http_request_firewall_custom/entrypoint','rulesets/phases/http_ratelimit/entrypoint','settings/security_level','settings/browser_check','bot_management']:
+                data=api('zones/'+zone['id']+'/'+path)
+                value=data.get('result') or {}
+                # Never log credentials, raw visitors, or IP allowlists.
+                if isinstance(value,dict) and 'rules' in value:
+                  rules=[]
+                  for rule in value.get('rules',[]):
+                    expr=rule.get('expression','')
+                    expr=re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?\b','[IP]',expr)
+                    rules.append({'id':rule.get('id'),'description':rule.get('description'),'enabled':rule.get('enabled'), 'action':rule.get('action'),'expression':expr})
+                  value={'rules':rules}
+                report.append({'check':path,'success':data.get('success'),'status':data.get('status'),'value':value})
+          (out/'summary.json').write_text(json.dumps(report,indent=2))
+          for row in report:
+            safe={k:v for k,v in row.items() if k!='value'}
+            print(json.dumps(safe))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horus-serving-controlplane-readonly
+          path: incident-control/
+          retention-days: 3
