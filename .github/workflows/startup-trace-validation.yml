@@ -1,0 +1,102 @@
+name: Validate startup trace and gate readiness
+on:
+  push:
+    branches: [diagnostic/startup-trace-handshake-20260929]
+    paths: [.github/workflows/startup-trace-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c5617d2edce83be6a2333241d32c588df6725628
+          path: code
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 37984d949aa583aa6e732562496786ed2b9e8696
+          path: staging
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Apply inspectable source and tests, never deploy
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python ../staging/diagnostics/apply-startup-trace.py
+          python ../staging/diagnostics/add-startup-trace-tests.py
+          git add public/assets/hm-loader.js public/assets/hm-gpt-direct.js public/assets/hm-video-direct.js public/assets/traffic-gate/horus-traffic-gate.js scripts/transform-loader-traffic-gate.mjs tests/Browser/hm-startup-trace.test.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/hm-loader-native.test.js tests/Browser/gpt-dependencies.playwright.spec.js docs/AD_STARTUP_DIAGNOSTICS.md
+          python - <<'PY'
+          import subprocess
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert paths=={'public/assets/hm-loader.js','public/assets/hm-gpt-direct.js','public/assets/hm-video-direct.js','public/assets/traffic-gate/horus-traffic-gate.js','scripts/transform-loader-traffic-gate.mjs','tests/Browser/hm-startup-trace.test.js','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/hm-loader-native.test.js','tests/Browser/gpt-dependencies.playwright.spec.js','docs/AD_STARTUP_DIAGNOSTICS.md'}
+          PY
+          git diff --cached --check
+          git diff --cached --binary > "$RUNNER_TEMP/startup-reviewed.patch"
+          sha256sum "$RUNNER_TEMP/startup-reviewed.patch"
+      - name: Prepare browser-only test tools
+        working-directory: code
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Prove the existing frame-load dependency with the new targeted test
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/transform-loader-traffic-gate.mjs "$RUNNER_TEMP/corrected-gate-transform.mjs"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/transform-loader-traffic-gate.mjs');s=p.read_text()
+          block="        if (message.type === 'HORUS_TRAFFIC_GATE_BOOT') {\n            trafficGateSendHello(gate.iframe);\n            return;\n        }\n"
+          assert s.count(block)==1
+          p.write_text(s.replace(block,''))
+          PY
+          npm run build:loader
+          set +e
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/gpt-dependencies.playwright.spec.js --project=chromium-desktop --grep 'verified readiness' --reporter=json > "$RUNNER_TEMP/startup-baseline.json"
+          baseline_status=$?
+          set -e
+          cp "$RUNNER_TEMP/corrected-gate-transform.mjs" scripts/transform-loader-traffic-gate.mjs
+          test "$baseline_status" -ne 0
+          python - <<'PY'
+          import os,json,pathlib
+          data=json.loads(pathlib.Path(os.environ['RUNNER_TEMP'],'startup-baseline.json').read_text())
+          assert data['stats']['unexpected']==2 and data['stats']['expected']==0,data['stats']
+          text=json.dumps(data)
+          assert 'Received' in text and 'Expected' in text
+          print('Both composed and minified readiness cases reproduced the load-event wait.')
+          PY
+      - name: Validate all real runtime and browser regressions
+        working-directory: code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build:loader
+          node --test tests/Browser/*.test.js | tee "$RUNNER_TEMP/startup-node.log"
+          npx playwright test --config=playwright.traffic-gate.config.js | tee "$RUNNER_TEMP/startup-browser.log"
+          sha256sum public/assets/hm-loader.min.js public/assets/hm-gpt-direct.js public/assets/hm-video-direct.js public/assets/traffic-gate/horus-traffic-gate.js > "$RUNNER_TEMP/startup-runtime-sha256.txt"
+      - name: Preserve exact inspectable source
+        if: always()
+        working-directory: code
+        run: tar --exclude=.git --exclude=node_modules --exclude=test-results --exclude=playwright-report -czf "$RUNNER_TEMP/startup-reviewed-source.tar.gz" .
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: startup-trace-validation
+          path: |
+            ${{ runner.temp }}/startup-reviewed.patch
+            ${{ runner.temp }}/startup-baseline.json
+            ${{ runner.temp }}/startup-node.log
+            ${{ runner.temp }}/startup-browser.log
+            ${{ runner.temp }}/startup-runtime-sha256.txt
+            ${{ runner.temp }}/startup-reviewed-source.tar.gz
+            code/test-results/**/error-context.md
+          retention-days: 7
+          if-no-files-found: error
