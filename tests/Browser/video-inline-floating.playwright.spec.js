@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { applyTrafficGateTransform } from '../../scripts/transform-loader-traffic-gate.mjs';
+import { applyShadowClickGuardTransform } from '../../scripts/transform-loader-shadow-click-guard.mjs';
 import { applyPlacementPresetTransform } from '../../scripts/transform-loader-placement-presets.mjs';
 
 const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
-const loader = applyPlacementPresetTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'));
+const loader = applyPlacementPresetTransform(applyShadowClickGuardTransform(applyTrafficGateTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'))));
 
 // Exercise the real loader + video DOM with a deterministic IMA boundary.
 // No live auctions, impression pixels, credentials, or paid inventory are used.

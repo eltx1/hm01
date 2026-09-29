@@ -470,6 +470,7 @@
     }
 
     function applyClickGuardState(config, persisted) {
+        var wasBlocked = state.clickGuard.blocked === true;
         var blocked = Boolean(persisted && persisted.blockedUntil > Date.now());
         if (blocked) {
             if (!state.clickGuard.blocked) clearAllRefreshTimers();
@@ -479,6 +480,7 @@
             state.clickGuard.blocked = false;
             clearClickGuardBlockTimer();
         }
+        if (wasBlocked !== blocked) notifyServingPolicyChange();
         return blocked;
     }
 
@@ -494,6 +496,27 @@
         if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;
         if (state.privacyDecision && state.privacyDecision.blocked) return false;
         return !clickGuardBlocked(config);
+    }
+
+    // Notification only: never trust an event payload as an authorization result.
+    // Consumers must re-read the live central policy through their bound callback.
+    function notifyServingPolicyChange() {
+        if (state.notifyingServingPolicy || !window.dispatchEvent || typeof window.CustomEvent !== 'function') return;
+        state.notifyingServingPolicy = true;
+        try { window.dispatchEvent(new window.CustomEvent('horus:serving-policy-change')); }
+        finally { state.notifyingServingPolicy = false; }
+    }
+
+    function bindVideoServingPolicy(config, entry, candidate, container) {
+        if (!directVideoRecipe(candidate.tag || {})) return;
+        container.__hmVideoCanRequestAds = function () {
+            // A detached/stale recipe must not inherit a new site's PASS or an
+            // old config's authorization after navigation/release delegation.
+            if (state.config !== config || container.isConnected === false || entry.element.isConnected === false) return false;
+            if (entry.element.getAttribute('data-hm-placement-dismissed') === '1') return false;
+            var placement = (config.placements || []).find(function (item) { return item.code === entry.placement.code; });
+            return Boolean(placement && placement.enabled && placement.status === 'active' && directJsServingAllowed(config));
+        };
     }
 
     function managedPlacementContainers(config) {
@@ -794,6 +817,7 @@
                     && (!decision.tcf.purpose || !decision.tcf.purpose.consents || decision.tcf.purpose.consents[1] !== true);
                 decision.limitedAds = decision.gpc || Boolean(tcfDenied) || decision.limitedAds;
                 state.privacyDecision = decision;
+                notifyServingPolicyChange();
                 resolve(decision);
             }
             if (typeof window.__tcfapi === 'function') {
@@ -1429,7 +1453,7 @@ function nativeDefinition(config, code) {
         if (directVideoRecipe(tag) && container && container.getAttribute) {
             var videoState = String(container.getAttribute('data-hm-video-status') || container.getAttribute('data-hm-video-runtime-state') || '');
             if (['started', 'completed'].indexOf(videoState) !== -1) return { done: true, rendered: true, reason: videoState };
-            if (['error', 'invalid', 'ineligible', 'duplicate', 'dismissed'].indexOf(videoState) !== -1) {
+            if (['error', 'invalid', 'ineligible', 'duplicate', 'dismissed', 'security-blocked'].indexOf(videoState) !== -1) {
                 return { done: true, rendered: false, reason: 'video-' + videoState };
             }
         }
@@ -1644,6 +1668,15 @@ function nativeDefinition(config, code) {
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
+                    // A policy stop can race the initial render poll. The
+                    // player may already have resumed healthy content-only
+                    // playback; do not tear that down or try another provider.
+                    var video = container && container.__hmVideoPlayer;
+                    if (video && video.adsSuppressed && video.contentMode && !video.contentFailed && !video.destroyed) {
+                        entry.element.setAttribute('data-hm-status', 'content-only');
+                        resolve(false);
+                        return;
+                    }
                     if (container && typeof container.__hmDestroy === 'function') {
                         try { container.__hmDestroy('failed'); } catch (error) {}
                     }
@@ -1674,6 +1707,7 @@ function nativeDefinition(config, code) {
                 }
 
                 container = directContainer(entry, candidate);
+                bindVideoServingPolicy(config, entry, candidate, container);
                 loadDirectScripts(config, candidate).then(function () {
                     if (!directJsServingAllowed(config)) { failed('blocked'); return; }
                     if (!runDirectInitialization(config, candidate, container)) { failed('initialization-failed'); return; }
@@ -2129,6 +2163,7 @@ function nativeDefinition(config, code) {
         var bootPromise = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
             if (normalizeControls(globalControls).adServingDisabled) {
                 state.config = { siteKey: siteKey, status: 'paused', controls: globalControls };
+                notifyServingPolicyChange();
                 log(state.config, 'Global advertising kill switch is active');
                 return null;
             }
@@ -2139,6 +2174,7 @@ function nativeDefinition(config, code) {
         }).then(function (config) {
             if (!config) return [];
             state.config = config;
+            notifyServingPolicyChange();
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
                 log(config, 'Hostname rejected', currentHostname());
                 return [];
@@ -2188,6 +2224,7 @@ function nativeDefinition(config, code) {
             if (state.scanTimer) window.clearTimeout(state.scanTimer);
             state.scanTimer = null;
             state.config = null;
+            notifyServingPolicyChange();
             state.gptPromise = null;
             state.prebidPromise = null;
             state.privacyPromise = null;

@@ -279,6 +279,7 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         gate.status = next;
         gate.reason = reason || null;
+        if (typeof notifyServingPolicyChange === 'function') notifyServingPolicyChange();
     }
 
     function trafficGateClearTimer(name) {
@@ -598,6 +599,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             if (generation !== state.preparationGeneration) return [];
             var earlyAttempt = reconcileEarlyTrafficGate(config, script, siteKey);
             state.config = config;
+            notifyServingPolicyChange();
 
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
                 log(config, 'Hostname rejected', currentHostname());
