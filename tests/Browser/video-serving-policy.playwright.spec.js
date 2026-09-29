@@ -73,7 +73,7 @@ test('forged PASS and notification payloads cannot unlock pending Cloudflare ver
     const run = await openSecurityPlayer(page, { delayVerification: true, waiting: true });
     await expect.poll(() => run.counts.verifies).toBe(1);
     await page.evaluate(() => {
-        window.postMessage({ type: 'HORUS_TRAFFIC_GATE_PASS', protocolVersion: 1, serverVerified: true }, '*');
+        window.postMessage({ type: 'HORUS_TRAFFIC_GATE_PASS', protocolVersion: 2, pageNonce: window.__HORUS_MEDIA_LOADER_STATE__.trafficGate.pageNonce, serverVerified: true }, '*');
         window.dispatchEvent(new CustomEvent('horus:serving-policy-change', { detail: { allowed: true } }));
     });
     expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
@@ -98,6 +98,8 @@ test('same-page probable click blocks VMAP immediately, preserves content and ig
     await openSecurityPlayer(page, { content: true, vmap: true, transformed: true });
     await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.clickGuard.trackedIframeEntries.length)).toBe(1);
+    await page.evaluate(() => window.scrollTo(0, 1800));
+    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
     await page.evaluate(() => {
         const frame = document.querySelector('[data-test-ima]');
         frame.dispatchEvent(new PointerEvent('pointerenter')); frame.focus();

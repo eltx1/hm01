@@ -117,7 +117,7 @@
     function adListener(player, source, type, generation, callback) {
         if (!type) return;
         source.addEventListener(type, function (event) {
-            if (currentAdRuntime(player, generation)) callback(event);
+            if (currentAdRuntime(player, generation) && authorizeVideoAds(player, 'sdk-event')) callback(event);
         }, false);
     }
 
@@ -830,7 +830,7 @@
         try { if (manager && manager.destroy) manager.destroy(); } catch (error) {}
         // Normal manual breaks reset IMA's same-tag state. A security stop must
         // never advertise content completion to a still-scheduled VMAP loader.
-        if (signalContentComplete !== false && !player.adsSuppressed) {
+        if (signalContentComplete !== false && !player.adsSuppressed && videoServingAllowed(player.container)) {
             try { if (loader && loader.contentComplete) loader.contentComplete(); } catch (error) {}
         }
         try { if (loader && loader.destroy) loader.destroy(); } catch (error) {}

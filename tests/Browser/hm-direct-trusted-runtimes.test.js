@@ -1439,3 +1439,20 @@ test('VMAP is manually admitted per break and denial tears down without postroll
     assert.equal(run.requested.length, 1);
     assert.equal(target.getAttribute('data-hm-video-policy-state'), 'blocked');
 });
+
+for (const event of ['ad-error', 'all-ads-completed']) {
+    test(`SDK terminal callback rechecks an unnotified denial before cleanup: ${event}`, async () => {
+        let allowed = true;
+        const target = securityVideoTarget(true);
+        const run = runVideo(target, { policy: () => allowed });
+        await tick();
+        allowed = false;
+        run.managers[0].emit(event, { getError: () => new Error('late provider error') });
+        await tick();
+        assert.equal(run.loaders[0].contentCompleteCalled, false);
+        assert.equal(run.loaders[0].destroyed, true);
+        assert.equal(target.getAttribute('data-hm-video-policy-state'), 'blocked');
+        assert.equal(target.getAttribute('data-hm-video-status'), 'content-playing');
+        assert.equal(run.requested.length, 1);
+    });
+}
