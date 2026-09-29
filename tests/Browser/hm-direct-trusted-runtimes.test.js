@@ -1320,3 +1320,84 @@ test('rewarded private-mode storage getter failure does not prevent opening or c
     assert.equal(target.style.display, 'none');
     assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-granted').length, 1);
 });
+
+function contentRecoveryFixture() {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=recovery').toString('base64'),
+        'data-hm-video-content-url': 'https://cdn.horusmedia.net/content/horus.mp4',
+    };
+    const target = container(attributes, 'content-recovery');
+    const runtime = runVideo(target);
+    return { attributes, target, runtime };
+}
+
+test('shared IMA media errors do not poison the accompanying content source', async () => {
+    const { attributes, target, runtime } = contentRecoveryFixture();
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    runtime.managers[0].emit('content-pause-requested');
+    video.src = 'https://video.example.com/failed-ad.mp4';
+    video.emit('error');
+    video.src = attributes['data-hm-video-content-url'];
+    runtime.managers[0].emit('ad-error', { getError: () => new Error('ad-media-failed') });
+    await tick();
+    assert.equal(target.__hmVideoPlayer.destroyed, false);
+    assert.equal(target.__hmVideoPlayer.contentFailed, false);
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 1, 'content recovery must not request another ad');
+});
+
+test('a stale content play rejection cannot close a newer successful resume', async () => {
+    const { attributes, target, runtime } = contentRecoveryFixture();
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    let rejectOld;
+    let calls = 0;
+    video.play = () => ++calls === 1 ? new Promise((_, reject) => { rejectOld = reject; }) : Promise.resolve();
+    runtime.managers[0].emit('content-resume-requested');
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    rejectOld(Object.assign(new Error('interrupted by IMA cleanup'), { name: 'AbortError' }));
+    await tick();
+    assert.equal(target.__hmVideoPlayer.destroyed, false);
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 1);
+});
+
+test('an autoplay policy refusal keeps native content playback available without retrying ads', async () => {
+    const { attributes, target, runtime } = contentRecoveryFixture();
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.play = () => Promise.reject(Object.assign(new Error('activation needed'), { name: 'NotAllowedError' }));
+    runtime.managers[0].emit('ad-error', { getError: () => new Error('no fill') });
+    await tick();
+    assert.equal(target.__hmVideoPlayer.destroyed, false);
+    assert.equal(target.__hmVideoPlayer.contentFailed, false);
+    assert.equal(attributes['data-hm-video-status'], 'content-ready');
+    assert.equal(attributes['data-hm-video-detail'], 'user-activation-required');
+    assert.equal(video.controls, true);
+    assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none', 'empty ad layer must not cover native controls');
+    video.emit('playing');
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 1);
+});
+
+test('a retired IMA manager cannot terminate a subsequent legitimate content break', async () => {
+    const { target, runtime } = contentRecoveryFixture();
+    await tick();
+    const first = runtime.managers[0];
+    first.emit('all-ads-completed');
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.currentTime = 60;
+    video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 2);
+    const second = runtime.managers[1];
+    first.emit('ad-error', { getError: () => new Error('late old callback') });
+    await tick();
+    assert.equal(second.destroyed, false);
+    assert.equal(target.__hmVideoPlayer.adsManager, second);
+    assert.equal(target.__hmVideoPlayer.adBreakPending, true);
+    assert.equal(runtime.requested.length, 2);
+});

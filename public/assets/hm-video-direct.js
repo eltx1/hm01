@@ -349,6 +349,9 @@
             contentStarted: false,
             contentEnded: false,
             contentFailed: false,
+            contentPlayGeneration: 0,
+            adRuntimeGeneration: 0,
+            adMediaActive: false,
             preRollRequested: false,
             midRollRequested: false,
             postRollRequested: false,
@@ -359,6 +362,7 @@
             adRulesHasPostroll: false,
             floating: false,
             wasInlineVisible: false,
+            wasInlineAnchorVisible: false,
             visibleRatio: 0,
             pendingAdStart: null,
             requestCorrelator: String(Date.now()),
@@ -377,6 +381,8 @@
     function destroyPlayer(player, reason) {
         if (!player || player.destroyed) return;
         player.destroyed = true;
+        player.contentPlayGeneration += 1;
+        player.adRuntimeGeneration += 1;
         window.clearTimeout(player.startupTimer);
         // Dismissal must not depend on IMA or publisher focus handlers succeeding.
         if (player.rewarded && player.container.style) player.container.style.display = 'none';
@@ -493,6 +499,7 @@
                 var previous = history.take();
                 if (previous) {
                     player.wasInlineVisible = previous.wasInlineVisible === true;
+                    player.wasInlineAnchorVisible = previous.anchorWasVisible === true;
                     layout.scrolled = previous.scrolled === true;
                 }
             } catch (error) { /* Optional layout history must never block ads. */ }
@@ -577,7 +584,7 @@
             player.visibleRatio = Math.max(0, Math.min(1, ratio));
             if (!player.floating && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
             var outside = data ? !data.hidden && (data.rect.bottom <= data.view.top + 1 || data.rect.top >= data.view.bottom - 1) : ratio <= 0.01;
-            if (!player.floating && player.inlineToFloating && player.wasInlineVisible && outside && (layout.scrolled || !data)) {
+            if (!player.floating && player.inlineToFloating && (player.wasInlineVisible || player.wasInlineAnchorVisible) && outside && (layout.scrolled || !data)) {
                 layout.reserve();
                 floatContentPlayer(player);
                 var floated = geometry(surface);
@@ -723,7 +730,30 @@
         }
     }
 
+    function setContentMediaOwnership(player, adActive) {
+        player.adMediaActive = adActive;
+        player.contentPlayGeneration += 1;
+        // A transparent IMA layer must not intercept native content controls
+        // between breaks or when the browser requires a playback gesture.
+        if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = adActive ? 'auto' : 'none';
+        if (!player.video || !player.contentEndedHandler) return;
+        if (adActive && player.contentEndedAttached && player.video.removeEventListener) {
+            try { player.video.removeEventListener('ended', player.contentEndedHandler); } catch (error) {}
+            player.contentEndedAttached = false;
+        } else if (!adActive && !player.contentEndedAttached && player.video.addEventListener) {
+            try {
+                player.video.addEventListener('ended', player.contentEndedHandler);
+                player.contentEndedAttached = true;
+            } catch (error) {}
+        }
+    }
+
     function cleanupContentAdRuntime(player) {
+        // Retire callbacks BEFORE SDK teardown, which can itself dispatch events
+        // and reject an older content play() promise on a shared video element.
+        player.adRuntimeGeneration += 1;
+        player.contentPlayGeneration += 1;
+        player.pendingAdStart = null;
         window.clearTimeout(player.startupTimer);
         if (player.resizeHandler && window.removeEventListener) {
             try { window.removeEventListener('resize', player.resizeHandler); } catch (error) {}
@@ -741,6 +771,7 @@
         player.displayContainer = null;
         player.adBreakPending = false;
         player.currentBreak = null;
+        setContentMediaOwnership(player, false);
     }
 
     function finishContentPlayer(player, reason) {
@@ -751,34 +782,48 @@
     }
 
     function markContentPlaying(player) {
-        if (!player || player.destroyed || player.contentFailed) return;
+        if (!player || player.destroyed || player.contentFailed || player.adMediaActive) return;
         player.contentStarted = true;
+        player.container.setAttribute('data-hm-video-detail', '');
         setStatus(player.container, 'content-playing');
     }
 
     function resumeContent(player) {
-        if (!player || player.destroyed || player.contentEnded) return;
+        if (!player || player.destroyed || player.contentEnded || player.adMediaActive) return;
         if (player.contentFailed) {
             finishContentPlayer(player, 'content-error');
             return;
         }
-        try {
-            var playResult = player.video && player.video.play ? player.video.play() : null;
-            if (playResult && typeof playResult.then === 'function') {
-                playResult.then(function () { markContentPlaying(player); }).catch(function (error) {
-                    player.contentFailed = true;
-                    player.container.setAttribute('data-hm-video-content-error', 'playback');
-                    recordVideoError(player, error, 'content-playback');
-                    finishContentPlayer(player, 'content-error');
-                });
-            } else {
-                markContentPlaying(player);
+        var generation = ++player.contentPlayGeneration;
+        function currentAttempt() {
+            return !player.destroyed && !player.adMediaActive && generation === player.contentPlayGeneration;
+        }
+        function failed(error) {
+            if (!currentAttempt()) return;
+            var name = String(error && error.name || '');
+            if (name === 'NotAllowedError' || name === 'AbortError') {
+                // Policy denial or an interrupted play is not broken media.
+                // Keep the native play control usable; never loop ad requests or
+                // pretend playback/impressions happened before actual playback.
+                player.video.controls = true;
+                if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = 'none';
+                setStatus(player.container, 'content-ready', name === 'NotAllowedError' ? 'user-activation-required' : 'playback-interrupted');
+                return;
             }
-        } catch (error) {
             player.contentFailed = true;
             player.container.setAttribute('data-hm-video-content-error', 'playback');
             recordVideoError(player, error, 'content-playback');
             finishContentPlayer(player, 'content-error');
+        }
+        try {
+            var playResult = player.video && player.video.play ? player.video.play() : null;
+            if (playResult && typeof playResult.then === 'function') {
+                playResult.then(function () { if (currentAttempt()) markContentPlaying(player); }).catch(failed);
+            } else if (currentAttempt()) {
+                markContentPlaying(player);
+            }
+        } catch (error) {
+            failed(error);
         }
     }
 
@@ -812,6 +857,7 @@
         if (player.adRules && position !== 'preroll') return;
         player.adBreakPending = true;
         player.currentBreak = position;
+        player.contentPlayGeneration += 1;
         if (player.contentStarted && player.video && player.video.pause) {
             try { player.video.pause(); } catch (error) {}
         }
@@ -819,9 +865,12 @@
         player.adBreakPending = true;
         player.currentBreak = position;
         setStatus(player.container, 'requesting-' + position);
+        if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = 'auto';
+        var generation = player.adRuntimeGeneration;
+        function currentRequest() { return !player.destroyed && generation === player.adRuntimeGeneration; }
 
         player.startupTimer = window.setTimeout(function () {
-            failContentAdBreak(player, new Error('Video ad break did not start in time'), 'startup-timeout', position);
+            if (currentRequest()) failContentAdBreak(player, new Error('Video ad break did not start in time'), 'startup-timeout', position);
         }, 15000);
 
         try {
@@ -829,7 +878,7 @@
             player.displayContainer.initialize();
             player.adsLoader = new ima.AdsLoader(player.displayContainer);
             player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
-                if (player.destroyed || player.currentBreak !== position) return;
+                if (!currentRequest() || player.currentBreak !== position) return;
                 try {
                     var settings = new ima.AdsRenderingSettings();
                     settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
@@ -848,47 +897,40 @@
                     }
                     player.adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
                         var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
-                        failContentAdBreak(player, error, 'playback-' + position, position);
+                        if (currentRequest()) failContentAdBreak(player, error, 'playback-' + position, position);
                     });
                     player.adsManager.addEventListener(adTypes.LOADED, function () {
-                        setStatus(player.container, 'loaded-' + position);
+                        if (currentRequest()) setStatus(player.container, 'loaded-' + position);
                     });
                     player.adsManager.addEventListener(adTypes.STARTED, function () {
-                        if (player.destroyed) return;
+                        if (!currentRequest()) return;
                         window.clearTimeout(player.startupTimer);
                         setStatus(player.container, 'started');
                     });
                     if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
+                        if (!currentRequest()) return;
                         if (player.adRules) player.adBreakPending = true;
+                        // IMA may temporarily own this exact video element. Its
+                        // media errors and ended events are not content failures.
+                        setContentMediaOwnership(player, true);
                         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
-                        // IMA may temporarily use the content video element for ad
-                        // playback. Do not interpret an ad media "ended" event as
-                        // the publisher content reaching its end.
-                        if (player.contentEndedAttached && player.video && player.video.removeEventListener && player.contentEndedHandler) {
-                            try { player.video.removeEventListener('ended', player.contentEndedHandler); } catch (error) {}
-                            player.contentEndedAttached = false;
-                        }
                     });
                     if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
-                        if (player.destroyed || player.contentEnded) return;
+                        if (!currentRequest() || player.contentEnded) return;
                         if (player.adRules) {
                             player.adBreakPending = false;
                             player.currentBreak = null;
                         }
-                        if (!player.contentEndedAttached && player.video && player.video.addEventListener && player.contentEndedHandler) {
-                            try {
-                                player.video.addEventListener('ended', player.contentEndedHandler);
-                                player.contentEndedAttached = true;
-                            } catch (error) {}
-                        }
+                        setContentMediaOwnership(player, false);
                         resumeContent(player);
                     });
                     if (adTypes.ALL_ADS_COMPLETED) player.adsManager.addEventListener(adTypes.ALL_ADS_COMPLETED, function () {
-                        if (player.destroyed) return;
+                        if (!currentRequest()) return;
                         if (player.adRules) {
                             window.clearTimeout(player.startupTimer);
                             player.adBreakPending = false;
                             player.currentBreak = null;
+                            setContentMediaOwnership(player, false);
                             if (player.contentEnded) finishContentPlayer(player, 'completed');
                             else resumeContent(player);
                             return;
@@ -899,21 +941,21 @@
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (player.adsManager.setVolume) player.adsManager.setVolume(0);
                     startAdManagerWhenViewable(player, function () {
-                        if (!player.destroyed && player.adsManager) player.adsManager.start();
+                        if (currentRequest() && player.adsManager) player.adsManager.start();
                     });
                     player.resizeHandler = function () {
-                        if (!player.adsManager || player.destroyed) return;
+                        if (!currentRequest() || !player.adsManager) return;
                         var resized = playerDimensions(player.container, player.size);
                         player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
                     };
                     if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);
                 } catch (error) {
-                    failContentAdBreak(player, error, 'manager-' + position, position);
+                    if (currentRequest()) failContentAdBreak(player, error, 'manager-' + position, position);
                 }
             }, false);
             player.adsLoader.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
                 var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
-                failContentAdBreak(player, error, 'request-' + position, position);
+                if (currentRequest()) failContentAdBreak(player, error, 'request-' + position, position);
             }, false);
 
             var request = new ima.AdsRequest();
@@ -930,7 +972,7 @@
             if (request.setContinuousPlayback) request.setContinuousPlayback(false);
             player.adsLoader.requestAds(request);
         } catch (error) {
-            failContentAdBreak(player, error, 'initialization-' + position, position);
+            if (currentRequest()) failContentAdBreak(player, error, 'initialization-' + position, position);
         }
     }
 
@@ -961,7 +1003,9 @@
         var surface = placementSurface(player);
         if (surface && surface.style && !player.floating && !(player.viewport && player.viewport.portal)) surface.style.position = 'relative';
 
+        listenContent(player, player.video, 'playing', function () { markContentPlaying(player); });
         listenContent(player, player.video, 'error', function () {
+            if (player.destroyed || player.adMediaActive) return;
             player.contentFailed = true;
             player.container.setAttribute('data-hm-video-content-error', player.contentStarted ? 'playback' : 'load');
             // Before preroll, keep the surface alive so the independent VAST

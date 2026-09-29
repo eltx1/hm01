@@ -122,3 +122,25 @@ test('transform is idempotent and rejects a missing admission boundary', () => {
     assert.equal(applyDirectPreparationTransform(production), production);
     assert.throws(() => applyDirectPreparationTransform(base), /reviewed Traffic Gate/);
 });
+
+
+test('Direct GPT and main GAM share one matching anonymous preload; IMA stays classic', () => {
+    const h = harness(), c = config();
+    c.placements.push({ code: 'gam', enabled: true, status: 'active', renderer: 'GAM', adUnitPath: '/123/gam' });
+    h.context.__prepare(c, true);
+    const hints = h.hints.filter(n => n.attributes.href === sdk.gpt);
+    assert.equal(hints.length, 1, 'the two independent engines must not preload the same SDK twice');
+    assert.equal(hints[0].attributes.crossorigin, 'anonymous');
+    const v = harness(); v.context.__prepare(config('video'), true);
+    assert.equal(v.hints.find(n => n.attributes.href === sdk.video).attributes.crossorigin, undefined);
+});
+
+test('manual limited-ads preload retains its existing classic fetch mode', () => {
+    const h = harness(), c = config();
+    c.directDemand.enabled = false;
+    c.placements = [{ code: 'gam', enabled: true, status: 'active', renderer: 'GAM', adUnitPath: '/123/gam' }];
+    c.gpt = { url: 'https://pagead2.googlesyndication.com/tag/js/gpt.js' };
+    h.context.__prepare(c, true);
+    assert.equal(h.hints.length, 1);
+    assert.equal(h.hints[0].attributes.crossorigin, undefined);
+});

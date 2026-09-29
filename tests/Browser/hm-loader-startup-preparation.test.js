@@ -106,13 +106,13 @@ test('a visible slot keeps its scroll history across delayed configuration then 
     assert.deepEqual(JSON.parse(JSON.stringify(h.node.__hmInlineVideoHistory.take())), { wasInlineVisible: true, scrolled: true });
     assert.equal(h.node.__hmInlineVideoHistory, undefined); assert.equal(h.scripts.length, 0);
 });
-test('empty video DIV gains layout only once confirmed; waiting for verification preserves history', () => {
+test('empty video DIV records an approved anchor without reserving a blank video rectangle', () => {
     const h = harness(80, 0), c = config(); h.context.observeSlots(null);
     assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '');
     assert.equal(h.node.__hmInlineVideoHistory.wasInlineVisible, false);
-    h.context.prep(c, false); assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '16 / 9');
+    h.context.prep(c, false); assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '');
     h.scroll(1800); const history = h.node.__hmInlineVideoHistory.take();
-    assert.equal(history.wasInlineVisible, true); assert.equal(history.scrolled, true);
+    assert.equal(history.wasInlineVisible, false); assert.equal(history.anchorWasVisible, true); assert.equal(history.scrolled, true);
     assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '');
 });
 for (const scenario of ['below-fold', 'hidden', 'background', 'clipped', 'zero-area']) {
@@ -152,16 +152,17 @@ test('the two production transforms are idempotent and require real boundaries',
 });
 
 
-test('the real empty Quick Monetize DIV reserves inline geometry before config, then hands off only after approval', () => {
+test('the empty Quick Monetize anchor stays collapsed before config and hands off only after approval', () => {
     const h = harness(80, 0), c = config();
     h.node.setAttribute('data-placement', 'quick_video_floating');
     c.placements[0].code = 'quick_video_floating';
     h.context.observeSlots(null);
-    assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '16 / 9');
-    assert.equal(h.node.__hmInlineVideoHistory.wasInlineVisible, true);
+    assert.equal(h.node.style.getPropertyValue('aspect-ratio'), '');
+    assert.equal(h.node.__hmInlineVideoHistory.wasInlineVisible, false);
+    assert.equal(h.node.__hmInlineVideoHistory.anchorWasVisible, true);
     h.scroll(1800); h.context.prep(c, false);
     const history = h.node.__hmInlineVideoHistory.take();
-    assert.equal(history.wasInlineVisible, true); assert.equal(history.scrolled, true);
+    assert.equal(history.wasInlineVisible, false); assert.equal(history.anchorWasVisible, true); assert.equal(history.scrolled, true);
     assert.equal(h.scripts.length, 0);
 });
 
