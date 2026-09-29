@@ -32,7 +32,7 @@ jobs:
           path: validated
           run-id: 36583213317
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Apply the validated patch and add the reported public reproduction site
+      - name: Apply the exact validated source patch only
         shell: bash
         run: |
           set -euo pipefail
@@ -42,23 +42,16 @@ jobs:
           test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = b15ea613fcefeb1ae08da8a3535ef6ee87484199
           git apply --check "$patch"
           git apply "$patch"
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('.github/workflows/video-playback-source-audit.yml')
-          s=p.read_text();old="['lordai.net','secretmagic.space','aleph1.online']"
-          assert s.count(old)==1
-          p.write_text(s.replace(old,"['lordai.net','secretmagic.space','aleph1.online','natega.bluekl.com']"))
-          PY
-          git add public/assets/hm-loader.js scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/hm-loader-direct-preparation.test.js tests/Browser/startup-recovery.playwright.spec.js tests/Browser/traffic-gate-loader.playwright.spec.js .github/workflows/video-playback-source-audit.yml
+          git add public/assets/hm-loader.js scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/hm-loader-direct-preparation.test.js tests/Browser/startup-recovery.playwright.spec.js tests/Browser/traffic-gate-loader.playwright.spec.js
           python - <<'PY'
           import subprocess
           paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
-          expected={'public/assets/hm-loader.js','scripts/transform-loader-direct-preparation.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/hm-loader-direct-preparation.test.js','tests/Browser/startup-recovery.playwright.spec.js','tests/Browser/traffic-gate-loader.playwright.spec.js','.github/workflows/video-playback-source-audit.yml'}
+          expected={'public/assets/hm-loader.js','scripts/transform-loader-direct-preparation.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/hm-loader-direct-preparation.test.js','tests/Browser/startup-recovery.playwright.spec.js','tests/Browser/traffic-gate-loader.playwright.spec.js'}
           assert paths==expected
           PY
           git diff --cached --check
           git diff --cached --stat
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Reuse matching GPT preloads and include reported publisher in read-only audit'
+          git commit -m 'Reuse matching GPT preloads across independent ad engines'
           git push origin "HEAD:refs/heads/$branch"
