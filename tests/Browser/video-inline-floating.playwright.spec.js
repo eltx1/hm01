@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { applyPlacementPresetTransform } from '../../scripts/transform-loader-placement-presets.mjs';
 
+// Generated 12-second, silent H.264 baseline fixture; no third-party media or ads.
+const contentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback.mp4.base64', import.meta.url), 'utf8'), 'base64');
 const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const loader = applyPlacementPresetTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'));
 
@@ -12,7 +14,16 @@ async function openPlayer(page, options = {}) {
         const path = new URL(route.request().url()).pathname;
         if (path === '/player.js') return route.fulfill({ contentType: 'application/javascript', body: runtime });
         if (path === '/ad.js') return route.fulfill({ contentType: 'application/javascript', body: '' });
-        if (path === '/content.mp4') return route.fulfill({ status: 404, body: '' });
+        if (path === '/broken-ad.mp4') return route.fulfill({ status: 404, body: '' });
+        if (path === '/content.mp4') {
+            if (!options.realContent) return route.fulfill({ status: 404, body: '' });
+            const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+            const start = range ? Number(range[1]) : 0;
+            const end = Math.min(contentBytes.length - 1, range && range[2] ? Number(range[2]) : contentBytes.length - 1);
+            return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4',
+                headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${contentBytes.length}` } : {}) },
+                body: contentBytes.subarray(start, end + 1) });
+        }
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
             html,body{margin:0;overflow-anchor:none} article{max-width:640px;margin:0 auto} #before{height:${options.belowFold ? 1600 : 80}px} #tail{height:4000px}
             [data-placement="video"]{width:320px;max-width:100%;min-height:180px} ${options.transformed ? 'article{transform:translateZ(0);contain:paint;overflow:hidden}' : ''}
@@ -23,8 +34,10 @@ async function openPlayer(page, options = {}) {
     await page.evaluate(options => {
         window.__HM_DISABLE_AUTOBOOT__ = true;
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
-        HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
-        HTMLMediaElement.prototype.pause = function () {};
+        if (!options.realContent) {
+            HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+            HTMLMediaElement.prototype.pause = function () {};
+        }
         class Manager {
             constructor() { this.events = {}; window.videoManager = this; }
             addEventListener(name, fn) { (this.events[name] ||= []).push(fn); }
@@ -34,7 +47,7 @@ async function openPlayer(page, options = {}) {
             setVolume() {}
             start() { window.adStarts++; this.emit('content-pause'); this.emit('started'); }
             resize(width, height) { this.dimensions = [width, height]; }
-            destroy() { window.adDestroys++; }
+            destroy() { window.adDestroys++; if (options.pauseOnDestroy) document.querySelector('video')?.pause(); }
         }
         window.installIma = () => { window.google = { ima: {
             AdDisplayContainer: class {
@@ -167,4 +180,85 @@ test('floating VAST stays above a dynamically resized sticky and both close cont
     expect(await page.evaluate(() => window.imaFrameLoads)).toBe(1);
     await video.locator('[data-hm-placement-close]').click();
     await expect(video).toBeHidden();
+});
+
+
+async function expectDecodedContent(page) {
+    await expect.poll(() => page.locator('video').evaluate(video => ({
+        frame: video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2,
+        playing: !video.paused && video.currentTime > 0.25,
+    }))).toEqual({ frame: true, playing: true });
+    // Verify decoded pixels, not only a successful play() promise or black box.
+    const brightness = await page.locator('video').evaluate(video => {
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+        const context = canvas.getContext('2d'); context.drawImage(video, 0, 0, 1, 1);
+        const pixel = context.getImageData(0, 0, 1, 1).data;
+        return pixel[0] + pixel[1] + pixel[2];
+    });
+    expect(brightness).toBeGreaterThan(60);
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+}
+
+test('real decoded content survives preroll no-fill and the inline-to-floating transition', async ({ page }, testInfo) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, transformed: true });
+    await page.evaluate(() => window.videoManager.emit('ad-error'));
+    await expectDecodedContent(page);
+    const before = await page.locator('video').evaluate(video => video.currentTime);
+    await page.evaluate(() => window.scrollTo(0, 1400));
+    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-floating-video-active', '1');
+    await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(before + 0.15);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    await testInfo.attach('real-content-after-no-fill', { body: await page.screenshot(), contentType: 'image/png' });
+});
+
+test('a native media error belonging to the shared ad element does not close healthy content', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true });
+    await page.evaluate(async () => {
+        const video = document.querySelector('video');
+        const error = new Promise(resolve => video.addEventListener('error', resolve, { once: true }));
+        video.src = 'https://reader.example/broken-ad.mp4';
+        video.load();
+        await error;
+        // Match the SDK returning ownership/restoring content after ad failure.
+        video.src = 'https://reader.example/content.mp4';
+        window.videoManager.emit('ad-error');
+    });
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+test('native play interruption during IMA teardown cannot discard a newer playing video', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, pauseOnDestroy: true });
+    await page.evaluate(() => {
+        window.videoManager.emit('content-resume');
+        window.videoManager.emit('all-completed');
+    });
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+test('autoplay refusal leaves native controls available and a playback gesture never re-auctions', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true });
+    await page.evaluate(() => {
+        const video = document.querySelector('video');
+        video.play = () => Promise.reject(new DOMException('User activation required', 'NotAllowedError'));
+        window.videoManager.emit('ad-error');
+    });
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-detail', 'user-activation-required');
+    expect(await page.locator('video').evaluate(video => video.controls)).toBe(true);
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'none');
+    await page.evaluate(() => {
+        const video = document.querySelector('video');
+        delete video.play;
+        // Fixture-owned gesture, with the browser's original native play().
+        const button = document.createElement('button'); button.id = 'fixture-play'; button.textContent = 'Play fixture';
+        button.onclick = () => video.play(); document.body.prepend(button);
+    });
+    await page.locator('#fixture-play').click();
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
