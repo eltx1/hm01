@@ -1,0 +1,43 @@
+name: Ad serving curl read-only
+on:
+  push:
+    branches: [diagnostics/ad-serving-incident-20260929]
+    paths: [.github/workflows/ad-serving-curl-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: GET published assets with no ad or verification requests
+        run: |
+          mkdir -p incident-curl
+          python3 - <<'PY'
+          import concurrent.futures, subprocess, json, pathlib, hashlib, urllib.parse
+          out=pathlib.Path('incident-curl')
+          bases={'cdn':'https://cdn.horusmedia.net','exact':'https://0b1ec7d8.horus-media-cdn.pages.dev'}
+          paths={'loader':'/hm-loader.js','control':'/configs/_global/control.json','config':'/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json','manifest':'/delivery-manifest.json','gate':'/traffic-gate/'}
+          def get(item):
+            name,url=item
+            dest=out/(name+'.body'); headers=out/(name+'.headers')
+            p=subprocess.run(['curl','--silent','--show-error','--max-time','15','--max-filesize','1800000','--dump-header',str(headers),'--output',str(dest),'--write-out','%{http_code}',url],capture_output=True,text=True)
+            d=dest.read_bytes() if dest.exists() else b''
+            row={'name':name,'url':url,'status':p.stdout,'curl_exit':p.returncode,'bytes':len(d),'sha256':hashlib.sha256(d).hexdigest()}
+            try:
+              j=json.loads(d)
+              if name.endswith('config'):
+                row['settings']={k:j.get(k) for k in ['siteKey','configVersion','status','controls','clickGuard','trafficGate','loaderRelease','privacy','runtime']}
+              if name.endswith('control'):row['control']=j
+            except Exception: pass
+            return row
+          tasks=[(prefix+'-'+name,base+path+'?liveverify=36501167367') for prefix,base in bases.items() for name,path in paths.items()]
+          tasks.append(('verify-gate','https://verify.horusmedia.net/traffic-gate/?liveverify=36501167367'))
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool: rows=list(pool.map(get,tasks))
+          (out/'summary.json').write_text(json.dumps(rows,indent=2)); print(json.dumps(rows,indent=2))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horus-curl-serving-incident
+          path: incident-curl/
+          retention-days: 3
