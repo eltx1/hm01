@@ -1,0 +1,93 @@
+name: Ad serving incident read-only
+on:
+  push:
+    branches: [diagnostics/ad-serving-incident-20260929]
+permissions:
+  contents: read
+jobs:
+  inspect-public-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read public loader, controls, site config and verification assets
+        run: |
+          mkdir -p incident
+          python3 - <<'PY'
+          import concurrent.futures, hashlib, json, pathlib, time, urllib.request, urllib.error, urllib.parse, re
+          from html.parser import HTMLParser
+          out = pathlib.Path('incident')
+          allowed = {'cdn.horusmedia.net', 'verify.horusmedia.net', 'lordai.net'}
+          urls = {
+            'loader': 'https://cdn.horusmedia.net/hm-loader.js',
+            'control': 'https://cdn.horusmedia.net/configs/_global/control.json',
+            'manifest': 'https://cdn.horusmedia.net/configs/hm_ircll0vkqq54jvt9gz85mrh2/manifest.json',
+            'config': 'https://cdn.horusmedia.net/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json',
+            'gate': 'https://verify.horusmedia.net/traffic-gate/',
+            'publisher': 'https://lordai.net/',
+          }
+          results = []
+          class SafeRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+              p = urllib.parse.urlsplit(newurl)
+              if p.scheme != 'https' or p.hostname not in allowed: raise ValueError('unapproved redirect')
+              return super().redirect_request(req, fp, code, msg, headers, newurl)
+          opener = urllib.request.build_opener(SafeRedirect)
+          def inspect(item):
+            name, url = item
+            start = time.monotonic()
+            row = {'name': name, 'url': url}
+            try:
+              req = urllib.request.Request(url, headers={'User-Agent': 'Horus-ReadOnly-Incident-Diagnostics/1.0'})
+              try: r = opener.open(req, timeout=12)
+              except urllib.error.HTTPError as e: r = e
+              with r:
+                data = r.read(1500001)
+                if len(data) > 1500000: raise ValueError('response too large')
+                row.update(status=r.code, type=r.headers.get('Content-Type'), cache=r.headers.get('CF-Cache-Status'), mitigated=r.headers.get('cf-mitigated'), sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
+                headers = {k:v for k,v in r.headers.items() if k.lower() in ['content-type','content-security-policy','access-control-allow-origin','cache-control','cf-cache-status','cf-mitigated','age','etag','last-modified']}
+                (out/(name+'.headers.json')).write_text(json.dumps(headers,indent=2))
+                (out/(name+'.body')).write_bytes(data)
+                try:
+                  j=json.loads(data)
+                  row['json_valid']=True
+                  if name=='config':
+                    row['config']={k:j.get(k) for k in ['siteKey','configVersion','status','immediatePause','controls','clickGuard','trafficGate','loaderRelease']}
+                    row['placements']=[{k:p.get(k) for k in ['code','type','status','enabled','format']} for p in j.get('placements',[])]
+                  elif name in ['control','manifest']: row['json']=j
+                except (ValueError,UnicodeError): row['json_valid']=False
+            except Exception as e: row['error']=str(e)
+            row['seconds']=round(time.monotonic()-start,3)
+            return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool: results=list(pool.map(inspect,urls.items()))
+          class Scripts(HTMLParser):
+            def __init__(self): super().__init__(); self.src=[]
+            def handle_starttag(self,tag,attrs):
+              if tag=='script':
+                a=dict(attrs)
+                if a.get('src'): self.src.append(a['src'])
+          extras={}
+          for name in ['publisher','gate']:
+            f=out/(name+'.body')
+            if not f.exists(): continue
+            parser=Scripts(); parser.feed(f.read_text(errors='replace'))
+            for src in parser.src:
+              u=urllib.parse.urljoin(urls[name],src); p=urllib.parse.urlsplit(u)
+              if p.scheme=='https' and p.hostname in {'cdn.horusmedia.net','verify.horusmedia.net'}:
+                extras['asset-'+str(len(extras))]=u
+          m=out/'manifest.body'
+          if m.exists():
+            try:
+              j=json.loads(m.read_text()); path=j.get('environments',{}).get('production',{}).get('path')
+              if isinstance(path,str):
+                u=urllib.parse.urljoin(urls['manifest'],path)
+                if urllib.parse.urlsplit(u).hostname=='cdn.horusmedia.net': extras['immutable-config']=u
+            except Exception: pass
+          for pair in list(extras.items())[:8]: results.append(inspect(pair))
+          (out/'summary.json').write_text(json.dumps(results,indent=2))
+          print(json.dumps(results,indent=2))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horus-ad-serving-incident
+          path: incident/
+          retention-days: 3
