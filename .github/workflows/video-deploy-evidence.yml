@@ -1,0 +1,27 @@
+name: Read-only video deployment evidence
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/video-deploy-evidence.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const repo = {owner: context.repo.owner, repo: context.repo.repo};
+            const {data} = await github.rest.actions.listWorkflowRunsForRepo({...repo, branch:'main', per_page:50});
+            const names = new Set(['Deploy production','Verify production live','Cloudflare Pages delivery','Production release','Sync production static edge','LordAI Quick surface repair']);
+            for (const run of data.workflow_runs) {
+              if (!names.has(run.name) || run.conclusion !== 'success') continue;
+              names.delete(run.name);
+              const {data: artifacts} = await github.rest.actions.listWorkflowRunArtifacts({...repo, run_id:run.id, per_page:30});
+              const {data: jobs} = await github.rest.actions.listJobsForWorkflowRun({...repo, run_id:run.id, per_page:30});
+              console.log(JSON.stringify({name:run.name,id:run.id,sha:run.head_sha,path:run.path,artifacts:artifacts.artifacts.map(a=>({id:a.id,name:a.name,bytes:a.size_in_bytes})),jobs:jobs.jobs.map(j=>({id:j.id,name:j.name,result:j.conclusion}))}));
+            }
+            console.log('Unmatched workflow names: '+JSON.stringify([...names]));
