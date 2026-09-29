@@ -1088,3 +1088,70 @@ test('privacy can resolve while Turnstile is still pending, but monetization sta
     await boot;
     assert.equal(runtime.metrics.gptScripts, 1);
 });
+
+function scanClock(h) {
+    let now = 0, sequence = 0;
+    const pending = new Map();
+    const originalSet = h.sandbox.setTimeout, originalClear = h.sandbox.clearTimeout;
+    h.sandbox.setTimeout = (callback, delay, ...args) => {
+        if (delay !== 25) return originalSet(callback, delay, ...args);
+        const id = { scan: ++sequence }; pending.set(id, { at: now + 25, callback }); return id;
+    };
+    h.sandbox.clearTimeout = id => { if (!pending.delete(id)) originalClear(id); };
+    return { async advance(ms) {
+        now += ms;
+        for (const [id, task] of [...pending]) if (task.at <= now) { pending.delete(id); task.callback(); }
+        await h.flush();
+    } };
+}
+
+test('continuous video/SPA DOM activity cannot postpone a newly mounted independent ad', async () => {
+    const c = baseConfig({ gam: true });
+    c.placements.push(placement('late_display', 'GAM'));
+    const h = createHarness(c), late = h.elements.pop(), clock = scanClock(h);
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    assertNoMonetization(h.metrics); h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gamSlots, 1);
+    h.elements.push(late); h.triggerMutation([late]);
+    // Deterministically simulate a video SDK appending nodes every 10 ms.
+    // A trailing-edge debounce starves the new display for this entire burst.
+    for (let elapsed = 0; elapsed < 120; elapsed += 10) {
+        await clock.advance(10); h.triggerMutation([]);
+    }
+    assert.equal(h.metrics.gamSlots, 2, 'new display must start while video DOM work is still ongoing');
+    for (let i = 0; i < 10; i++) { h.triggerMutation([late]); await clock.advance(30); }
+    assert.equal(h.metrics.gamSlots, 2, 'fair scanning must still keep one renderer per physical slot');
+    h.sandbox.HorusMediaLoader._resetForTests();
+});
+
+test('pending video runtime never blocks GAM, standalone Prebid or another Direct slot after PASS', async () => {
+    const c = baseConfig({ gam: true, standalone: true, direct: true });
+    c.placements.unshift(placement('direct_second', 'DIRECT_JS'));
+    c.directDemand.placements.direct_second = { enabled: true, candidates: [directCandidate('direct_second')] };
+    c.directDemand.placements.direct_slot.candidates[0].network = 'PENDING_VIDEO';
+    c.directDemand.placements.direct_slot.candidates[0].tag.container.attributes = { 'data-hm-video-direct': '1' };
+    const h = createHarness(c), held = [];
+    const append = h.sandbox.document.head.appendChild;
+    h.sandbox.document.head.appendChild = node => {
+        if (node.getAttribute?.('data-hm-direct-script') === 'PENDING_VIDEO') { h.metrics.directScripts++; held.push(node); return node; }
+        return append(node);
+    };
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush(); assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); for (let i = 0; i < 5; i++) await h.flush();
+    assert.equal(held.length, 1); assert.equal(h.metrics.gamRequests, 1);
+    assert.equal(h.metrics.prebidAuctions, 1); assert.equal(h.metrics.directScripts, 2);
+    assert.equal(h.metrics.providerInitializations, 1, 'other Direct slot initializes before video script onload');
+    held.forEach(script => script.onload?.()); await boot;
+    h.sandbox.HorusMediaLoader._resetForTests();
+});
+
+test('one placement initialization exception cannot cancel the other independent engines', async () => {
+    const c = baseConfig({ gam: true, standalone: true, direct: true });
+    c.placements.find(p => p.code === 'direct_slot').lazyLoad = { enabled: true };
+    const h = createHarness(c);
+    h.sandbox.IntersectionObserver = class { observe() { throw new Error('Publisher observer failed'); } disconnect() {} };
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush(); h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gamRequests, 1); assert.equal(h.metrics.prebidAuctions, 1);
+    assert.equal(h.metrics.directScripts, 0, 'failed slot is not retried as a side effect of another engine');
+    h.sandbox.HorusMediaLoader._resetForTests();
+});

@@ -60,8 +60,12 @@ const RUNTIME = String.raw`
             var top = Number(visual && visual.offsetTop || 0), left = Number(visual && visual.offsetLeft || 0);
             var bottom = top + Number(visual && visual.height || window.innerHeight || 0);
             var right = left + Number(visual && visual.width || window.innerWidth || 0);
-            if (!(rect.width > 0 && rect.height > 0 && bottom > top && right > left)) return null;
-            var clip = { top: Math.max(top, rect.top), bottom: Math.min(bottom, rect.bottom), left: Math.max(left, rect.left), right: Math.min(right, rect.right) };
+            if (!(rect.width > 0 && rect.height >= 0 && bottom > top && right > left)) return null;
+            // A collapsed insertion point can have scroll history without a
+            // reserved rectangle. This is anchor geometry, not ad viewability.
+            var anchor = rect.height <= 1;
+            var measuredHeight = anchor ? 1 : rect.height;
+            var clip = { top: Math.max(top, rect.top), bottom: Math.min(bottom, anchor ? rect.top + 1 : rect.bottom), left: Math.max(left, rect.left), right: Math.min(right, rect.right) };
             if (window.getComputedStyle) {
                 for (var parent = node, depth = 0; parent && parent.nodeType === 1 && depth < 64; parent = parent.parentElement, depth++) {
                     var css = window.getComputedStyle(parent);
@@ -73,49 +77,30 @@ const RUNTIME = String.raw`
                     }
                 }
             }
-            return Math.min(1, Math.max(0, clip.right - clip.left) * Math.max(0, clip.bottom - clip.top) / (rect.width * rect.height));
+            return { anchor: anchor, ratio: Math.min(1, Math.max(0, clip.right - clip.left) * Math.max(0, clip.bottom - clip.top) / (rect.width * measuredHeight)) };
         }
         function recordNode(node, code) {
-            var record = { node: node, wasInlineVisible: false, scrolled: false, released: false, reserved: false, styles: [],
+            var record = { node: node, wasInlineVisible: false, anchorWasVisible: false, scrolled: false, released: false,
                 scrollY: Number(window.scrollY || window.pageYOffset || 0), scrollX: Number(window.scrollX || window.pageXOffset || 0) };
-            function reserve(name, value) {
-                if (!node.style || !node.style.setProperty) return;
-                record.styles.push([name, node.style.getPropertyValue(name), node.style.getPropertyPriority ? node.style.getPropertyPriority(name) : '', value]);
-                node.style.setProperty(name, value);
-            }
-            // A publisher's empty DIV otherwise has no measurable inline area.
-            // Reserve only opted-in video inventory, never override hidden CSS.
+            // Preparation never changes publisher layout or reserves empty ad
+            // space. The live player owns its dimensions after admission.
             record.sample = function () {
                 if (record.released) return;
                 var placement = prep.eligible && prep.eligible[code];
                 if (node.isConnected === false || node.getAttribute('data-hm-placement-dismissed') === '1'
                     || node.getAttribute('data-placement') !== code || prep.eligible && !placement) { record.release(); return; }
-                // The permanent Quick Monetize embed has this reserved code.
-                // Give its empty DIV real geometry even while config is pending;
-                // other unknown slots remain untouched. Config still decides
-                // whether this history may be consumed; it is never permission.
                 var knownEmbed = !prep.config && code === 'quick_video_floating';
-                if ((placement || knownEmbed) && !record.reserved) {
-                    record.reserved = true;
-                    var rect = node.getBoundingClientRect();
-                    if (rect.height <= 1 && (knownEmbed || placementFormatSettings(placement).reserveSpace !== false)) {
-                        reserve('width', 'min(400px, 100%)');
-                        reserve('aspect-ratio', '16 / 9');
-                    }
-                }
-                if (record.wasInlineVisible && (Number(window.scrollY || window.pageYOffset || 0) !== record.scrollY
+                if ((record.wasInlineVisible || record.anchorWasVisible) && (Number(window.scrollY || window.pageYOffset || 0) !== record.scrollY
                     || Number(window.scrollX || window.pageXOffset || 0) !== record.scrollX)) record.scrolled = true;
-                var ratio = geometry(node);
-                if (ratio !== null && ratio >= 0.5) record.wasInlineVisible = true;
+                var measurement = geometry(node);
+                if (measurement && measurement.ratio >= 0.5) {
+                    if (!measurement.anchor) record.wasInlineVisible = true;
+                    else if (knownEmbed || placement) record.anchorWasVisible = true;
+                }
             };
             record.release = function () {
                 if (record.released) return;
                 record.released = true;
-                record.styles.forEach(function (s) {
-                    if (node.style.getPropertyValue(s[0]) === s[3] && (!node.style.getPropertyPriority || node.style.getPropertyPriority(s[0]) === '')) {
-                        if (s[1]) node.style.setProperty(s[0], s[1], s[2]); else node.style.removeProperty(s[0]);
-                    }
-                });
                 if (node.__hmInlineVideoHistory === record) delete node.__hmInlineVideoHistory;
                 if (prep.resize && prep.resize.unobserve) prep.resize.unobserve(node);
                 var index = prep.records.indexOf(record);
@@ -125,6 +110,7 @@ const RUNTIME = String.raw`
                 record.sample();
                 var value = record.released || !prep.config || !prep.eligible[code] || state.inlineVideoPreparation !== prep || prep.stopped ? null
                     : { wasInlineVisible: record.wasInlineVisible, scrolled: record.scrolled };
+                if (value && record.anchorWasVisible) value.anchorWasVisible = true;
                 record.release();
                 if (!prep.records.length && prep.config) prep.stop();
                 return value;
@@ -151,7 +137,7 @@ const RUNTIME = String.raw`
         };
         prep.schedule = function (event) {
             if (prep.stopped) return;
-            if (event && event.type === 'scroll') prep.records.forEach(function (r) { if (r.wasInlineVisible) r.scrolled = true; });
+            if (event && event.type === 'scroll') prep.records.forEach(function (r) { if (r.wasInlineVisible || r.anchorWasVisible) r.scrolled = true; });
             if (prep.frame !== null) return;
             prep.frame = window.requestAnimationFrame ? window.requestAnimationFrame(function () { prep.frame = null; prep.discover(); })
                 : window.setTimeout(function () { prep.frame = null; prep.discover(); }, 16);
@@ -185,12 +171,12 @@ export function applyVideoPreparationTransform(input) {
     if (!source.includes(hook) || !source.includes(reset)) throw new Error('Video preparation requires actual Loader boot and reset boundaries');
     source = source.replace(hook, () => RUNTIME + hook + '\n        try { prepareInlineVideoHistory(config); } catch (error) { stopInlineVideoPreparation(); }');
     source = source.replace(reset, '        stopInlineVideoPreparation();\n' + reset);
-    // A rejected gate is authoritative; remove pre-render layout reservations.
+    // A rejected gate is authoritative; remove geometry-only preparation.
     const deny = "        trafficGateSetState(TRAFFIC_GATE_STATES.blocked, reason || 'DENIED');";
     if (!source.includes(deny)) throw new Error('Video preparation requires explicit denial boundary');
     source = source.replace(deny, '        stopInlineVideoPreparation();\n' + deny);
     // Observe already-present publisher slots while configuration is in flight.
-    // Unknown/zero-area slots are never inferred to have been visible.
+    // Unknown zero-area slots never gain anchor eligibility before config.
     const early = '        if (!siteKey || !window.fetch || earlyBootPreparation || state.booting) return;';
     const boot = '        if (state.booting && !options.force) return state.booting;';
     if (!source.includes(early) || !source.includes(boot)) throw new Error('Missing early and ordinary boot boundaries');

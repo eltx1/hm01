@@ -11,19 +11,53 @@ const source = await readFile(new URL('../../public/assets/hm-loader.js', import
 const composed = [applyTrafficGateTransform, applyShadowClickGuardTransform, applyPlacementPresetTransform,
     applyDirectPreparationTransform, applyVideoPreparationTransform].reduce((s, f) => f(s), source);
 const minified = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
+const gptRuntime = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
 const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const gateHtml = await readFile(new URL('../../public/traffic-gate/index.html', import.meta.url), 'utf8');
 const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-traffic-gate.js', import.meta.url), 'utf8');
 
+function parallelDisplayConfig(config) {
+    for (const code of ['parallel_display', 'late_display']) {
+        config.placements.push({ code, type: 'DISPLAY', enabled: true, status: 'active', renderer: 'DIRECT_JS',
+            sizes: [[300, 250]], lazyLoad: { enabled: false }, format: { settings: { autoMount: false } } });
+        config.directDemand.placements[code] = { enabled: true, candidates: [{ network: 'TEST_GPT', tag: {
+            executionMode: 'STRUCTURED', scripts: [{ url: 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.0123456789abcdef.js' }],
+            container: { element: 'div', id: code + '-runtime', attributes: { 'data-hm-gpt-direct': '1',
+                'data-hm-gpt-ad-unit-path': '/123/' + code, 'data-hm-gpt-sizes': '[[300,250]]', 'data-hm-gpt-inner-id': code + '-provider' } },
+            initialization: { type: 'NONE' }, render: { timeoutMs: 20000, successSelector: '#' + code + '-runtime[data-hm-gpt-runtime-state="rendered"]' },
+        } }] };
+    }
+}
+function installGptFixture() {
+    // Provider boundary only. The production Loader, GPT adapter, gates and
+    // DOM observer run unchanged; no auction/tracking URL is ever requested.
+    const queued = window.googletag?.cmd || [], slots = new Map(), listeners = new Set();
+    const pubads = { addEventListener(name, fn) { if (name === 'slotRenderEnded') listeners.add(fn); },
+        removeEventListener(name, fn) { listeners.delete(fn); } };
+    window.googletag = { apiReady: true, cmd: { push(fn) { fn(); } }, pubads: () => pubads,
+        defineSlot(path, sizes, id) { const slot = { id, addService() { return this; } }; slots.set(id, slot); return slot; },
+        display(id) {
+            window.displayMetrics.requests++; window.displayMetrics.ids.push(id);
+            queueMicrotask(() => [...listeners].forEach(fn => fn({ slot: slots.get(id), isEmpty: false, size: [300, 250] })));
+        }, enableServices() {}, destroySlots() {},
+    };
+    queued.forEach(fn => fn());
+}
+
 async function open(page, options = {}) {
     const config = securityConfig(options), counts = { runtime: 0, sdk: 0, verifies: 0 };
+    if (options.parallel) parallelDisplayConfig(config);
     let release; const hold = new Promise(resolve => { release = resolve; });
     if (!options.delay) release();
     await page.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url());
         const headers = { 'Cache-Control': 'public, max-age=3600' };
         if (url.origin === 'https://reader.example') return route.fulfill({ contentType: 'text/html', body: publisherPage(options) });
+        if (url.origin === 'https://securepubads.g.doubleclick.net' && url.pathname === '/tag/js/gpt.js') {
+            return route.fulfill({ headers, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });
+        }
         if (url.origin === 'https://cdn.horusmedia.net') {
+            if (url.pathname.includes('/runtime/gpt/')) return route.fulfill({ headers, contentType: 'application/javascript', body: gptRuntime });
             if (url.pathname.includes('/runtime/video/')) {
                 counts.runtime++; if (options.delay === 'runtime') await hold;
                 return route.fulfill({ headers, contentType: 'application/javascript', body: 'window.videoMetrics.runtimeExecutions++;\n' + runtime });
@@ -51,6 +85,13 @@ async function open(page, options = {}) {
     });
     await page.goto('https://reader.example/article');
     await page.evaluate(initializeTestMedia, options);
+    await page.evaluate(parallel => {
+        window.displayMetrics = { requests: 0, ids: [] };
+        if (parallel) {
+            const node = document.createElement('div'); node.className = 'hm-ad'; node.dataset.placement = 'parallel_display';
+            node.style.width = '320px'; document.querySelector('[data-placement]').after(node);
+        }
+    }, options.parallel);
     if (options.noObserver) await page.evaluate(() => { window.IntersectionObserver = undefined; });
     await page.addScriptTag({ content: options.minified ? minified : composed });
     await page.evaluate(() => { window.HorusMediaLoader.boot({ script: document.getElementById('loader') }); });
@@ -79,7 +120,7 @@ for (const mode of ['composed', 'minified']) for (const delay of ['config', 'ver
 for (const options of [{ content: true }, { content: true, contentFailure: true }, { noObserver: true }, { emptyDiv: true }]) {
     test(`early scroll keeps content fail-open and observer fallback: ${JSON.stringify(options)}`, async ({ page }) => {
         const run = await open(page, { ...options, delay: 'verification' });
-        await expect.poll(() => page.locator('[data-placement="video"]').evaluate(el => el.__hmInlineVideoHistory?.wasInlineVisible)).toBe(true);
+        await expect.poll(() => page.locator('[data-placement="video"]').evaluate(el => !!(el.__hmInlineVideoHistory?.wasInlineVisible || el.__hmInlineVideoHistory?.anchorWasVisible))).toBe(true);
         await page.evaluate(() => window.scrollTo(0, 1800)); run.release();
         await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
         await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
@@ -99,17 +140,18 @@ test('preload overlaps verification but executes neither runtime nor IMA until v
 });
 for (const options of [{ denied: true }, { blockedInitially: true }]) {
     test(`early scroll cannot authorize against gate/Click Guard: ${JSON.stringify(options)}`, async ({ page }) => {
-        const run = await open(page, { ...options, delay: 'verification' });
+        const run = await open(page, { ...options, parallel: true, delay: 'verification' });
         await expect.poll(() => run.counts.verifies).toBe(1);
         await page.evaluate(() => window.scrollTo(0, 1800)); run.release();
         await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe(options.denied ? 'ERROR' : 'PASSED');
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
         expect(await page.evaluate(() => window.videoMetrics.runtimeExecutions)).toBe(0);
+        expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(0);
     });
 }
 for (const options of [{ belowFold: true }, { inlineOnly: true }]) {
     test(`never float an unseen or inline-only slot: ${JSON.stringify(options)}`, async ({ page }) => {
-        const run = await open(page, { ...options, delay: 'verification' });
+        const run = await open(page, { ...options, parallel: true, delay: 'verification' });
         await expect.poll(() => run.counts.verifies).toBe(1);
         await page.evaluate(() => window.scrollTo(0, 3000)); run.release();
         await expect(page.locator('[data-hm-video-direct]')).toHaveAttribute('data-hm-video-runtime-state', /.+/);
@@ -131,7 +173,9 @@ test('a delayed manager starts in the existing floated player, not a second play
 test('the publisher permanent empty DIV preserves a pre-config scroll', async ({ page }) => {
     const run = await open(page, { delay: 'config', quickEmbed: true, emptyDiv: true });
     const surface = page.locator('[data-placement="quick_video_floating"]');
-    await expect.poll(() => surface.evaluate(el => el.__hmInlineVideoHistory?.wasInlineVisible)).toBe(true);
+    await expect.poll(() => surface.evaluate(el => el.__hmInlineVideoHistory?.anchorWasVisible)).toBe(true);
+    expect(await surface.evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(1);
+    expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
     await page.evaluate(() => window.scrollTo(0, 1800)); run.release();
     await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
     await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
@@ -162,5 +206,44 @@ for (const mode of ['composed', 'minified']) {
         await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
         expect(run.counts.verifies).toBe(1);
+    });
+}
+
+
+for (const mode of ['composed', 'minified']) for (const delay of ['runtime', 'sdk']) {
+    test(`${mode}: independent display starts while video ${delay} is pending, even during continuous DOM activity`, async ({ page }) => {
+        const run = await open(page, { parallel: true, delay, minified: mode === 'minified' });
+        await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+        expect(await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        await page.evaluate(() => {
+            window.domBusyStill = true;
+            const pulse = document.createElement('span'); document.getElementById('tail').appendChild(pulse);
+            let counter = 0; window.domBusyTimer = setInterval(() => { pulse.textContent = String(counter++); }, 8);
+            window.domBusyStop = setTimeout(() => { clearInterval(window.domBusyTimer); window.domBusyStill = false; }, 2500);
+            const node = document.createElement('div'); node.className = 'hm-ad'; node.dataset.placement = 'late_display';
+            node.style.width = '320px'; document.querySelector('[data-placement]').after(node);
+        });
+        await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(2);
+        expect(await page.evaluate(() => window.domBusyStill)).toBe(true);
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        await page.evaluate(() => { clearInterval(window.domBusyTimer); clearTimeout(window.domBusyStop); });
+        run.release(); await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+        expect(await page.evaluate(() => window.displayMetrics.ids)).toEqual(['parallel_display-runtime', 'late_display-runtime']);
+        expect(run.counts.verifies).toBe(1);
+    });
+}
+for (const mode of ['composed', 'minified']) {
+    test(`${mode}: collapsed Quick video anchor reserves no blank space while verification is pending`, async ({ page }) => {
+        const run = await open(page, { parallel: true, quickEmbed: true, emptyDiv: true, delay: 'verification', minified: mode === 'minified' });
+        await expect.poll(() => run.counts.verifies).toBe(1);
+        const surface = page.locator('[data-placement="quick_video_floating"]');
+        expect(await surface.evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(1);
+        expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(0);
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+        await page.evaluate(() => window.scrollTo(0, 1800)); run.release();
+        await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+        await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
     });
 }

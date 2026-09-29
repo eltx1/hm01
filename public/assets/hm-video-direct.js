@@ -362,6 +362,7 @@
             adRulesHasPostroll: false,
             floating: false,
             wasInlineVisible: false,
+            wasInlineAnchorVisible: false,
             visibleRatio: 0,
             pendingAdStart: null,
             requestCorrelator: String(Date.now()),
@@ -498,6 +499,7 @@
                 var previous = history.take();
                 if (previous) {
                     player.wasInlineVisible = previous.wasInlineVisible === true;
+                    player.wasInlineAnchorVisible = previous.anchorWasVisible === true;
                     layout.scrolled = previous.scrolled === true;
                 }
             } catch (error) { /* Optional layout history must never block ads. */ }
@@ -582,7 +584,7 @@
             player.visibleRatio = Math.max(0, Math.min(1, ratio));
             if (!player.floating && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
             var outside = data ? !data.hidden && (data.rect.bottom <= data.view.top + 1 || data.rect.top >= data.view.bottom - 1) : ratio <= 0.01;
-            if (!player.floating && player.inlineToFloating && player.wasInlineVisible && outside && (layout.scrolled || !data)) {
+            if (!player.floating && player.inlineToFloating && (player.wasInlineVisible || player.wasInlineAnchorVisible) && outside && (layout.scrolled || !data)) {
                 layout.reserve();
                 floatContentPlayer(player);
                 var floated = geometry(surface);

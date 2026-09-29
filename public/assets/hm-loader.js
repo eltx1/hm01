@@ -1716,6 +1716,18 @@ function nativeDefinition(config, code) {
         });
     }
 
+    function startIndependentEntry(config, entry, start) {
+        // One placement's synchronous provider/observer failure must not prevent
+        // the remaining placements or engines from being dispatched.
+        return Promise.resolve().then(function () {
+            if (!canRequestAds(config)) return false;
+            return start(config, entry);
+        }).catch(function (error) {
+            log(config, 'Independent placement stopped safely', entry.placement.code, error);
+            return false;
+        });
+    }
+
     function defineItems(config, items) {
         if (!canRequestAds(config) || !items.length) return Promise.resolve([]);
         var standaloneItems = prebidServingAllowed(config)
@@ -1741,13 +1753,13 @@ function nativeDefinition(config, code) {
         }
 
         standaloneItems.forEach(function (item) { ensureElementId(item.element, config, item.placement); });
-        var standalonePromise = Promise.all(standaloneItems.map(function (item) { return runStandaloneEntry(config, item); }));
+        var standalonePromise = Promise.all(standaloneItems.map(function (item) { return startIndependentEntry(config, item, runStandaloneEntry); }));
         nativeOnly.forEach(function (item) {
             ensureElementId(item.element, config, item.placement);
             item.element.setAttribute('data-hm-defined', '1');
             item.element.setAttribute('data-hm-status', 'direct-demand');
         });
-        var nativePromise = Promise.all(nativeOnly.map(function (item) { return runDirectEntry(config, item); }));
+        var nativePromise = Promise.all(nativeOnly.map(function (item) { return startIndependentEntry(config, item, runDirectEntry); }));
         if (!gamItems.length) return Promise.all([nativePromise, standalonePromise]).then(function () { diagnostics(config, standaloneItems); return nativeOnly.concat(standaloneItems); });
 
         return loadGpt(config).then(function (googletag) {
@@ -1993,8 +2005,13 @@ function nativeDefinition(config, code) {
         if (!state.observer && window.MutationObserver && document.documentElement) {
             state.observer = new window.MutationObserver(function (mutations) {
                 inspectClickGuardMutations(state.config, mutations || []);
-                window.clearTimeout(state.scanTimer);
-                state.scanTimer = window.setTimeout(function () { scan(state.config); }, 25);
+                // Coalesce a burst without moving its deadline. Trailing-edge
+                // debounce lets an active video/SPA starve unrelated late slots.
+                if (state.scanTimer !== null) return;
+                state.scanTimer = window.setTimeout(function () {
+                    state.scanTimer = null;
+                    scan(state.config);
+                }, 25);
             });
             state.observer.observe(document.documentElement, { childList: true, subtree: true });
             discoverClickGuardIframes(state.config);
