@@ -1,0 +1,46 @@
+name: Ad serving Pages snapshot read-only
+on:
+  push:
+    branches: [diagnostics/ad-serving-incident-20260929]
+    paths: [.github/workflows/ad-serving-pages-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read published public assets without ad calls
+        run: |
+          mkdir -p snapshot
+          python3 - <<'PY'
+          import urllib.request,urllib.error,urllib.parse,json,pathlib,hashlib,concurrent.futures
+          out=pathlib.Path('snapshot'); report=[]
+          paths={'loader':'/hm-loader.js','control':'/configs/_global/control.json','config':'/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json','manifest':'/delivery-manifest.json','gate':'/traffic-gate/'}
+          bases={'latest':'https://horus-media-cdn.pages.dev','verified':'https://76106ac8.horus-media-cdn.pages.dev'}
+          def get(item):
+            prefix,name,url=item; row={'name':prefix+'-'+name,'url':url}
+            try:
+              try: r=urllib.request.urlopen(url,timeout=12)
+              except urllib.error.HTTPError as e:r=e
+              with r:
+                data=r.read(1800001)
+                if len(data)>1800000:raise ValueError('bounded response exceeded')
+                row.update(status=r.code,bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),type=r.headers.get('Content-Type'))
+                (out/(row['name']+'.body')).write_bytes(data)
+                if name in ['control','config'] and r.code==200:
+                  j=json.loads(data)
+                  row['settings']={k:j.get(k) for k in ['siteKey','configVersion','status','controls','clickGuard','trafficGate','loaderRelease','runtime','privacy']}
+                  row['placements']=[{'code':p.get('code'),'type':p.get('type'),'enabled':p.get('enabled'),'format':p.get('format')} for p in j.get('placements',[])]
+            except Exception as e:row['error']=str(e)
+            return row
+          tasks=[(p,n,b+path) for p,b in bases.items() for n,path in paths.items()]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:report=list(pool.map(get,tasks))
+          (out/'summary.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horus-public-pages-incident
+          path: snapshot/
+          retention-days: 3
