@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      BASE_SHA: 4591910380b50e9b778ff2ded9be8fe286250b17
+      BASE_SHA: 73c759002eef15b77fe4e721cf35e4e2fc1b145d
       TARGET_BRANCH: fix/video-live-serving-policy
     steps:
       - uses: actions/checkout@v6
@@ -23,10 +23,8 @@ jobs:
           python3 - <<'PY'
           import base64, gzip, hashlib, os, pathlib, shutil
           root = pathlib.Path('.reviewed-video-policy')
-          encoded = ''.join((root / f'payload-{i}.txt').read_text().strip() for i in range(4))
-          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
-          expected = '4fa3a2b877401bbda08a0f16e8f0d3fa14fed71e48fc42f1678f0882cf6755cb'
-          assert hashlib.sha256(patch).hexdigest() == expected, 'reviewed patch checksum mismatch'
+          patch = gzip.decompress(base64.b64decode((root / 'payload-0.txt').read_text().strip(), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'ea778220790e395e749138b2a107ce50bdb8479ad0dfe0110f0005bafe470a64', 'reviewed patch checksum mismatch'
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
           (temp / 'reviewed-video-policy.patch').write_bytes(patch)
           shutil.copyfile(root / 'manifest.json', temp / 'reviewed-video-manifest.json')
@@ -58,12 +56,12 @@ jobs:
           node --check public/assets/hm-loader.js
           node --check public/assets/hm-video-direct.js
           node --check tests/Browser/video-serving-policy.playwright.spec.js
-          node --test tests/Browser/hm-loader-click-guard.test.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/hm-loader-shadow-click-guard.test.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/traffic-gate-siteverify-worker.test.js tests/Browser/hm-loader-placement-presets.test.js
+          node --test tests/Browser/hm-loader-click-guard.test.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/hm-loader-shadow-click-guard.test.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/traffic-gate-siteverify-worker.test.js tests/Browser/hm-loader-placement-presets.test.js tests/Browser/hm-loader-direct-fallback-hardening.test.js
       - name: Commit reviewed code to review branch without force
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Enforce live serving policy across VAST and VMAP playback' -m 'Recheck central Cloudflare, privacy, serving and Click Guard admission for every video request and deferred start; stop scheduled advertising on revocation, preserve healthy content and floating layout, and add combined security/browser regressions.'
+          git commit -m 'Recheck live policy on terminal SDK events and cleanup' -m 'Prevent late error/completion cleanup from signaling contentComplete after unnotified denial; exercise actual clicks after Floating and strengthen forged PASS coverage.'
           git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           printf 'Reviewed source commit: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
