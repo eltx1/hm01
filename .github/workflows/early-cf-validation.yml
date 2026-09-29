@@ -17,7 +17,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: b3d540706e071dba369126b57fba82da8d695b15
+          ref: d4c9644038b193dc24f00ba46590f69114edb7ff
           path: staging
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -27,7 +27,8 @@ jobs:
         shell: python
         run: |
           import pathlib,base64,gzip,hashlib,os
-          for name,digest in [('early-cf','d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'),('early-cf-refine','5babc07c60b8df9d997b6c1428f8368a87c387a241fea66b69ab0f69c3c2e91e'),('early-cf-origin','7835cd3e7a6e1f1d9f1536eb71b02450cae18c69ce0e1ea84b2175357861bc26')]:
+          pairs=[('early-cf','d12324dbbc8dfc3758736fbd150f71b0e31392008666454d901f6745e50893b6'),('early-cf-refine','5babc07c60b8df9d997b6c1428f8368a87c387a241fea66b69ab0f69c3c2e91e'),('early-cf-origin','7835cd3e7a6e1f1d9f1536eb71b02450cae18c69ce0e1ea84b2175357861bc26'),('early-cf-ready-only','dbf32faea97b1eb3ba1bd57491b4b39ff3e6c4884fedb23a4d784535aa64b280')]
+          for name,digest in pairs:
               encoded=pathlib.Path('staging/diagnostics/'+name+'.patch.gz.base64').read_text().strip()
               if name=='early-cf-refine': encoded=encoded.replace('cf+eYAhUZ','cf+YAhUZ',1)
               patch=gzip.decompress(base64.b64decode(encoded,validate=True))
@@ -47,17 +48,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in early-cf early-cf-refine early-cf-origin; do
+          for name in early-cf early-cf-refine early-cf-origin early-cf-ready-only; do
             git apply --check "$RUNNER_TEMP/$name.patch"
             git apply "$RUNNER_TEMP/$name.patch"
           done
           git add -N tests/Browser/early-verification.playwright.spec.js
           git diff --check
-          # The earlier checksum mismatch was entirely the generated baseline
-          # hm-loader.min.js. Its removal reproduced the expected source hash.
-          # Include only reviewed source/test files, never generated build output.
           git diff HEAD -- playwright.traffic-gate.config.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html scripts/loader-startup-trace.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/early-verification.playwright.spec.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/traffic-gate.test.js > "$RUNNER_TEMP/early-cf-final.patch"
-          echo "804834528aff55d199dded6eb8df4e7bc4dac27915a87798e1e312660df4ba8c  $RUNNER_TEMP/early-cf-final.patch" | sha256sum -c -
+          echo "9c076d26d96a8ec7f4047c7aadb1125e3817b653a3425efb4f09cf38d3fa180b  $RUNNER_TEMP/early-cf-final.patch" | sha256sum -c -
           npm run build:loader
           sha256sum public/assets/hm-loader.min.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html > "$RUNNER_TEMP/early-compiled-sha256.txt"
       - name: Run complete Node regressions
