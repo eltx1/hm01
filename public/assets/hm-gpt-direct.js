@@ -90,6 +90,17 @@
     }
     // END SHARED REWARDED PROMPT
 
+    // Optional local diagnostic hook. Never transmit data or alter authorization.
+    function tracePhase(phase, container, detail) {
+        try {
+            var loader = window.HorusMediaLoader;
+            if (!loader || typeof loader.trace !== 'function') return;
+            var fields = Object.assign({}, detail || {});
+            if (container && typeof loader.traceSlot === 'function') fields.slot = loader.traceSlot(container);
+            loader.trace(phase, fields);
+        } catch (error) { /* Diagnostics must not change playback or requests. */ }
+    }
+
     var STATE_KEY = '__HORUS_GPT_DIRECT_RUNTIME_V5__';
     if (window[STATE_KEY]) {
         if (typeof window[STATE_KEY].scan === 'function') window[STATE_KEY].scan();
@@ -274,6 +285,15 @@
         container.setAttribute('data-hm-gpt-status', status);
     }
 
+    function traceSlotService(slot, container, service) {
+        try {
+            var loader = window.HorusMediaLoader;
+            if (!loader) return;
+            if (typeof loader.traceSlot === 'function') loader.traceSlot(slot, container);
+            if (typeof loader.traceGpt === 'function') loader.traceGpt(service);
+        } catch (error) { /* Keep slot initialization independent of diagnostics. */ }
+    }
+
     function destroySlot(slot) {
         try {
             if (window.googletag && typeof window.googletag.destroySlots === 'function') window.googletag.destroySlots([slot]);
@@ -310,6 +330,8 @@
                 return;
             }
             pubads = googletag.pubads();
+            tracePhase('GPT ready');
+            traceSlotService(slot, container, pubads);
             if (!pubads || typeof slot.addService !== 'function') {
                 report(container, 'failed');
                 destroySlot(slot);
@@ -362,6 +384,7 @@
             slot.addService(pubads);
             container.setAttribute('data-hm-gpt-runtime-state', 'requested');
             if (typeof googletag.enableServices === 'function') googletag.enableServices();
+            tracePhase('GPT call', container);
             googletag.display(container.id);
         } catch (error) {
             if (!finished) {
@@ -576,6 +599,8 @@
                 slot = gpt.defineOutOfPageSlot(path, gpt.enums.OutOfPageFormat.REWARDED);
                 if (!slot) { close('ineligible'); return; }
                 pubads = gpt.pubads();
+                tracePhase('GPT ready');
+                traceSlotService(slot, container, pubads);
                 slot.addService(pubads);
                 listen('rewardedSlotReady', ready);
                 listen('rewardedSlotGranted', function (event) {
@@ -588,6 +613,7 @@
                 listen('rewardedSlotClosed', function () { close(granted ? 'completed' : 'dismissed'); });
                 listen('slotRenderEnded', function (event) { if (event.isEmpty) close('empty'); });
                 gpt.enableServices();
+                tracePhase('GPT call', container);
                 gpt.display(slot);
                 var disabled = gpt.getConfig ? gpt.getConfig('disableInitialLoad').disableInitialLoad : (pubads.isInitialLoadDisabled && pubads.isInitialLoadDisabled());
                 if (disabled && pubads.refresh) pubads.refresh([slot]);

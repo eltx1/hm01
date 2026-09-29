@@ -207,6 +207,8 @@ test('authorized Site origin receives READY then PASS with the exact nonce and n
     assert.equal(harness.renderCount, 1);
     assert.deepEqual(harness.messages.map(({ payload }) => payload.type), [
         'HORUS_TRAFFIC_GATE_READY',
+        'HORUS_TRAFFIC_GATE_PROGRESS',
+        'HORUS_TRAFFIC_GATE_PROGRESS',
         'HORUS_TRAFFIC_GATE_PASS',
     ]);
     for (const { payload, targetOrigin } of harness.messages) {
@@ -365,7 +367,9 @@ test('invalid or mismatched Site configuration never authorizes a challenge', as
 test('transient verification is retried once with the same token and idempotency key', async () => {
     const harness = createHarness({ verificationReplies: [{ status: 503, body: { success: false, retryable: true } }] });
     await harness.hello();
-    assert.equal(harness.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_READY');
+    assert.equal(harness.messages.filter(({ payload }) => payload.type !== 'HORUS_TRAFFIC_GATE_PROGRESS').at(-1).payload.type, 'HORUS_TRAFFIC_GATE_READY');
+    assert.equal(harness.messages.at(-1).payload.phase, 'verify');
+    assert.equal(harness.messages.some(({ payload }) => payload.type === 'HORUS_TRAFFIC_GATE_PASS'), false);
     await harness.runTimer(1500);
     assert.equal(harness.verificationCalls.length, 2);
     assert.deepEqual(harness.verificationCalls[0], harness.verificationCalls[1]);

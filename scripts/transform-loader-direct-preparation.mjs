@@ -33,12 +33,16 @@ const HELPER = String.raw`
             } catch (error) { return false; }
         });
         if (existing) return;
+        if (typeof startupTrace === 'function') startupTrace('GPT load');
         ensureGoogletagQueue();
         // Start GPT and its internal dependency alongside the Horus adapter.
         // Do not await this promise, video readiness, or another placement.
         // The adapter retains slot creation; GAM reuses this same promise.
         state.gptPromise = loadExternalScript('script[data-hm-gpt="1"]', 'data-hm-gpt', url, 'anonymous')
-            .then(function () { return ensureGoogletagQueue(); });
+            .then(function () {
+                if (typeof startupTrace === 'function') startupTrace('GPT fetched');
+                return ensureGoogletagQueue();
+            });
         state.gptPromise.catch(function (error) {
             // Handle optional overlap failure without rejecting sibling Direct
             // candidates; the original rejection remains available to GAM.
