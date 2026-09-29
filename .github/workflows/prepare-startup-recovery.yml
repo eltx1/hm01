@@ -1,0 +1,81 @@
+name: Prepare startup recovery safely
+on:
+  push:
+    branches: [ops/prepare-startup-recovery-20260929]
+    paths: [.github/workflows/prepare-startup-recovery.yml]
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: payload
+      - name: Verify reviewed patch bytes
+        run: |
+          python3 - <<'PY'
+          import pathlib,base64,gzip,hashlib
+          encoded=''.join((pathlib.Path('payload/ops')/f'startup-patch.{i}').read_text().strip() for i in range(1,5))
+          # Correct a single transport transcription before verifying the complete
+          # reviewed patch checksum; any other mismatch aborts before execution.
+          encoded=encoded.replace('Fkw4/bMY','Fkw/bMY')
+          patch=gzip.decompress(base64.b64decode(encoded,validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='205b62965af5d90a685535a737ca1e189c66a312592b4eabec1bf87bef9d924e'
+          pathlib.Path('startup.patch').write_bytes(patch)
+          print('Verified patch: 205b62965af5d90a685535a737ca1e189c66a312592b4eabec1bf87bef9d924e')
+          PY
+      - uses: actions/checkout@v6
+        with:
+          ref: 4591910380b50e9b778ff2ded9be8fe286250b17
+          path: source
+      - name: Prepare exact proposed tree
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin c5c83f6811e04d4c0386ecd28d6a2e07ce586ea8
+          git apply --check ../startup.patch
+          git apply ../startup.patch
+          git show c5c83f6811e04d4c0386ecd28d6a2e07ce586ea8:tests/Browser/hm-loader-direct-preparation.test.js > tests/Browser/hm-loader-direct-preparation.test.js
+          git diff --check
+          git add playwright.traffic-gate.config.js public/assets/hm-video-direct.js scripts/build-loader.mjs scripts/transform-loader-direct-preparation.mjs scripts/transform-loader-video-preparation.mjs tests/Browser/helpers/startup-preparation-fixture.js tests/Browser/hm-loader-startup-preparation.test.js tests/Browser/startup-recovery.playwright.spec.js tests/Browser/hm-loader-direct-preparation.test.js
+          git diff --cached --stat
+          git write-tree > ../reviewed-tree
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Install pinned dependencies and CI browsers
+        working-directory: source
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Build minified loader and run all Node regressions
+        working-directory: source
+        run: npm run test:browser
+      - name: Run full-composition startup, security and existing floating browser matrix
+        working-directory: source
+        run: npx playwright test --config=playwright.traffic-gate.config.js startup-recovery.playwright.spec.js video-inline-floating.playwright.spec.js traffic-gate-loader.playwright.spec.js
+      - name: Publish only the reviewed PR branch after tests pass
+        working-directory: source
+        run: |
+          set -euo pipefail
+          expected=c5c83f6811e04d4c0386ecd28d6a2e07ce586ea8
+          actual=$(git ls-remote origin refs/heads/fix/quick-monetize-preparation-latency | cut -f1)
+          test "$actual" = "$expected"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit=$(git commit-tree "$(cat ../reviewed-tree)" -p "$expected" -m 'Preserve early inline visibility across startup delays and prepare Direct assets safely')
+          git push origin "$commit:refs/heads/fix/quick-monetize-preparation-latency"
+          echo "reviewed_commit=$commit"
+      - name: Save browser regression diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: startup-recovery-browser-results
+          path: source/test-results/
+          retention-days: 3
+          if-no-files-found: ignore
