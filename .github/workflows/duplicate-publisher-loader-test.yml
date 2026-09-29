@@ -1,0 +1,63 @@
+name: Check duplicate publisher Loader offline
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/duplicate-publisher-loader-test.yml]
+permissions:
+  contents: read
+jobs:
+  duplicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 002bfca816627c7c7e0786456d89499fea7cf664
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Add an isolated regression for the duplicate markup observation
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tests/Browser/startup-recovery.playwright.spec.js')
+          with p.open('a') as f:
+              f.write('''
+          for (const mode of ['composed', 'minified']) for (const stage of ['runtime-pending', 'already-started']) {
+              test(`${mode}: duplicate publisher embed at ${stage} keeps one owner and independent requests`, async ({page}) => {
+                  const run = await open(page, {parallel:true, delay:stage === 'runtime-pending' ? 'runtime' : null, minified:mode === 'minified'});
+                  await expect.poll(() => page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+                  if (stage === 'already-started') await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+                  await page.addScriptTag({content:mode === 'minified' ? minified : composed});
+                  await page.evaluate(() => { window.HorusMediaLoader.boot({script:document.getElementById('loader')}); });
+                  await page.waitForTimeout(100);
+                  expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+                  if (stage === 'runtime-pending') {
+                      expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
+                      run.release();
+                  }
+                  await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+                  await page.waitForTimeout(100);
+                  expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
+                  expect(await page.evaluate(() => window.displayMetrics.requests)).toBe(1);
+                  await expect(page.locator('[data-test-ima]')).toHaveCount(1);
+              });
+          }
+          ''')
+      - name: Install isolated test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+          npm run build:loader
+      - name: Run duplicate-loader matrix without any paid ad requests
+        run: |
+          set -o pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/startup-recovery.playwright.spec.js --grep 'duplicate publisher embed' | tee duplicate-embed.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: duplicate-publisher-embed-proof
+          path: duplicate-embed.log
+          retention-days: 7
