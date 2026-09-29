@@ -13,6 +13,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      REVIEW_DRY_RUN: 'false'
     steps:
       - name: Require the exact completed successful validation
         uses: actions/github-script@v8
@@ -21,8 +23,8 @@ jobs:
             const repo={owner:context.repo.owner,repo:context.repo.repo};
             let passed=false;
             for(let attempt=0;attempt<48;attempt++) {
-              const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36638431829});
-              if(run.head_sha!=='bea4841125d620ce7c0b0e79c2f651bacea35d90'||run.path!=='.github/workflows/early-cf-validation.yml'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
+              const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:36639495351});
+              if(run.head_sha!=='5cecd3ec7574332574f705cc3289b9154179e972'||run.path!=='.github/workflows/early-cf-validation.yml'||run.head_repository.id!==context.payload.repository.id)throw new Error('Unexpected validation source');
               if(run.status==='completed') {
                 if(run.conclusion!=='success')throw new Error('Validation failed; no review update permitted');
                 const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id});
@@ -39,28 +41,39 @@ jobs:
         with:
           name: early-cf-validation
           path: validated
-          run-id: 36638431829
+          run-id: 36639495351
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Fast-forward the empty review branch with only validated source
         shell: bash
         run: |
           set -euo pipefail
           patch=validated/_temp/early-cf-final.patch
-          echo "9c076d26d96a8ec7f4047c7aadb1125e3817b653a3425efb4f09cf38d3fa180b  $patch" | sha256sum -c -
+          echo "3998056baf740fc283022c1d2352d2a02feca0bece9ef21bd6f8e2b3fd668cc2  $patch" | sha256sum -c -
           branch=fix/early-verification-preparation-20260930
           base=3bc3a7f04590f9818ba8c9b1d4ac18fba1455f08
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$base"
-          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = "$base"
           git apply --check "$patch"
           git apply "$patch"
-          git add playwright.traffic-gate.config.js public/assets/traffic-gate/horus-traffic-gate.js public/traffic-gate/index.html scripts/loader-startup-trace.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/early-verification.playwright.spec.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/traffic-gate.test.js
+          git add playwright.traffic-gate.config.js public/assets/traffic-gate/horus-traffic-gate.js scripts/loader-startup-trace.mjs scripts/transform-loader-traffic-gate.mjs tests/Browser/early-verification.playwright.spec.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/traffic-gate.test.js
           python - <<'PY'
           import subprocess
           paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
-          assert paths=={'playwright.traffic-gate.config.js','public/assets/traffic-gate/horus-traffic-gate.js','public/traffic-gate/index.html','scripts/loader-startup-trace.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/early-verification.playwright.spec.js','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/traffic-gate.test.js'}
+          assert paths=={'playwright.traffic-gate.config.js','public/assets/traffic-gate/horus-traffic-gate.js','scripts/loader-startup-trace.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/early-verification.playwright.spec.js','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/traffic-gate.test.js'}
           PY
           git diff --cached --check
+          if [[ "$REVIEW_DRY_RUN" == 'true' ]]; then
+            git diff --cached --stat
+            exit 0
+          fi
+          test "$REVIEW_DRY_RUN" = 'false'
+          git fetch --no-tags origin "refs/heads/$branch"
+          remote_sha=$(git rev-parse FETCH_HEAD)
+          if [[ "$remote_sha" != "$base" ]]; then
+            test "$(git rev-parse FETCH_HEAD^{tree})" = "$(git write-tree)"
+            echo 'The exact reviewed tree is already published; no write required.'
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Warm only ready verification documents alongside configuration without early authorization'
+          git commit -m 'Prepare ready verification documents early without bypassing server validation'
           git push origin "HEAD:refs/heads/$branch"
