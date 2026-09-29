@@ -120,6 +120,7 @@ async function openReading(page, language, browserLanguages = [language]) {
         Object.defineProperty(navigator, 'languages', { configurable: true, value: languages });
         Object.defineProperty(navigator, 'language', { configurable: true, value: languages[0] || '' });
     }, browserLanguages);
+    await page.evaluate(() => { document.querySelectorAll('[data-hm-video-direct]').forEach(el => { el.__hmVideoCanRequestAds = () => true; }); });
     await page.addScriptTag({ content: runtime });
 }
 

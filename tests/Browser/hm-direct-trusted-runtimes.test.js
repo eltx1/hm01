@@ -207,6 +207,9 @@ function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function runVideo(selectedContainer, options = {}) {
+    // Production supplies this per-recipe callback; isolated SDK fixtures must
+    // explicitly model that boundary instead of making missing policy pass.
+    if (!options.missingPolicy) selectedContainer.__hmVideoCanRequestAds = options.policy || (() => true);
     const requested = [];
     const managers = [];
     const loaders = [];
@@ -264,6 +267,7 @@ function runVideo(selectedContainer, options = {}) {
         COMPLETE: 'complete',
         SKIPPED: 'skipped',
         ALL_ADS_COMPLETED: 'all-ads-completed',
+        AD_BREAK_READY: 'ad-break-ready',
         CONTENT_PAUSE_REQUESTED: 'content-pause-requested',
         CONTENT_RESUME_REQUESTED: 'content-resume-requested',
     };
@@ -276,7 +280,10 @@ function runVideo(selectedContainer, options = {}) {
         }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
         emit(name, event = {}) { (this.listeners[name] || []).forEach((callback) => callback(event)); }
-        init(width, height, mode) { this.initialized = [width, height, mode]; }
+        init(width, height, mode) {
+            this.initialized = [width, height, mode];
+            if ((options.cuePoints || []).includes(0) && !options.deferAdBreak) this.emit('ad-break-ready');
+        }
         setVolume(volume) { this.volume = volume; }
         start() {
             if (options.managerStartThrows) throw new Error('manager-start-failed');
@@ -289,6 +296,7 @@ function runVideo(selectedContainer, options = {}) {
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
+        getSettings() { return { setAutoPlayAdBreaks: value => { this.autoPlayAdBreaks = value; } }; }
         constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.pendingManager = null; loaders.push(this); }
         destroy() { this.destroyed = true; }
         contentComplete() { this.contentCompleteCalled = true; }
@@ -1319,4 +1327,115 @@ test('rewarded private-mode storage getter failure does not prevent opening or c
     runtime.managers[0].emit('all-ads-completed');
     assert.equal(target.style.display, 'none');
     assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-granted').length, 1);
+});
+
+
+function securityVideoTarget(content = false) {
+    return container({
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://ads.example/video').toString('base64'),
+        ...(content ? { 'data-hm-video-content-url': 'https://media.example/content.mp4' } : {}),
+    }, 'security-video');
+}
+
+for (const policy of [null, () => false, () => { throw new Error('unavailable policy'); }, () => 'true']) {
+    test(`video admission fails closed without an explicit live boolean grant: ${String(policy)}`, async () => {
+        const target = securityVideoTarget();
+        const run = runVideo(target, policy ? { policy } : { missingPolicy: true });
+        await tick();
+        assert.equal(run.requested.length, 0);
+        assert.equal(target.getAttribute('data-hm-video-status'), 'security-blocked');
+    });
+}
+
+for (const content of [false, true]) {
+    test(`late deny blocks VAST before first visibility: content=${content}`, async () => {
+        let allowed = true;
+        const target = securityVideoTarget(content);
+        const run = runVideo(target, { policy: () => allowed, autoIntersect: false });
+        await tick();
+        allowed = false;
+        run.intersectionObservers[0].emit(0.6, true);
+        await tick();
+        assert.equal(run.requested.length, 0);
+        assert.equal(target.getAttribute('data-hm-video-policy-state'), 'blocked');
+    });
+
+    test(`late deny invalidates a delayed manager response: content=${content}`, async () => {
+        let allowed = true;
+        const target = securityVideoTarget(content);
+        const run = runVideo(target, { policy: () => allowed, deferManagerLoad: true });
+        await tick();
+        assert.equal(run.requested.length, 1);
+        allowed = false;
+        run.loaders[0].emitManagerLoaded();
+        await tick();
+        assert.equal(run.managers[0].started, false);
+        assert.equal(run.loaders[0].destroyed, true);
+        assert.equal(run.loaders[0].contentCompleteCalled, false);
+    });
+
+    test(`late deny blocks the pending viewability start: content=${content}`, async () => {
+        let allowed = true;
+        const target = securityVideoTarget(content);
+        const run = runVideo(target, { policy: () => allowed, autoIntersect: false, deferManagerLoad: true });
+        await tick();
+        run.intersectionObservers[0].emit(0.6, true);
+        run.intersectionObservers[0].emit(0.2, true);
+        run.loaders[0].emitManagerLoaded();
+        assert.equal(run.managers[0].started, false);
+        allowed = false;
+        run.intersectionObservers[0].emit(0.6, true);
+        await tick();
+        assert.equal(run.managers[0].started, false);
+        assert.equal(run.managers[0].destroyed, true);
+    });
+}
+
+test('a denied manual midroll/postroll never issues another request and content stays usable', async () => {
+    let allowed = true;
+    const target = securityVideoTarget(true);
+    const run = runVideo(target, { policy: () => allowed, contentDuration: 120 });
+    await tick();
+    run.managers[0].emit('all-ads-completed');
+    await tick();
+    allowed = false;
+    const video = run.created.find(node => node.tagName === 'VIDEO');
+    video.currentTime = 70;
+    video.emit('timeupdate');
+    await tick();
+    assert.equal(run.requested.length, 1);
+    assert.equal(target.getAttribute('data-hm-video-policy-state'), 'blocked');
+    assert.equal(target.getAttribute('data-hm-video-status'), 'content-playing');
+    video.emit('ended');
+    assert.equal(run.requested.length, 1);
+    assert.equal(target.getAttribute('data-hm-video-status'), 'security-blocked');
+});
+
+test('VMAP is manually admitted per break and denial tears down without postroll signaling', async () => {
+    let allowed = true;
+    const target = securityVideoTarget(true);
+    const run = runVideo(target, { policy: () => allowed, contentDuration: 120, cuePoints: [0, 60, -1], deferAdBreak: true });
+    await tick();
+    const manager = run.managers[0], loader = run.loaders[0];
+    assert.equal(loader.autoPlayAdBreaks, false);
+    assert.equal(manager.started, false, 'VMAP must not start eagerly');
+    manager.emit('ad-break-ready');
+    assert.equal(manager.started, true);
+    manager.emit('content-resume-requested');
+    await tick();
+    manager.started = false;
+    allowed = false;
+    manager.emit('ad-break-ready');
+    await tick();
+    assert.equal(manager.started, false);
+    assert.equal(manager.destroyed, true);
+    assert.equal(loader.destroyed, true);
+    assert.equal(loader.contentCompleteCalled, false);
+    manager.emit('all-ads-completed');
+    manager.emit('ad-error', { getError: () => new Error('stale') });
+    manager.emit('ad-break-ready');
+    assert.equal(manager.started, false);
+    assert.equal(run.requested.length, 1);
+    assert.equal(target.getAttribute('data-hm-video-policy-state'), 'blocked');
 });
