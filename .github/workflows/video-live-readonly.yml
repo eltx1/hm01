@@ -1,0 +1,63 @@
+name: Read-only public video delivery probe
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/video-live-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  public-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read public publisher HTML and static configuration only
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, json, pathlib, re, hashlib
+          out = pathlib.Path('video-public-probe'); out.mkdir()
+          def get(url, name):
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent':'HorusMedia-ReadOnly-Diagnostics/1.0'})
+                  with urllib.request.urlopen(req, timeout=25) as response:
+                      data = response.read(3000000)
+                      info = {'url':url,'status':response.status,'type':response.headers.get('Content-Type'),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+                  (out/name).write_bytes(data)
+                  print(json.dumps(info))
+                  return data.decode('utf8',errors='replace')
+              except Exception as e:
+                  print(json.dumps({'url':url,'error':str(e)})); return ''
+          keys = {'hm_ircll0vkqq54jvt9gz85mrh2'}
+          for domain in ['lordai.net','secretmagic.space']:
+              html = get('https://'+domain+'/',domain+'.html')
+              keys.update(re.findall(r'data-site-key=[\"\x27]([^\"\x27]+)', html))
+          for key in sorted(keys):
+              if not re.fullmatch('[A-Za-z0-9_-]{1,100}',key): continue
+              root = 'https://cdn.horusmedia.net/configs/'+key+'/'
+              get(root+'manifest.json',key+'-manifest.json')
+              raw = get(root+'production.json',key+'-production.json')
+              if not raw: continue
+              try: config=json.loads(raw)
+              except Exception: continue
+              def walk(node):
+                  if isinstance(node,dict):
+                      for k,v in node.items():
+                          if k=='data-hm-video-content-url' and isinstance(v,str):
+                              parsed=urllib.parse.urlparse(v)
+                              if parsed.scheme=='https' and parsed.hostname in ['cdn.horusmedia.net','app.horusmedia.net','horusmedia.net']:
+                                  try:
+                                      req=urllib.request.Request(v, headers={'Range':'bytes=0-1023','User-Agent':'HorusMedia-ReadOnly-Diagnostics/1.0'})
+                                      with urllib.request.urlopen(req,timeout=25) as response:
+                                          chunk=response.read(1024)
+                                          print(json.dumps({'content_url':v,'status':response.status,'type':response.headers.get('Content-Type'),'content_range':response.headers.get('Content-Range'),'length':response.headers.get('Content-Length'),'prefix_hex':chunk[:24].hex()}))
+                                  except Exception as e: print(json.dumps({'content_url':v,'error':str(e)}))
+                          walk(v)
+                  elif isinstance(node,list):
+                      for v in node: walk(v)
+              walk(config)
+          get('https://cdn.horusmedia.net/delivery-manifest.json','delivery-manifest.json')
+          get('https://app.horusmedia.net/release.json','release.json')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-public-probe
+          path: video-public-probe
+          retention-days: 2
