@@ -485,6 +485,19 @@
         var initialScrollY = Number(window.scrollY || window.pageYOffset || 0);
         var initialScrollX = Number(window.scrollX || window.pageXOffset || 0);
 
+        // Consume geometry measured by the Loader while verification/runtime
+        // bytes were pending. It grants layout eligibility, never ad permission.
+        var history = surface && surface.__hmInlineVideoHistory;
+        if (player.inlineToFloating && history && history.node === surface && typeof history.take === 'function') {
+            try {
+                var previous = history.take();
+                if (previous) {
+                    player.wasInlineVisible = previous.wasInlineVisible === true;
+                    layout.scrolled = previous.scrolled === true;
+                }
+            } catch (error) { /* Optional layout history must never block ads. */ }
+        }
+
         function write(style, property, value) {
             if (!style || (style.getPropertyValue && style.getPropertyValue(property) === value)) return;
             importantStyle(style, property, value);

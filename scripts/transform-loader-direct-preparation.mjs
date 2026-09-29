@@ -1,5 +1,4 @@
-// Trusted Quick Monetize runtimes use DIRECT_JS, even when their SDK is GPT.
-// Fetch their static bytes in parallel with verification, without executing them.
+// Fetch approved Quick Monetize static bytes, never execute them before admission.
 const MARKER = 'function prepareTrustedDirectAssets(config, controls)';
 const HELPER = String.raw`
     function prepareTrustedDirectAssets(config, controls) {
@@ -15,14 +14,13 @@ const HELPER = String.raw`
             entry.candidates.slice(0, 20).some(function (candidate) {
                 var tag = candidate && candidate.tag;
                 if (!tag || candidate.gamManaged || String(tag.executionMode || 'STRUCTURED') !== 'STRUCTURED') return false;
-                var attrs = tag.container && tag.container.attributes || {};
+                var attrs = tag.container && tag.container.attributes || tag.attributes || {};
                 var kind = String(attrs['data-hm-gpt-direct'] || '') === '1' ? 'gpt'
                     : String(attrs['data-hm-video-direct'] || '') === '1' ? 'video' : null;
                 if (!kind) return false;
                 if (prepared[kind]) return true;
-                var specs = directScriptSpecs(tag);
                 var approvedUrl = null;
-                specs.slice(0, 5).some(function (spec) {
+                directScriptSpecs(tag).slice(0, 5).some(function (spec) {
                     try {
                         var url = new URL(String(spec.url || ''));
                         var path = new RegExp('^/runtime/' + kind + '/hm-' + kind + '-direct\\.[a-f0-9]{16}\\.js$');
@@ -33,8 +31,6 @@ const HELPER = String.raw`
                     } catch (error) { return false; }
                 });
                 if (!approvedUrl) return false;
-                // Bound downloads to one trusted recipe per runtime family. The
-                // SDKs remain on Google's official origins; none is self-hosted.
                 prepared[kind] = true;
                 addPreparationHint('preload', approvedUrl, 'script');
                 if (kind === 'gpt' && !(window.googletag && (window.googletag.apiReady || window.googletag.pubadsReady))) {
@@ -59,7 +55,6 @@ export function applyDirectPreparationTransform(input) {
         throw new Error('Trusted Direct preparation requires the reviewed Traffic Gate preparation boundary');
     }
     source = source.replace(declaration, () => HELPER + declaration);
-    // This point is AFTER host/site/control/gate validity and privacy admission.
-    // No timers, request authorization, retry limits or visibility rules change.
+    // AFTER the existing host, site, control, gate validity and privacy boundary.
     return source.replace(point, '        prepareTrustedDirectAssets(config, controls);\n' + point);
 }
