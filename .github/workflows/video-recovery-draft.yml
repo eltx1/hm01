@@ -1,0 +1,49 @@
+name: Stage clean video recovery review
+on:
+  push:
+    branches: [diagnostic/video-black-flash-20260929]
+    paths: [.github/workflows/video-recovery-draft.yml]
+permissions:
+  contents: write
+jobs:
+  review-tree:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 7aa1e88fa2b4f4bb896dad1f2143afe0d18bbfb6
+          path: code
+      - uses: actions/checkout@v6
+        with:
+          ref: 26c0bb461d44745c12d6d1610358d8d2766ee95a
+          path: staging
+          persist-credentials: false
+      - name: Publish draft source only, never deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib,base64,gzip,hashlib,os
+          raw=gzip.decompress(base64.b64decode(pathlib.Path('staging/diagnostics/video-recovery.patch.gz.base64').read_bytes()))
+          assert hashlib.sha256(raw).hexdigest()=='ffd4fff9a525990a252ffa7eadaf57c9988e5da89a91ae34a6fd660feef80ce1'
+          pathlib.Path(os.environ['RUNNER_TEMP']+'/video-recovery.patch').write_bytes(raw)
+          PY
+          cd code
+          git apply --check "$RUNNER_TEMP/video-recovery.patch"
+          git apply "$RUNNER_TEMP/video-recovery.patch"
+          git add public/assets/hm-video-direct.js tests/Browser/hm-direct-trusted-runtimes.test.js tests/Browser/video-inline-floating.playwright.spec.js tests/Browser/fixtures/content-playback.mp4.base64
+          test "$(git diff --cached --name-only | wc -l)" -eq 4
+          branch=fix/video-playback-recovery-review-20260929
+          if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            test "$(git write-tree)" = "$(git rev-parse FETCH_HEAD^{tree})"
+            git rev-parse FETCH_HEAD
+            exit 0
+          fi
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve video playback through IMA media errors and stale callbacks'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD
