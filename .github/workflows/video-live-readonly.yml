@@ -10,36 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Read immutable public snapshot, never VAST or tracking
+      - name: Classify public error pages, do not request ads
         shell: python
         run: |
-          import urllib.request, urllib.parse, json, pathlib, hashlib, base64
-          out=pathlib.Path('video-public-probe'); out.mkdir()
-          root='https://91ba8e4b.horus-media-cdn.pages.dev/'
-          path='configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json'
-          try:
-              with urllib.request.urlopen(root+path,timeout=25) as r: data=r.read(3000000)
-              digest=hashlib.sha256(data).hexdigest()
-              print('SNAPSHOT_SHA256',digest)
-              if digest!='676153d88e1abefb4408821a164ef0a1d266e6e6a60077a7afe80de167a45a21': raise ValueError('snapshot mismatch')
-              (out/'production.json').write_bytes(data)
-              def walk(node):
-                  if isinstance(node,dict):
-                      if node.get('data-hm-video-direct')=='1':
-                          safe={k:v for k,v in node.items() if k!='data-hm-vast-url'}
-                          p=urllib.parse.urlsplit(base64.b64decode(node.get('data-hm-vast-url','')).decode())
-                          safe['vast_endpoint']=p.scheme+'://'+p.netloc+p.path
-                          safe['vast_parameters']={k:v for k,v in urllib.parse.parse_qs(p.query).items() if k in ['iu','sz','plcmt','vpos','ad_rule','vpa','vpmute']}
-                          print('VIDEO_RECIPE',json.dumps(safe))
-                      for v in node.values(): walk(v)
-                  elif isinstance(node,list):
-                      for v in node: walk(v)
-              walk(json.loads(data))
-          except Exception as e:
-              print('SNAPSHOT_READ_ERROR',str(e))
-              (out/'error.txt').write_text(str(e))
-      - uses: actions/upload-artifact@v4
-        with:
-          name: video-public-probe
-          path: video-public-probe
-          retention-days: 2
+          import urllib.request, urllib.error, json, re, html
+          urls=['https://cdn.horusmedia.net/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json','https://91ba8e4b.horus-media-cdn.pages.dev/configs/hm_ircll0vkqq54jvt9gz85mrh2/production.json']
+          for url in urls:
+              try:
+                  with urllib.request.urlopen(url,timeout=20) as r:
+                      print(json.dumps({'url':url,'status':r.status,'type':r.headers.get('Content-Type')}))
+              except urllib.error.HTTPError as e:
+                  body=e.read(32000).decode('utf8',errors='replace')
+                  headings=re.findall(r'<(?:title|h1|h2)[^>]*>(.*?)</(?:title|h1|h2)>',body,re.S|re.I)
+                  headings=[html.unescape(re.sub('<[^>]+>',' ',v)).strip()[:500] for v in headings]
+                  print(json.dumps({'url':url,'status':e.code,'cf_mitigated':e.headers.get('cf-mitigated'),'headings':headings,'error_codes':re.findall(r'Error\s*(?:code)?\s*:?\s*(\d{3,5})',re.sub('<[^>]+>',' ',body),re.I)[:5]}))
+              except Exception as e: print(json.dumps({'url':url,'error':str(e)}))
