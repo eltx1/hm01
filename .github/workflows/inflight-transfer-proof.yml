@@ -1,0 +1,23 @@
+name: Inflight transport readback
+on:
+  push:
+    branches: [diagnostic/inflight-gate-20260930]
+    paths: [.github/workflows/inflight-transfer-proof.yml]
+permissions:
+  contents: read
+jobs:
+  readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 52d4271ce081ac277f5e231929d297d0bc8c9551
+          persist-credentials: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: inflight-transport-readback
+          path: .github/workflows/inflight-gate-validation.yml
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
