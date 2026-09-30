@@ -207,7 +207,13 @@ function createHarness(config, {
     let nonceSequence = 0;
     const nativeSetTimeout = setTimeout;
     const nativeClearTimeout = clearTimeout;
-    const scaledSetTimeout = (callback, delay = 0, ...args) => nativeSetTimeout(callback, Math.max(0, Number(delay) * timerScale), ...args);
+    const activeTimers = new Map();
+    const scaledSetTimeout = (callback, delay = 0, ...args) => {
+        const id = nativeSetTimeout(() => { activeTimers.delete(id); callback(...args); }, Math.max(0, Number(delay) * timerScale));
+        activeTimers.set(id, () => callback(...args));
+        return id;
+    };
+    const cancelTimeout = id => { activeTimers.delete(id); nativeClearTimeout(id); };
     const loaderScript = {
         src: 'https://cdn.horusmedia.net/hm-loader.js',
         dataset: {
@@ -441,7 +447,7 @@ function createHarness(config, {
         WeakSet,
         Uint8Array,
         setTimeout: scaledSetTimeout,
-        clearTimeout: nativeClearTimeout,
+        clearTimeout: cancelTimeout,
         setInterval(callback) { const id = ++intervalSequence; intervals.set(id, callback); return id; },
         clearInterval(id) { intervals.delete(id); },
         queueMicrotask,
@@ -518,6 +524,12 @@ function createHarness(config, {
         get gateFrame() { return gateFrame; },
         setGlobalControls(value) { globalControls = structuredClone(value); },
         elapse(ms) { clockOffset += ms; },
+        fireTimer(id) {
+            const callback = activeTimers.get(id);
+            assert.ok(callback, 'timer must be live before deterministic firing');
+            cancelTimeout(id); callback();
+        },
+        messageListenerCount() { return (listeners.message || []).length; },
         domReady() {
             document.readyState = 'interactive';
             (documentListeners.DOMContentLoaded || []).splice(0).forEach(callback => callback());
@@ -1294,21 +1306,30 @@ test('slow global controls cannot be bypassed by a warmed frame or expose HELLO 
     assertNoMonetization(runtime.metrics);
 });
 
-test('a warm document without readiness never delays the ordinary verification transport', async () => {
-    const runtime = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.flush();
-    assert.equal(runtime.metrics.warmFrames, 1);
-    assert.equal(runtime.metrics.gateFrames, 1);
-    assert.notEqual(runtime.gateFrame, runtime.metrics.warmFrame);
-    assert.equal(runtime.metrics.warmFrameRemovals, 1);
-    assert.equal(runtime.metrics.hellos.length, 1, 'normal handshake starts without waiting for the silent warm frame');
-    assertNoMonetization(runtime.metrics);
-    runtime.metrics.releaseGateDocument();
-    assert.equal(runtime.metrics.hellos.length, 1, 'late discarded readiness cannot send another HELLO');
-    runtime.sendGate('PASS');
-    await boot;
-    assert.equal(runtime.metrics.gamRequests, 1);
+test('pending document recovery replaces only one transport within the original deadline', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const first = h.metrics.warmFrame, startedAt = gate.startedAt, deadline = gate.maxTimer, nonce = gate.pageNonce;
+    const oldOnload = first.onload, oldOnerror = first.onerror, fallback = gate.transportFallback;
+    assert.equal(h.gateFrame, first);
+    assert.equal(h.metrics.hellos.length, 0);
+    assertNoMonetization(h.metrics);
+    h.fireTimer(gate.initialTimer); await h.flush();
+    assert.notEqual(h.gateFrame, first);
+    assert.equal(first.parentNode, null);
+    assert.equal(h.metrics.gateFrames, 2);
+    assert.equal(h.metrics.hellos.length, 1);
+    assert.equal(gate.startedAt, startedAt); assert.equal(gate.maxTimer, deadline); assert.equal(gate.pageNonce, nonce);
+    assert.equal(gate.transportFallback, null);
+    oldOnload(); oldOnerror(); fallback('pending_deadline'); h.metrics.releaseGateDocument();
+    h.sendGate('PASS', {}, {source:first.contentWindow});
+    assertNoMonetization(h.metrics);
+    assert.equal(h.metrics.hellos.length, 1);
+    assert.equal(h.metrics.gateFrames, 2, 'late signals cannot create a third frame');
+    h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gamRequests, 1);
+    assert.equal(h.messageListenerCount(), 0);
 });
 
 test('failed or stale document warmup falls back to the ordinary bounded verification', async () => {
@@ -1335,18 +1356,115 @@ test('failed or stale document warmup falls back to the ordinary bounded verific
 });
 
 
-test('a late error from discarded preparation cannot reset the ordinary active deadline', async () => {
+test('a pending preparation error recovers once without resetting the active deadline', async () => {
     const h = createHarness(baseConfig(), {deferGateDocument:true, warmFrameFailure:true, timerScale:1});
     const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
     const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
-    const startedAt = gate.startedAt, deadline = gate.maxTimer;
-    h.metrics.releaseGateDocument(); await h.flush();
+    const startedAt = gate.startedAt, deadline = gate.maxTimer, oldError = h.gateFrame.onerror;
+    h.metrics.releaseGateDocument(); await h.flush(); oldError();
     assert.equal(h.metrics.warmFrames, 1);
-    assert.equal(h.metrics.gateFrames, 1);
+    assert.equal(h.metrics.gateFrames, 2);
     assert.equal(h.metrics.hellos.length, 1);
     assert.equal(gate.startedAt, startedAt);
     assert.equal(gate.maxTimer, deadline);
     assertNoMonetization(h.metrics);
     h.sendGate('PASS'); await boot;
     assert.equal(h.metrics.gamRequests, 1);
+});
+
+test('pending same-page verification document is retained until readiness, with one HELLO and original deadline', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot();
+    await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const firstFrame = h.metrics.warmFrame, deadline = gate.maxTimer, startedAt = gate.startedAt;
+    try {
+        assert.equal(h.gateFrame, firstFrame, 'retain the valid in-flight navigation instead of cancelling it');
+        assert.equal(h.metrics.hellos.length, 0);
+        assertNoMonetization(h.metrics);
+        h.metrics.releaseGateDocument();
+        await h.flush();
+        assert.equal(h.metrics.hellos.length, 1);
+        firstFrame.onload?.();
+        h.metrics.releaseGateDocument();
+        assert.equal(h.metrics.hellos.length, 1, 'readiness and load cannot double-submit HELLO');
+        assert.equal(gate.maxTimer, deadline);
+        assert.equal(gate.startedAt, startedAt);
+        h.sendGate('PASS', {serverVerified:false});
+        assertNoMonetization(h.metrics);
+        h.sendGate('PASS'); await boot;
+        assert.equal(h.metrics.gamRequests, 1);
+        assert.equal(h.metrics.gateFrames, 1);
+    } finally { h.sandbox.HorusMediaLoader._resetForTests(); }
+});
+
+
+test('legacy gate load without readiness ping falls back before sending any HELLO to that document', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    h.gateFrame.onload();
+    assert.equal(h.metrics.hellos.length, 0);
+    h.fireTimer(gate.initialTimer); await h.flush();
+    assert.equal(h.metrics.hellos.length, 1);
+    assert.equal(h.metrics.gateFrames, 2);
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gamRequests, 1);
+    assert.equal(h.messageListenerCount(), 0);
+});
+
+test('pending navigation cannot outlive the original maximum or resume from a late message', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const oldLoad = h.gateFrame.onload;
+    h.elapse(2001); h.metrics.releaseGateDocument(); await boot;
+    assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
+    assert.equal(gate.iframe, null); assert.equal(gate.documentListener, null); assert.equal(gate.transportFallback, null);
+    assert.equal(h.metrics.hellos.length, 0);
+    assert.equal(h.messageListenerCount(), 0);
+    h.metrics.releaseGateDocument(); oldLoad(); await h.flush();
+    assert.equal(h.metrics.gateFrames, 1);
+    assertNoMonetization(h.metrics);
+});
+
+test('invalid source, origin or protocol cannot wake a pending document or authorize advertising', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true, timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    for (const overrides of [{origin:'https://untrusted.example'}, {source:{}}, {data:{type:'HORUS_TRAFFIC_GATE_DOCUMENT_READY',protocolVersion:1}}]) {
+        h.sandbox.dispatchEvent({type:'message',origin:GATE_ORIGIN,source:h.gateFrame.contentWindow,
+            data:{type:'HORUS_TRAFFIC_GATE_DOCUMENT_READY',protocolVersion:2},...overrides});
+    }
+    assert.equal(h.metrics.hellos.length, 0); assertNoMonetization(h.metrics);
+    h.metrics.releaseGateDocument(); await h.flush();
+    h.sendGate('PASS', {serverVerified:false}); assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await boot; assert.equal(h.metrics.gamRequests, 1);
+});
+
+
+test('a loaded speculative error or legacy document without a readiness ping is not adopted', async () => {
+    const h = createHarness(baseConfig(), {readyState:'loading', autoboot:true,
+        deferFirstConfig:true,deferGateDocument:true,timerScale:1});
+    await h.flush(); h.metrics.warmFrame.onload();
+    h.metrics.releaseFirstConfig(); h.domReady();
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    assert.notEqual(h.gateFrame, h.metrics.warmFrame);
+    assert.equal(h.metrics.hellos.length, 1);
+    assert.ok(h.sandbox.HorusMediaLoader.getStartupTrace().events.some(e=>e.phase==='CF cold' && e.reason==='readiness_missing'));
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await boot; assert.equal(h.metrics.gamRequests, 1);
+});
+
+test('a pending frame that becomes ready never restarts while its server verification is slow', async () => {
+    const h = createHarness(baseConfig(), {deferGateDocument:true,timerScale:1});
+    const boot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    h.metrics.releaseGateDocument(); await h.flush();
+    const deadline = gate.maxTimer;
+    h.sendGate('READY'); h.sendGate('PROGRESS', {phase:'token'});
+    h.fireTimer(gate.initialTimer); await h.flush();
+    assert.equal(h.metrics.gateFrames, 1); assert.equal(h.metrics.hellos.length, 1);
+    assert.equal(gate.maxTimer, deadline); assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await boot; assert.equal(h.metrics.gamRequests, 1);
 });
