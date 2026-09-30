@@ -244,7 +244,7 @@ final class StaticDeliverySnapshotBuilder
   X-Content-Type-Options: nosniff
 
 /hm-loader.js
-  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Cache-Control: public, no-cache, max-age=0, must-revalidate, no-transform
   Content-Type: application/javascript; charset=utf-8
 
 /assets/loader/*
@@ -252,7 +252,7 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: application/javascript; charset=utf-8
 
 /assets/hm-loader.min.js
-  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Cache-Control: public, no-cache, max-age=0, must-revalidate, no-transform
   Content-Type: application/javascript; charset=utf-8
 
 /assets/hm-gpt-direct.js

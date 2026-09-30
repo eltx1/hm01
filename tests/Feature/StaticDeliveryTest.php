@@ -220,6 +220,25 @@ class StaticDeliveryTest extends TestCase
         $this->assertFileExists($this->dist.'/sellers.json');
     }
 
+    public function test_mutable_loader_aliases_revalidate_while_hashed_loader_remains_immutable(): void
+    {
+        $headers = app(StaticDeliverySnapshotBuilder::class)->build()->files['_headers'];
+        $policy = 'Cache-Control: public, no-cache, max-age=0, must-revalidate, no-transform';
+
+        foreach (['/hm-loader.js', '/assets/hm-loader.min.js'] as $path) {
+            $pattern = '~(?:^|\\n)'.preg_quote($path, '~').'\\n((?:  [^\\n]*(?:\\n|$))*)~';
+            $this->assertMatchesRegularExpression($pattern, $headers);
+            preg_match($pattern, $headers, $matches);
+            $this->assertStringContainsString($policy, $matches[1]);
+            $this->assertStringNotContainsString('stale-while-revalidate', $matches[1]);
+        }
+
+        $this->assertStringContainsString(
+            "/assets/loader/*\n  Cache-Control: public, max-age=31536000, immutable",
+            $headers,
+        );
+    }
+
     public function test_snapshot_retention_hashing_and_file_budget_are_enforced(): void
     {
         [$site, $admin] = $this->siteWithPrimaryHorus();
