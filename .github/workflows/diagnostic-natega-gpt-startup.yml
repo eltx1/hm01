@@ -1,0 +1,62 @@
+name: Diagnose Natega GPT startup
+on:
+  push:
+    branches: [diagnostic/natega-gpt-startup-20260930]
+    paths: [.github/workflows/diagnostic-natega-gpt-startup.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONFIG_URL: https://355dbb2d.horus-media-cdn.pages.dev/configs/hm_dugvamtfxlbeknptexbsqtpp/production.json
+    steps:
+      - name: Fetch public config only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          curl -fsSL --max-time 20 "$CONFIG_URL?diag=$GITHUB_RUN_ID" -o evidence/config.json
+          jq '{
+            configVersion,
+            status,
+            servingMode,
+            gpt: {
+              singleRequest: .gpt.singleRequest,
+              config: .gpt.config,
+              url: .gpt.url
+            },
+            prebid: {
+              enabled: .prebid.enabled,
+              deliveryMode: .prebid.deliveryMode,
+              lazyLoading: .prebid.delivery.lazyLoading
+            },
+            placements: [
+              .placements[] | {
+                code,
+                type,
+                renderer,
+                enabled,
+                status,
+                lazyLoad,
+                adUnitPath,
+                directRecipe: (.directRecipe // null),
+                format: {
+                  code: .format.code,
+                  settings: .format.settings
+                }
+              }
+            ],
+            directDemand: {
+              enabled: .directDemand.enabled,
+              placements: (.directDemand.placements // {})
+            }
+          }' evidence/config.json > evidence/safe-config.json
+          cat evidence/safe-config.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: natega-gpt-startup-evidence
+          path: evidence/safe-config.json
+          retention-days: 7
+          if-no-files-found: error
