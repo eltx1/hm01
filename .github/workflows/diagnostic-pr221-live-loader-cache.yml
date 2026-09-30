@@ -1,0 +1,65 @@
+name: Diagnose PR221 live Loader cache
+on:
+  push:
+    branches: [diagnostic/pr221-live-loader-cache-20260930]
+    paths: [.github/workflows/diagnostic-pr221-live-loader-cache.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect exact Pages and custom Loader alias
+        shell: bash
+        env:
+          EXPECTED_SHA: 76f7d2ad10588188cb764603ca2f00883f20488fde20567282bdb1713b3fd9f3
+          EXACT_URL: https://763d4fe9.horus-media-cdn.pages.dev/hm-loader.js
+          CUSTOM_URL: https://cdn.horusmedia.net/hm-loader.js
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          inspect() {
+            local name="$1" url="$2"
+            local body="evidence/$name.body" headers="evidence/$name.headers"
+            local code
+            code="$(curl -sS -L --max-time 20 \
+              -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/150 Safari/537.36' \
+              -H 'Accept: */*' -H 'Accept-Encoding: identity' \
+              -D "$headers" -o "$body" -w '%{http_code}' \
+              "$url?pr221_live=$GITHUB_RUN_ID")"
+            printf '%s\n' "$code" > "evidence/$name.status"
+            sha256sum "$body" | awk '{print $1}' > "evidence/$name.sha256"
+            printf '== %s ==\nHTTP %s\nSHA %s\n' "$name" "$code" "$(cat "evidence/$name.sha256")"
+            grep -iE '^(cache-control|age|cf-cache-status|etag|last-modified|content-type|cf-ray):' "$headers" || true
+          }
+          inspect exact "$EXACT_URL"
+          inspect custom "$CUSTOM_URL"
+
+          test "$(cat evidence/exact.status)" = "200"
+          test "$(cat evidence/exact.sha256)" = "$EXPECTED_SHA"
+          exact_cache="$(awk 'BEGIN{IGNORECASE=1} /^cache-control:/{sub(/^[^:]+:[[:space:]]*/, ""); gsub(/\r/,""); print; exit}' evidence/exact.headers)"
+          [[ "$exact_cache" == *"no-cache"* ]]
+          [[ "$exact_cache" == *"max-age=0"* ]]
+          [[ "$exact_cache" == *"must-revalidate"* ]]
+          [[ "$exact_cache" != *"stale-while-revalidate"* ]]
+
+          if [[ "$(cat evidence/custom.status)" == "200" ]]; then
+            test "$(cat evidence/custom.sha256)" = "$EXPECTED_SHA"
+            custom_cache="$(awk 'BEGIN{IGNORECASE=1} /^cache-control:/{sub(/^[^:]+:[[:space:]]*/, ""); gsub(/\r/,""); print; exit}' evidence/custom.headers)"
+            [[ "$custom_cache" == *"no-cache"* ]]
+            [[ "$custom_cache" == *"max-age=0"* ]]
+            [[ "$custom_cache" == *"must-revalidate"* ]]
+            [[ "$custom_cache" != *"stale-while-revalidate"* ]]
+            echo 'CUSTOM_ALIAS_VERIFIED=1' | tee evidence/result.env
+          else
+            echo "CUSTOM_ALIAS_VERIFIED=0" | tee evidence/result.env
+            echo "::warning::Custom CDN alias returned HTTP $(cat evidence/custom.status); exact Pages bytes and headers are verified."
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr221-live-loader-cache-evidence
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: warn
