@@ -14,7 +14,7 @@
         </div>
     </div>
     <p>Keep the permanent Horus Loader installed once, then place this DIV inside the page body where the accompanying video should start — for example near the beginning of the article or just below the header.</p>
-    <p class="muted">The player starts inline at this exact position. After it has been visible and the visitor scrolls it off the page, Horus may move the same player to the lower-right floating position. The publisher supplies only the VAST/VMAP URL in Quick Monetize; the platform content video is controlled globally by Horus Media.</p>
+    <p class="muted">The player starts inline at this exact position. After it has been visible and the visitor scrolls it off the page, Horus may move the same player to the lower-right floating position. Quick Monetize accepts a VAST/VMAP URL or a GAM ad unit path and generates the full VAST URL; the platform content video is controlled globally by Horus Media.</p>
     <div class="detail-grid">
         @foreach($units as $unit)
             <article>

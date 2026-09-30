@@ -10,7 +10,7 @@
     // Without preserveKeys=true, Collection::groupBy() reindexes each group to 0..N,
     // causing the UI to submit numeric values that fail backend validation.
     $presetGroups = collect($quickPresets)->groupBy(fn ($preset) => $preset['group'] ?? 'Formats', true);
-    $oldMode = old('placement_mode', old('placement_id') ? 'existing' : 'new');
+    $oldMode = old('placement_mode', old('placement_id', $selectedPlacementId) ? 'existing' : 'new');
     $oldInputType = old('tag_input_type', str_starts_with(trim((string) old('tag', '')), '/') ? 'GAM_AD_UNIT_PATH' : 'PROVIDER_TAG');
 @endphp
 
@@ -138,7 +138,8 @@
                                     data-site-id="{{ $site->id }}"
                                     data-placement-type="{{ $placement->type->value }}"
                                     data-preset="{{ data_get($placement->metadata, 'placement_preset', '') }}"
-                                    @selected(old('placement_id') === $placement->id)>
+                                    data-video-master-size="{{ data_get($placement->format_settings, 'videoMasterSize', '') }}"
+                                    @selected(old('placement_id', $selectedPlacementId) === $placement->id)>
                                 {{ $placement->name }} · {{ $placement->code }}{{ $sizes ? ' · '.$sizes : '' }}
                             </option>
                         @endforeach
@@ -146,6 +147,18 @@
                 </select>
                 <span class="muted" id="quick-placement-help">Only active placements for the selected website are shown.</span>
                 @error('placement_id')<span class="error">{{ $message }}</span>@enderror
+            </label>
+
+            <label class="full" id="quick-video-size-wrap" style="display:none;">Video master size
+                <select class="hm-input" name="video_master_size" id="quick-video-size" disabled>
+                    <option value="">Keep saved size / use preset default</option>
+                    @foreach(\App\Services\Inventory\VideoMasterSize::choices() as $sizeKey => $dimensions)
+                        <option value="{{ $sizeKey }}" @selected(old('video_master_size') === $sizeKey)>{{ $dimensions[0] }}×{{ $dimensions[1] }}</option>
+                    @endforeach
+                </select>
+                <span class="muted">Maximum player dimensions. The player shrinks proportionally to fit its container or viewport; ad requests use its actual rendered size. Leave unchanged to preserve a saved layout.</span>
+                <span class="muted" id="quick-video-size-current"></span>
+                @error('video_master_size')<span class="error">{{ $message }}</span>@enderror
             </label>
 
             <label class="full" id="quick-input-type-wrap">Ad input
@@ -192,12 +205,17 @@
     const tagLabel = document.getElementById('quick-tag-label');
     const tagHelp = document.getElementById('quick-tag-help');
     const sizeHelp = document.getElementById('quick-size-help');
+    const videoSize = document.getElementById('quick-video-size');
+    const videoSizeWrap = document.getElementById('quick-video-size-wrap');
+    const videoSizeCurrent = document.getElementById('quick-video-size-current');
     const submit = document.getElementById('quick-submit');
     const help = document.getElementById('quick-placement-help');
     if (!site || !preset || !useExisting || !mode || !existingWrap || !placement || !submit) return;
 
     const blocked = {{ $hasBlockingReason ? 'true' : 'false' }};
     const allOptions = [...placement.querySelectorAll('option[data-site-id]')];
+    const savedInputs = {{ \Illuminate\Support\Js::from($quickInputs) }};
+    const redisplayingInput = {{ session()->hasOldInput('tag') ? 'true' : 'false' }};
 
     const refreshInput = () => {
         if (!inputType || !tag) return;
@@ -205,19 +223,27 @@
         const type = option?.dataset.placementType || '';
         const key = useExisting.checked ? option?.dataset.preset : preset.value;
         const video = type === 'VIDEO';
-        const pathSupported = ['DISPLAY', 'STICKY', 'REWARDED'].includes(type);
+        if (videoSize && videoSizeWrap) {
+            videoSizeWrap.style.display = video ? '' : 'none';
+            videoSize.disabled = blocked || !video;
+            videoSizeCurrent.textContent = video && useExisting.checked && option?.dataset.videoMasterSize
+                ? 'Saved master: ' + option.dataset.videoMasterSize.replace('x', '×') : '';
+        }
+        const pathSupported = ['DISPLAY', 'STICKY', 'VIDEO', 'REWARDED'].includes(type);
         inputType.querySelector('[value="GAM_AD_UNIT_PATH"]').disabled = !pathSupported;
-        inputTypeWrap.style.display = video ? 'none' : '';
-        inputType.disabled = blocked || video;
-        if (!video && !pathSupported) inputType.value = 'PROVIDER_TAG';
-        const path = !video && inputType.value === 'GAM_AD_UNIT_PATH';
+        inputTypeWrap.style.display = '';
+        inputType.disabled = blocked;
+        if (!pathSupported) inputType.value = 'PROVIDER_TAG';
+        const path = pathSupported && inputType.value === 'GAM_AD_UNIT_PATH';
         tag.rows = path ? 2 : 12;
         tagLabel.textContent = path ? 'Google Ad Manager ad unit path' : (video ? 'VAST URL or provider-issued video tag' : 'Full provider tag');
         tag.placeholder = path ? '/1234567/ad_unit' : (video ? 'HTTPS VAST/VMAP URL or a complete supported video provider tag.' : 'Paste a complete GPT or supported provider tag.');
         tagHelp.textContent = path
-            ? (type === 'REWARDED'
+            ? (video
+                ? 'Paste only /NetworkCode/AdUnitCode, including any parent/child network code or nested ad unit path. Horus generates and saves the complete linear VAST URL, keeps fallback enabled, and supplies the actual page, player size, playback and consent signals at runtime.'
+                : (type === 'REWARDED'
                 ? 'Paste /NetworkCode/AdUnitCode. Horus uses official GPT Rewarded: the visitor opts in and content access follows Google’s reward grant event. No display sizes are applied.'
-                : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.')
+                : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.'))
             : (video
                 ? 'A plain VAST/VMAP URL runs in the Horus accompanying-content player. For Inline → Floating Video, copy the generated DIV into the publisher page; Horus starts inline there and floats only after the visitor scrolls it away. The platform content video is controlled globally by Horus Media.'
                 : 'Paste the complete supported GPT or third-party tag. A supported script-only tag is also accepted. Its declared sizes are checked against this placement. Choose GAM ad unit path above if you only have the unit path.');
@@ -271,10 +297,19 @@
         submit.disabled = blocked || !site.value || (existing ? !placement.value : !preset.value);
     };
 
-    site.addEventListener('change', refreshMode);
-    placement.addEventListener('change', refreshMode);
+    const loadSavedInput = () => {
+        if (!useExisting.checked) return;
+        const saved = savedInputs[placement.value];
+        inputType.value = saved?.inputType || 'PROVIDER_TAG';
+        tag.value = saved?.tag || '';
+        // Opening an edit is not an explicit request to replace saved mappings.
+        videoSize.value = '';
+        refreshInput();
+    };
+    site.addEventListener('change', () => { refreshMode(); loadSavedInput(); });
+    placement.addEventListener('change', () => { refreshMode(); loadSavedInput(); });
     preset.addEventListener('change', refreshMode);
-    useExisting.addEventListener('change', refreshMode);
+    useExisting.addEventListener('change', () => { refreshMode(); loadSavedInput(); });
     if (inputType) inputType.addEventListener('change', refreshInput);
     if (tag) tag.addEventListener('input', () => {
         const value = tag.value.trim();
@@ -284,6 +319,7 @@
         }
     });
     refreshMode();
+    if (!redisplayingInput) loadSavedInput();
 })();
 </script>
 @endsection

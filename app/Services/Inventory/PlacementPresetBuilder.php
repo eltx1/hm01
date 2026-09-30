@@ -60,7 +60,7 @@ final class PlacementPresetBuilder
             Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
             $existing = $this->existingQuickPreset($site, $preset);
             if ($existing) {
-                return $this->reconcileQuickPreset($existing, $preset, $actor, is_array($choice) ? $choice : []);
+                return $this->reconcileQuickPreset($existing, $preset, $actor, is_array($choice) ? $choice : [], $overrides['video_master_size'] ?? null);
             }
         }
 
@@ -218,7 +218,7 @@ final class PlacementPresetBuilder
      *
      * @param array<string, mixed> $choice
      */
-    private function reconcileQuickPreset(Placement $placement, string $preset, User $actor, array $choice): Placement
+    private function reconcileQuickPreset(Placement $placement, string $preset, User $actor, array $choice, ?string $videoMasterSize = null): Placement
     {
         $placement->loadMissing(['targeting', 'sizes']);
         $targeting = $placement->targeting
@@ -238,6 +238,18 @@ final class PlacementPresetBuilder
             'sort_order' => $placement->sort_order,
             'metadata' => (array) ($placement->metadata ?? []),
         ]);
+
+        // Retagging a saved video must not silently reset its master size or
+        // custom responsive policy to the catalog defaults. This also retains
+        // historical 640x360/480x270 configurations without a migration.
+        if (in_array($preset, ['video_floating', 'video_outstream'], true)) {
+            unset($data['sizes']);
+            $data['format_settings'] = array_replace_recursive(
+                (array) ($data['format_settings'] ?? []),
+                (array) ($placement->format_settings ?? []),
+            );
+        }
+        $data = VideoMasterSize::apply($data, $videoMasterSize);
 
         $settings = (array) ($data['format_settings'] ?? []);
         $bundleMember = data_get($placement->metadata, 'responsive_bundle') === 'v1';
@@ -261,6 +273,18 @@ final class PlacementPresetBuilder
         // QuickMonetizeService owns the enclosing transaction and performs one
         // final production publish after Demand mappings/widgets are restored.
         // Avoid publishing a half-reconciled placement before that wiring exists.
+        return $this->inventory->updatePlacement($placement, $data, $actor, false);
+    }
+
+    public function selectVideoMasterSize(Placement $placement, string $master, User $actor): Placement
+    {
+        $data = VideoMasterSize::apply([
+            'type' => $placement->type->value,
+            'format_settings' => (array) ($placement->format_settings ?? []),
+        ], $master);
+
+        // Quick activation validates and publishes the full demand configuration
+        // in its enclosing transaction, rather than a half-updated placement.
         return $this->inventory->updatePlacement($placement, $data, $actor, false);
     }
 

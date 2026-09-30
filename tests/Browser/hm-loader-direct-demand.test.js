@@ -189,7 +189,7 @@ function harness(selectedConfig, options = {}) {
     const localStore = new Map();
     const sandbox = {
         console, URL, Promise, Object, JSON, Math, Date, Number, String, Boolean, Array, WeakSet,
-        setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask,
+        setTimeout(callback, delay) { options.timerDelays?.push(delay); return setTimeout(callback, delay); }, clearTimeout, setInterval, clearInterval, queueMicrotask,
         MutationObserver, Event, document,
         navigator: { globalPrivacyControl: false },
         location: { hostname: 'publisher.example', href: 'https://publisher.example/article' },
@@ -472,4 +472,30 @@ test('consent timeout with BLOCK_ADS prevents Direct Demand script requests', as
     const runtime = harness(selected);
     await runtime.sandbox.HorusMediaLoader.boot();
     assert.equal(runtime.metrics.directLoads.length, 0);
+});
+
+
+test('legacy video recipe allows bounded startup phases while independent banners start in parallel', async () => {
+    const tag = recipe({ url: 'https://cdn.horusmedia.net/runtime/video/hm-video-direct.js', dedupeKey: 'video-runtime' });
+    tag.container.id = 'video-phases';
+    tag.container.attributes = { 'data-hm-video-direct': '1' };
+    tag.containerId = 'video-phases';
+    tag.render = { timeoutMs: 15000, assumeLoadedIsSuccess: false };
+    tag.assumeLoadedIsSuccess = false;
+    const selected = config({
+        video: { enabled: true, candidates: [candidate('VIDEO', tag)] },
+        banner: { enabled: true, candidates: [candidate('BANNER', recipe({ url: 'https://ads.example.com/banner.js' }))] },
+    });
+    selected.placements.find(p => p.code === 'video').type = 'VIDEO';
+    const timerDelays = [];
+    const runtime = harness(selected, { timerDelays });
+    const boot = runtime.sandbox.HorusMediaLoader.boot();
+    await settle();
+    const loadsBeforeVideo = runtime.metrics.directLoads.length;
+    const video = runtime.elements.find(el => el.getAttribute('data-placement') === 'video').children.find(el => el.id === 'video-phases');
+    video.setAttribute('data-hm-video-status', 'started');
+    await boot;
+    assert.equal(loadsBeforeVideo, 2, 'banner startup cannot wait on video media');
+    assert.ok(timerDelays.includes(60000), JSON.stringify(timerDelays));
+    assert.equal(runtime.elements.find(el => el.getAttribute('data-placement') === 'banner').getAttribute('data-hm-direct'), 'BANNER');
 });

@@ -282,7 +282,7 @@ function runVideo(selectedContainer, options = {}) {
             if (options.managerStartThrows) throw new Error('manager-start-failed');
             this.started = true;
             this.emit(adEventTypes.LOADED);
-            this.emit(adEventTypes.STARTED);
+            if (!options.deferMediaStart) this.emit(adEventTypes.STARTED);
         }
         resize(width, height, mode) { this.resized = [width, height, mode]; }
         getCuePoints() { return options.cuePoints || []; }
@@ -369,8 +369,9 @@ function runVideo(selectedContainer, options = {}) {
         innerWidth: 1280,
         innerHeight: 720,
         atob(value) { return Buffer.from(String(value), 'base64').toString('binary'); },
-        setTimeout,
-        clearTimeout,
+        btoa(value) { return Buffer.from(String(value), 'binary').toString('base64'); },
+        setTimeout: options.clock ? options.clock.setTimeout : setTimeout,
+        clearTimeout: options.clock ? options.clock.clearTimeout : clearTimeout,
         localStorage: {
             getItem(key) { return storage.has(key) ? storage.get(key) : null; },
             setItem(key, value) { storage.set(key, String(value)); },
@@ -1400,4 +1401,184 @@ test('a retired IMA manager cannot terminate a subsequent legitimate content bre
     assert.equal(target.__hmVideoPlayer.adsManager, second);
     assert.equal(target.__hmVideoPlayer.adBreakPending, true);
     assert.equal(runtime.requested.length, 2);
+});
+
+function videoClock() {
+    let now = 0, next = 0;
+    const timers = new Map();
+    return {
+        setTimeout(fn, delay) { const id = ++next; timers.set(id, { fn, at: now + delay }); return id; },
+        clearTimeout(id) { timers.delete(id); },
+        advance(ms) {
+            const until = now + ms;
+            while (true) {
+                const due = [...timers].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+                if (!due) break;
+                now = due[1].at; timers.delete(due[0]); due[1].fn();
+            }
+            now = until;
+        },
+    };
+}
+
+for (const mode of ['content', 'ad-only', 'rewarded']) {
+    test(`${mode} has independently bounded VAST and media phases, with no late callback resurrection`, async () => {
+        const clock = videoClock();
+        const attrs = {
+            'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64'),
+            ...(mode === 'content' ? { 'data-hm-video-content-url': 'https://media.example/content.mp4' } : {}),
+            ...(mode === 'rewarded' ? { 'data-hm-video-rewarded': '1' } : {}),
+        };
+        const target = container(attrs, 'phase-player');
+        const runtime = runVideo(target, { clock, deferManagerLoad: true, deferMediaStart: true });
+        await tick();
+        if (mode === 'rewarded') runtime.created.find(node => node.tagName === 'BUTTON' && node.getAttribute('data-hm-reward-activate') === '1')?.click();
+        // The prompt's first button is the explicit user activation in this fixture.
+        if (mode === 'rewarded' && !runtime.requested.length) runtime.created.find(node => node.tagName === 'BUTTON' && node.textContent === 'Watch ad')?.click();
+        assert.equal(runtime.requested.length, 1);
+        clock.advance(14000);
+        runtime.loaders[0].emitManagerLoaded();
+        clock.advance(12000);
+        assert.equal(runtime.managers[0].destroyed, false, 'IMA gets its full 12s even after a 14s VAST response');
+        clock.advance(3000);
+        assert.equal(runtime.managers[0].destroyed, true);
+        assert.equal(attrs['data-hm-video-error-stage'], 'media-start-timeout');
+        runtime.managers[0].emit('started');
+        assert.notEqual(attrs['data-hm-video-status'], 'started');
+        assert.equal(runtime.requested.length, 1, 'no timer retries create extra auctions');
+        if (mode === 'content') { await tick(); assert.equal(attrs['data-hm-video-status'], 'content-playing'); }
+        if (mode === 'rewarded') assert.equal(attrs['data-hm-reward-granted'], undefined);
+    });
+}
+
+test('VAST request timeout is bounded and a late manager is ignored', async () => {
+    const clock = videoClock();
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64') };
+    const runtime = runVideo(container(attrs), { clock, deferManagerLoad: true });
+    await tick(); clock.advance(15000);
+    assert.equal(attrs['data-hm-video-error-stage'], 'request-timeout');
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(runtime.managers[0].started, false);
+    assert.equal(attrs['data-hm-video-status'], 'error');
+});
+
+test('a late return to viewability still receives a full media startup budget', async () => {
+    const clock = videoClock();
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64') };
+    const target = container(attrs);
+    const runtime = runVideo(target, { clock, deferManagerLoad: true, deferMediaStart: true });
+    await tick();
+    runtime.intersectionObservers[0].emit(0);
+    runtime.loaders[0].emitManagerLoaded();
+    clock.advance(14000);
+    assert.equal(runtime.managers[0].started, false);
+    runtime.intersectionObservers[0].emit(1);
+    clock.advance(12000);
+    assert.equal(runtime.managers[0].destroyed, false);
+    runtime.managers[0].emit('started');
+    clock.advance(20000);
+    assert.equal(runtime.managers[0].destroyed, false);
+    target.__hmDestroy('dismissed');
+});
+
+for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480]]) {
+    test(`video master ${width}x${height} uses its real dimensions and linear-only GAM tag`, async () => {
+        const original = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=1x1&vad_type=linear_nonlinear&nofb=1&max_ad_duration=15000';
+        const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from(original).toString('base64'),
+            'data-hm-video-width': String(width), 'data-hm-video-height': String(height), 'data-hm-video-inline-to-floating': '1' };
+        const target = container(attrs);
+        target.clientWidth = width;
+        const runtime = runVideo(target);
+        await tick();
+        const request = runtime.requested[0], tag = new URL(request.adTagUrl);
+        assert.equal(tag.searchParams.get('sz'), `${width}x${height}`);
+        assert.equal(tag.searchParams.get('vad_type'), 'linear');
+        assert.equal(tag.searchParams.get('nofb'), '1');
+        assert.equal(tag.searchParams.get('max_ad_duration'), '15000');
+        assert.equal(request.linearAdSlotWidth, width);
+        assert.equal(request.linearAdSlotHeight, height);
+        runtime.intersectionObservers[0].emit(0);
+        assert.equal(target.style.aspectRatio, `${width} / ${height}`);
+        assert.equal(target.getAttribute('data-hm-video-master-height'), String(height));
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('long VAST attributes roundtrip 10000 URL bytes without changing third-party parameters', async () => {
+    const prefix = 'https://ads.example/vast?custom=';
+    const url = prefix + 'x'.repeat(10000 - prefix.length);
+    const encoded = Buffer.from(url).toString('base64');
+    const parts = encoded.match(/.{1,1800}/g);
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url-parts': String(parts.length) };
+    parts.forEach((value, index) => attrs[`data-hm-vast-url-${index}`] = value);
+    const target = container(attrs), runtime = runVideo(target);
+    await tick();
+    assert.equal(runtime.requested[0].adTagUrl, url);
+    target.__hmDestroy('dismissed');
+});
+
+for (const invalid of [
+    { 'data-hm-vast-url-parts': '2', 'data-hm-vast-url-0': 'a'.repeat(1800) },
+    { 'data-hm-vast-url-parts': '9' },
+    { 'data-hm-vast-url-parts': '2', 'data-hm-vast-url': 'abcd' },
+    { 'data-hm-vast-url-0': 'abcd' },
+    { 'data-hm-vast-url': '%%%=' },
+    { 'data-hm-vast-url': Buffer.from('https://ads.example/' + 'x'.repeat(10000)).toString('base64') },
+]) {
+    test(`invalid VAST transport rejects before SDK/ad request: ${Object.keys(invalid).join(',')}`, async () => {
+        const attrs = { 'data-hm-video-direct': '1', ...invalid };
+        const runtime = runVideo(container(attrs));
+        await tick();
+        assert.equal(runtime.requested.length, 0);
+        assert.equal(attrs['data-hm-video-status'], 'invalid');
+    });
+}
+
+
+test('VMAP without preroll retires the startup timer while keeping future breaks alive', async () => {
+    const clock = videoClock();
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vmap').toString('base64'),
+        'data-hm-video-content-url': 'https://media.example/content.mp4' };
+    const target = container(attrs);
+    const runtime = runVideo(target, { clock, cuePoints: [30, -1], deferMediaStart: true });
+    await tick();
+    runtime.managers[0].emit('content-resume-requested');
+    clock.advance(60000);
+    await tick();
+    assert.equal(runtime.managers[0].destroyed, false);
+    assert.equal(attrs['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('waiting for ad viewability expires without forcing a hidden start or retry', async () => {
+    const clock = videoClock();
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64'),
+        'data-hm-video-content-url': 'https://media.example/content.mp4' };
+    const target = container(attrs);
+    const runtime = runVideo(target, { clock, deferManagerLoad: true });
+    await tick();
+    runtime.intersectionObservers[0].emit(0);
+    runtime.loaders[0].emitManagerLoaded();
+    clock.advance(15000);
+    await tick();
+    assert.equal(runtime.managers[0].started, false);
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(attrs['data-hm-video-error-stage'], 'viewability-timeout');
+    assert.equal(attrs['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('measured dimensions reflect a constrained player box rather than its master preset', async () => {
+    const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video').toString('base64'),
+        'data-hm-video-width': '640', 'data-hm-video-height': '480' };
+    const target = container(attrs);
+    target.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, width: 280, height: 210, right: 280, bottom: 210 });
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('sz'), '280x210');
+    assert.equal(runtime.requested[0].linearAdSlotWidth, 280);
+    assert.equal(runtime.requested[0].linearAdSlotHeight, 210);
+    target.__hmDestroy('dismissed');
 });

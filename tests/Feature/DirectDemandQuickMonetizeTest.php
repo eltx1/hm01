@@ -506,23 +506,29 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         }
     }
 
-    public function test_gam_rewarded_path_cannot_be_saved_as_floating_video(): void
+    public function test_gam_paths_on_video_presets_generate_vast_rather_than_a_rewarded_gpt_surface(): void
     {
         $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
         foreach (['AUTO', 'GAM_AD_UNIT_PATH'] as $mode) {
             foreach (['video_floating', 'video_outstream'] as $preset) {
                 $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
                     'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => $preset,
-                    'tag_input_type' => $mode, 'tag' => '/23055873217/rewarded',
-                ]))->assertSessionHasErrors('placement_preset');
+                    'tag_input_type' => $mode, 'tag' => '/23055873217/video',
+                ]))->assertSessionHasNoErrors();
+                $tag = data_get($this->publishedConfiguration(), 'directDemand.placements.quick_'.$preset.'.candidates.0.tag');
+                $this->assertSame('VIDEO', $tag['format']);
+                $this->assertSame('1', data_get($tag, 'container.attributes.data-hm-video-direct'));
+                $this->assertNull(data_get($tag, 'container.attributes.data-hm-gpt-rewarded'));
+                parse_str(parse_url(base64_decode(data_get($tag, 'container.attributes.data-hm-vast-url')), PHP_URL_QUERY), $query);
+                $this->assertSame('/23055873217/video', $query['iu']);
+                $this->assertSame('linear', $query['vad_type']);
             }
         }
-        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_floating']);
-        $this->assertDatabaseMissing('placements', ['site_id' => $this->site->id, 'code' => 'quick_video_outstream']);
-        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame(2, DemandWidget::withoutGlobalScopes()->count());
     }
 
-    public function test_a_gam_path_cannot_replace_a_working_vast_video_or_publish_partial_changes(): void
+    public function test_a_malformed_gam_path_cannot_replace_a_working_vast_video_or_publish_partial_changes(): void
     {
         $this->seed(AdFormatSeeder::class);
         $this->bindPublicProviderDns();
@@ -537,8 +543,8 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $beforeWidget = $widget->getAttributes();
 
         $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
-            'placement_id' => $video->id, 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/video',
-        ]))->assertSessionHasErrors('placement_id');
+            'placement_id' => $video->id, 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/video?nofb=1',
+        ]))->assertSessionHasErrors('tag');
 
         $this->assertSame($beforeWidget, $widget->fresh()->getAttributes());
         $this->assertSame($before, $this->publishedConfiguration());
@@ -562,6 +568,81 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame($count, $this->site->configVersions()->count());
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
+    public function test_vast_url_above_the_byte_limit_is_rejected_without_partial_publication(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $base = 'https://vast.vendor.net/tag?padding=';
+        $beforeVersions = $this->site->configVersions()->count();
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'video_floating',
+            'tag' => $base.str_repeat('x', 10_001 - strlen($base)),
+        ]))->assertSessionHasErrors('tag');
+        $this->assertSame(0, DemandAccount::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame($beforeVersions, $this->site->configVersions()->count());
+    }
+
+    public function test_video_runtime_refresh_recovers_a_previously_truncated_vast_url_in_static_configuration(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->bindPublicProviderDns();
+        $base = 'https://vast.vendor.net/tag?iu=/123/video&sz=400x225&correlator=[timestamp]&cust_params=a%3Db%26c%3Dd&padding=';
+        $vastUrl = $base.str_repeat('x', 10_000 - strlen($base));
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'new', 'placement_id' => null, 'placement_preset' => 'video_floating',
+            'tag' => $vastUrl,
+        ]))->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertSame($vastUrl, DemandWidget::withoutGlobalScopes()->firstOrFail()->direct_tag_template);
+
+        // Model a saved configuration from before chunked VAST transport. The
+        // complete source URL is still in the widget and must be regenerated,
+        // rather than relabeling the old truncated bytes with a new runtime URL.
+        $version = $this->site->configVersions()->orderByDesc('version')->firstOrFail();
+        $payload = $version->payload;
+        $tagPath = 'directDemand.placements.quick_video_floating.candidates.0.tag';
+        $attributes = (array) data_get($payload, $tagPath.'.container.attributes');
+        foreach (array_keys($attributes) as $key) {
+            if (str_starts_with($key, 'data-hm-vast-url')) unset($attributes[$key]);
+        }
+        $attributes['data-hm-vast-url'] = substr(base64_encode($vastUrl), 0, 2000);
+        data_set($payload, $tagPath.'.container.attributes', $attributes);
+        data_set($payload, $tagPath.'.attributes', $attributes);
+        $oldRuntime = 'https://cdn.horusmedia.net/runtime/video/hm-video-direct.0000000000000000.js';
+        data_set($payload, $tagPath.'.scripts.0.url', $oldRuntime);
+        data_set($payload, $tagPath.'.scriptUrl', $oldRuntime);
+        $version->update(['payload' => $payload, 'checksum' => hash('sha256', app(\App\Services\StaticDelivery\CanonicalJson::class)->encode($payload))]);
+        $count = $this->site->configVersions()->count();
+
+        $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $current = $this->site->configVersions()->orderByDesc('version')->firstOrFail();
+        $snapshot = app(\App\Services\StaticDelivery\StaticDeliverySnapshotBuilder::class)->build();
+        $configPath = 'configs/'.$this->site->public_key.'/production.json';
+        $configuration = json_decode($snapshot->files[$configPath], true, 512, JSON_THROW_ON_ERROR);
+        $immutablePath = 'configs/'.$this->site->public_key.'/production.v'.$current->version.'.'.substr($current->checksum, 0, 16).'.json';
+        $this->assertSame($snapshot->files[$configPath], $snapshot->files[$immutablePath]);
+        $attributes = (array) data_get($configuration, $tagPath.'.container.attributes');
+        $this->assertArrayNotHasKey('data-hm-vast-url', $attributes);
+        $this->assertSame('8', $attributes['data-hm-vast-url-parts']);
+        $encoded = '';
+        for ($index = 0; $index < 8; $index++) $encoded .= $attributes['data-hm-vast-url-'.$index];
+        $this->assertSame($vastUrl, base64_decode($encoded, true));
+        $this->assertTrue(collect($attributes)->every(fn ($value) => strlen((string) $value) <= 2000));
+        $this->assertSame($attributes, data_get($configuration, $tagPath.'.attributes'));
+        $this->assertSame(60_000, data_get($configuration, $tagPath.'.render.timeoutMs'));
+        $runtimeUrl = (string) data_get($configuration, $tagPath.'.scripts.0.url');
+        $runtimePath = ltrim((string) parse_url($runtimeUrl, PHP_URL_PATH), '/');
+        $runtime = file_get_contents(public_path('assets/hm-video-direct.js'));
+        $this->assertSame('runtime/video/hm-video-direct.'.substr(hash('sha256', $runtime), 0, 16).'.js', $runtimePath);
+        $this->assertSame($runtime, $snapshot->files[$runtimePath]);
+        $this->assertSame($runtimeUrl, data_get($configuration, $tagPath.'.scriptUrl'));
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
     }

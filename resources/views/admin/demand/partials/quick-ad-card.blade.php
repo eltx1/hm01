@@ -37,6 +37,9 @@
             </details>
         @endif
     </form>
+    @if($placement->type->value === 'VIDEO' && $enabled)
+        <a class="section-anchor" href="{{ route('admin.demand.quick.create', ['site' => $site->id, 'placement' => $placement->id]) }}">Edit video tag and size</a>
+    @endif
     @if(auth()->user()->hasPermission('inventory.view'))
         <a class="section-anchor" href="{{ route('admin.sites.inventory.index', $site) }}">Advanced placement settings</a>
     @endif

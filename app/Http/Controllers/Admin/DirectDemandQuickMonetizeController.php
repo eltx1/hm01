@@ -8,11 +8,13 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Http\Controllers\Controller;
 use App\Models\DemandNetwork;
+use App\Models\DemandWidget;
 use App\Models\Placement;
 use App\Models\Site;
 use App\Services\Demand\QuickMonetizeService;
 use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\PlacementPresetCatalog;
+use App\Services\Inventory\VideoMasterSize;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -46,11 +48,39 @@ final class DirectDemandQuickMonetizeController extends Controller
             ->orderBy('display_name')
             ->get();
 
+        $selectedPlacementId = (string) $request->query('placement', '');
+        $placements = $sites->flatMap(fn (Site $site) => $site->placements)->keyBy('id');
+        $selectedPlacement = $placements->get($selectedPlacementId);
+        $selectedSiteId = (string) $request->query('site', $selectedPlacement?->site_id ?? '');
+        if ($selectedPlacement?->site_id !== $selectedSiteId) $selectedPlacementId = '';
+        $quickInputs = [];
+        $widgets = DemandWidget::withoutGlobalScopes()
+            ->with(['demandPlacement' => fn ($query) => $query->withoutGlobalScopes()])
+            ->whereHas('demandPlacement', fn ($query) => $query->withoutGlobalScopes()->whereIn('placement_id', $placements->keys()))
+            ->where('is_enabled', true)
+            ->where('approval_status', 'APPROVED')
+            ->orderByDesc('id')
+            ->get();
+        foreach ($widgets as $widget) {
+            if (! (bool) data_get($widget->configuration, 'quick_monetize_managed', false)) continue;
+            $placementId = $widget->demandPlacement?->placement_id;
+            if (! $placementId || isset($quickInputs[$placementId])) continue;
+            $kind = (string) data_get($widget->configuration, 'input_kind', 'PROVIDER_TAG');
+            $gamVideoPath = $kind === 'GAM_VIDEO_PATH' ? data_get($widget->configuration, 'gam_ad_unit_path') : null;
+            $quickInputs[$placementId] = [
+                'inputType' => $gamVideoPath || in_array($kind, ['GAM_AD_UNIT_PATH', 'GAM_REWARDED_PATH'], true) ? 'GAM_AD_UNIT_PATH' : 'PROVIDER_TAG',
+                'tag' => $gamVideoPath ?: (string) $widget->direct_tag_template,
+                'videoMasterSize' => (string) data_get($placements->get($placementId)?->format_settings, 'videoMasterSize', ''),
+            ];
+        }
+
         return view('admin.demand.quick', [
             'sites' => $sites,
             'network' => $network,
             'blockingReasons' => $this->readinessProblems($controls, $network),
-            'selectedSiteId' => (string) $request->query('site', ''),
+            'selectedSiteId' => $selectedSiteId,
+            'selectedPlacementId' => $selectedPlacementId,
+            'quickInputs' => $quickInputs,
             'quickPresets' => $presets->quickChoices(),
         ]);
     }
@@ -77,6 +107,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             'placement_preset' => ['nullable', Rule::in($quickPresetKeys)],
             'placement_id' => ['nullable', 'ulid', 'exists:placements,id'],
             'placement_name' => ['nullable', 'string', 'max:255'],
+            'video_master_size' => ['nullable', Rule::in(array_keys(VideoMasterSize::choices()))],
             'tag' => ['required', 'string', 'max:60000'],
             'tag_input_type' => ['nullable', Rule::in(['AUTO', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'])],
         ]);
@@ -142,6 +173,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $preset,
             $data['placement_name'] ?? null,
             (string) ($data['tag_input_type'] ?? 'AUTO'),
+            $data['video_master_size'] ?? null,
         );
         $placement = $result['placement'];
         $account = $result['account'];

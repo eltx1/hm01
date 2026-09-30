@@ -219,16 +219,18 @@ const HELPERS = `    function placementFormatSettings(placement) {
                         setImportantStyle(floating.style, 'bottom', bottom);
                     }
 
-                    // On very short mobile viewports, keep the entire 16:9
+                    // On very short mobile viewports, keep the entire selected
                     // floating player above the sticky instead of allowing a
                     // second overlap at the top edge.
                     if (viewport.width > 0 && viewportHeight > 0) {
-                        var normalWidth = Math.min(400, Math.max(1, viewport.width - 32));
+                        var masterWidth = Number(floating.getAttribute('data-hm-video-master-width')) || 400;
+                        var masterHeight = Number(floating.getAttribute('data-hm-video-master-height')) || 225;
+                        var normalWidth = Math.min(masterWidth, Math.max(1, viewport.width - 32));
                         var bottomPixels = occupied > 0 ? Math.ceil(occupied) + 16 : 16;
                         var availableHeight = Math.max(1, viewportHeight - bottomPixels - 16);
-                        var widthForHeight = Math.floor(availableHeight * 16 / 9);
-                        var safeWidth = Math.max(120, Math.min(normalWidth, widthForHeight));
-                        var widthValue = safeWidth < normalWidth ? String(safeWidth) + 'px' : 'min(400px, calc(100vw - 32px))';
+                        var widthForHeight = Math.floor(availableHeight * masterWidth / masterHeight);
+                        var safeWidth = Math.max(1, Math.min(normalWidth, widthForHeight));
+                        var widthValue = safeWidth < normalWidth ? String(safeWidth) + 'px' : 'min(' + masterWidth + 'px, calc(100vw - 32px))';
                         if (!floating.style.getPropertyValue || floating.style.getPropertyValue('width') !== widthValue) {
                             setImportantStyle(floating.style, 'width', widthValue);
                         }
@@ -300,9 +302,11 @@ const HELPERS = `    function placementFormatSettings(placement) {
             resetPositionStyle(style, 'top');
             resetPositionStyle(style, 'transform');
             setImportantStyle(style, 'margin', '0');
-            setImportantStyle(style, 'width', 'min(400px, calc(100vw - 32px))');
+            var masterWidth = Number(element.getAttribute('data-hm-video-master-width')) || 400;
+            var masterHeight = Number(element.getAttribute('data-hm-video-master-height')) || 225;
+            setImportantStyle(style, 'width', 'min(' + masterWidth + 'px, calc(100vw - 32px))');
             setImportantStyle(style, 'max-width', 'calc(100vw - 32px)');
-            setImportantStyle(style, 'aspect-ratio', '16 / 9');
+            setImportantStyle(style, 'aspect-ratio', masterWidth + ' / ' + masterHeight);
             setImportantStyle(style, 'box-sizing', 'border-box');
             setImportantStyle(style, 'background', '#000');
             setImportantStyle(style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');

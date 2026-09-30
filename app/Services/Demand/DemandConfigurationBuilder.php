@@ -236,9 +236,9 @@ final class DemandConfigurationBuilder
             throw new \RuntimeException('Structured Direct Demand requires at least one approved script.');
         }
 
-        $trustedLongRunningRuntime = ($containerAttributes['data-hm-gpt-direct'] ?? null) === '1'
-            || ($containerAttributes['data-hm-video-direct'] ?? null) === '1';
-        $timeoutMaximum = $trustedLongRunningRuntime ? 30_000 : 10_000;
+        $trustedVideoRuntime = ($containerAttributes['data-hm-video-direct'] ?? null) === '1';
+        $trustedGptRuntime = ($containerAttributes['data-hm-gpt-direct'] ?? null) === '1';
+        $timeoutMaximum = $trustedVideoRuntime ? 60_000 : ($trustedGptRuntime ? 30_000 : 10_000);
         $timeout = max(500, min($timeoutMaximum, (int) ($render['timeoutMs'] ?? $tag['renderTimeoutMs'] ?? config('demand.direct_render_timeout_ms', 2500))));
         $publicPlacementId = mb_substr((string) ($tag['publicPlacementId'] ?? data_get($containerAttributes, 'data-widget-id') ?? $containerId), 0, 255);
         if ($this->containsSensitive([$publicPlacementId, $parameters, $containerAttributes])) {
@@ -283,6 +283,11 @@ final class DemandConfigurationBuilder
     /** @return array<string, string> */
     private function publicAttributes(array $attributes): array
     {
+        // Encoded VAST URLs are atomic payloads, not display strings. Validate
+        // before the generic attribute cap so corruption cannot look like a
+        // valid shorter ad request. Keep all other provider limits unchanged.
+        $this->assertVastUrlAttributes($attributes);
+
         return collect($attributes)
             ->filter(fn ($value, $key) => is_scalar($value)
                 && preg_match('/^data-[a-z0-9_.:-]+$/i', (string) $key)
@@ -290,6 +295,51 @@ final class DemandConfigurationBuilder
             ->map(fn ($value) => mb_substr((string) $value, 0, 2000))
             ->reject(fn ($value) => preg_match('/javascript\s*:/i', $value) || preg_match('/^(?:env|file):/i', $value))
             ->all();
+    }
+
+    private function assertVastUrlAttributes(array $attributes): void
+    {
+        $base = 'data-hm-vast-url';
+        $payload = [];
+        foreach ($attributes as $key => $value) {
+            if (! preg_match('/^data-hm-vast-url(?:-|$)/i', (string) $key)) continue;
+            if ($key !== strtolower((string) $key) || ! is_string($value)) {
+                throw new \RuntimeException('Invalid VAST URL transport attributes.');
+            }
+            $payload[$key] = $value;
+        }
+        if ($payload === []) return;
+
+        if (array_key_exists($base, $payload)) {
+            if (count($payload) !== 1 || strlen($payload[$base]) > 2000) {
+                throw new \RuntimeException('The VAST URL must use bounded, unambiguous transport attributes.');
+            }
+            $encoded = $payload[$base];
+        } else {
+            $count = $payload[$base.'-parts'] ?? '';
+            if (! preg_match('/^[2-8]$/D', $count) || count($payload) !== (int) $count + 1) {
+                throw new \RuntimeException('Invalid VAST URL chunk count.');
+            }
+            $encoded = '';
+            for ($index = 0; $index < (int) $count; $index++) {
+                $part = $payload[$base.'-'.$index] ?? '';
+                $length = strlen($part);
+                if ($length < 4 || $length > 1800 || $length % 4 !== 0
+                    || ($index < (int) $count - 1 && $length !== 1800)) {
+                    throw new \RuntimeException('Invalid or missing VAST URL chunk.');
+                }
+                $encoded .= $part;
+            }
+        }
+
+        $url = base64_decode($encoded, true);
+        if ($encoded === '' || strlen($encoded) > 13_336 || $url === false
+            || base64_encode($url) !== $encoded || strlen($url) > 10_000
+            || ! filter_var($url, FILTER_VALIDATE_URL)
+            || strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https'
+            || parse_url($url, PHP_URL_USER) !== null || parse_url($url, PHP_URL_PASS) !== null) {
+            throw new \RuntimeException('Invalid encoded VAST URL.');
+        }
     }
 
     /** @return array<string, string|int|float|bool> */
