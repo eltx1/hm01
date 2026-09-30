@@ -1,0 +1,49 @@
+name: Diagnose Turnstile runtime config
+on:
+  push:
+    branches: [diagnostic/turnstile-runtime-config-20260930]
+    paths: [.github/workflows/diagnostic-turnstile-runtime-config.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WIDGET_NAME: Horus Ad Traffic Gate
+    steps:
+      - name: Read active Turnstile widget configuration only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          mkdir -p evidence
+          curl -fsSL --max-time 30             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/challenges/widgets?per_page=100"             -o evidence/widgets.json
+          jq -e '.success == true' evidence/widgets.json >/dev/null
+          jq --arg name "$WIDGET_NAME" '
+            [.result[] | select(.name == $name) | {
+              name,
+              mode,
+              domains,
+              clearance_level,
+              bot_fight_mode,
+              ephemeral_id,
+              region,
+              created_on,
+              modified_on,
+              deployed_via,
+              last_modified_via
+            }]' evidence/widgets.json > evidence/safe-widget-config.json
+          jq -e 'length == 1' evidence/safe-widget-config.json >/dev/null
+          cat evidence/safe-widget-config.json
+          rm evidence/widgets.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: turnstile-runtime-config-evidence
+          path: evidence/safe-widget-config.json
+          retention-days: 7
+          if-no-files-found: error
