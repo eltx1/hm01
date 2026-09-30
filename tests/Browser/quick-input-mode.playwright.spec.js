@@ -11,11 +11,7 @@ if (scripts.length !== 1) throw new Error('Expected one Quick Monetize form cont
 const blockedExpression = "{{ $hasBlockingReason ? 'true' : 'false' }}";
 if (!scripts[0].includes(blockedExpression)) throw new Error('Expected the server-rendered activation control.');
 const savedInputs = {
-    'existing-display': { inputType: 'GAM_AD_UNIT_PATH', tag: '/1234567/publisher/display', videoMasterSize: '' },
-    'existing-sticky': { inputType: 'GAM_AD_UNIT_PATH', tag: '/1234567/publisher/display', videoMasterSize: '' },
-    'existing-rewarded': { inputType: 'GAM_AD_UNIT_PATH', tag: '/1234567/publisher/display', videoMasterSize: '' },
     'existing-video': { inputType: 'GAM_AD_UNIT_PATH', tag: '/123,456/publisher/video', videoMasterSize: '400x300' },
-    'second-display': { inputType: 'GAM_AD_UNIT_PATH', tag: '/987/second/display', videoMasterSize: '' },
 };
 const controller = scripts[0].replace(blockedExpression, 'false')
     .replace('{{ \\Illuminate\\Support\\Js::from($quickInputs) }}', JSON.stringify(savedInputs))
@@ -181,7 +177,11 @@ test('existing placements use their own surface and stay scoped to the selected 
 
     for (const placement of ['existing-display', 'existing-sticky', 'existing-rewarded']) {
         await page.locator('#quick-placement').selectOption(placement);
-        expect(await formData(page)).toMatchObject({ placement_mode: 'existing', placement_id: placement, tag_input_type: 'GAM_AD_UNIT_PATH', tag: unitPath });
+        // Only VIDEO inputs are hydrated by the server. Ordinary placements
+        // remain empty until the operator supplies their new tag or path.
+        expect(await formData(page)).toMatchObject({ placement_mode: 'existing', placement_id: placement, tag_input_type: 'PROVIDER_TAG', tag: '' });
+        await page.locator('#quick-input-type').selectOption('GAM_AD_UNIT_PATH');
+        await page.locator('#quick-tag').fill(unitPath);
         expect(await formData(page)).not.toHaveProperty('placement_preset');
     }
     await expect(page.locator('#quick-tag-help')).toContainText('official GPT Rewarded');
@@ -204,5 +204,5 @@ test('existing placements use their own surface and stay scoped to the selected 
         .filter(option => option.dataset.siteId && !option.disabled && !option.hidden)
         .map(option => ({ value: option.value, site: option.dataset.siteId }))
     )).toEqual([{ value: 'second-display', site: 'site-two' }]);
-    expect(await formData(page)).toMatchObject({ site_id: 'site-two', placement_id: 'second-display', tag_input_type: 'GAM_AD_UNIT_PATH', tag: '/987/second/display' });
+    expect(await formData(page)).toMatchObject({ site_id: 'site-two', placement_id: 'second-display', tag_input_type: 'PROVIDER_TAG', tag: '' });
 });

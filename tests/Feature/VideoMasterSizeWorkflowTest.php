@@ -191,6 +191,46 @@ final class VideoMasterSizeWorkflowTest extends TestCase
         $this->assertNull(data_get($widget->configuration, 'gam_ad_unit_path'));
     }
 
+    public function test_video_edit_hydration_keeps_generated_and_full_vast_inputs_without_exposing_display_tags(): void
+    {
+        $displayTag = <<<'HTML'
+<script async src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<div id="private-display-provider-code"></div>
+<script>
+window.googletag = window.googletag || {cmd: []};
+googletag.cmd.push(function() {
+  googletag.defineSlot('/123/display', [300, 250], 'private-display-provider-code').addService(googletag.pubads());
+  googletag.enableServices();
+  googletag.display('private-display-provider-code');
+});
+</script>
+HTML;
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_preset' => 'responsive_display', 'tag' => $displayTag,
+        ]))->assertSessionHasNoErrors();
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123,456/site/video',
+        ]))->assertSessionHasNoErrors();
+        $generated = $this->video();
+        $url = 'https://vast.vendor.net/tag?slot=full-video&custom=preserved';
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_preset' => 'video_outstream', 'tag' => $url,
+        ]))->assertSessionHasNoErrors();
+        $fullVast = Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->where('code', 'quick_video_outstream')->firstOrFail();
+
+        foreach ([$generated, $fullVast] as $video) {
+            $response = $this->get(route('admin.demand.quick.create', ['site' => $this->site->id, 'placement' => $video->id]))->assertOk();
+            $response->assertViewHas('selectedPlacementId', $video->id);
+            $response->assertViewHas('quickInputs', fn ($inputs) => count($inputs) === 2
+                && $inputs[$generated->id]['inputType'] === 'GAM_AD_UNIT_PATH'
+                && $inputs[$generated->id]['tag'] === '/123,456/site/video'
+                && $inputs[$fullVast->id]['inputType'] === 'PROVIDER_TAG'
+                && $inputs[$fullVast->id]['tag'] === $url);
+            $response->assertDontSee('googletag.defineSlot', false);
+            $response->assertDontSee('private-display-provider-code', false);
+        }
+    }
+
     public function test_malformed_or_mismatched_video_inputs_fail_without_saved_changes(): void
     {
         $versions = ConfigVersion::withoutGlobalScopes()->count();

@@ -54,9 +54,12 @@ final class DirectDemandQuickMonetizeController extends Controller
         $selectedSiteId = (string) $request->query('site', $selectedPlacement?->site_id ?? '');
         if ($selectedPlacement?->site_id !== $selectedSiteId) $selectedPlacementId = '';
         $quickInputs = [];
+        // Edit hydration is a video-only workflow. Do not embed unrelated
+        // display/GPT provider code in the installation-code workspace.
+        $videoPlacementIds = $placements->filter(fn (Placement $placement) => $placement->type->value === 'VIDEO')->keys();
         $widgets = DemandWidget::withoutGlobalScopes()
             ->with(['demandPlacement' => fn ($query) => $query->withoutGlobalScopes()])
-            ->whereHas('demandPlacement', fn ($query) => $query->withoutGlobalScopes()->whereIn('placement_id', $placements->keys()))
+            ->whereHas('demandPlacement', fn ($query) => $query->withoutGlobalScopes()->whereIn('placement_id', $videoPlacementIds))
             ->where('is_enabled', true)
             ->where('approval_status', 'APPROVED')
             ->orderByDesc('id')
