@@ -895,6 +895,12 @@
                 try {
                     var settings = new ima.AdsRenderingSettings();
                     settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
+                    // Preload the selected media and tolerate slower creative CDNs.
+                    // Google IMA defaults media loading to 8s; 12s reduces avoidable
+                    // VAST 402 timeouts without changing auction eligibility.
+                    settings.enablePreloading = true;
+                    settings.loadVideoTimeout = 12000;
+                    settings.prerollLoadVideoTimeout = 12000;
                     player.adsManager = event.getAdsManager(player.video, settings);
                     var adTypes = ima.AdEvent.Type;
                     if (position === 'preroll' && player.adsManager && typeof player.adsManager.getCuePoints === 'function') {
@@ -1109,6 +1115,12 @@
                 try {
                 var settings = new ima.AdsRenderingSettings();
                 settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
+                // Preload the selected media and tolerate slower creative CDNs.
+                // Google IMA defaults media loading to 8s; 12s reduces avoidable
+                // VAST 402 timeouts without changing auction eligibility.
+                settings.enablePreloading = true;
+                settings.loadVideoTimeout = 12000;
+                settings.prerollLoadVideoTimeout = 12000;
                 player.adsManager = event.getAdsManager(player.video, settings);
                 var adTypes = ima.AdEvent.Type;
                 player.adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, function (errorEvent) {
@@ -1203,9 +1215,10 @@
         var accompanyingAvailable = player.contentMode && !player.contentFailed;
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
         tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
-        // sz identifies eligible inventory; it is not the CSS player size.
-        // IMA receives actual dimensions separately in linearAdSlotWidth/Height.
-        if (!tag.searchParams.get('sz')) tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
+        // The GAM sz parameter describes the primary video ad slot. A
+        // saved tag can outlive a responsive player-size change, so always
+        // align Google VAST requests with this request's actual player size.
+        tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
         if (!player.rewarded && accompanyingAvailable) {
             tag.searchParams.set('plcmt', '2');
             if (breakPosition) {

@@ -34,6 +34,7 @@ async function openPlayer(page, options = {}) {
     await page.evaluate(options => {
         window.__HM_DISABLE_AUTOBOOT__ = true;
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
+        window.lastAdTagUrl = null; window.lastRenderingSettings = null;
         if (!options.realContent) {
             HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
             HTMLMediaElement.prototype.pause = function () {};
@@ -62,7 +63,18 @@ async function openPlayer(page, options = {}) {
             AdsLoader: class {
                 constructor() { this.events = {}; }
                 addEventListener(name, callback) { this.events[name] = callback; }
-                requestAds() { window.adRequests++; this.events.manager({ getAdsManager: () => new Manager() }); }
+                requestAds(request) {
+                    window.adRequests++;
+                    window.lastAdTagUrl = request.adTagUrl || null;
+                    this.events.manager({ getAdsManager: (_video, settings) => {
+                        window.lastRenderingSettings = {
+                            enablePreloading: settings.enablePreloading,
+                            loadVideoTimeout: settings.loadVideoTimeout,
+                            prerollLoadVideoTimeout: settings.prerollLoadVideoTimeout,
+                        };
+                        return new Manager();
+                    } });
+                }
                 destroy() {}
                 contentComplete() {}
             },
@@ -77,7 +89,7 @@ async function openPlayer(page, options = {}) {
         } else window.installIma();
         const attributes = {
             'data-hm-video-direct': '1', 'data-hm-video-width': '320', 'data-hm-video-height': '180',
-            'data-hm-vast-url': btoa('https://ads.example/vast'),
+            'data-hm-vast-url': btoa(options.vastUrl || 'https://ads.example/vast'),
         };
         // Deliberately omit the child floating attribute: cached pre-fix recipes
         // must still work through the loader's authoritative placement metadata.
@@ -142,6 +154,29 @@ for (const options of [{}, { content: true }, { noObserver: true }, { transforme
         expect(await page.evaluate(() => window.adRequests)).toBe(1);
     });
 }
+
+test('GAM VAST uses the actual player size and hardened IMA media settings', async ({ page }) => {
+    const original = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/23055873217/video-bluekl.com&env=vp&gdfp_req=1&output=vast&sz=300x250%7C640x480&url=https%3A%2F%2Fold.example%2Fpage&correlator=';
+    await openPlayer(page, { content: true, vastUrl: original });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+
+    const result = await page.evaluate(() => ({
+        tag: window.lastAdTagUrl,
+        settings: window.lastRenderingSettings,
+    }));
+    const tag = new URL(result.tag);
+
+    expect(tag.searchParams.get('sz')).toBe('320x180');
+    expect(tag.searchParams.get('url')).toBe('https://reader.example/article');
+    expect(tag.searchParams.get('description_url')).toBe('https://reader.example/article');
+    expect(tag.searchParams.get('plcmt')).toBe('2');
+    expect(tag.searchParams.get('vpos')).toBe('preroll');
+    expect(result.settings).toEqual({
+        enablePreloading: true,
+        loadVideoTimeout: 12000,
+        prerollLoadVideoTimeout: 12000,
+    });
+});
 
 test('records inline visibility before a delayed IMA SDK and starts once after floating', async ({ page }) => {
     await openPlayer(page, { delayedSdk: true });

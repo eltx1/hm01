@@ -852,7 +852,7 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
     assert.equal(url.searchParams.get('plcmt'), null);
-    assert.equal(url.searchParams.get('sz'), '400x300');
+    assert.equal(url.searchParams.get('sz'), '400x225');
     assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
 });
