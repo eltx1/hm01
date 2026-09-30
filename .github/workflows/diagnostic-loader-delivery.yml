@@ -1,0 +1,143 @@
+name: Diagnose loader delivery mismatch
+on:
+  push:
+    branches: [diagnostic/loader-delivery-20260930]
+    paths: [.github/workflows/diagnostic-loader-delivery.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 9a7bbbddbc7c080d006cfd05662badebe2177ac5
+          persist-credentials: false
+      - name: Read public serving assets without executing advertising
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git archive HEAD | gzip > evidence/reviewed-main-source.tar.gz
+          python3 - <<'PY'
+          import concurrent.futures, hashlib, json, pathlib, urllib.request, urllib.error
+          from html.parser import HTMLParser
+          out = pathlib.Path('evidence')
+          targets = [
+            ('publisher', 'https://natega.bluekl.com/'),
+            ('cdn-loader', 'https://cdn.horusmedia.net/hm-loader.js'),
+            ('previous-loader', 'https://b73ce6c2.horus-media-cdn.pages.dev/hm-loader.js'),
+            ('deployed-loader', 'https://728a706f.horus-media-cdn.pages.dev/hm-loader.js'),
+            ('pages-main-loader', 'https://horus-media-cdn.pages.dev/hm-loader.js'),
+          ]
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+          class Scripts(HTMLParser):
+            def __init__(self): super().__init__(); self.scripts=[]
+            def handle_starttag(self, tag, attrs):
+              a=dict(attrs)
+              if tag=='script' and ('data-site-key' in a or 'hm-loader' in a.get('src','')):
+                self.scripts.append({k:a[k] for k in ['src','data-site-key','data-environment','data-config-base','async','defer','type'] if k in a})
+          def get(t):
+            name,url=t
+            row={'name':name,'url':url}
+            try:
+              req=urllib.request.Request(url,headers={'User-Agent':'Horus-Delivery-Diagnostic/1.0','Accept-Encoding':'identity'})
+              with urllib.request.build_opener(NoRedirect).open(req,timeout=20) as r:
+                b=r.read(2000001)
+                if len(b)>2000000: raise ValueError('Body exceeds bound')
+                row.update(status=r.status,bytes=len(b),sha256=hashlib.sha256(b).hexdigest())
+                row['headers']={k:r.headers.get(k) for k in ['Content-Type','Cache-Control','Age','CF-Cache-Status','CF-Mitigated','ETag','Last-Modified','Vary','Location'] if r.headers.get(k)}
+                if name=='publisher':
+                  p=Scripts(); p.feed(b.decode('utf8','replace')); row['horusScripts']=p.scripts
+                elif r.status==200 and 'javascript' in r.headers.get('Content-Type',''):
+                  (out/(name+'.js')).write_bytes(b)
+            except urllib.error.HTTPError as e:
+              row.update(status=e.code,outcome='request_rejected')
+              row['headers']={k:e.headers.get(k) for k in ['Content-Type','Cache-Control','CF-Mitigated','Location'] if e.headers.get(k)}
+            except Exception as e: row.update(outcome='transport_error',error_type=type(e).__name__)
+            return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool: rows=list(pool.map(get,targets))
+          (out/'public-requests.json').write_text(json.dumps(rows,indent=2))
+          print(json.dumps(rows,indent=2))
+          PY
+      - name: Compute signatures of downloaded JavaScript in a networkless VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import fs from 'node:fs'; import vm from 'node:vm'; import crypto from 'node:crypto';
+          const results=[];
+          for (const label of ['cdn-loader','previous-loader','deployed-loader','pages-main-loader']) {
+            const path=`evidence/${label}.js`; if(!fs.existsSync(path)) continue;
+            const window={__HM_DISABLE_AUTOBOOT__:true}, document={};
+            try {
+              vm.runInNewContext(fs.readFileSync(path,'utf8'),{window,document,URL},{timeout:1500,codeGeneration:{strings:false,wasm:false}});
+              const loader=window.HorusMediaLoader;
+              const source=['boot','refresh','scan','getStartupTrace','_resetForTests'].map(name=>name+':'+(typeof loader?.[name]==='function'?Function.prototype.toString.call(loader[name]):'missing')).join('\n');
+              const signature=crypto.createHash('sha256').update(source).digest('hex');
+              results.push({label,version:loader?.version,signature,matchesVisitor:signature==='022c52ab44e24eb400a22107ccc98c6d22e379556d7ac3cf96fe5fe6424f7762',matchesPR219:signature==='6499ce30c38d1f533f46925ebe351cc353a96e05916aaca91a85cb3d8cfb68c1'});
+            } catch(e) {results.push({label,error:e.name});}
+          }
+          fs.writeFileSync('evidence/signatures.json',JSON.stringify(results,null,2)); console.log(JSON.stringify(results,null,2));
+          JS
+      - name: Read scoped Cloudflare delivery configuration without any writes
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, urllib.request, urllib.error
+          token=os.environ.get('CF_TOKEN',''); account=os.environ.get('CF_ACCOUNT','')
+          report={'schema':1,'read_only':True,'errors':[]}
+          def api(path):
+            try:
+              req=urllib.request.Request('https://api.cloudflare.com/client/v4'+path,headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=20) as r: d=json.load(r)
+              if d.get('success') is not True:
+                report['errors'].append({'path':path,'codes':[e.get('code') for e in d.get('errors',[])]}); return None
+              return d.get('result')
+            except urllib.error.HTTPError as e:
+              report['errors'].append({'path':path,'status':e.code}); return None
+            except Exception as e:
+              report['errors'].append({'path':path,'error_type':type(e).__name__}); return None
+          if token and account:
+            project=api('/accounts/'+account+'/pages/projects/horus-media-cdn')
+            if isinstance(project,dict):
+              dep=project.get('canonical_deployment') or {}
+              report['pages']={k:project.get(k) for k in ['name','subdomain','domains','production_branch']}
+              report['pages']['canonical_deployment']={k:dep.get(k) for k in ['id','url','environment','created_on','latest_stage','deployment_trigger']}
+              domains=api('/accounts/'+account+'/pages/projects/horus-media-cdn/domains')
+              if isinstance(domains,list): report['pages']['domain_status']=[{k:d.get(k) for k in ['name','status','validation_data','verification_data']} for d in domains if d.get('name') in ['cdn.horusmedia.net','verify.horusmedia.net']]
+            zones=api('/zones?name=horusmedia.net&per_page=1')
+            if isinstance(zones,list) and len(zones)==1 and zones[0].get('name')=='horusmedia.net':
+              z=zones[0]['id']; report['zone_id']=z
+              report['dns']=[]
+              for host in ['cdn.horusmedia.net','verify.horusmedia.net']:
+                records=api('/zones/'+z+'/dns_records?name='+host)
+                if isinstance(records,list): report['dns'] += [{k:r.get(k) for k in ['name','type','content','proxied','ttl']} for r in records]
+              rules=api('/zones/'+z+'/rulesets/phases/http_request_cache_settings/entrypoint')
+              if isinstance(rules,dict): report['cache_rules']={k:rules.get(k) for k in ['id','version','phase','rules']}
+              page=api('/zones/'+z+'/pagerules?status=active&per_page=100')
+              if isinstance(page,list): report['page_rules']=[{k:p.get(k) for k in ['id','status','priority','targets','actions']} for p in page]
+              routes=api('/zones/'+z+'/workers/routes')
+              if isinstance(routes,list): report['worker_routes']=[{k:r.get(k) for k in ['id','pattern','script']} for r in routes if any(h in r.get('pattern','') for h in ['cdn.horusmedia.net','verify.horusmedia.net','*.horusmedia.net','*horusmedia.net'])]
+              for setting in ['browser_cache_ttl','cache_level']:
+                d=api('/zones/'+z+'/settings/'+setting)
+                if isinstance(d,dict): report[setting]={'value':d.get('value'),'editable':d.get('editable')}
+          else: report['errors'].append({'error':'Existing credentials unavailable'})
+          pathlib.Path('evidence/cloudflare-delivery.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Retain bounded read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: loader-delivery-diagnostic
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error
