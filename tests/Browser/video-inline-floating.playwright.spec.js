@@ -18,7 +18,7 @@ async function openPlayer(page, options = {}) {
         if (path === '/broken-ad.mp4') return route.fulfill({ status: 404, body: '' });
         if (path === '/content.mp4') {
             resourceRequests.content++;
-            if (!options.realContent) return route.fulfill({ status: 404, body: '' });
+            if (!options.content) return route.fulfill({ status: 404, body: '' });
             const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
             const start = range ? Number(range[1]) : 0;
             const end = Math.min(contentBytes.length - 1, range && range[2] ? Number(range[2]) : contentBytes.length - 1);
@@ -26,7 +26,7 @@ async function openPlayer(page, options = {}) {
                 headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${contentBytes.length}` } : {}) },
                 body: contentBytes.subarray(start, end + 1) });
         }
-        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
             *{box-sizing:border-box} html,body{margin:0;overflow-anchor:none;background:#f4f5f7;color:#172237;font:16px/1.7 system-ui,sans-serif}
             article{max-width:720px;margin:0 auto;padding:0 24px;background:#fff;min-height:100vh}
             #before{height:${options.belowFold ? 1600 : 240}px;padding-top:32px} .section{color:#637085;font:700 11px/1.4 system-ui,sans-serif;letter-spacing:.15em;text-transform:uppercase}
@@ -45,7 +45,9 @@ async function openPlayer(page, options = {}) {
         window.__HM_DISABLE_AUTOBOOT__ = true;
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
-        window.contentPlayCalls = 0; window.contentPauseCalls = 0;
+        window.contentPlayCalls = 0; window.contentPauseCalls = 0; window.contentLoadCalls = 0;
+        const nativeLoad = HTMLMediaElement.prototype.load;
+        HTMLMediaElement.prototype.load = function (...args) { window.contentLoadCalls++; return nativeLoad.apply(this, args); };
         // Count live viewport subscriptions, preserving normal browser listener
         // semantics (listener identity plus capture) so repeated floats cannot
         // silently accumulate resize/scroll handlers.
@@ -213,8 +215,11 @@ async function rememberPlayingAd(page) {
             surface, parent: surface.parentNode, runtime, player: runtime.__hmVideoPlayer,
             video: document.querySelector('video'), layer: document.querySelector('[data-hm-video-ad-layer]'),
             iframe, iframeDocument: iframe.contentDocument, manager: window.videoManager,
-            playCalls: window.contentPlayCalls, pauseCalls: window.contentPauseCalls,
+            playCalls: window.contentPlayCalls, pauseCalls: window.contentPauseCalls, loadCalls: window.contentLoadCalls,
+            src: document.querySelector('video').getAttribute('src'), sourceMutations: 0,
         };
+        new MutationObserver(records => { window.originalPlayer.sourceMutations += records.length; })
+            .observe(window.originalPlayer.video, { attributes: true, attributeFilter: ['src'] });
     });
 }
 
@@ -226,18 +231,20 @@ async function expectSamePlayingAd(page) {
             sameParent: saved.surface.parentNode === saved.parent,
             sameRuntime: runtime === saved.runtime && runtime.__hmVideoPlayer === saved.player,
             sameVideo: document.querySelector('video') === saved.video,
+            sameSource: saved.video.getAttribute('src') === saved.src, sourceMutations: saved.sourceMutations,
             sameLayer: document.querySelector('[data-hm-video-ad-layer]') === saved.layer,
             sameIframe: document.querySelector('[data-test-ima]') === saved.iframe && saved.iframe.contentDocument === saved.iframeDocument,
             sameManager: window.videoManager === saved.manager,
             requests: window.adRequests, starts: window.adStarts, destroys: window.adDestroys, iframeLoads: window.imaFrameLoads,
             additionalPlays: window.contentPlayCalls - saved.playCalls, additionalPauses: window.contentPauseCalls - saved.pauseCalls,
+            additionalLoads: window.contentLoadCalls - saved.loadCalls,
             surfaces: document.querySelectorAll('[data-placement="video"]').length,
             runtimes: document.querySelectorAll('[data-hm-video-direct]').length,
             videos: document.querySelectorAll('video').length, iframes: document.querySelectorAll('[data-test-ima]').length,
         };
     })).toEqual({
-        sameSurface: true, sameParent: true, sameRuntime: true, sameVideo: true, sameLayer: true, sameIframe: true, sameManager: true,
-        requests: 1, starts: 1, destroys: 0, iframeLoads: 1, additionalPlays: 0, additionalPauses: 0,
+        sameSurface: true, sameParent: true, sameRuntime: true, sameVideo: true, sameSource: true, sourceMutations: 0, sameLayer: true, sameIframe: true, sameManager: true,
+        requests: 1, starts: 1, destroys: 0, iframeLoads: 1, additionalPlays: 0, additionalPauses: 0, additionalLoads: 0,
         surfaces: 1, runtimes: 1, videos: 1, iframes: 1,
     });
 }
@@ -261,6 +268,11 @@ async function expectInline(page, original = null) {
         if (await surface.getAttribute('data-hm-video-portal') === '1') {
             current.styles.top = original.styles.top;
             current.styles.left = original.styles.left;
+            // CSSOM resolves bottom:auto to a viewport-relative used value.
+            // Verify the declaration was cleared; document geometry above is
+            // the authoritative return-position assertion.
+            expect(await surface.evaluate(el => el.style.bottom)).toBe('auto');
+            current.styles.bottom = original.styles.bottom;
         }
         expect(current.styles).toEqual(original.styles);
     }
@@ -295,7 +307,9 @@ for (const options of [{}, { content: true }, { noObserver: true }, { transforme
             const listenerCount = await page.evaluate(() => window.viewportListenerCount());
             if (cycle === 0) firstFloatingListenerCount = listenerCount;
             expect(listenerCount).toBeLessThanOrEqual(firstFloatingListenerCount);
-            expect(requests).toEqual(resourceCounts);
+            // Browsers may range-fetch/retry media independently of scroll.
+            // Source mutations, decoder state and ad requests are asserted separately.
+            expect(requests.runtime).toBe(resourceCounts.runtime);
             const tailY = await page.locator('#tail').evaluate(el => el.getBoundingClientRect().top + scrollY);
             expect(Math.abs(tailY - original.tailY)).toBeLessThan(1);
             if (cycle === 0 && Object.keys(options).length === 0) await attachLayout(page, testInfo, 'floating-after-scroll');
@@ -320,7 +334,8 @@ for (const options of [{}, { content: true }, { noObserver: true }, { transforme
         await expect(surface).toBeHidden();
         expect(await page.evaluate(() => window.adRequests)).toBe(1);
         expect(await page.evaluate(() => window.adStarts)).toBe(1);
-        expect(requests).toEqual(resourceCounts);
+        // Native byte-range requests do not indicate an application restart.
+        expect(requests.runtime).toBe(resourceCounts.runtime);
         expect(await page.evaluate(() => window.viewportListenerCount())).toBeLessThan(firstFloatingListenerCount);
     });
 }
