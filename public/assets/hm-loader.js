@@ -1407,10 +1407,13 @@ function nativeDefinition(config, code) {
 
     function directRenderPolicy(tag) {
         var render = tag && tag.render || {};
-        var longRunning = directGptRecipe(tag) || directVideoRecipe(tag);
+        var video = directVideoRecipe(tag);
+        var longRunning = directGptRecipe(tag) || video;
         var fallback = longRunning ? 15000 : 2500;
-        var maximum = longRunning ? 30000 : 10000;
-        var minimum = longRunning ? 15000 : 0;
+        // Trusted video owns bounded SDK (10s), request (15s), viewability (15s), and media
+        // start (15s) phases. Legacy saved 15s recipes must not cut them short.
+        var maximum = video ? 60000 : (longRunning ? 30000 : 10000);
+        var minimum = video ? 60000 : (longRunning ? 15000 : 0);
         var configured = Number(render.timeoutMs || tag.renderTimeoutMs || fallback);
         return {
             timeoutMs: Math.max(minimum, Math.min(maximum, configured)),

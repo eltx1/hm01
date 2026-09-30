@@ -212,7 +212,7 @@ final class QuickMonetizeService
     }
 
     /** @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>} */
-    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO'): array
+    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO', ?string $videoMasterSize = null): array
     {
         $tag = trim($tag);
         $inputKind = strtoupper(trim($inputKind));
@@ -230,6 +230,23 @@ final class QuickMonetizeService
         }
         if ($inputKind === 'PROVIDER_TAG' && $adUnitPath !== null) {
             throw ValidationException::withMessages(['tag' => 'Select GAM ad unit path to use /Network_Code/AdUnit_Code, or paste the full provider tag.']);
+        }
+
+        $gamVideoPath = null;
+        $videoPlacement = $existingPlacement !== null
+            ? $existingPlacement->type->value === 'VIDEO'
+            : in_array($preset, ['video_floating', 'video_outstream'], true);
+        if ($adUnitPath !== null && $videoPlacement) {
+            $gamVideoPath = $adUnitPath;
+            // Use the ordinary reviewed VAST pipeline. The provisional size is
+            // replaced with the saved placement master inside the transaction.
+            try {
+                $tag = (new GoogleVideoAdTag())->build($gamVideoPath, [400, 225]);
+                $vast = $this->vastTags->parse($tag);
+            } catch (Throwable $exception) {
+                throw ValidationException::withMessages(['tag' => $exception->getMessage()]);
+            }
+            $adUnitPath = null;
         }
 
         if ($adUnitPath !== null) {
@@ -268,7 +285,7 @@ final class QuickMonetizeService
         if (count($isolationOrigins) > 20) throw ValidationException::withMessages(['tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.']);
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
-        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $adUnitPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName): array {
+        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $adUnitPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName, $videoMasterSize, $gamVideoPath): array {
             $bundle = ($existingPlacement === null && $preset === 'responsive_display')
                 || data_get($existingPlacement?->metadata, 'responsive_bundle') === 'v1';
             $placement = $existingPlacement;
@@ -276,7 +293,15 @@ final class QuickMonetizeService
                 $placements = $this->placements->responsiveBundle($site, $actor, $placementName);
             } elseif (! $placement) {
                 if (! $preset) throw ValidationException::withMessages(['placement_preset' => 'Choose an ad format / surface.']);
-                $placement = $this->placements->create($site, $preset, $actor, ['name' => $placementName], false, true);
+                $placement = $this->placements->create($site, $preset, $actor, ['name' => $placementName, 'video_master_size' => $videoMasterSize], false, true);
+            }
+            if ($videoMasterSize !== null && $videoMasterSize !== '') {
+                if ($bundle) {
+                    throw ValidationException::withMessages(['video_master_size' => 'A video master size requires a Video placement.']);
+                }
+                if ($existingPlacement !== null) {
+                    $placement = $this->placements->selectVideoMasterSize($placement, $videoMasterSize, $actor);
+                }
             }
             $placements ??= [$placement];
             foreach ($placements as $placement) {
@@ -284,6 +309,13 @@ final class QuickMonetizeService
                 if ($adUnitPath !== null && ! in_array($placement->type->value, ['DISPLAY', 'STICKY', 'REWARDED'], true)) {
                     throw ValidationException::withMessages([$existingPlacement ? 'placement_id' : 'placement_preset' => 'A GAM ad unit path requires a Display, Sticky, or Rewarded placement. Video placements use a VAST URL or a full provider tag.']);
                 }
+            }
+
+            if ($gamVideoPath !== null) {
+                $master = $placement->sizes->first(fn ($size): bool => $size->is_active && $size->size_type === 'FIXED' && $size->width && $size->height);
+                if (! $master) throw ValidationException::withMessages(['video_master_size' => 'The video placement needs an active master size.']);
+                $tag = (new GoogleVideoAdTag())->build($gamVideoPath, [(int) $master->width, (int) $master->height]);
+                $vast['url'] = $tag;
             }
 
             $siteRevenueShare = $this->publisherRevenueShare($site);
@@ -322,9 +354,11 @@ final class QuickMonetizeService
                 $widgetConfiguration['isolation_style_origins'] = $resourceOrigins['style'];
                 $widgetConfiguration['isolation_media_origins'] = $resourceOrigins['media'];
                 $widgetConfiguration['isolation_font_origins'] = $resourceOrigins['font'];
-                $widgetConfiguration['input_kind'] = $adUnitPath !== null
+                unset($widgetConfiguration['gam_ad_unit_path']);
+                if ($gamVideoPath !== null) $widgetConfiguration['gam_ad_unit_path'] = $gamVideoPath;
+                $widgetConfiguration['input_kind'] = $gamVideoPath !== null ? 'GAM_VIDEO_PATH' : ($adUnitPath !== null
                     ? ($placement->type->value === 'REWARDED' ? 'GAM_REWARDED_PATH' : 'GAM_AD_UNIT_PATH')
-                    : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG');
+                    : ($vast !== null ? 'VAST_URL' : 'PROVIDER_TAG'));
                 if ($vast !== null) {
                     $widgetConfiguration['vast_origin'] = $vast['origin'];
                     $widgetConfiguration['render_timeout_ms'] = max(15_000, (int) ($widgetConfiguration['render_timeout_ms'] ?? 0));

@@ -26,7 +26,7 @@ async function openPlayer(page, options = {}) {
         }
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
             html,body{margin:0;overflow-anchor:none} article{max-width:640px;margin:0 auto} #before{height:${options.belowFold ? 1600 : 80}px} #tail{height:4000px}
-            [data-placement="video"]{width:320px;max-width:100%;min-height:180px} ${options.transformed ? 'article{transform:translateZ(0);contain:paint;overflow:hidden}' : ''}
+            [data-placement="video"]{width:${options.master?.[0] || 320}px;max-width:100%;min-height:180px} ${options.transformed ? 'article{transform:translateZ(0);contain:paint;overflow:hidden}' : ''}
             </style></head><body><article><div id="before"></div><div class="hm-ad" data-placement="video"></div><div id="tail">Publisher article</div></article>
             <script id="loader" data-site-key="VIDEO_LAYOUT" data-config-version="1"></script></body></html>` });
     });
@@ -66,6 +66,7 @@ async function openPlayer(page, options = {}) {
                 requestAds(request) {
                     window.adRequests++;
                     window.lastAdTagUrl = request.adTagUrl || null;
+                    window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
                     this.events.manager({ getAdsManager: (_video, settings) => {
                         window.lastRenderingSettings = {
                             enablePreloading: settings.enablePreloading,
@@ -88,7 +89,7 @@ async function openPlayer(page, options = {}) {
             const script = document.createElement('script'); script.dataset.hmImaSdk = '1'; document.head.appendChild(script);
         } else window.installIma();
         const attributes = {
-            'data-hm-video-direct': '1', 'data-hm-video-width': '320', 'data-hm-video-height': '180',
+            'data-hm-video-direct': '1', 'data-hm-video-width': String(options.master?.[0] || 320), 'data-hm-video-height': String(options.master?.[1] || 180),
             'data-hm-vast-url': btoa(options.vastUrl || 'https://ads.example/vast'),
         };
         // Deliberately omit the child floating attribute: cached pre-fix recipes
@@ -108,7 +109,7 @@ async function openPlayer(page, options = {}) {
         const config = {
             siteKey: 'VIDEO_LAYOUT', configVersion: 1, status: 'active', allowedHostnames: ['reader.example'],
             controls: { gamDisabled: true, prebidDisabled: true },
-            placements: placements.map(p => ({ ...p, enabled: true, status: 'active', renderer: 'DIRECT_JS', sizes: [[320, 180]] })),
+            placements: placements.map(p => ({ ...p, enabled: true, status: 'active', renderer: 'DIRECT_JS', sizes: [p.type === 'VIDEO' ? (options.master || [320, 180]) : [320, 50]] })),
             directDemand: { enabled: true, placements: directPlacements },
         };
         window.fetch = async () => ({ ok: true, json: async () => config });
@@ -297,3 +298,23 @@ test('autoplay refusal leaves native controls available and a playback gesture n
     await expectDecodedContent(page);
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
+
+for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480]]) {
+    test(`master ${master.join('x')} keeps actual GAM/IMA dimensions and ratio through floating`, async ({ page }) => {
+        await openPlayer(page, { master, sticky: true, vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=1x1' });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        const box = await page.locator('[data-hm-video-direct]').boundingBox();
+        const request = await page.evaluate(() => ({ tag: window.lastAdTagUrl, size: window.lastAdDimensions }));
+        expect(request.size).toEqual([Math.round(box.width), Math.round(box.height)]);
+        expect(new URL(request.tag).searchParams.get('sz')).toBe(request.size.join('x'));
+        expect(new URL(request.tag).searchParams.get('vad_type')).toBe('linear');
+        await page.evaluate(() => window.scrollTo(0, 1100));
+        await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
+        const floated = await page.locator('[data-hm-video-direct]').boundingBox();
+        expect(Math.abs(floated.width / floated.height - master[0] / master[1])).toBeLessThan(0.02);
+        expect(floated.x).toBeGreaterThanOrEqual(0);
+        expect(floated.y).toBeGreaterThanOrEqual(0);
+        await expect.poll(() => page.evaluate(() => window.videoManager.dimensions)).toEqual([Math.round(floated.width), Math.round(floated.height)]);
+        expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    });
+}

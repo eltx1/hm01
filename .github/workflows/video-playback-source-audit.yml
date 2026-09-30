@@ -79,6 +79,21 @@ jobs:
                   if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])) return null;
                   return 'https://'.$parts['host'].(isset($parts['port']) ? ':'.$parts['port'] : '').($parts['path'] ?? '/');
               };
+              $hasVast = static function (array $attributes): bool {
+                  $encoded = $attributes['data-hm-vast-url'] ?? '';
+                  if (isset($attributes['data-hm-vast-url-parts'])) {
+                      $count = (string) $attributes['data-hm-vast-url-parts'];
+                      if ($encoded !== '' || !preg_match('/^[2-8]$/D', $count)) return false;
+                      for ($index = 0; $index < (int) $count; $index++) {
+                          $part = $attributes['data-hm-vast-url-'.$index] ?? '';
+                          if (!is_string($part) || strlen($part) < 4 || strlen($part) > 1800 || ($index < (int) $count - 1 && strlen($part) !== 1800)) return false;
+                          $encoded .= $part;
+                      }
+                  }
+                  if (!is_string($encoded) || $encoded === '' || strlen($encoded) > 13336) return false;
+                  $decoded = base64_decode($encoded, true);
+                  return $decoded !== false && strlen($decoded) <= 10000 && base64_encode($decoded) === $encoded && str_starts_with($decoded, 'https://');
+              };
               $configured = (string) config('horus.video_content_url');
               $report = ['schema_version'=>1, 'release_sha'=>$release, 'runtime_sha256'=>hash_file('sha256','public/assets/hm-video-direct.js'), 'platform_content_configured'=>$configured !== '', 'platform_content_url'=>$safeUrl($configured), 'sites'=>[]];
               // Only named public reproduction sites. No unrelated tenant,
@@ -87,10 +102,10 @@ jobs:
               foreach ($sites as $site) {
                   $version = App\Models\ConfigVersion::withoutGlobalScopes()->where('site_id',$site->id)->where('environment',App\Enums\ConfigEnvironment::Production->value)->orderByDesc('version')->first();
                   $videos = [];
-                  $walk = function ($node) use (&$walk,&$videos,$safeUrl) {
+                  $walk = function ($node) use (&$walk,&$videos,$safeUrl,$hasVast) {
                       if (!is_array($node)) return;
                       if (($node['data-hm-video-direct'] ?? '') === '1') {
-                          $item = ['rewarded'=>($node['data-hm-video-rewarded'] ?? '') === '1', 'has_vast'=>!empty($node['data-hm-vast-url']), 'has_content'=>!empty($node['data-hm-video-content-url']), 'content_url'=>$safeUrl($node['data-hm-video-content-url'] ?? ''), 'inline_to_floating'=>($node['data-hm-video-inline-to-floating'] ?? '') === '1', 'width'=>$node['data-hm-video-width'] ?? null, 'height'=>$node['data-hm-video-height'] ?? null];
+                          $item = ['rewarded'=>($node['data-hm-video-rewarded'] ?? '') === '1', 'has_vast'=>$hasVast($node), 'has_content'=>!empty($node['data-hm-video-content-url']), 'content_url'=>$safeUrl($node['data-hm-video-content-url'] ?? ''), 'inline_to_floating'=>($node['data-hm-video-inline-to-floating'] ?? '') === '1', 'width'=>$node['data-hm-video-width'] ?? null, 'height'=>$node['data-hm-video-height'] ?? null];
                           $videos[hash('sha256',json_encode($item))] = $item;
                       }
                       foreach ($node as $child) if (is_array($child)) $walk($child);

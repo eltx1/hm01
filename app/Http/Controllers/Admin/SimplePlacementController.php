@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Site;
 use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\PlacementPresetCatalog;
+use App\Services\Inventory\VideoMasterSize;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -28,6 +29,7 @@ final class SimplePlacementController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'code' => ['nullable', 'string', 'max:120'],
             'ad_unit_id' => ['nullable', 'ulid'],
+            'video_master_size' => ['nullable', Rule::in(array_keys(VideoMasterSize::choices()))],
         ]);
 
         $placement = $builder->create(
@@ -38,6 +40,7 @@ final class SimplePlacementController extends Controller
                 'name' => $data['name'],
                 'code' => $data['code'] ?? null,
                 'ad_unit_id' => $data['ad_unit_id'] ?? null,
+                'video_master_size' => $data['video_master_size'] ?? null,
             ],
         );
 

@@ -129,6 +129,42 @@
         }
     }
 
+    function vastUrlAttribute(container) {
+        var single = container.getAttribute('data-hm-vast-url');
+        var count = container.getAttribute('data-hm-vast-url-parts');
+        var encoded = single || '';
+        if (container.attributes) {
+            for (var attribute = 0; attribute < container.attributes.length; attribute += 1) {
+                var name = container.attributes[attribute].name;
+                if (name.indexOf('data-hm-vast-url-') === 0 && name !== 'data-hm-vast-url-parts'
+                    && !/^data-hm-vast-url-[0-7]$/.test(name)) return null;
+            }
+        }
+        if (count !== null) {
+            if (single !== null || !/^[2-8]$/.test(count)) return null;
+            encoded = '';
+            for (var index = 0; index < 8; index += 1) {
+                var part = container.getAttribute('data-hm-vast-url-' + index);
+                if (index >= Number(count)) { if (part !== null) return null; continue; }
+                if (!part || part.length > 1800 || (index < Number(count) - 1 && part.length !== 1800)) return null;
+                encoded += part;
+            }
+        } else {
+            for (var orphan = 0; orphan < 8; orphan += 1) {
+                if (container.getAttribute('data-hm-vast-url-' + orphan) !== null) return null;
+            }
+        }
+        // Validate before decoding: a truncated base64 prefix may otherwise
+        // remain a syntactically valid URL pointing at the wrong auction.
+        if (!encoded || encoded.length > 13336 || encoded.length % 4 !== 0
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return null;
+        try {
+            var binary = window.atob(encoded);
+            if (binary.length > 10000 || (window.btoa && window.btoa(binary) !== encoded)) return null;
+        } catch (error) { return null; }
+        return decodeBase64(encoded);
+    }
+
     function jsonAttribute(container, name, fallback) {
         var raw = container.getAttribute(name);
         if (!raw) return fallback;
@@ -288,6 +324,12 @@
     }
 
     function playerDimensions(container, fallback) {
+        // CSS fitting, the floating clearance and rewarded overlays can all
+        // change the real box. Report its measured dimensions, not its preset.
+        if (container.getBoundingClientRect) {
+            var box = container.getBoundingClientRect();
+            if (box.width > 0 && box.height > 0) return [Math.max(1, Math.round(box.width)), Math.max(1, Math.round(box.height))];
+        }
         var width = Math.round(Number(container.clientWidth || fallback[0]));
         width = Math.max(1, Math.min(fallback[0], width || fallback[0]));
         var ratio = fallback[0] / fallback[1];
@@ -703,9 +745,11 @@
         importantStyle(surface.style, 'top', 'auto');
         importantStyle(surface.style, 'transform', 'none');
         importantStyle(surface.style, 'margin', '0');
-        importantStyle(surface.style, 'width', 'min(400px, calc(100vw - 32px))');
+        importantStyle(surface.style, 'width', 'min(' + player.size[0] + 'px, calc(100vw - 32px))');
         importantStyle(surface.style, 'max-width', 'calc(100vw - 32px)');
-        importantStyle(surface.style, 'aspect-ratio', '16 / 9');
+        importantStyle(surface.style, 'aspect-ratio', player.size[0] + ' / ' + player.size[1]);
+        surface.setAttribute('data-hm-video-master-width', String(player.size[0]));
+        surface.setAttribute('data-hm-video-master-height', String(player.size[1]));
         importantStyle(surface.style, 'box-sizing', 'border-box');
         importantStyle(surface.style, 'background', '#000');
         importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
@@ -882,16 +926,23 @@
         var generation = player.adRuntimeGeneration;
         function currentRequest() { return !player.destroyed && generation === player.adRuntimeGeneration; }
 
-        player.startupTimer = window.setTimeout(function () {
-            if (currentRequest()) failContentAdBreak(player, new Error('Video ad break did not start in time'), 'startup-timeout', position);
-        }, 15000);
+        function armStartupPhase(phase) {
+            window.clearTimeout(player.startupTimer);
+            player.startupTimer = window.setTimeout(function () {
+                if (currentRequest()) failContentAdBreak(player, new Error('Video ad ' + phase + ' timed out'), phase + '-timeout', position);
+            }, 15000);
+        }
+        // Separate VAST resolution from media loading. A slow VAST response
+        // must not consume IMA's entire 12-second media load allowance.
+        armStartupPhase('request');
 
         try {
             player.displayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
             player.displayContainer.initialize();
             player.adsLoader = new ima.AdsLoader(player.displayContainer);
             player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
-                if (!currentRequest() || player.currentBreak !== position) return;
+                if (!currentRequest() || player.currentBreak !== position || player.adsManager) return;
+                armStartupPhase('viewability');
                 try {
                     var settings = new ima.AdsRenderingSettings();
                     settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
@@ -937,6 +988,9 @@
                     });
                     if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
                         if (!currentRequest() || player.contentEnded) return;
+                        // A VMAP may legitimately start with content and a
+                        // later cue point. It has finished startup without an ad.
+                        window.clearTimeout(player.startupTimer);
                         if (player.adRules) {
                             player.adBreakPending = false;
                             player.currentBreak = null;
@@ -961,7 +1015,10 @@
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (player.adsManager.setVolume) player.adsManager.setVolume(0);
                     startAdManagerWhenViewable(player, function () {
-                        if (currentRequest() && player.adsManager) player.adsManager.start();
+                        if (currentRequest() && player.adsManager) {
+                            armStartupPhase('media-start');
+                            player.adsManager.start();
+                        }
                     });
                     player.resizeHandler = function () {
                         if (!currentRequest() || !player.adsManager) return;
@@ -1103,15 +1160,20 @@
         player.started = true;
         setStatus(player.container, 'requesting');
 
-        if (player.rewarded) player.startupTimer = window.setTimeout(function () {
-            failVideo(player, new Error('Rewarded video did not start in time'), 'startup-timeout');
-        }, 15000);
+        function armStartupPhase(phase) {
+            window.clearTimeout(player.startupTimer);
+            player.startupTimer = window.setTimeout(function () {
+                failVideo(player, new Error('Video ad ' + phase + ' timed out'), phase + '-timeout');
+            }, 15000);
+        }
+        armStartupPhase('request');
         try {
             player.displayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
             player.displayContainer.initialize();
             player.adsLoader = new ima.AdsLoader(player.displayContainer);
             player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
-                if (player.destroyed) return;
+                if (player.destroyed || player.adsManager) return;
+                armStartupPhase('viewability');
                 try {
                 var settings = new ima.AdsRenderingSettings();
                 settings.restoreCustomPlaybackStateOnAdBreakComplete = true;
@@ -1127,7 +1189,7 @@
                     var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
                     failVideo(player, error, 'playback');
                 });
-                player.adsManager.addEventListener(adTypes.LOADED, function () { setStatus(player.container, 'loaded'); });
+                player.adsManager.addEventListener(adTypes.LOADED, function () { if (!player.destroyed) setStatus(player.container, 'loaded'); });
                 player.adsManager.addEventListener(adTypes.STARTED, function () {
                     if (player.destroyed) return;
                     window.clearTimeout(player.startupTimer);
@@ -1159,7 +1221,10 @@
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                 if (player.adsManager.setVolume) player.adsManager.setVolume(player.rewarded ? 1 : 0);
                 startAdManagerWhenViewable(player, function () {
-                    if (!player.destroyed && player.adsManager) player.adsManager.start();
+                    if (!player.destroyed && player.adsManager) {
+                        armStartupPhase('media-start');
+                        player.adsManager.start();
+                    }
                 });
                 player.resizeHandler = function () {
                     if (!player.adsManager || player.destroyed) return;
@@ -1219,6 +1284,8 @@
         // saved tag can outlive a responsive player-size change, so always
         // align Google VAST requests with this request's actual player size.
         tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
+        // This runtime implements linear IMA video only, not overlay ads.
+        tag.searchParams.set('vad_type', 'linear');
         if (!player.rewarded && accompanyingAvailable) {
             tag.searchParams.set('plcmt', '2');
             if (breakPosition) {
@@ -1357,7 +1424,7 @@
 
     function render(container) {
         if (!container || container.getAttribute('data-hm-video-runtime-state')) return;
-        var vastUrl = decodeBase64(container.getAttribute('data-hm-vast-url'));
+        var vastUrl = vastUrlAttribute(container);
         if (!vastUrl || !/^https:\/\//i.test(vastUrl)) {
             setStatus(container, 'invalid');
             if (!rewardedMode(container)) hideFloatingSurface(container);

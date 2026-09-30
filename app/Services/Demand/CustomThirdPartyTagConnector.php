@@ -220,11 +220,12 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         $sizes = $policy['sizes'];
         $runtimeUrl = $this->trustedRuntimeUrl('hm-video-direct.js');
         $containerId = ($rewarded ? 'hm-rewarded-' : 'hm-video-').$placement->id;
-        $timeout = max(15_000, min(30_000, (int) ($configuration['render_timeout_ms'] ?? 20_000)));
+        // Cover SDK acquisition, VAST resolution, viewability and media-start
+        // phases without ending a valid IMA attempt at the outer Loader layer.
+        $timeout = 60_000;
         $formatSettings = (array) ($placement->placement->format_settings ?? []);
         $attributes = [
             'data-hm-video-direct' => '1',
-            'data-hm-vast-url' => base64_encode($vast['url']),
             'data-hm-video-width' => (string) $frameSize[0],
             'data-hm-video-height' => (string) $frameSize[1],
             'data-hm-video-sizes' => json_encode($sizes, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
@@ -232,6 +233,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'data-hm-video-muted' => $rewarded ? '0' : '1',
             'data-hm-video-autoplay' => $rewarded ? '0' : '1',
         ];
+        $attributes += $this->vastUrlAttributes($vast['url']);
         if (! $rewarded) {
             if (($formatSettings['floatingPosition'] ?? null) === 'bottom_right') {
                 $attributes['data-hm-video-inline-to-floating'] = '1';
@@ -302,6 +304,20 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     private function cspSources(array $origins): string { return collect($origins)->filter(fn ($value) => is_string($value) && $value !== '')->unique()->values()->implode(' '); }
     private function cspSuffix(string $sources): string { return $sources === '' ? '' : ' '.$sources; }
     private function quickDirectiveOrigins(array $configuration, string $key, array $fallback): array { if (! array_key_exists($key, $configuration)) return array_values(array_unique($fallback)); return collect((array) $configuration[$key])->map(fn ($origin) => $this->canonicalHttpsOrigin((string) $origin))->filter()->unique()->take(20)->values()->all(); }
+
+    /** Keep short legacy recipes intact and split before public-attribute sanitization. */
+    private function vastUrlAttributes(string $url): array
+    {
+        if ($url === '' || strlen($url) > 10_000) {
+            throw new RuntimeException('The VAST ad tag URL exceeds the supported length.');
+        }
+        $encoded = base64_encode($url);
+        if (strlen($encoded) <= 2000) return ['data-hm-vast-url' => $encoded];
+
+        // At most eight 1,800-character chunks cover the parser's 10,000-byte
+        // URL limit. Never publish an oversized single attribute to be truncated.
+        return $this->chunkedPayloadAttributes('data-hm-vast-url', $encoded);
+    }
 
     private function encodedPayloadAttributes(string $baseAttribute, string $payload): array
     {

@@ -48,19 +48,29 @@
     @php($placementPresets = app(\App\Services\Inventory\PlacementPresetCatalog::class)->choices())
     <p class="eyebrow">Simple placement builder</p><h3>Create a placement in seconds</h3>
     <p class="muted">Choose what the ad should look like. Horus fills in type, format, sizes, responsive mapping, and safe defaults automatically. Auto-mount formats do not need a publisher placeholder.</p>
-    <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.placements.simple', $site) }}">@csrf
+    <form class="form-stack" method="POST" action="{{ route('admin.sites.inventory.placements.simple', $site) }}" id="simple-placement-form">@csrf
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.7rem">
             @foreach($placementPresets as $presetKey => $preset)
                 @continue($presetKey === \App\Services\Inventory\PlacementPresetCatalog::CUSTOM)
                 <label style="display:block;border:1px solid rgba(212,168,67,.28);border-radius:12px;padding:.8rem;cursor:pointer;background:rgba(255,255,255,.02)">
                     <div style="display:flex;gap:.55rem;align-items:flex-start">
-                        <input type="radio" name="placement_preset" value="{{ $presetKey }}" @checked($presetKey === 'responsive_display') required style="margin-top:.25rem">
+                        <input type="radio" name="placement_preset" value="{{ $presetKey }}" @checked(old('placement_preset', 'responsive_display') === $presetKey) required style="margin-top:.25rem">
                         <span><strong>{{ $preset['label'] }}</strong><br><span class="muted">{{ $preset['summary'] }}</span></span>
                     </div>
                     <div class="status-row" style="margin-top:.55rem"><span class="pill">{{ $preset['badge'] }}</span><span class="pill">{{ $preset['type'] }}</span></div>
                 </label>
             @endforeach
         </div>
+        <label id="simple-video-size-wrap" style="display:none;">Video master size
+            <select class="hm-input" name="video_master_size" id="simple-video-size" disabled>
+                <option value="">Use preset default</option>
+                @foreach(\App\Services\Inventory\VideoMasterSize::choices() as $sizeKey => $dimensions)
+                    <option value="{{ $sizeKey }}" @selected(old('video_master_size') === $sizeKey)>{{ $dimensions[0] }}×{{ $dimensions[1] }}</option>
+                @endforeach
+            </select>
+            <span class="muted">Maximum player dimensions. The player shrinks proportionally to fit its container or viewport; ad requests use its actual rendered size.</span>
+            @error('video_master_size')<span class="error">{{ $message }}</span>@enderror
+        </label>
         <label>Placement name<input class="hm-input" name="name" placeholder="Article responsive or Bottom anchor" required></label>
         <label>Code <span class="muted">(optional — generated automatically)</span><input class="hm-input" name="code" placeholder="Leave blank to auto-generate"></label>
         <label>GAM ad unit <span class="muted">(optional for Direct Demand / Quick Monetize)</span><select class="hm-input" name="ad_unit_id"><option value="">No GAM ad unit — Direct Demand ready</option>@foreach($site->adUnits as $unit)<option value="{{ $unit->id }}">{{ $unit->code }}</option>@endforeach</select></label>
@@ -125,4 +135,20 @@
     </form>
 </article>
 </section>
+<script>
+(() => {
+    const form = document.getElementById('simple-placement-form');
+    const size = document.getElementById('simple-video-size');
+    const wrap = document.getElementById('simple-video-size-wrap');
+    if (!form || !size || !wrap) return;
+    const refresh = () => {
+        const preset = form.querySelector('[name="placement_preset"]:checked')?.value;
+        const video = ['video_floating', 'video_outstream'].includes(preset);
+        wrap.style.display = video ? '' : 'none';
+        size.disabled = !video;
+    };
+    form.addEventListener('change', refresh);
+    refresh();
+})();
+</script>
 @endsection

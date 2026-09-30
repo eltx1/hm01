@@ -114,8 +114,9 @@ test('placement preset transform injects safe auto-mount, hardened surface owner
     assert.match(transformed, /node\.pause\(\)/);
     assert.match(transformed, /node\.src = 'about:blank'/);
     assert.match(transformed, /calc\(16px \+ env\(safe-area-inset-bottom, 0px\)\)/);
-    assert.match(transformed, /min\(400px, calc\(100vw - 32px\)\)/);
-    assert.match(transformed, /setImportantStyle\(style, 'aspect-ratio', '16 \/ 9'\)/);
+    assert.match(transformed, /data-hm-video-master-width/);
+    assert.match(transformed, /availableHeight \* masterWidth \/ masterHeight/);
+    assert.match(transformed, /setImportantStyle\(style, 'aspect-ratio', masterWidth \+ ' \/ ' \+ masterHeight\)/);
     assert.match(transformed, /function attachDirectResponsiveMapping\(container, entry\)/);
     assert.match(transformed, /data-hm-gpt-size-map/);
     assert.match(transformed, /JSON\.stringify\(mappings\)/);
@@ -266,4 +267,14 @@ test('floating video clearance reserves live sticky iframe space before wrapper 
     iframeRect.bottom = 800;
     resizeObservers[0].callback();
     assert.equal(floating.style.bottom, '166px');
+
+    // Selected 4:3 masters must fit both viewport axes above the sticky.
+    floatingAttributes['data-hm-video-master-width'] = '640';
+    floatingAttributes['data-hm-video-master-height'] = '480';
+    window.visualViewport.height = 350;
+    iframeRect.top = 250; iframeRect.bottom = 350; iframeRect.height = 100;
+    floating.__hmClearance.update();
+    assert.equal(floating.style.width, '290px');
+    assert.ok(290 * 480 / 640 + 116 + 16 <= 350);
+
 });
