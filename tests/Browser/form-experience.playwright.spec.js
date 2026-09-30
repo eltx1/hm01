@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -12,21 +13,22 @@ async function open(page, name, fixturePath = '/preview') {
     // next catch-all route. WebKit can otherwise finish an old handler after a
     // new navigation has already claimed the request.
     await page.unrouteAll({ behavior: 'wait' });
-    await page.route('**/*', async route => {
+    await page.route('**/*', route => {
         const url = new URL(route.request().url());
         if (url.pathname === '/fixture.css') return route.fulfill({ contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
         if (url.pathname === '/fixture.js') return route.fulfill({ contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
-        if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
+        if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: readFileSync(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
         if (/^\/(assets|build)\//.test(url.pathname) && !url.pathname.includes('..')) {
             let body;
             try {
-                body = await readFile(path.join(root, 'public', url.pathname));
+                // Keep route resolution synchronous. WebKit can retire a request
+                // while an async filesystem read is pending, after which fulfill()
+                // races a request that is already handled.
+                body = readFileSync(path.join(root, 'public', url.pathname));
             } catch {
                 // Missing optional branding assets are intentionally empty.
                 return route.fulfill({ status: 204 });
             }
-            // Keep route.fulfill outside the file-read catch: a Playwright route
-            // lifecycle error must never be swallowed and fulfilled a second time.
             return route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body });
         }
         return route.fulfill({ status: 204 });
