@@ -7,6 +7,18 @@ const manifest = JSON.parse(await readFile(path.join(root, 'public/build/manifes
 const styles = [...new Set([manifest['resources/css/app.css'].file, ...(manifest['resources/js/app.js'].css || [])])];
 const types = { '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2' };
 
+async function fulfillFixtureRoute(route, response) {
+    try {
+        await route.fulfill(response);
+    } catch (error) {
+        // WebKit can retire an intercepted resource while an async fixture read
+        // is finishing. Ignore only Playwright's exact already-handled lifecycle
+        // race; every other routing error remains a hard test failure.
+        if (String(error && error.message || '').includes('Route is already handled')) return;
+        throw error;
+    }
+}
+
 async function open(page, name, fixturePath = '/preview') {
     // Drain any handler still serving the previous fixture before installing the
     // next catch-all route. WebKit can otherwise finish an old handler after a
@@ -14,22 +26,22 @@ async function open(page, name, fixturePath = '/preview') {
     await page.unrouteAll({ behavior: 'wait' });
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
-        if (url.pathname === '/fixture.css') return route.fulfill({ contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
-        if (url.pathname === '/fixture.js') return route.fulfill({ contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
-        if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
+        if (url.pathname === '/fixture.css') return fulfillFixtureRoute(route, { contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
+        if (url.pathname === '/fixture.js') return fulfillFixtureRoute(route, { contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
+        if (url.pathname === fixturePath) return fulfillFixtureRoute(route, { contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
         if (/^\/(assets|build)\//.test(url.pathname) && !url.pathname.includes('..')) {
             let body;
             try {
                 body = await readFile(path.join(root, 'public', url.pathname));
             } catch {
                 // Missing optional branding assets are intentionally empty.
-                return route.fulfill({ status: 204 });
+                return fulfillFixtureRoute(route, { status: 204 });
             }
             // Keep route.fulfill outside the file-read catch: a Playwright route
             // lifecycle error must never be swallowed and fulfilled a second time.
-            return route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body });
+            return fulfillFixtureRoute(route, { contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body });
         }
-        return route.fulfill({ status: 204 });
+        return fulfillFixtureRoute(route, { status: 204 });
     });
     // Match the fixture application's asset origin; all requests are intercepted.
     await page.goto(`http://localhost${fixturePath}`);
