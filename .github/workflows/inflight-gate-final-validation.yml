@@ -1,0 +1,120 @@
+name: Final in-flight gate validation
+on:
+  push:
+    branches: [diagnostic/inflight-gate-20260930]
+    paths: [.github/workflows/inflight-gate-final-validation.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: horus-inflight-gate-isolated-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      BASE_SHA: 9a7bbbddbc7c080d006cfd05662badebe2177ac5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 9a7bbbddbc7c080d006cfd05662badebe2177ac5
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Retrieve checksum-pinned source transport, not a deployable release
+        uses: actions/download-artifact@v8
+        with:
+          name: inflight-gate-validation-evidence
+          path: previous-evidence
+          run-id: 36652380727
+          github-token: ${{ github.token }}
+      - name: Apply reviewed patch and fix test synchronization without changing security assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          echo 'd0fe1e863039390853fb5a72ee5bbe5c9c0ddd7805dd9fc29abbcb70dd479d9e  previous-evidence/reviewed.patch' | sha256sum -c -
+          echo '20cf4978f20111c1bf6af5cc9f3876f05d6ccaacce6116d62dd4e301bbd902a2  previous-evidence/pr219-loader.js' | sha256sum -c -
+          git apply --check previous-evidence/reviewed.patch
+          git apply previous-evidence/reviewed.patch
+          python3 - <<'PY'
+          import pathlib, hashlib
+          p=pathlib.Path('tests/Browser/responsive-bundle.playwright.spec.js')
+          s=p.read_text()
+          old="if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin);"
+          new="if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') { window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin); document.documentElement.setAttribute('data-hm-test-reply-ready', '1'); }"
+          assert s.count(old)==1
+          s=s.replace(old,new)
+          old="        await expect.poll(() => frame.evaluate(() => typeof window.reply)).toBe('function');"
+          new="        // The legacy stub has no readiness ping, so a pending frame may be\n        // replaced before HELLO. Locator assertions retry that navigation; a\n        // captured evaluate Promise instead fails permanently on detachment.\n        await expect(page.frameLocator('iframe[data-hm-traffic-gate]')\n            .locator('html[data-hm-test-reply-ready=\"1\"]')).toHaveCount(1);"
+          assert s.count(old)==1
+          s=s.replace(old,new)
+          p.write_text(s)
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='ed4031bf24647d8ad2e9b56c31d5ba50d26d2021b067bd85dbd49bcccb3f8821'
+          PY
+          git diff --check
+          git add -N docs/operations/inflight-verification-readiness.md tests/Browser/loader-build-identity.test.js
+          git diff --binary > evidence/final-reviewed.patch
+          echo '56ffc431130c029155e1d125c950385a7fa48a4ce4df60511e6a225f95531b99  evidence/final-reviewed.patch' | sha256sum -c -
+          cp previous-evidence/pr219-loader.js evidence/pr219-loader.js
+      - name: Install isolated test dependencies
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Reproduce original cancellation and execute complete Node regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/transform-loader-traffic-gate.mjs "$RUNNER_TEMP/candidate-transform.mjs"
+          git show "$BASE_SHA:scripts/transform-loader-traffic-gate.mjs" > scripts/transform-loader-traffic-gate.mjs
+          set +e
+          node --test --test-name-pattern='pending same-page verification document' tests/Browser/hm-loader-traffic-gate.test.js > evidence/negative-before.txt 2>&1
+          result=$?
+          set -e
+          cp "$RUNNER_TEMP/candidate-transform.mjs" scripts/transform-loader-traffic-gate.mjs
+          test "$result" -ne 0
+          grep -Fq 'retain the valid in-flight navigation instead of cancelling it' evidence/negative-before.txt
+          npm run test:browser > evidence/node-tests.txt 2>&1
+          cp public/assets/hm-loader.min.js evidence/candidate-loader.min.js
+          npm run build:loader
+          cmp public/assets/hm-loader.min.js evidence/candidate-loader.min.js
+          echo '76f7d2ad10588188cb764603ca2f00883f20488fde20567282bdb1713b3fd9f3  evidence/candidate-loader.min.js' | sha256sum -c -
+      - name: Repeat immediate and pending-frame security scenarios across every browser profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright test --config=playwright.traffic-gate.config.js tests/Browser/responsive-bundle.playwright.spec.js --grep 'Traffic Gate (PASS|DENIED) governs' --repeat-each=3 > evidence/fixture-repeat.txt 2>&1
+      - name: Full browser matrix and old-new controlled pending navigation comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          HM_PENDING_BASELINE="$PWD/evidence/pr219-loader.js" npx playwright test --config=playwright.traffic-gate.config.js > evidence/browser-tests.txt 2>&1
+      - name: Publish the exact tested source tree to a candidate branch only
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs');
+            const {owner,repo}=context.repo;
+            const base=process.env.BASE_SHA;
+            const {data:live}=await github.rest.git.getRef({owner,repo,ref:'heads/main'});
+            if(live.object.sha!==base) throw new Error('Main moved; rebase and revalidate.');
+            const {data:parent}=await github.rest.git.getCommit({owner,repo,commit_sha:base});
+            const paths=['docs/operations/inflight-verification-readiness.md','scripts/build-loader.mjs','scripts/loader-startup-trace.mjs','scripts/transform-loader-traffic-gate.mjs','tests/Browser/early-verification.playwright.spec.js','tests/Browser/hm-loader-traffic-gate.test.js','tests/Browser/hm-startup-trace.test.js','tests/Browser/loader-build-identity.test.js','tests/Browser/responsive-bundle.playwright.spec.js'];
+            const tree=paths.map(path=>({path,mode:'100644',type:'blob',content:fs.readFileSync(path,'utf8')}));
+            const {data:nextTree}=await github.rest.git.createTree({owner,repo,base_tree:parent.tree.sha,tree});
+            const {data:commit}=await github.rest.git.createCommit({owner,repo,message:'Retain valid in-flight verification navigation with bounded fallback and trace build identity',tree:nextTree.sha,parents:[base]});
+            await github.rest.git.createRef({owner,repo,ref:'refs/heads/fix/inflight-gate-readiness-20260930',sha:commit.sha});
+            fs.writeFileSync('evidence/candidate.json',JSON.stringify({base_sha:base,head_sha:commit.sha,tree_sha:nextTree.sha,branch:'fix/inflight-gate-readiness-20260930',paths},null,2));
+            core.info(`Validated candidate: ${commit.sha}`);
+      - name: Preserve all test evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: inflight-gate-final-evidence
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn
