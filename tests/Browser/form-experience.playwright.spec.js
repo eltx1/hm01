@@ -8,13 +8,26 @@ const styles = [...new Set([manifest['resources/css/app.css'].file, ...(manifest
 const types = { '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2' };
 
 async function open(page, name, fixturePath = '/preview') {
+    // Drain any handler still serving the previous fixture before installing the
+    // next catch-all route. WebKit can otherwise finish an old handler after a
+    // new navigation has already claimed the request.
+    await page.unrouteAll({ behavior: 'wait' });
     await page.route('**/*', async route => {
         const url = new URL(route.request().url());
         if (url.pathname === '/fixture.css') return route.fulfill({ contentType: 'text/css', body: styles.map(file => `@import url("/build/${file}");`).join('\n') });
         if (url.pathname === '/fixture.js') return route.fulfill({ contentType: 'application/javascript', body: `import '/build/${manifest['resources/js/app.js'].file}';` });
         if (url.pathname === fixturePath) return route.fulfill({ contentType: 'text/html', body: await readFile(path.join(root, `storage/framework/testing/form-experience/${name}.html`), 'utf8') });
         if (/^\/(assets|build)\//.test(url.pathname) && !url.pathname.includes('..')) {
-            try { return await route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body: await readFile(path.join(root, 'public', url.pathname)) }); } catch { /* optional branding asset */ }
+            let body;
+            try {
+                body = await readFile(path.join(root, 'public', url.pathname));
+            } catch {
+                // Missing optional branding assets are intentionally empty.
+                return route.fulfill({ status: 204 });
+            }
+            // Keep route.fulfill outside the file-read catch: a Playwright route
+            // lifecycle error must never be swallowed and fulfilled a second time.
+            return route.fulfill({ contentType: types[path.extname(url.pathname)] || 'application/octet-stream', body });
         }
         return route.fulfill({ status: 204 });
     });
@@ -140,7 +153,7 @@ test('admin can find a website and read all selected daily metrics in both theme
         await page.screenshot({ path: info.outputPath(`reports-admin-websites-${theme}.png`), fullPage: true });
         if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
     }
-    await page.unroute('**/*');
+    await page.unrouteAll({ behavior: 'wait' });
     await page.evaluate(() => localStorage.clear());
     await open(page, 'reports-admin-website', target.pathname);
     await expect(page.getByRole('heading', { name: 'Example publishing', exact: true })).toBeVisible();
@@ -171,7 +184,7 @@ test('admin can find a website and read all selected daily metrics in both theme
     expect(csv.pathname).toBe(target.pathname);
     expect(csv.searchParams.getAll('metrics[]')).not.toContain('clicks');
     expect(csv.searchParams.get('from')).toBe('2026-09-01');
-    await page.unroute('**/*');
+    await page.unrouteAll({ behavior: 'wait' });
     await open(page, 'reports-admin-website-empty');
     await expect(page.getByText('No finalized reports for these dates', { exact: true })).toBeVisible();
 });
@@ -214,7 +227,7 @@ test('publisher report handles empty and zero data with working dates and column
         expect(data).not.toContainEqual(['metrics[]', 'clicks']);
         expect(data).toContainEqual(['metrics[]', 'viewability_bp']);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-        await page.unroute('**/*');
+        await page.unrouteAll({ behavior: 'wait' });
     }
 });
 
@@ -261,7 +274,7 @@ test('validation identifies the field and viewer has no edit control', async ({ 
     await expect(page.locator('[name="country"]')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.locator('[name="account_reference"]')).toHaveValue('');
     await expect(page.locator('#field-country-error')).toBeVisible();
-    await page.unroute('**/*');
+    await page.unrouteAll({ behavior: 'wait' });
     await open(page, 'payment-viewer');
     await expect(page.locator('[data-payment-profile-form]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Save payment method' })).toHaveCount(0);
