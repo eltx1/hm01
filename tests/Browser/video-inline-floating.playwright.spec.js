@@ -10,13 +10,15 @@ const loader = applyPlacementPresetTransform(await readFile(new URL('../../publi
 // Exercise the real loader + video DOM with a deterministic IMA boundary.
 // No live auctions, impression pixels, credentials, or paid inventory are used.
 async function openPlayer(page, options = {}) {
+    const resourceRequests = { runtime: 0, content: 0 };
     await page.route('https://reader.example/**', route => {
         const path = new URL(route.request().url()).pathname;
-        if (path === '/player.js') return route.fulfill({ contentType: 'application/javascript', body: runtime });
+        if (path === '/player.js') { resourceRequests.runtime++; return route.fulfill({ contentType: 'application/javascript', body: runtime }); }
         if (path === '/ad.js') return route.fulfill({ contentType: 'application/javascript', body: '' });
         if (path === '/broken-ad.mp4') return route.fulfill({ status: 404, body: '' });
         if (path === '/content.mp4') {
-            if (!options.realContent) return route.fulfill({ status: 404, body: '' });
+            resourceRequests.content++;
+            if (!options.content) return route.fulfill({ status: 404, body: '' });
             const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
             const start = range ? Number(range[1]) : 0;
             const end = Math.min(contentBytes.length - 1, range && range[2] ? Number(range[2]) : contentBytes.length - 1);
@@ -24,10 +26,18 @@ async function openPlayer(page, options = {}) {
                 headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${contentBytes.length}` } : {}) },
                 body: contentBytes.subarray(start, end + 1) });
         }
-        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-            html,body{margin:0;overflow-anchor:none} article{max-width:640px;margin:0 auto} #before{height:${options.belowFold ? 1600 : 80}px} #tail{height:4000px}
-            [data-placement="video"]{width:${options.master?.[0] || 320}px;max-width:100%;min-height:180px} ${options.transformed ? 'article{transform:translateZ(0);contain:paint;overflow:hidden}' : ''}
-            </style></head><body><article><div id="before"></div><div class="hm-ad" data-placement="video"></div><div id="tail">Publisher article</div></article>
+        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            *{box-sizing:border-box} html,body{margin:0;overflow-anchor:none;background:#f4f5f7;color:#172237;font:16px/1.7 system-ui,sans-serif}
+            article{max-width:720px;margin:0 auto;padding:0 24px;background:#fff;min-height:100vh}
+            #before{height:${options.belowFold ? 1600 : 240}px;padding-top:32px} .section{color:#637085;font:700 11px/1.4 system-ui,sans-serif;letter-spacing:.15em;text-transform:uppercase}
+            h1{font:650 30px/1.2 Georgia,serif;letter-spacing:-.025em;margin:12px 0} .byline{font-size:12px;color:#677489}
+            [data-placement="video"]{width:${options.master?.[0] || 320}px;max-width:100%;min-height:180px;margin:24px auto}
+            #tail{height:4000px;padding-top:24px} #tail p{margin:0 0 28px;color:#4f5c70} #tail h2{font:600 24px/1.3 Georgia,serif}
+            ${options.transformed ? `article{transform:${options.transformed === 'scaled' ? 'scale(.75)' : 'translateZ(0)'};transform-origin:top center;contain:paint;overflow:hidden}` : ''}
+            </style></head><body><article><div id="before"><div class="section">The daily reader / Field notes</div><h1>A quieter way to see the city</h1><div class="byline">September 30, 2026 · 5 minute read</div></div><div class="hm-ad" data-placement="video"></div><div id="tail">
+            <p>Good stories make room for a closer look. Along familiar streets, small details reveal how a place changes through the day.</p><h2>Taking the long way home</h2>
+            ${Array.from({ length: 12 }, (_, index) => `<p>Chapter ${index + 1}. The morning light reaches the old station first, then moves across the square. We follow the rhythm of the neighborhood, where each corner offers something worth noticing.</p>`).join('')}
+            </div></article>
             <script id="loader" data-site-key="VIDEO_LAYOUT" data-config-version="1"></script></body></html>` });
     });
     await page.goto('https://reader.example/article');
@@ -35,9 +45,34 @@ async function openPlayer(page, options = {}) {
         window.__HM_DISABLE_AUTOBOOT__ = true;
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
+        window.contentPlayCalls = 0; window.contentPauseCalls = 0; window.contentLoadCalls = 0;
+        const nativeLoad = HTMLMediaElement.prototype.load;
+        HTMLMediaElement.prototype.load = function (...args) { window.contentLoadCalls++; return nativeLoad.apply(this, args); };
+        // Count live viewport subscriptions, preserving normal browser listener
+        // semantics (listener identity plus capture) so repeated floats cannot
+        // silently accumulate resize/scroll handlers.
+        const listenerSets = [];
+        for (const target of [window, window.visualViewport].filter(Boolean)) {
+            const live = new Map(), add = target.addEventListener, remove = target.removeEventListener;
+            listenerSets.push(live);
+            target.addEventListener = function (type, callback, options) {
+                if (['scroll', 'resize', 'orientationchange'].includes(type)) {
+                    const key = `${type}:${typeof options === 'boolean' ? options : !!options?.capture}`;
+                    if (!live.has(key)) live.set(key, new Set());
+                    live.get(key).add(callback);
+                }
+                return add.call(this, type, callback, options);
+            };
+            target.removeEventListener = function (type, callback, options) {
+                const key = `${type}:${typeof options === 'boolean' ? options : !!options?.capture}`;
+                live.get(key)?.delete(callback);
+                return remove.call(this, type, callback, options);
+            };
+        }
+        window.viewportListenerCount = () => listenerSets.reduce((total, live) => total + [...live.values()].reduce((sum, listeners) => sum + listeners.size, 0), 0);
         if (!options.realContent) {
-            HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
-            HTMLMediaElement.prototype.pause = function () {};
+            HTMLMediaElement.prototype.play = function () { window.contentPlayCalls++; return Promise.resolve(); };
+            HTMLMediaElement.prototype.pause = function () { window.contentPauseCalls++; };
         }
         class Manager {
             constructor() { this.events = {}; window.videoManager = this; }
@@ -53,7 +88,10 @@ async function openPlayer(page, options = {}) {
         window.installIma = () => { window.google = { ima: {
             AdDisplayContainer: class {
                 constructor(layer) {
-                    const iframe = document.createElement('iframe'); iframe.srcdoc = '<html><body>SDK fixture</body></html>';
+                    const iframe = document.createElement('iframe');
+                    iframe.title = 'Deterministic IMA advertisement fixture';
+                    iframe.style.cssText = 'display:block;width:100%;height:100%;border:0';
+                    iframe.srcdoc = '<html><head><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:grid;place-items:center;background:radial-gradient(ellipse at 75% 10%,#224b7a,transparent 65%),linear-gradient(150deg,#050b1e,#102b49);color:#f6f8ff;font:14px system-ui,sans-serif;text-align:center}small{display:block;margin-bottom:14px;color:#ffd66b;font-size:10px;letter-spacing:.18em}strong{font-weight:500;letter-spacing:.02em}span{display:block;margin-top:12px;color:#9da9c2;font-size:10px}</style></head><body><div><small>HORUS MEDIA</small><strong>Every story has a next chapter</strong><span>Local ad fixture · No live inventory</span></div></body></html>';
                     iframe.dataset.testIma = '1'; iframe.addEventListener('load', () => window.imaFrameLoads++);
                     layer.appendChild(iframe); this.frame = iframe;
                 }
@@ -95,7 +133,7 @@ async function openPlayer(page, options = {}) {
         // Deliberately omit the child floating attribute: cached pre-fix recipes
         // must still work through the loader's authoritative placement metadata.
         if (options.content) attributes['data-hm-video-content-url'] = 'https://reader.example/content.mp4';
-        const videoSettings = { autoMount: false, position: options.inlineOnly ? 'inline' : 'inline_to_bottom_right', floatingPosition: options.inlineOnly ? null : 'bottom_right', closeable: true, closeOutside: true };
+        const videoSettings = { autoMount: false, position: options.alwaysFloating ? 'bottom_right' : options.inlineOnly ? 'inline' : 'inline_to_bottom_right', floatingPosition: options.inlineOnly ? null : 'bottom_right', closeable: true, closeOutside: true };
         const placements = [{ code: 'video', type: 'VIDEO', format: { settings: videoSettings } }];
         const directPlacements = { video: { enabled: true, candidates: [{ network: 'TEST', tag: {
             executionMode: 'STRUCTURED', scripts: [{ url: 'https://reader.example/player.js' }],
@@ -123,6 +161,7 @@ async function openPlayer(page, options = {}) {
         await expect(page.locator('[data-placement="bottom"]')).toHaveAttribute('data-hm-status', 'rendered');
         await page.locator('[data-placement="bottom"]').evaluate(el => { el.style.width = '100vw'; el.style.height = '90px'; });
     }
+    return resourceRequests;
 }
 
 async function assertFloating(page) {
@@ -132,27 +171,172 @@ async function assertFloating(page) {
         const r = el.getBoundingClientRect();
         return getComputedStyle(el).position === 'fixed' && r.top >= 0 && r.bottom <= innerHeight && r.width > 0 && r.height > 0;
     })).toBe(true);
+    if (await page.evaluate(() => window.adStarts > 0)) {
+    const close = surface.locator('[data-hm-placement-close]');
+    await expect(close).toBeVisible();
+    await expect.poll(() => close.evaluate(button => {
+        const rect = button.getBoundingClientRect(), media = document.querySelector('[data-hm-video-direct]').getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return rect.width >= 44 && rect.height >= 44 && rect.bottom <= media.top + 1 && (hit === button || button.contains(hit));
+    })).toBe(true);
+    }
     return surface;
 }
 
-for (const options of [{}, { content: true }, { noObserver: true }, { transformed: true }, { transformed: true, content: true }]) {
-    test(`inline to floating keeps the playing ad and iframe: ${JSON.stringify(options)}`, async ({ page }) => {
-        await openPlayer(page, options);
-        await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
-        await expect.poll(() => page.evaluate(() => window.imaFrameLoads)).toBe(1);
-        await page.evaluate(() => { window.originalFrame = document.querySelector('[data-test-ima]'); window.originalVideo = document.querySelector('video'); window.scrollTo(0, 1800); });
+// Scroll and allow both the scroll handler and its next-frame layout write to
+// settle. In particular, a negative assertion must not pass before scrolling.
+async function scrollPage(page, y) {
+    await page.evaluate(y => new Promise(resolve => {
+        window.scrollTo(0, y);
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }), y);
+}
+
+async function inlineGeometry(page) {
+    return page.locator('[data-placement="video"]').evaluate(surface => {
+        const box = surface.getBoundingClientRect(), tail = document.getElementById('tail').getBoundingClientRect();
+        const css = getComputedStyle(surface);
+        return {
+            x: box.x + scrollX, y: box.y + scrollY, width: box.width, height: box.height,
+            tailY: tail.y + scrollY,
+            styles: Object.fromEntries(['position', 'top', 'right', 'bottom', 'left', 'boxShadow', 'zIndex'].map(key => [key, css[key]])),
+        };
+    });
+}
+
+async function rememberPlayingAd(page) {
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.imaFrameLoads)).toBe(1);
+    await page.evaluate(() => {
+        const surface = document.querySelector('[data-placement="video"]');
+        const runtime = document.querySelector('[data-hm-video-direct]');
+        const iframe = document.querySelector('[data-test-ima]');
+        window.originalPlayer = {
+            surface, parent: surface.parentNode, runtime, player: runtime.__hmVideoPlayer,
+            video: document.querySelector('video'), layer: document.querySelector('[data-hm-video-ad-layer]'),
+            iframe, iframeDocument: iframe.contentDocument, manager: window.videoManager,
+            playCalls: window.contentPlayCalls, pauseCalls: window.contentPauseCalls, loadCalls: window.contentLoadCalls,
+            src: document.querySelector('video').getAttribute('src'), sourceMutations: 0,
+        };
+        new MutationObserver(records => { window.originalPlayer.sourceMutations += records.length; })
+            .observe(window.originalPlayer.video, { attributes: true, attributeFilter: ['src'] });
+    });
+}
+
+async function expectSamePlayingAd(page) {
+    await expect.poll(() => page.evaluate(() => {
+        const saved = window.originalPlayer, runtime = document.querySelector('[data-hm-video-direct]');
+        return {
+            sameSurface: document.querySelector('[data-placement="video"]') === saved.surface,
+            sameParent: saved.surface.parentNode === saved.parent,
+            sameRuntime: runtime === saved.runtime && runtime.__hmVideoPlayer === saved.player,
+            sameVideo: document.querySelector('video') === saved.video,
+            sameSource: saved.video.getAttribute('src') === saved.src, sourceMutations: saved.sourceMutations,
+            sameLayer: document.querySelector('[data-hm-video-ad-layer]') === saved.layer,
+            sameIframe: document.querySelector('[data-test-ima]') === saved.iframe && saved.iframe.contentDocument === saved.iframeDocument,
+            sameManager: window.videoManager === saved.manager,
+            requests: window.adRequests, starts: window.adStarts, destroys: window.adDestroys, iframeLoads: window.imaFrameLoads,
+            additionalPlays: window.contentPlayCalls - saved.playCalls, additionalPauses: window.contentPauseCalls - saved.pauseCalls,
+            additionalLoads: window.contentLoadCalls - saved.loadCalls,
+            surfaces: document.querySelectorAll('[data-placement="video"]').length,
+            runtimes: document.querySelectorAll('[data-hm-video-direct]').length,
+            videos: document.querySelectorAll('video').length, iframes: document.querySelectorAll('[data-test-ima]').length,
+        };
+    })).toEqual({
+        sameSurface: true, sameParent: true, sameRuntime: true, sameVideo: true, sameSource: true, sourceMutations: 0, sameLayer: true, sameIframe: true, sameManager: true,
+        requests: 1, starts: 1, destroys: 0, iframeLoads: 1, additionalPlays: 0, additionalPauses: 0, additionalLoads: 0,
+        surfaces: 1, runtimes: 1, videos: 1, iframes: 1,
+    });
+}
+
+async function expectInline(page, original = null) {
+    const surface = page.locator('[data-placement="video"]');
+    await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+    await expect(surface).not.toHaveAttribute('data-hm-floating-video-active', '1');
+    await expect(surface).toBeVisible();
+    if (original) {
+        // Comparing the article below the player catches an orphan placeholder,
+        // collapsed reserved slot, doubled margins, and accumulated layout drift.
+        await expect.poll(async () => {
+            const current = await inlineGeometry(page);
+            return ['x', 'y', 'width', 'height', 'tailY'].every(key => Math.abs(current[key] - original[key]) < 1);
+        }).toBe(true);
+        if (!original.styles) return surface;
+        const current = await inlineGeometry(page);
+        // A portal's top/left track the anchor in viewport coordinates on every
+        // scroll; its document coordinates were checked above.
+        if (await surface.getAttribute('data-hm-video-portal') === '1') {
+            current.styles.top = original.styles.top;
+            current.styles.left = original.styles.left;
+            // CSSOM resolves bottom:auto to a viewport-relative used value.
+            // Verify the declaration was cleared; document geometry above is
+            // the authoritative return-position assertion.
+            expect(await surface.evaluate(el => el.style.bottom)).toBe('auto');
+            current.styles.bottom = original.styles.bottom;
+        }
+        expect(current.styles).toEqual(original.styles);
+    }
+    return surface;
+}
+
+async function attachLayout(page, testInfo, state) {
+    const viewport = page.viewportSize();
+    const name = `video-player-${state}-${viewport.width}x${viewport.height}`;
+    const path = testInfo.outputPath(`${name}.png`);
+    await page.screenshot({ path, animations: 'disabled', fullPage: false });
+    await testInfo.attach(name, { path, contentType: 'image/png' });
+}
+
+for (const options of [{}, { content: true }, { noObserver: true }, { transformed: true }, { transformed: true, content: true }, { transformed: 'scaled' }]) {
+    test(`repeated inline ↔ floating cycles preserve the ad, iframe, and original slot: ${JSON.stringify(options)}`, async ({ page }, testInfo) => {
+        const requests = await openPlayer(page, options);
+        await rememberPlayingAd(page);
+        const original = await inlineGeometry(page);
+        const resourceCounts = { ...requests };
+        if (options.transformed) {
+            await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-portal', '1');
+            expect(await page.locator('[data-placement="video"]').evaluate(el => el.parentNode === document.body)).toBe(true);
+        }
+        if (Object.keys(options).length === 0) await attachLayout(page, testInfo, 'inline-before-scroll');
+
+        let firstFloatingListenerCount;
+        for (let cycle = 0; cycle < 3; cycle++) {
+            await scrollPage(page, original.y + original.height + 80);
+            await assertFloating(page);
+            await expectSamePlayingAd(page);
+            const listenerCount = await page.evaluate(() => window.viewportListenerCount());
+            if (cycle === 0) firstFloatingListenerCount = listenerCount;
+            expect(listenerCount).toBeLessThanOrEqual(firstFloatingListenerCount);
+            // Browsers may range-fetch/retry media independently of scroll.
+            // Source mutations, decoder state and ad requests are asserted separately.
+            expect(requests.runtime).toBe(resourceCounts.runtime);
+            const tailY = await page.locator('#tail').evaluate(el => el.getBoundingClientRect().top + scrollY);
+            expect(Math.abs(tailY - original.tailY)).toBeLessThan(1);
+            if (cycle === 0 && Object.keys(options).length === 0) await attachLayout(page, testInfo, 'floating-after-scroll');
+
+            // Restore on the first visible slice of the ORIGINAL slot, without
+            // requiring the reader to return all the way to the top of the page.
+            await scrollPage(page, original.y + original.height - 24);
+            await expectInline(page, original);
+            await expectSamePlayingAd(page);
+            await scrollPage(page, 0);
+            await expectInline(page, original);
+            if (cycle === 0 && Object.keys(options).length === 0) await attachLayout(page, testInfo, 'inline-returned');
+        }
+
+        await scrollPage(page, original.y + original.height + 80);
         const surface = await assertFloating(page);
-        expect(await page.evaluate(() => window.adRequests)).toBe(1);
-        expect(await page.evaluate(() => window.adDestroys)).toBe(0);
-        expect(await page.evaluate(() => document.querySelector('[data-test-ima]') === window.originalFrame && document.querySelector('video') === window.originalVideo)).toBe(true);
-        await page.evaluate(() => window.scrollTo(0, 2500));
-        await assertFloating(page);
-        expect(await page.evaluate(() => window.imaFrameLoads)).toBe(1);
         await surface.locator('[data-hm-placement-close]').click();
         await expect(surface).toBeHidden();
         await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
-        await page.evaluate(() => window.scrollTo(0, 0));
+        await scrollPage(page, 0);
+        await scrollPage(page, 1800);
+        await expect(surface).toBeHidden();
         expect(await page.evaluate(() => window.adRequests)).toBe(1);
+        expect(await page.evaluate(() => window.adStarts)).toBe(1);
+        // Native byte-range requests do not indicate an application restart.
+        expect(requests.runtime).toBe(resourceCounts.runtime);
+        expect(await page.evaluate(() => window.viewportListenerCount())).toBeLessThan(firstFloatingListenerCount);
     });
 }
 
@@ -190,34 +374,101 @@ test('records inline visibility before a delayed IMA SDK and starts once after f
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
 
-test('inline-only inventory does not float and an unseen placement never starts offscreen', async ({ page }) => {
+test('inline-only inventory never floats on scroll or viewport resize', async ({ page }) => {
     await openPlayer(page, { inlineOnly: true, content: true });
-    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
-    await page.evaluate(() => window.scrollTo(0, 1800));
+    await rememberPlayingAd(page);
+    await scrollPage(page, 1800);
     await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
-    await openPlayer(page, { belowFold: true, noObserver: true });
-    await page.evaluate(() => window.scrollTo(0, 3000));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await scrollPage(page, 2200);
     await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
-    expect(await page.evaluate(() => window.adRequests)).toBe(0);
+    await scrollPage(page, 0);
+    await expectSamePlayingAd(page);
 });
 
-test('floating VAST stays above a dynamically resized sticky and both close controls work', async ({ page }) => {
+for (const options of [{}, { noObserver: true }, { transformed: true }]) {
+    test(`a below-fold slot floats only after being seen and passed above the viewport: ${JSON.stringify(options)}`, async ({ page }) => {
+        await openPlayer(page, { ...options, belowFold: true });
+        const surface = page.locator('[data-placement="video"]');
+        const slot = await inlineGeometry(page);
+        await scrollPage(page, 0);
+        await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+        expect(await page.evaluate(() => window.adRequests)).toBe(0);
+
+        // Jump over the placement entirely: crossing its document coordinate is
+        // not proof that it was ever visible, and must not start an auction.
+        await scrollPage(page, slot.y + slot.height + 800);
+        await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+        expect(await page.evaluate(() => window.adRequests)).toBe(0);
+
+        await scrollPage(page, slot.y - 80);
+        await rememberPlayingAd(page);
+        await scrollPage(page, 0);
+        await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+        await expectSamePlayingAd(page);
+
+        await scrollPage(page, slot.y + slot.height + 80);
+        await assertFloating(page);
+        await scrollPage(page, slot.y + slot.height - 24);
+        await expectInline(page, slot);
+        await expectSamePlayingAd(page);
+    });
+}
+
+test('sticky clearance is removed inline and recalculated on every later float', async ({ page }) => {
     await openPlayer(page, { sticky: true, transformed: true });
-    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
-    await page.evaluate(() => window.scrollTo(0, 1800));
-    const video = await assertFloating(page), bottom = page.locator('[data-placement="bottom"]');
+    await rememberPlayingAd(page);
+    const original = await inlineGeometry(page);
+    const bottom = page.locator('[data-placement="bottom"]');
+    await scrollPage(page, 1800);
+    const video = await assertFloating(page);
     const gap = async () => { const a = await bottom.boundingBox(), b = await video.boundingBox(); return a.y - b.y - b.height; };
     await expect.poll(gap).toBeGreaterThanOrEqual(15);
     await bottom.evaluate(el => { el.style.height = '130px'; });
     await expect.poll(gap).toBeGreaterThanOrEqual(15);
+    await expectSamePlayingAd(page);
+
+    await scrollPage(page, 0);
+    await expectInline(page, original);
+    await bottom.evaluate(el => { el.style.height = '70px'; });
+    await expectInline(page, original);
+    await scrollPage(page, 1800);
+    await assertFloating(page);
+    await expect.poll(gap).toBeGreaterThanOrEqual(15);
     await bottom.locator('[data-hm-placement-close]').click();
+    await expect(bottom).toBeHidden();
     await expect.poll(() => video.evaluate(el => parseFloat(getComputedStyle(el).bottom))).toBe(16);
-    expect(await page.evaluate(() => window.adRequests)).toBe(1);
-    expect(await page.evaluate(() => window.imaFrameLoads)).toBe(1);
+    await scrollPage(page, 0);
+    await expectInline(page, original);
+    await scrollPage(page, 1800);
+    await assertFloating(page);
+    await expect.poll(() => video.evaluate(el => parseFloat(getComputedStyle(el).bottom))).toBe(16);
+    await expectSamePlayingAd(page);
     await video.locator('[data-hm-placement-close]').click();
     await expect(video).toBeHidden();
+    await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
 });
 
+for (const transformed of [false, true]) {
+    test(`closing the returned inline player is permanent (portal=${transformed})`, async ({ page }) => {
+        await openPlayer(page, { transformed });
+        await rememberPlayingAd(page);
+        const original = await inlineGeometry(page);
+        await scrollPage(page, 1800);
+        await assertFloating(page);
+        await scrollPage(page, 0);
+        const surface = await expectInline(page, original);
+        await surface.locator('[data-hm-placement-close]').click();
+        await expect(surface).toBeHidden();
+        await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
+        await page.setViewportSize({ width: 375, height: 812 });
+        await scrollPage(page, 1800);
+        await scrollPage(page, 0);
+        await expect(surface).toBeHidden();
+        expect(await page.evaluate(() => ({ requests: window.adRequests, starts: window.adStarts, loads: window.imaFrameLoads })))
+            .toEqual({ requests: 1, starts: 1, loads: 1 });
+    });
+}
 
 async function expectDecodedContent(page) {
     await expect.poll(() => page.locator('video').evaluate(video => ({
@@ -235,17 +486,37 @@ async function expectDecodedContent(page) {
     await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
 }
 
-test('real decoded content survives preroll no-fill and the inline-to-floating transition', async ({ page }, testInfo) => {
+test('real decoded content keeps its source and playback time across both transition directions', async ({ page }, testInfo) => {
     await page.route('**/*', route => route.abort());
     await openPlayer(page, { content: true, realContent: true, transformed: true });
     await page.evaluate(() => window.videoManager.emit('ad-error'));
     await expectDecodedContent(page);
-    const before = await page.locator('video').evaluate(video => video.currentTime);
-    await page.evaluate(() => window.scrollTo(0, 1400));
-    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-floating-video-active', '1');
-    await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(before + 0.15);
-    expect(await page.evaluate(() => window.adRequests)).toBe(1);
-    await testInfo.attach('real-content-after-no-fill', { body: await page.screenshot(), contentType: 'image/png' });
+    const original = await inlineGeometry(page);
+    await page.evaluate(() => {
+        const video = document.querySelector('video');
+        window.contentIdentity = { video, src: video.currentSrc, resets: 0, seeks: 0 };
+        video.addEventListener('emptied', () => window.contentIdentity.resets++);
+        video.addEventListener('seeking', () => window.contentIdentity.seeks++);
+    });
+    await attachLayout(page, testInfo, 'decoded-content-inline');
+    for (let cycle = 0; cycle < 2; cycle++) {
+        let previousTime = await page.locator('video').evaluate(video => video.currentTime);
+        await scrollPage(page, 1400);
+        await assertFloating(page);
+        await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(previousTime + 0.15);
+        if (cycle === 0) await attachLayout(page, testInfo, 'decoded-content-floating');
+        previousTime = await page.locator('video').evaluate(video => video.currentTime);
+        await scrollPage(page, 0);
+        await expectInline(page, original);
+        await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(previousTime + 0.15);
+        await expectDecodedContent(page);
+        expect(await page.evaluate(() => {
+            const saved = window.contentIdentity, video = document.querySelector('video');
+            return { sameVideo: saved.video === video, sameSource: saved.src === video.currentSrc, resets: saved.resets, seeks: saved.seeks, requests: window.adRequests };
+        })).toEqual({ sameVideo: true, sameSource: true, resets: 0, seeks: 0, requests: 1 });
+        await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'none');
+    }
+    await attachLayout(page, testInfo, 'decoded-content-returned');
 });
 
 test('a native media error belonging to the shared ad element does not close healthy content', async ({ page }) => {
@@ -299,22 +570,149 @@ test('autoplay refusal leaves native controls available and a playback gesture n
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
 
+async function expectMediaRatioAndManagerSize(page, master) {
+    await expect.poll(() => page.locator('[data-hm-video-direct]').evaluate((media, master) => {
+        const box = media.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && Math.abs(box.width / box.height - master[0] / master[1]) < 0.02
+            && window.videoManager.dimensions[0] === Math.round(box.width) && window.videoManager.dimensions[1] === Math.round(box.height);
+    }, master)).toBe(true);
+}
+
 for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480]]) {
-    test(`master ${master.join('x')} keeps actual GAM/IMA dimensions and ratio through floating`, async ({ page }) => {
+    test(`master ${master.join('x')} preserves GAM/IMA dimensions through desktop, mobile, and landscape roundtrips`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width: 1280, height: 900 });
         await openPlayer(page, { master, sticky: true, vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=1x1' });
-        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        await rememberPlayingAd(page);
         const box = await page.locator('[data-hm-video-direct]').boundingBox();
         const request = await page.evaluate(() => ({ tag: window.lastAdTagUrl, size: window.lastAdDimensions }));
         expect(request.size).toEqual([Math.round(box.width), Math.round(box.height)]);
         expect(new URL(request.tag).searchParams.get('sz')).toBe(request.size.join('x'));
         expect(new URL(request.tag).searchParams.get('vad_type')).toBe('linear');
-        await page.evaluate(() => window.scrollTo(0, 1100));
-        await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
-        const floated = await page.locator('[data-hm-video-direct]').boundingBox();
-        expect(Math.abs(floated.width / floated.height - master[0] / master[1])).toBeLessThan(0.02);
-        expect(floated.x).toBeGreaterThanOrEqual(0);
-        expect(floated.y).toBeGreaterThanOrEqual(0);
-        await expect.poll(() => page.evaluate(() => window.videoManager.dimensions)).toEqual([Math.round(floated.width), Math.round(floated.height)]);
-        expect(await page.evaluate(() => window.adRequests)).toBe(1);
+        await scrollPage(page, 1800);
+        await assertFloating(page);
+        await expectMediaRatioAndManagerSize(page, master);
+
+        for (const viewport of [{ width: 375, height: 812 }, { width: 320, height: 640 }, { width: 844, height: 390 }]) {
+            await page.setViewportSize(viewport);
+            const surface = await assertFloating(page);
+            await expectMediaRatioAndManagerSize(page, master);
+            await expect.poll(async () => {
+                const sticky = await page.locator('[data-placement="bottom"]').boundingBox(), floating = await surface.boundingBox();
+                return sticky.y - floating.y - floating.height;
+            }).toBeGreaterThanOrEqual(15);
+            await expect.poll(() => surface.evaluate(el => {
+                const r = el.getBoundingClientRect();
+                return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+            })).toBe(true);
+            if (master[0] === 640 && viewport.width === 375) await attachLayout(page, testInfo, '640x480-mobile-floating-sticky');
+
+            const reserved = await page.locator('[data-hm-video-placeholder]').evaluate(anchor => {
+                const box = anchor.getBoundingClientRect();
+                return { x: box.x + scrollX, y: box.y + scrollY, width: box.width, height: box.height,
+                    tailY: document.getElementById('tail').getBoundingClientRect().top + scrollY };
+            });
+            await scrollPage(page, 0);
+            await expectInline(page, reserved);
+            await expectMediaRatioAndManagerSize(page, master);
+            expect(await surface.evaluate(el => {
+                const box = el.getBoundingClientRect(), article = document.querySelector('article').getBoundingClientRect();
+                return Math.abs((box.left + box.right) / 2 - (article.left + article.right) / 2) < 1
+                    && box.left >= article.left && box.right <= article.right && document.documentElement.scrollWidth <= innerWidth;
+            })).toBe(true);
+            await expectSamePlayingAd(page);
+            if (master[0] === 640 && viewport.width === 375) await attachLayout(page, testInfo, '640x480-mobile-inline-returned');
+            await scrollPage(page, 1800);
+            await assertFloating(page);
+        }
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await scrollPage(page, 0);
+        await expectInline(page);
+        const restored = await page.locator('[data-hm-video-direct]').boundingBox();
+        expect(Math.abs(restored.width - master[0])).toBeLessThan(1);
+        expect(Math.abs(restored.height - master[1])).toBeLessThan(1);
+        await expectSamePlayingAd(page);
     });
 }
+
+test('legacy bottom_right inventory remains fixed and playing from its initial render', async ({ page }) => {
+    await openPlayer(page, { alwaysFloating: true, belowFold: true });
+    await rememberPlayingAd(page);
+    await assertFloating(page);
+    await scrollPage(page, 1800);
+    await assertFloating(page);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await scrollPage(page, 0);
+    await assertFloating(page);
+    await expectMediaRatioAndManagerSize(page, [320, 180]);
+    await expectSamePlayingAd(page);
+    await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
+});
+
+
+test('the return boundary has hysteresis and never jitters or restarts the ad', async ({ page }) => {
+    await openPlayer(page);
+    await rememberPlayingAd(page);
+    const slot = await inlineGeometry(page), bottom = slot.y + slot.height;
+    await page.evaluate(() => {
+        window.floatingTransitions = [];
+        new MutationObserver(records => {
+            for (const record of records) window.floatingTransitions.push(record.target.getAttribute('data-hm-video-floating-state'));
+        }).observe(document.querySelector('[data-placement="video"]'), { attributes: true, attributeFilter: ['data-hm-video-floating-state'] });
+    });
+    await scrollPage(page, bottom + 4);
+    await assertFloating(page);
+    for (const delta of [-2, 2, -3, 3, -1]) {
+        await scrollPage(page, bottom + delta);
+        await assertFloating(page);
+    }
+    expect(await page.evaluate(() => window.floatingTransitions)).toEqual(['floating']);
+    await scrollPage(page, bottom - 12);
+    await expectInline(page, slot);
+    for (const delta of [-2, -4, -3]) {
+        await scrollPage(page, bottom + delta);
+        await expectInline(page, slot);
+    }
+    await scrollPage(page, bottom + 4);
+    await assertFloating(page);
+    expect(await page.evaluate(() => window.floatingTransitions)).toEqual(['floating', 'inline', 'floating']);
+    await expectSamePlayingAd(page);
+});
+
+test('a body-owned portal tracks article width and horizontal reflow on every return', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openPlayer(page, { master: [640, 480], transformed: true });
+    await rememberPlayingAd(page);
+    for (const width of [520, 420, 720]) {
+        await scrollPage(page, 1800);
+        await assertFloating(page);
+        await page.locator('article').evaluate((article, width) => { article.style.maxWidth = `${width}px`; }, width);
+        await expect.poll(() => page.locator('[data-hm-video-placeholder]').evaluate(anchor => anchor.getBoundingClientRect().width)).toBe(Math.min(640, width - 48));
+        const reserved = await page.locator('[data-hm-video-placeholder]').evaluate(anchor => {
+            const box = anchor.getBoundingClientRect();
+            return { x: box.x + scrollX, y: box.y + scrollY, width: box.width, height: box.height,
+                tailY: document.getElementById('tail').getBoundingClientRect().top + scrollY };
+        });
+        await scrollPage(page, 0);
+        const surface = await expectInline(page, reserved);
+        expect(await surface.evaluate(el => el.parentNode === document.body)).toBe(true);
+        await expectMediaRatioAndManagerSize(page, [640, 480]);
+        await expectSamePlayingAd(page);
+    }
+});
+
+
+test('portal chrome does not count toward the media viewability needed to start an ad', async ({ page }) => {
+    await openPlayer(page, { transformed: true, belowFold: true, delayedSdk: true });
+    const slot = await inlineGeometry(page);
+    const partialScroll = slot.y - (page.viewportSize().height - 112);
+    await scrollPage(page, partialScroll);
+    await page.evaluate(() => { window.installIma(); document.querySelector('[data-hm-ima-sdk]').dispatchEvent(new Event('load')); });
+    await scrollPage(page, partialScroll);
+    // 112 visible shell pixels comprise the 44px chrome and only 68/180 media
+    // pixels. A shell-only ratio would incorrectly cross the 50% threshold.
+    expect(await page.evaluate(() => window.adRequests)).toBe(0);
+    expect(await page.evaluate(() => window.adStarts)).toBe(0);
+    await scrollPage(page, partialScroll + 60);
+    await rememberPlayingAd(page);
+    await expectSamePlayingAd(page);
+});
