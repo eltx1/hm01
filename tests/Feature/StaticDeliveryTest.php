@@ -234,7 +234,7 @@ class StaticDeliveryTest extends TestCase
         }
 
         $this->assertStringContainsString(
-            "/assets/loader/*\\n  Cache-Control: public, max-age=31536000, immutable",
+            "/assets/loader/*\n  Cache-Control: public, max-age=31536000, immutable",
             $headers,
         );
     }
