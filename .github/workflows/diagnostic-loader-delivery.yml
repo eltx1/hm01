@@ -9,7 +9,6 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    environment: production
     steps:
       - uses: actions/checkout@v6
         with:
@@ -63,7 +62,7 @@ jobs:
           (out/'public-requests.json').write_text(json.dumps(rows,indent=2))
           print(json.dumps(rows,indent=2))
           PY
-      - name: Compute signatures of downloaded JavaScript in a networkless VM
+      - name: Compute signatures in a networkless VM
         shell: bash
         run: |
           set -euo pipefail
@@ -83,57 +82,7 @@ jobs:
           }
           fs.writeFileSync('evidence/signatures.json',JSON.stringify(results,null,2)); console.log(JSON.stringify(results,null,2));
           JS
-      - name: Read scoped Cloudflare delivery configuration without any writes
-        env:
-          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, os, pathlib, urllib.request, urllib.error
-          token=os.environ.get('CF_TOKEN',''); account=os.environ.get('CF_ACCOUNT','')
-          report={'schema':1,'read_only':True,'errors':[]}
-          def api(path):
-            try:
-              req=urllib.request.Request('https://api.cloudflare.com/client/v4'+path,headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
-              with urllib.request.urlopen(req,timeout=20) as r: d=json.load(r)
-              if d.get('success') is not True:
-                report['errors'].append({'path':path,'codes':[e.get('code') for e in d.get('errors',[])]}); return None
-              return d.get('result')
-            except urllib.error.HTTPError as e:
-              report['errors'].append({'path':path,'status':e.code}); return None
-            except Exception as e:
-              report['errors'].append({'path':path,'error_type':type(e).__name__}); return None
-          if token and account:
-            project=api('/accounts/'+account+'/pages/projects/horus-media-cdn')
-            if isinstance(project,dict):
-              dep=project.get('canonical_deployment') or {}
-              report['pages']={k:project.get(k) for k in ['name','subdomain','domains','production_branch']}
-              report['pages']['canonical_deployment']={k:dep.get(k) for k in ['id','url','environment','created_on','latest_stage','deployment_trigger']}
-              domains=api('/accounts/'+account+'/pages/projects/horus-media-cdn/domains')
-              if isinstance(domains,list): report['pages']['domain_status']=[{k:d.get(k) for k in ['name','status','validation_data','verification_data']} for d in domains if d.get('name') in ['cdn.horusmedia.net','verify.horusmedia.net']]
-            zones=api('/zones?name=horusmedia.net&per_page=1')
-            if isinstance(zones,list) and len(zones)==1 and zones[0].get('name')=='horusmedia.net':
-              z=zones[0]['id']; report['zone_id']=z
-              report['dns']=[]
-              for host in ['cdn.horusmedia.net','verify.horusmedia.net']:
-                records=api('/zones/'+z+'/dns_records?name='+host)
-                if isinstance(records,list): report['dns'] += [{k:r.get(k) for k in ['name','type','content','proxied','ttl']} for r in records]
-              rules=api('/zones/'+z+'/rulesets/phases/http_request_cache_settings/entrypoint')
-              if isinstance(rules,dict): report['cache_rules']={k:rules.get(k) for k in ['id','version','phase','rules']}
-              page=api('/zones/'+z+'/pagerules?status=active&per_page=100')
-              if isinstance(page,list): report['page_rules']=[{k:p.get(k) for k in ['id','status','priority','targets','actions']} for p in page]
-              routes=api('/zones/'+z+'/workers/routes')
-              if isinstance(routes,list): report['worker_routes']=[{k:r.get(k) for k in ['id','pattern','script']} for r in routes if any(h in r.get('pattern','') for h in ['cdn.horusmedia.net','verify.horusmedia.net','*.horusmedia.net','*horusmedia.net'])]
-              for setting in ['browser_cache_ttl','cache_level']:
-                d=api('/zones/'+z+'/settings/'+setting)
-                if isinstance(d,dict): report[setting]={'value':d.get('value'),'editable':d.get('editable')}
-          else: report['errors'].append({'error':'Existing credentials unavailable'})
-          pathlib.Path('evidence/cloudflare-delivery.json').write_text(json.dumps(report,indent=2))
-          print(json.dumps(report,indent=2))
-          PY
-      - name: Retain bounded read-only evidence
+      - name: Retain bounded public-only evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
