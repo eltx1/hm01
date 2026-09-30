@@ -89,7 +89,7 @@ async function open(page, { count = 6, gated = false, blocked = false, expanded 
             return route.fulfill({ status: 404, body: '' });
         }
         if (url.origin === GATE && gateDocumentReady) await gateDocumentReady;
-        if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin); });</script>` });
+        if (url.origin === GATE) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>addEventListener('message', event => { if(event.data?.type === 'HORUS_TRAFFIC_GATE_HELLO') { window.reply = type => parent.postMessage({...event.data, type, serverVerified: true}, event.origin); document.documentElement.setAttribute('data-hm-test-reply-ready', '1'); } });</script>` });
         if (url.href === 'https://securepubads.g.doubleclick.net/tag/js/gpt.js') return route.fulfill({ contentType: 'application/javascript', body: gpt });
         return route.abort('blockedbyclient');
     });
@@ -216,7 +216,11 @@ for (const outcome of ['PASS', 'DENIED']) for (const holdDocument of [false, tru
             expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);
             releaseDocument();
         }
-        await expect.poll(() => frame.evaluate(() => typeof window.reply)).toBe('function');
+        // The legacy stub has no readiness ping, so a pending frame may be
+        // replaced before HELLO. Locator assertions retry that navigation; a
+        // captured evaluate Promise instead fails permanently on detachment.
+        await expect(page.frameLocator('iframe[data-hm-traffic-gate]')
+            .locator('html[data-hm-test-reply-ready="1"]')).toHaveCount(1);
         await page.evaluate(() => window.postMessage({ type: 'HORUS_TRAFFIC_GATE_PASS', protocolVersion: 1, pageNonce: 'forged' }, '*'));
         await page.waitForTimeout(200);
         expect(requests.filter(url => /runtime\/gpt|doubleclick/.test(url))).toHaveLength(0);

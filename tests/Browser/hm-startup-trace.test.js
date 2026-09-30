@@ -53,3 +53,19 @@ test('one listener set tracks actual GPT events without conflating call, respons
     assert.equal(events[0].slot, h.c.startupSlotNumber(element));
     assert.equal(JSON.stringify(events).includes('private'), false);
 });
+
+
+test('transport diagnostics allow only fixed reason/mode values and identify the trace revision', () => {
+    const h = harness();
+    h.c.startupTrace('CF adopt', {mode:'pending', token:'private'});
+    h.c.startupTrace('CF cold', {reason:'source'});
+    h.c.startupTrace('CF transport', {reason:'pending_deadline',attempt:1});
+    h.c.startupTrace('CF transport', {reason:'https://private',mode:'private',attempt:2});
+    const snapshot = h.c.startupSnapshot();
+    assert.equal(snapshot.build, 'startup-trace-2');
+    assert.equal(snapshot.runtimeBuild, 'source-inflight-1');
+    assert.equal(snapshot.events[0].mode, 'pending');
+    assert.equal(snapshot.events[1].reason, 'source');
+    assert.equal(snapshot.events[2].reason, 'pending_deadline');
+    assert.equal(JSON.stringify(snapshot).includes('private'), false);
+});

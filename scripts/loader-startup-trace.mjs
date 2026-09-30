@@ -2,7 +2,7 @@
 // tokens, nonces, URLs, account IDs, consent strings or raw provider errors.
 export const startupTraceRuntime = String.raw`
     var STARTUP_PHASES = ['Horus init', 'CFG start', 'CFG ready', 'CFG wait', 'CFG error',
-        'CF cold', 'CF prepare', 'CF prepared', 'CF start', 'CF ready', 'CF token', 'CF verify', 'CF retry', 'CF pass', 'CF reject', 'CF error', 'CF timeout',
+        'CF cold', 'CF prepare', 'CF prepared', 'CF adopt', 'CF transport', 'CF document loaded', 'CF start', 'CF ready', 'CF token', 'CF verify', 'CF retry', 'CF pass', 'CF reject', 'CF error', 'CF timeout',
         'Privacy ready', 'Privacy reject', 'Core handoff', 'Core ready', 'Core wait',
         'Horus start', 'Horus wait', 'GPT load', 'GPT ready', 'GPT call', 'GPT request', 'GPT response',
         'GPT render', 'GPT empty', 'GPT error', 'GPT fetched', 'GPT wait', 'GPT onload', 'Core error', 'VAST call', 'VAST no-fill', 'VAST error', 'Video start', 'Video content'];
@@ -36,6 +36,8 @@ export const startupTraceRuntime = String.raw`
                 var value = detail[key];
                 if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1000000) clean[key] = Math.floor(value);
             });
+            if (['binding', 'stale', 'detached', 'source', 'readiness_missing', 'pending_deadline', 'frame_error'].indexOf(detail.reason) !== -1) clean.reason = detail.reason;
+            if (['ready', 'pending'].indexOf(detail.mode) !== -1) clean.mode = detail.mode;
             if (['config', 'controls', 'manifest', 'core', 'gpt', 'dom', 'privacy', 'policy'].indexOf(detail.resource) !== -1) clean.resource = detail.resource;
             if (['preroll', 'midroll', 'postroll'].indexOf(detail.position) !== -1) clean.position = detail.position;
             var key = phase + '|' + JSON.stringify(clean);
@@ -51,7 +53,7 @@ export const startupTraceRuntime = String.raw`
     function startupSnapshot() {
         try {
             var trace = startupTraceState();
-            return { schema: 1, version: VERSION, build: 'startup-trace-1', dropped: trace.dropped,
+            return { schema: 1, version: VERSION, build: 'startup-trace-2', runtimeBuild: 'source-inflight-1', dropped: trace.dropped,
                 events: trace.events.map(function (entry) { return Object.assign({}, entry); }) };
         } catch (error) { return { schema: 1, events: [] }; }
     }

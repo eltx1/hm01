@@ -141,6 +141,7 @@ const trafficGateRuntime = String.raw`
                     || !event.data || event.data.type !== 'HORUS_TRAFFIC_GATE_DOCUMENT_READY'
                     || event.data.protocolVersion !== 2) return;
                 preparation.ready = true;
+                startupTrace('CF prepared');
                 if (window.removeEventListener) window.removeEventListener('message', preparation.listener, false);
                 preparation.listener = null;
             };
@@ -148,8 +149,8 @@ const trafficGateRuntime = String.raw`
             preparation.iframe.setAttribute('data-hm-traffic-gate-document', '1');
             preparation.iframe.onload = function () {
                 if (state.trafficGateDocumentPreparation !== preparation) return;
+                // An iframe load event alone does not prove its script is ready.
                 preparation.loaded = true;
-                startupTrace('CF prepared');
             };
             preparation.iframe.onerror = function () {
                 if (state.trafficGateDocumentPreparation === preparation) discardTrafficGateDocument();
@@ -167,20 +168,23 @@ const trafficGateRuntime = String.raw`
     function takeTrafficGateDocument(config) {
         var preparation = state.trafficGateDocumentPreparation;
         if (!preparation) return null;
-        if (preparation.siteKey !== config.siteKey || preparation.script !== findScript()
-            || Date.now() - preparation.startedAt > EARLY_PREPARATION_MAX_AGE_MS
-            || !preparation.iframe.parentNode
-            || preparation.iframe.src !== 'https://verify.horusmedia.net/traffic-gate/?protocol=2#prepare'
-            || !preparation.ready) {
-            // Optional preparation must NEVER become a new wait. If the gate
-            // script is not already known ready, start the ordinary transport
-            // now, including engines which emit no event for a failed iframe.
-            startupTrace('CF cold');
+        var reason = preparation.siteKey !== config.siteKey || preparation.script !== findScript() ? 'binding'
+            : Date.now() - preparation.startedAt > EARLY_PREPARATION_MAX_AGE_MS ? 'stale'
+            : !preparation.iframe.parentNode ? 'detached'
+            : preparation.iframe.src !== 'https://verify.horusmedia.net/traffic-gate/?protocol=2#prepare' ? 'source'
+            : preparation.loaded && !preparation.ready ? 'readiness_missing'
+            : null;
+        if (reason) {
+            startupTrace('CF cold', { reason: reason });
             discardTrafficGateDocument();
             return null;
         }
+        // Transfer ownership of a VALID pending navigation, not just a ready
+        // document. The active gate owns the original bounded deadline from now
+        // on; speculative cleanup must not remove its iframe or reset its clock.
         state.trafficGateDocumentPreparation = null;
         clearTrafficGateDocumentListener(preparation);
+        startupTrace('CF adopt', { mode: preparation.ready ? 'ready' : 'pending' });
         return preparation;
     }
 
@@ -315,6 +319,8 @@ const trafficGateRuntime = String.raw`
             pageNonce: null,
             iframe: null,
             messageListener: null,
+            documentListener: null,
+            transportFallback: null,
             activityListeners: [],
             activityBaseline: null,
             initialTimer: null,
@@ -426,6 +432,9 @@ const trafficGateRuntime = String.raw`
 
     function trafficGateRemoveIframe() {
         var gate = trafficGateRuntimeState();
+        gate.transportFallback = null;
+        if (gate.documentListener && window.removeEventListener) window.removeEventListener('message', gate.documentListener, false);
+        gate.documentListener = null;
         var iframe = gate.iframe;
         if (!iframe) return;
         iframe.onload = null;
@@ -506,9 +515,14 @@ const trafficGateRuntime = String.raw`
     }
 
     function trafficGateOnInitialWait() {
-        // A slow challenge is not a verification result. Keep waiting within
-        // the original deadline; interaction must never authorize ads.
-        trafficGateRuntimeState().initialTimer = null;
+        // A pending speculative document gets only this existing grace window.
+        // If no HELLO was sent, replace its transport ONCE, using the same nonce,
+        // attempt and original max deadline. Never retry a running challenge.
+        var gate = trafficGateRuntimeState();
+        gate.initialTimer = null;
+        var fallback = gate.transportFallback;
+        gate.transportFallback = null;
+        if (typeof fallback === 'function') fallback('pending_deadline');
     }
 
     function trafficGateOnMaxWait() {
@@ -610,49 +624,93 @@ const trafficGateRuntime = String.raw`
             return decision;
         }
 
+        gate.messageListener = trafficGateMessageListener;
+        if (window.addEventListener) window.addEventListener('message', gate.messageListener, false);
+        trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
+        gate.initialTimer = window.setTimeout(trafficGateOnInitialWait, settings.initialWaitMs);
+        attachTrafficGateTransport(gate, settings, takeTrafficGateDocument(config));
+        return decision;
+    }
+
+    function attachTrafficGateTransport(gate, settings, preparation) {
         var iframe;
-        var preparation = takeTrafficGateDocument(config);
         try {
             iframe = preparation ? preparation.iframe : createTrafficGateFrame(settings.origin);
             iframe.setAttribute('data-hm-traffic-gate', '1');
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_CREATE_FAILED', true);
-            return decision;
+            return;
         }
-
         gate.iframe = iframe;
-        gate.messageListener = trafficGateMessageListener;
-        if (window.addEventListener) window.addEventListener('message', gate.messageListener, false);
         var helloSent = false;
-        iframe.onload = function () {
-            var current = trafficGateRuntimeState();
-            if (current.iframe !== iframe || !iframe.contentWindow || helloSent) return;
+        function isCurrent() {
+            return trafficGateRuntimeState() === gate && gate.iframe === iframe
+                && gate.status === TRAFFIC_GATE_STATES.pending;
+        }
+        function sendHello() {
+            if (!isCurrent() || !iframe.contentWindow || helloSent) return;
+            // Readiness cannot extend an elapsed deadline, even if a background
+            // browser queues its timer after the message event.
+            if (Date.now() - gate.startedAt >= settings.maxWaitMs) {
+                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT', true);
+                return;
+            }
             helloSent = true;
+            gate.transportFallback = null;
+            if (gate.documentListener && window.removeEventListener) window.removeEventListener('message', gate.documentListener, false);
+            gate.documentListener = null;
             try {
                 iframe.contentWindow.postMessage({
                     type: 'HORUS_TRAFFIC_GATE_HELLO',
                     protocolVersion: TRAFFIC_GATE_PROTOCOL_VERSION,
-                    pageNonce: current.pageNonce,
+                    pageNonce: gate.pageNonce,
                     sitePublicKey: settings.siteKey
                 }, settings.origin);
             } catch (error) {
                 trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'HANDSHAKE_FAILED', true);
             }
-        };
+        }
+        function replacePendingTransport(reason) {
+            if (!isCurrent() || helloSent || !preparation) return;
+            if (Date.now() - gate.startedAt >= settings.maxWaitMs) {
+                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT', true);
+                return;
+            }
+            startupTrace('CF transport', { reason: reason, attempt: state.gateTraceAttempt });
+            // Invalidate the old source and all readiness handlers before the
+            // replacement is mounted. No new challenge has run on the old frame.
+            trafficGateRemoveIframe();
+            attachTrafficGateTransport(gate, settings, null);
+        }
+        if (preparation && !preparation.ready) gate.transportFallback = replacePendingTransport;
+        if (preparation) {
+            gate.documentListener = function (event) {
+                if (!isCurrent() || event.origin !== settings.origin || event.source !== iframe.contentWindow
+                    || !event.data || event.data.type !== 'HORUS_TRAFFIC_GATE_DOCUMENT_READY'
+                    || event.data.protocolVersion !== TRAFFIC_GATE_PROTOCOL_VERSION) return;
+                startupTrace('CF prepared');
+                sendHello();
+            };
+            if (window.addEventListener) window.addEventListener('message', gate.documentListener, false);
+        }
+        // A warmed document must prove script readiness: iframe load can also
+        // mean a failed navigation/error page. Legacy/no-referrer documents use
+        // the bounded ordinary fallback, which preserves the original onload
+        // handshake. Never send HELLO to both a parked and replacement frame.
+        iframe.onload = preparation ? function () {
+            if (!isCurrent()) return;
+            preparation.loaded = true;
+            startupTrace('CF document loaded');
+        } : sendHello;
         iframe.onerror = function () {
-            if (trafficGateRuntimeState().iframe === iframe) trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
+            if (!isCurrent()) return;
+            if (preparation && !helloSent) replacePendingTransport('frame_error');
+            else trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_UNAVAILABLE', true);
         };
-
-        trafficGateSetState(TRAFFIC_GATE_STATES.pending, null);
-        gate.initialTimer = window.setTimeout(trafficGateOnInitialWait, settings.initialWaitMs);
-        trafficGateEnsureMaxTimer();
         try {
             if (preparation) {
-                // Attach the normal, nonce-bound listener before HELLO. Never
-                // reappend a warmed iframe: moving it reloads its document.
-                // The source-bound ping proves the existing message listener
-                // is installed; do not wait for iframe load or its preloads.
-                iframe.onload();
+                // Never reappend/move this iframe: that restarts its navigation.
+                if (preparation.ready) sendHello();
             } else {
                 var parent = document.body || document.documentElement;
                 if (!parent || !parent.appendChild) throw new Error('No frame parent');
@@ -661,7 +719,6 @@ const trafficGateRuntime = String.raw`
         } catch (error) {
             trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.unavailable, 'IFRAME_APPEND_FAILED', true);
         }
-        return decision;
     }
 
     function setTrafficGateResume(callback) {
