@@ -336,6 +336,16 @@
         return [width, Math.max(1, Math.round(width / ratio))];
     }
 
+    function managerDimensions(player) {
+        // IMA lays out its iframe in CSS pixels. A portal may mirror a scaled
+        // publisher ancestor; visual request/viewability dimensions stay separate.
+        var container = player.container;
+        if (player.viewport && player.viewport.portal && !player.floating && container.clientWidth > 0 && container.clientHeight > 0) {
+            return [Math.max(1, Math.round(container.clientWidth)), Math.max(1, Math.round(container.clientHeight))];
+        }
+        return playerDimensions(container, player.size);
+    }
+
     function createPlayer(container) {
         if (container.__hmVideoPlayer) return container.__hmVideoPlayer;
         var size = selectedSize(container);
@@ -427,7 +437,11 @@
             destroyPlayer(player, 'dismissed');
         });
         container.__hmDestroy = function (reason) { destroyPlayer(player, reason || 'dismissed'); };
+        installPlayerPresentation(player);
         installVideoViewport(player);
+        if (player.floating && typeof window.CustomEvent === 'function' && window.dispatchEvent) {
+            window.dispatchEvent(new window.CustomEvent('horus:video-floated', { detail: { placementId: String(placementSurface(player).getAttribute('data-placement') || '') } }));
+        }
         return player;
     }
 
@@ -533,6 +547,53 @@
         setStatus(player.container, 'waiting-ad-viewability');
     }
 
+    // Chrome is a sibling of the measured media surface. Never put controls
+    // over an IMA creative, alter its dimensions, or rebuild its playing DOM.
+    function installPlayerPresentation(player) {
+        if (player.rewarded) return;
+        var surface = placementSurface(player);
+        if (!surface || surface === player.container || !surface.insertBefore) return;
+        var initiallyFloating = surface.getAttribute('data-hm-floating-video-active') === '1';
+        surface.setAttribute('data-hm-video-shell', '1');
+        surface.setAttribute('data-hm-video-chrome-height', '44');
+        surface.setAttribute('data-hm-video-master-width', String(player.size[0]));
+        surface.setAttribute('data-hm-video-master-height', String(player.size[1]));
+        surface.setAttribute('data-hm-video-floating-state', initiallyFloating ? 'floating' : 'inline');
+        var styles = { position: 'relative', display: 'block', width: player.size[0] + 'px', 'max-width': '100%',
+            height: 'auto', 'min-height': '0', 'margin-left': 'auto', 'margin-right': 'auto', padding: '0',
+            border: '0', 'border-radius': '12px', 'box-sizing': 'border-box', background: '#050b1e',
+            'box-shadow': '0 8px 28px rgba(5,8,22,.16)', 'text-align': 'left', isolation: 'isolate' };
+        if (initiallyFloating) {
+            styles.position = 'fixed'; styles.margin = '0'; styles['aspect-ratio'] = 'auto';
+            styles.width = 'min(' + player.size[0] + 'px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))';
+            styles['max-width'] = 'calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))';
+            styles.right = 'calc(16px + env(safe-area-inset-right, 0px))';
+            player.floating = true;
+        }
+        Object.keys(styles).forEach(function (name) { importantStyle(surface.style, name, styles[name]); });
+        var rail = document.createElement('div');
+        rail.setAttribute('data-hm-video-chrome', '1');
+        rail.style.cssText = 'box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;height:44px;padding:0 56px 0 14px;border-radius:12px 12px 0 0;background:linear-gradient(110deg,#07132e,#050b1e);color:#f6f8ff;font:600 12px/1.4 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.02em;overflow:hidden;';
+        rail.style.cssText = rail.style.cssText.replace(/;/g, ' !important;');
+        rail.textContent = 'Video';
+        surface.insertBefore(rail, surface.firstChild || null);
+        player.chrome = rail;
+        importantStyle(player.container.style, 'margin', '0 auto');
+        importantStyle(player.container.style, 'border-radius', '0 0 12px 12px');
+        importantStyle(player.container.style, 'box-sizing', 'border-box');
+        player.video.setAttribute('aria-label', 'Video player');
+        var close = surface.querySelector && surface.querySelector('[data-hm-placement-close="1"]');
+        if (close) {
+            close.setAttribute('aria-label', 'Close video player');
+            var buttonStyles = { top: '0', right: '4px', width: '44px', height: '44px', 'min-width': '44px', 'min-height': '44px',
+                'max-width': '44px', 'max-height': '44px', 'line-height': '44px', 'font-size': '24px',
+                color: '#f6f8ff', background: 'transparent', border: '0', 'border-radius': '8px', 'touch-action': 'manipulation' };
+            Object.keys(buttonStyles).forEach(function (name) { importantStyle(close.style, name, buttonStyles[name]); });
+            close.addEventListener('focus', function () { importantStyle(close.style, 'outline', '2px solid #f1b733'); importantStyle(close.style, 'outline-offset', '-4px'); });
+            close.addEventListener('blur', function () { importantStyle(close.style, 'outline', 'none'); });
+        }
+    }
+
     // Layout is independent of content/VAST availability. Observe the inline
     // position before loading IMA so a slow SDK cannot lose the scroll history.
     function installVideoViewport(player) {
@@ -540,7 +601,7 @@
         var surface = placementSurface(player);
         var floatingValue = player.container.getAttribute('data-hm-video-inline-to-floating');
         player.inlineToFloating = floatingValue === '1' || (floatingValue !== '0' && surface && surface.getAttribute('data-hm-video-inline-to-floating') === '1');
-        var layout = player.viewport = { surface: surface, anchor: null, portal: false, frame: null, stopped: false, onVisible: null, scrolled: false };
+        var layout = player.viewport = { inlineCss: surface && surface.style ? surface.style.cssText : '', surface: surface, anchor: null, portal: false, frame: null, stopped: false, onVisible: null, scrolled: false };
         var initialScrollY = Number(window.scrollY || window.pageYOffset || 0);
         var initialScrollX = Number(window.scrollX || window.pageXOffset || 0);
 
@@ -597,15 +658,20 @@
             anchor.setAttribute('data-hm-video-placeholder', '1');
             anchor.setAttribute('aria-hidden', 'true');
             anchor.style.cssText = 'display:block;box-sizing:border-box;padding:0;border:0;pointer-events:none;';
-            write(anchor.style, 'width', Math.max(1, bounds.width) + 'px');
+            write(anchor.style, 'width', player.size[0] + 'px');
             write(anchor.style, 'max-width', '100%');
-            write(anchor.style, 'height', Math.max(1, bounds.height) + 'px');
+            write(anchor.style, 'height', 'auto');
+            write(anchor.style, 'aspect-ratio', player.size[0] + ' / ' + player.size[1]);
+            write(anchor.style, 'box-sizing', 'content-box');
+            write(anchor.style, 'padding-top', (Number(surface.getAttribute('data-hm-video-chrome-height')) || 0) + 'px');
             if (window.getComputedStyle) {
                 var css = window.getComputedStyle(surface);
-                ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(function (name) { write(anchor.style, name, css.getPropertyValue(name)); });
+                ['margin-top', 'margin-bottom'].forEach(function (name) { write(anchor.style, name, css.getPropertyValue(name)); });
+                write(anchor.style, 'margin-left', 'auto'); write(anchor.style, 'margin-right', 'auto');
             }
             surface.parentNode.insertBefore(anchor, surface);
             layout.anchor = anchor;
+            if (layout.resize) layout.resize.observe(anchor);
         };
         // A transform/contain on a publisher ancestor changes the containing
         // block of position:fixed. Escape it BEFORE IMA creates its iframe, never
@@ -636,7 +702,7 @@
         function accept(ratio, data) {
             player.visibleRatio = Math.max(0, Math.min(1, ratio));
             if (!player.floating && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
-            var outside = data ? !data.hidden && (data.rect.bottom <= data.view.top + 1 || data.rect.top >= data.view.bottom - 1) : ratio <= 0.01;
+            var outside = data ? !data.hidden && data.rect.bottom <= data.view.top + 1 : ratio <= 0.01;
             if (!player.floating && player.inlineToFloating && (player.wasInlineVisible || player.wasInlineAnchorVisible) && outside && (layout.scrolled || !data)) {
                 layout.reserve();
                 floatContentPlayer(player);
@@ -652,20 +718,48 @@
                 destroyPlayer(player, 'dismissed'); return;
             }
             layout.scrolled = layout.scrolled || Number(window.scrollY || window.pageYOffset || 0) !== initialScrollY || Number(window.scrollX || window.pageXOffset || 0) !== initialScrollX;
+            // Follow the original slot in both directions, never the fixed box.
+            // Re-entry restores styling only: no reparent/reload of the IMA iframe.
+            if (player.floating && layout.anchor) {
+                var original = geometry(layout.anchor);
+                if (original && !original.hidden && original.ratio > 0 && original.rect.bottom > original.view.top + 8) {
+                    player.floating = false;
+                    surface.setAttribute('data-hm-floating-video-active', '0');
+                    surface.setAttribute('data-hm-video-floating-state', 'inline');
+                    surface.style.cssText = layout.inlineCss;
+                    if (!layout.portal) {
+                        if (layout.resize && layout.resize.unobserve) layout.resize.unobserve(layout.anchor);
+                        if (layout.anchor.parentNode) layout.anchor.parentNode.removeChild(layout.anchor);
+                        layout.anchor = null;
+                    }
+                }
+            }
             var data = geometry(player.floating ? surface : layout.anchor || player.container);
             if (!data) { notify(); return; }
             if (layout.portal && !player.floating) {
                 var rect = data.rect, clip = data.clip;
+                var inlineWidth = Number(layout.anchor.offsetWidth) || rect.width;
+                var inlineHeight = Number(layout.anchor.offsetHeight) || rect.height;
+                var scaleX = rect.width / inlineWidth, scaleY = rect.height / inlineHeight;
                 write(surface.style, 'position', 'fixed'); write(surface.style, 'margin', '0');
                 write(surface.style, 'top', rect.top + 'px'); write(surface.style, 'left', rect.left + 'px');
                 write(surface.style, 'right', 'auto'); write(surface.style, 'bottom', 'auto');
-                write(surface.style, 'width', rect.width + 'px'); write(surface.style, 'height', rect.height + 'px');
+                write(surface.style, 'width', inlineWidth + 'px'); write(surface.style, 'height', inlineHeight + 'px');
+                write(surface.style, 'transform-origin', 'top left');
+                write(surface.style, 'transform', 'scale(' + scaleX + ',' + scaleY + ')');
                 write(surface.style, 'visibility', data.hidden || data.ratio <= 0 ? 'hidden' : 'visible');
-                write(surface.style, 'clip-path', data.ratio >= 0.999 ? 'none' : 'inset(' + Math.max(0, clip.top - rect.top) + 'px ' + Math.max(0, rect.right - clip.right) + 'px ' + Math.max(0, rect.bottom - clip.bottom) + 'px ' + Math.max(0, clip.left - rect.left) + 'px)');
+                write(surface.style, 'clip-path', data.ratio >= 0.999 ? 'none' : 'inset(' + Math.max(0, clip.top - rect.top) / scaleY + 'px ' + Math.max(0, rect.right - clip.right) / scaleX + 'px ' + Math.max(0, rect.bottom - clip.bottom) / scaleY + 'px ' + Math.max(0, clip.left - rect.left) / scaleX + 'px)');
             }
-            accept(data.ratio, data);
+            var visibleRatio = data.ratio;
+            if (layout.portal && !player.floating && player.container.getBoundingClientRect) {
+                var media = player.container.getBoundingClientRect();
+                visibleRatio = data.hidden || !(media.width > 0 && media.height > 0) ? 0
+                    : Math.max(0, Math.min(media.right, data.clip.right) - Math.max(media.left, data.clip.left))
+                    * Math.max(0, Math.min(media.bottom, data.clip.bottom) - Math.max(media.top, data.clip.top)) / (media.width * media.height);
+            }
+            accept(visibleRatio, data);
             if (player.adsManager && player.adsManager.resize) {
-                var size = playerDimensions(player.container, player.size), signature = size.join('x');
+                var size = managerDimensions(player), signature = size.join('x');
                 if (layout.size !== signature) {
                     layout.size = signature;
                     try { player.adsManager.resize(size[0], size[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal'); } catch (error) {}
@@ -740,24 +834,24 @@
         importantStyle(surface.style, 'visibility', 'visible');
         importantStyle(surface.style, 'clip-path', 'none');
         importantStyle(surface.style, 'z-index', '2147483000');
-        importantStyle(surface.style, 'right', '16px');
+        importantStyle(surface.style, 'right', 'calc(16px + env(safe-area-inset-right, 0px))');
         importantStyle(surface.style, 'left', 'auto');
         importantStyle(surface.style, 'top', 'auto');
         importantStyle(surface.style, 'transform', 'none');
         importantStyle(surface.style, 'margin', '0');
-        importantStyle(surface.style, 'width', 'min(' + player.size[0] + 'px, calc(100vw - 32px))');
-        importantStyle(surface.style, 'max-width', 'calc(100vw - 32px)');
-        importantStyle(surface.style, 'aspect-ratio', player.size[0] + ' / ' + player.size[1]);
+        importantStyle(surface.style, 'width', 'min(' + player.size[0] + 'px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))');
+        importantStyle(surface.style, 'max-width', 'calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))');
+        importantStyle(surface.style, 'aspect-ratio', player.chrome ? 'auto' : player.size[0] + ' / ' + player.size[1]);
         surface.setAttribute('data-hm-video-master-width', String(player.size[0]));
         surface.setAttribute('data-hm-video-master-height', String(player.size[1]));
         importantStyle(surface.style, 'box-sizing', 'border-box');
-        importantStyle(surface.style, 'background', '#000');
-        importantStyle(surface.style, 'box-shadow', '0 12px 36px rgba(0,0,0,.38)');
+        importantStyle(surface.style, 'background', '#050b1e');
+        importantStyle(surface.style, 'box-shadow', '0 12px 40px rgba(5,8,22,.28)');
         importantStyle(surface.style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
         releasePendingAdStart(player);
         try {
             if (player.adsManager && player.adsManager.resize) {
-                var dimensions = playerDimensions(player.container, player.size);
+                var dimensions = managerDimensions(player);
                 player.adsManager.resize(dimensions[0], dimensions[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal');
             }
         } catch (error) {}
@@ -1011,7 +1105,7 @@
                         }
                         finishContentAdBreak(player, position);
                     });
-                    var dimensions = playerDimensions(player.container, player.size);
+                    var dimensions = managerDimensions(player);
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (player.adsManager.setVolume) player.adsManager.setVolume(0);
                     startAdManagerWhenViewable(player, function () {
@@ -1022,7 +1116,7 @@
                     });
                     player.resizeHandler = function () {
                         if (!currentRequest() || !player.adsManager) return;
-                        var resized = playerDimensions(player.container, player.size);
+                        var resized = managerDimensions(player);
                         player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
                     };
                     if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);
@@ -1217,7 +1311,7 @@
                         destroyPlayer(player, 'completed');
                     }
                 });
-                var dimensions = playerDimensions(player.container, player.size);
+                var dimensions = managerDimensions(player);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                 if (player.adsManager.setVolume) player.adsManager.setVolume(player.rewarded ? 1 : 0);
                 startAdManagerWhenViewable(player, function () {
@@ -1228,7 +1322,7 @@
                 });
                 player.resizeHandler = function () {
                     if (!player.adsManager || player.destroyed) return;
-                    var resized = playerDimensions(player.container, player.size);
+                    var resized = managerDimensions(player);
                     player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
                 };
                 if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);

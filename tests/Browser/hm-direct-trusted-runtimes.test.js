@@ -757,7 +757,7 @@ test('accompanying content floats only after it was visible inline and then scro
     assert.equal(surfaceAttributes['data-hm-floating-video-active'], '1');
     assert.equal(surfaceAttributes['data-hm-video-floating-state'], 'floating');
     assert.equal(surface.style.position, 'fixed');
-    assert.equal(surface.style.right, '16px');
+    assert.equal(surface.style.right, 'calc(16px + env(safe-area-inset-right, 0px))');
     assert.match(surface.style.width, /400px/);
     assert.equal(runtime.dispatched.filter((event) => event.type === 'horus:video-floated').length, 1);
     assert.ok(runtime.managers[0].resized);

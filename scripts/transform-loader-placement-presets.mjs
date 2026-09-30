@@ -177,10 +177,19 @@ const HELPERS = `    function placementFormatSettings(placement) {
             var tracker = floating.__hmClearance;
             if (!tracker) {
                 tracker = floating.__hmClearance = { anchors: [], observed: [], frame: null, stopped: false };
+                // Resolve env() through layout; parseFloat('env(...)') cannot
+                // account for a home indicator/notch in a short viewport.
+                if (document.createElement && floating.appendChild) {
+                    tracker.insets = document.createElement('span');
+                    tracker.insets.setAttribute('aria-hidden', 'true');
+                    tracker.insets.style.cssText = 'position:absolute!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)!important;';
+                    floating.appendChild(tracker.insets);
+                }
                 tracker.update = function () {
                     tracker.frame = null;
                     if (floating.isConnected === false || floating.getAttribute('data-hm-placement-dismissed') === '1') {
                         tracker.stopped = true;
+                        if (tracker.insets && tracker.insets.parentNode) tracker.insets.parentNode.removeChild(tracker.insets);
                         if (tracker.resize) tracker.resize.disconnect();
                         if (tracker.mutations) tracker.mutations.disconnect();
                         if (window.removeEventListener) {
@@ -193,6 +202,9 @@ const HELPERS = `    function placementFormatSettings(placement) {
                         }
                         return;
                     }
+
+                    // Keep the tracker reusable but dormant while the player is inline.
+                    if (floating.getAttribute('data-hm-floating-video-active') !== '1') return;
 
                     var viewport = clearanceViewport();
                     var viewportHeight = viewport.height;
@@ -226,11 +238,15 @@ const HELPERS = `    function placementFormatSettings(placement) {
                         var masterWidth = Number(floating.getAttribute('data-hm-video-master-width')) || 400;
                         var masterHeight = Number(floating.getAttribute('data-hm-video-master-height')) || 225;
                         var normalWidth = Math.min(masterWidth, Math.max(1, viewport.width - 32));
-                        var bottomPixels = occupied > 0 ? Math.ceil(occupied) + 16 : 16;
-                        var availableHeight = Math.max(1, viewportHeight - bottomPixels - 16);
+                        var insetStyle = tracker.insets && window.getComputedStyle ? window.getComputedStyle(tracker.insets) : null;
+                        var safeTop = insetStyle ? parseFloat(insetStyle.paddingTop) || 0 : 0;
+                        var safeBottom = insetStyle ? parseFloat(insetStyle.paddingBottom) || 0 : 0;
+                        var bottomPixels = occupied > 0 ? Math.ceil(occupied) + 16 : 16 + safeBottom;
+                        var chromeHeight = Number(floating.getAttribute('data-hm-video-chrome-height')) || 0;
+                        var availableHeight = Math.max(1, viewportHeight - bottomPixels - 16 - safeTop - chromeHeight);
                         var widthForHeight = Math.floor(availableHeight * masterWidth / masterHeight);
                         var safeWidth = Math.max(1, Math.min(normalWidth, widthForHeight));
-                        var widthValue = safeWidth < normalWidth ? String(safeWidth) + 'px' : 'min(' + masterWidth + 'px, calc(100vw - 32px))';
+                        var widthValue = safeWidth < normalWidth ? String(safeWidth) + 'px' : 'min(' + masterWidth + 'px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))';
                         if (!floating.style.getPropertyValue || floating.style.getPropertyValue('width') !== widthValue) {
                             setImportantStyle(floating.style, 'width', widthValue);
                         }
@@ -294,9 +310,10 @@ const HELPERS = `    function placementFormatSettings(placement) {
         var style = element.style;
 
         if (placement.type === 'VIDEO' && position === 'bottom_right') {
+            element.setAttribute('data-hm-floating-video-active', '1');
             setImportantStyle(style, 'position', 'fixed');
             setImportantStyle(style, 'z-index', '2147483000');
-            setImportantStyle(style, 'right', '16px');
+            setImportantStyle(style, 'right', 'calc(16px + env(safe-area-inset-right, 0px))');
             setImportantStyle(style, 'bottom', element.__hmClearance && element.__hmClearance.bottom || 'calc(16px + env(safe-area-inset-bottom, 0px))');
             resetPositionStyle(style, 'left');
             resetPositionStyle(style, 'top');
@@ -304,8 +321,8 @@ const HELPERS = `    function placementFormatSettings(placement) {
             setImportantStyle(style, 'margin', '0');
             var masterWidth = Number(element.getAttribute('data-hm-video-master-width')) || 400;
             var masterHeight = Number(element.getAttribute('data-hm-video-master-height')) || 225;
-            setImportantStyle(style, 'width', 'min(' + masterWidth + 'px, calc(100vw - 32px))');
-            setImportantStyle(style, 'max-width', 'calc(100vw - 32px)');
+            setImportantStyle(style, 'width', 'min(' + masterWidth + 'px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))');
+            setImportantStyle(style, 'max-width', 'calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))');
             setImportantStyle(style, 'aspect-ratio', masterWidth + ' / ' + masterHeight);
             setImportantStyle(style, 'box-sizing', 'border-box');
             setImportantStyle(style, 'background', '#000');
