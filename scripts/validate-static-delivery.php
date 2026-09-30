@@ -175,6 +175,20 @@ foreach (['Access-Control-Allow-Origin: *', 'X-Content-Type-Options: nosniff', '
         exit(1);
     }
 }
+
+$mutableLoaderCachePolicy = 'Cache-Control: public, no-cache, max-age=0, must-revalidate, no-transform';
+foreach (['/hm-loader.js', '/assets/hm-loader.min.js'] as $mutableLoaderPath) {
+    $pattern = '~(?:^|\\n)'.preg_quote($mutableLoaderPath, '~').'\\n((?:  [^\\n]*(?:\\n|$))*)~';
+    if (! preg_match($pattern, $headers, $matches)) {
+        fwrite(STDERR, "Mutable Loader _headers block missing: {$mutableLoaderPath}.\\n");
+        exit(1);
+    }
+    $block = $matches[1];
+    if (! str_contains($block, $mutableLoaderCachePolicy) || str_contains($block, 'stale-while-revalidate')) {
+        fwrite(STDERR, "Mutable Loader must revalidate on every navigation without stale serving: {$mutableLoaderPath}.\\n");
+        exit(1);
+    }
+}
 foreach (['/sellers.json', '/supply/sellers.json', 'Content-Type: application/json; charset=utf-8'] as $header) {
     if (! str_contains($headers, $header)) {
         fwrite(STDERR, "sellers.json _headers policy missing: {$header}.\n");
