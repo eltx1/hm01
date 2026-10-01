@@ -100,7 +100,7 @@ async function openPlayer(page, options = {}) {
             stop() { window.managerStops++; if (!options.noStopEvents) { this.emit('complete'); this.emit('all-completed'); } }
             getCuePoints() { return []; }
             init(width, height) { window.managerInits++; this.dimensions = [width, height]; }
-            setVolume() {}
+            setVolume(value) { this.volume = value; }
             start() { window.adStarts++; if (this.ad.linear) this.emit('content-pause'); this.emit('loaded'); this.emit('started'); }
             resize(width, height) { window.managerResizes.push([width, height]); this.dimensions = [width, height]; }
             destroy() { window.adDestroys++; if (options.pauseOnDestroy) document.querySelector('video')?.pause(); }
@@ -125,6 +125,7 @@ async function openPlayer(page, options = {}) {
                 requestAds(request) {
                     window.adRequests++;
                     window.lastAdTagUrl = request.adTagUrl || null;
+                    window.lastAdPlaybackIntent = { autoPlay: request.willAutoPlay, muted: request.willPlayMuted };
                     window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
                     window.lastNonlinearDimensions = [request.nonLinearAdSlotWidth, request.nonLinearAdSlotHeight];
                     this.events.manager({ getAdsManager: (_video, settings) => {
@@ -139,7 +140,7 @@ async function openPlayer(page, options = {}) {
                 destroy() {}
                 contentComplete() { window.contentCompleteCalls++; }
             },
-            AdsRequest: class { setAdWillAutoPlay() {} setAdWillPlayMuted() {} setContinuousPlayback() {} },
+            AdsRequest: class { setAdWillAutoPlay(value) { this.willAutoPlay = value; } setAdWillPlayMuted(value) { this.willPlayMuted = value; } setContinuousPlayback() {} },
             AdsRenderingSettings: class {}, AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: 'manager' } },
             AdErrorEvent: { Type: { AD_ERROR: 'ad-error' } }, ViewMode: { NORMAL: 'normal' },
             AdEvent: { Type: { LOADED: 'loaded', STARTED: 'started', COMPLETE: 'complete', SKIPPED: 'skipped', ALL_ADS_COMPLETED: 'all-completed', CONTENT_PAUSE_REQUESTED: 'content-pause', CONTENT_RESUME_REQUESTED: 'content-resume', LINEAR_CHANGED: 'linear-changed', USER_CLOSE: 'user-close' } },
@@ -996,7 +997,8 @@ test('portal chrome does not count toward the media viewability needed to start 
 // remains an explicitly deterministic local test double, never a paid auction.
 test('mixed nonlinear creative stays clickable over decoded content and external content controls survive repeated inline-floating cycles', async ({ page }, testInfo) => {
     await page.route('**/*', route => route.abort());
-    await openPlayer(page, { content: true, realContent: true, nonlinear: true, master: [336, 280], transformed: true });
+    await openPlayer(page, { content: true, realContent: true, nonlinear: true, master: [336, 280], transformed: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/mixed-fixture&output=vast&env=vp' });
     await expectDecodedContent(page);
     const video = page.locator('video');
     await video.evaluate(el => { el.playbackRate = 0.5; });
@@ -1027,13 +1029,24 @@ test('mixed nonlinear creative stays clickable over decoded content and external
             ].map(([name, node]) => [name, node?.getBoundingClientRect().toJSON()])),
         }))),
     });
+    // The requested muted autoplay intent must survive native media insertion
+    // and loading before any user control can change it, including in WebKit.
+    const toggle = page.locator('[data-hm-video-content-control="play"]');
+    const mute = page.locator('[data-hm-video-content-control="mute"]');
+    await expect.poll(() => video.evaluate(el => ({ muted: el.muted, defaultMuted: el.defaultMuted })))
+        .toEqual({ muted: true, defaultMuted: true });
+    await expect(mute).toHaveAttribute('aria-label', 'Unmute video content');
+    expect(await page.evaluate(() => window.lastAdPlaybackIntent)).toEqual({ autoPlay: true, muted: true });
+    expect(await page.evaluate(() => ({
+        muted: new URL(window.lastAdTagUrl).searchParams.get('vpmute'),
+        autoplay: new URL(window.lastAdTagUrl).searchParams.get('vpa'),
+        volume: window.videoManager.volume,
+    }))).toEqual({ muted: '1', autoplay: 'auto', volume: 0 });
     await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'auto');
     const creative = page.frameLocator('[data-test-ima]').locator('#creative');
     await expect(creative).toBeVisible();
     await creative.click({ position: { x: 30, y: 25 } });
     await expect.poll(() => page.evaluate(() => window.adClicks)).toBe(1);
-    const toggle = page.locator('[data-hm-video-content-control="play"]');
-    const mute = page.locator('[data-hm-video-content-control="mute"]');
     await expect(toggle).toBeVisible();
     await expect(mute).toBeVisible();
     for (const control of [toggle, mute]) {

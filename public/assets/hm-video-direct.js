@@ -361,7 +361,11 @@
         var video = document.createElement('video');
         var adLayer = document.createElement('div');
         var closeButton = rewarded ? document.createElement('button') : null;
-        video.muted = container.getAttribute('data-hm-video-muted') !== '0';
+        var startsMuted = container.getAttribute('data-hm-video-muted') !== '0';
+        // Preserve the initial mute default through insertion/portal setup in
+        // WebKit. Later user mute choices change only the live property.
+        if (startsMuted) video.setAttribute('muted', '');
+        video.muted = startsMuted;
         video.autoplay = container.getAttribute('data-hm-video-autoplay') !== '0';
         video.playsInline = true;
         video.setAttribute('playsinline', '');
@@ -761,8 +765,18 @@
             if (!data) { notify(); return; }
             if (layout.portal && !player.floating) {
                 var rect = data.rect, clip = data.clip;
-                var inlineWidth = Number(layout.anchor.offsetWidth) || rect.width;
-                var inlineHeight = Number(layout.anchor.offsetHeight) || rect.height;
+                // offsetWidth/Height round fractional CSS pixels. That rounding
+                // must not masquerade as a publisher transform and shrink chrome.
+                var anchorCss = window.getComputedStyle(layout.anchor);
+                var inlineWidth = parseFloat(anchorCss.width), inlineHeight = parseFloat(anchorCss.height);
+                if (anchorCss.boxSizing !== 'border-box') {
+                    inlineWidth += (parseFloat(anchorCss.paddingLeft) || 0) + (parseFloat(anchorCss.paddingRight) || 0)
+                        + (parseFloat(anchorCss.borderLeftWidth) || 0) + (parseFloat(anchorCss.borderRightWidth) || 0);
+                    inlineHeight += (parseFloat(anchorCss.paddingTop) || 0) + (parseFloat(anchorCss.paddingBottom) || 0)
+                        + (parseFloat(anchorCss.borderTopWidth) || 0) + (parseFloat(anchorCss.borderBottomWidth) || 0);
+                }
+                inlineWidth = inlineWidth > 0 ? inlineWidth : Number(layout.anchor.offsetWidth) || rect.width;
+                inlineHeight = inlineHeight > 0 ? inlineHeight : Number(layout.anchor.offsetHeight) || rect.height;
                 var scaleX = rect.width / inlineWidth, scaleY = rect.height / inlineHeight;
                 write(surface.style, 'position', 'fixed'); write(surface.style, 'margin', '0');
                 write(surface.style, 'top', rect.top + 'px'); write(surface.style, 'left', rect.left + 'px');
