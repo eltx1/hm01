@@ -210,6 +210,34 @@ $add('Reporting', 'google_account_onboarding', $reportingGoogleConfigured ? 'PAS
     $reportingGoogleConfigured ? 'Platform Google application is configured locally; live account consent and network permissions are verified when connecting.' : 'Platform Google application has not been configured; new Google account authorization is unavailable.',
     ['platform_app_configured' => $reportingGoogleConfigured]);
 
+// Global serving controls are a first-order production dependency. A stale
+// emergency kill switch can make every publisher look configured while the
+// browser runtime correctly refuses to request ads.
+$blockingGlobalServingControls = DB::table('platform_controls')
+    ->where('scope_type', 'PLATFORM')
+    ->where('scope_id', 'GLOBAL')
+    ->whereIn('control_key', ['AD_SERVING', 'DIRECT_JS', 'NATIVE_DEMAND'])
+    ->where('is_disabled', 1)
+    ->pluck('control_key')
+    ->map(static fn ($value): string => strtoupper((string) $value))
+    ->unique()
+    ->sort()
+    ->values()
+    ->all();
+$metrics['global_serving_controls'] = [
+    'blocking_controls' => $blockingGlobalServingControls,
+];
+$add(
+    'Monetization',
+    'global_serving_controls',
+    $blockingGlobalServingControls === [] ? 'PASS' : 'BLOCKED',
+    'P1',
+    $blockingGlobalServingControls === []
+        ? 'Global ad-serving and Direct JS controls allow delivery.'
+        : 'One or more global serving controls currently block browser ad delivery.',
+    ['blocking_controls' => $blockingGlobalServingControls],
+);
+
 // Monetization integrations.
 $gamEnabled = $count('gam_connections', fn ($query) => $query->where('is_enabled', 1)->whereNull('deleted_at'));
 $gamReal = $count('gam_connections', fn ($query) => $query->where('is_enabled', 1)->where('dry_run_default', 0)->whereNull('deleted_at'));
