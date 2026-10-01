@@ -154,7 +154,7 @@ jobs:
             "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && php" \
             < ops/audit/gam-site-scope-preflight.php > "$result" 2> "$errors"; then
             # The repository is public. Never echo raw PHP/HTTP/API errors.
-            jq -c '{schema_version,compatible,reason}' "$result" 2>/dev/null || echo '{"compatible":false,"reason":"PREFLIGHT_EXECUTION_FAILED"}'
+            jq -c '{schema_version,compatible,reason,diagnostics:(if .diagnostics then {coverage:.diagnostics.coverage,probes:[.diagnostics.probes[]|{profile,status}]} else null end)}' "$result" 2>/dev/null || echo '{"compatible":false,"reason":"PREFLIGHT_EXECUTION_FAILED"}'
             exit 1
           fi
           jq -e '.schema_version == 1 and .compatible == true and .active_bindings == .validated_bindings' "$result" >/dev/null
