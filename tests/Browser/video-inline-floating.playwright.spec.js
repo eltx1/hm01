@@ -718,6 +718,60 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
     });
 }
 
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 812 }]) {
+    test(`production 400x225 has truthful inline and compact floating measurements at ${viewport.width}px`, async ({ page }, testInfo) => {
+        const master = [400, 225], availableInlineWidth = Math.min(720, viewport.width) - 48;
+        // This is the former sizing rule calculated for the same article. It is
+        // deliberately not presented as a screenshot or execution of old code.
+        const previousInlineWidth = Math.min(master[0], availableInlineWidth);
+        await page.setViewportSize(viewport);
+        await openPlayer(page, { master, content: true,
+            vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=400x225' });
+        await rememberPlayingAd(page);
+        await expectEnlargedInlineGeometry(page, master);
+        await expectMediaRatioAndManagerSize(page, master);
+        const original = await inlineGeometry(page);
+        const inline = await page.locator('[data-hm-video-direct]').boundingBox();
+        expect(inline.width).toBeCloseTo(availableInlineWidth, 2);
+        expect(inline.height).toBeCloseTo(availableInlineWidth * 9 / 16, 2);
+        if (viewport.width === 1280) expect(inline.width).toBeGreaterThan(previousInlineWidth);
+        else expect(inline.width).toBeCloseTo(previousInlineWidth, 2);
+        await attachLayout(page, testInfo, 'production400-inline-before-scroll');
+
+        await scrollPage(page, original.y + original.height + 80);
+        await assertFloating(page);
+        await expectCompactFloatingGeometry(page, master);
+        await expectMediaRatioAndManagerSize(page, master);
+        const floating = await page.locator('[data-hm-video-direct]').boundingBox();
+        expect(floating.width).toBeCloseTo(Math.min(400, viewport.width - 32), 2);
+        expect(floating.height).toBeCloseTo(floating.width * 9 / 16, 2);
+        await expectSamePlayingAd(page);
+        await attachLayout(page, testInfo, 'production400-floating-after-scroll');
+
+        await scrollPage(page, 0);
+        await expectInline(page, original);
+        await expectEnlargedInlineGeometry(page, master);
+        await expectMediaRatioAndManagerSize(page, master);
+        await expectSamePlayingAd(page);
+        const returned = await page.locator('[data-hm-video-direct]').boundingBox();
+        await attachLayout(page, testInfo, 'production400-inline-returned');
+        const dimensions = box => ({ width: box.width, height: box.height });
+        await testInfo.attach(`video-player-production400-measurements-${viewport.width}x${viewport.height}`, {
+            contentType: 'application/json',
+            body: Buffer.from(JSON.stringify({
+                viewport, selectedMaster: { width: 400, height: 225 },
+                previousSizingContract: {
+                    evidence: 'Calculated from the previous min(selected master, available article width) rule; old runtime was not executed',
+                    inlineMedia: { width: previousInlineWidth, height: previousInlineWidth * 9 / 16 },
+                },
+                actualCurrentRuntimeMeasurements: { inlineMedia: dimensions(inline), floatingMedia: dimensions(floating), returnedInlineMedia: dimensions(returned) },
+                inlineWidthChangePixels: inline.width - previousInlineWidth,
+                request: await page.evaluate(() => ({ tag: window.lastAdTagUrl, imaDimensions: window.lastAdDimensions, count: window.adRequests })),
+            }, null, 2)),
+        });
+    });
+}
+
 for (const master of [[320, 180], [1200, 675]]) {
     test(`wide articles cap enlarged inline media without reducing a larger custom master: ${master.join('x')}`, async ({ page }) => {
         await page.setViewportSize({ width: 1600, height: 1200 });

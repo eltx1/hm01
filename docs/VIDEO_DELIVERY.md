@@ -13,12 +13,14 @@ The selectable video masters are 300×250, 320×180, 336×280, 400×225, 400×30
 640×480. A master defines the media aspect ratio and maximum floating size,
 not six simultaneous ad slots. Inline media fills the publisher container up to
 960px (or an existing custom master wider than 960px); narrow columns remain
-constrained by their own available width. Floating size and sticky clearance
+constrained by their own available width. A narrow column already filled by the
+previous player will retain that same physical inline size; enlargement never
+overflows the publisher column. Floating size and sticky clearance
 remain based on the selected master. Returning inline restores the larger
 responsive surface without recreating media or requesting another ad.
 
 Existing saved responsive layouts remain valid. IMA linear slot dimensions
-always describe the actual visible media box at request time, excluding chrome;
+always describe the actual rendered media box at request time, excluding chrome;
 its manager uses CSS layout pixels for a transformed publisher surface.
 GAM `sz` is separate inventory targeting: valid configured single or pipe-separated
 sizes are preserved, including explicit `1x1`. Generated tags use the selected

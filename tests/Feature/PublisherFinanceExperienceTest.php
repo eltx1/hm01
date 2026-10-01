@@ -210,6 +210,8 @@ class PublisherFinanceExperienceTest extends TestCase
 
     public function test_publisher_dashboard_uses_one_canonical_usd_currency_without_mixing_legacy_money(): void
     {
+        $this->travelTo(now()->startOfMonth()->addDays(10));
+
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
         $usd = $this->connection($admin->organization_id, 'USD', 'publisher-finance-usd');
         $eur = $this->connection($admin->organization_id, 'EUR', 'publisher-finance-eur');
