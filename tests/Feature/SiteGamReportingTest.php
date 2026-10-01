@@ -206,14 +206,14 @@ class SiteGamReportingTest extends TestCase
     public function test_existing_binding_automatically_scopes_forward_without_rewriting_history(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())
+            ->push($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 'US$ 2000000']]))]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
         $old = DailyReport::withoutGlobalScopes()->sole();
         $before = $old->getAttributes();
         $configuration = $binding->connection->fresh()->configuration;
         unset($configuration['site_report_scope']);
         $binding->connection->update(['configuration' => $configuration]);
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 'US$ 2000000']]))]);
         $results = app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
         $this->assertCount(1, $results);
         $this->assertSame(ReportImportStatus::Completed, $results[0]->status, $results[0]->error_message ?? '');
@@ -268,7 +268,7 @@ class SiteGamReportingTest extends TestCase
     public function test_conflicting_same_day_scope_facts_are_not_overwritten_or_duplicated(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
         $row = DailyReport::withoutGlobalScopes()->sole();
         $dimensions = $row->dimension->external_dimensions;
@@ -285,10 +285,10 @@ class SiteGamReportingTest extends TestCase
     public function test_scoped_downward_correction_zeroes_the_same_fact_when_only_another_site_remains(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())
+            ->push($this->csv(hostname: 'different.publisher.example'))]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
         $row = DailyReport::withoutGlobalScopes()->sole();
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv(hostname: 'different.publisher.example'))]);
         $job = $this->import($binding);
         $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
         $this->assertDatabaseCount('daily_reports', 1);
