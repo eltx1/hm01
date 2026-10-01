@@ -9,10 +9,13 @@ use App\Enums\ServingMode;
 use App\Enums\SiteStatus;
 use App\Models\ConfigVersion;
 use App\Models\DemandWidget;
+use App\Models\DemandPlacement;
 use App\Models\Placement;
 use App\Services\Inventory\InventoryManager;
 use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\VideoMasterSize;
+use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Demand\GoogleVideoAdTag;
 use App\Services\Security\PublicProviderOriginValidator;
 use Database\Seeders\AdFormatSeeder;
 use Database\Seeders\DemandNetworkSeeder;
@@ -172,7 +175,7 @@ final class VideoMasterSizeWorkflowTest extends TestCase
         $video = $this->video();
         $response = $this->get(route('admin.demand.quick.create', ['site' => $this->site->id, 'placement' => $video->id]))->assertOk();
         $response->assertViewHas('selectedPlacementId', $video->id);
-        $response->assertViewHas('quickInputs', fn ($inputs) => $inputs[$video->id] === ['inputType' => 'GAM_AD_UNIT_PATH', 'tag' => $path, 'videoMasterSize' => '336x280']);
+        $response->assertViewHas('quickInputs', fn ($inputs) => $inputs[$video->id] === ['inputType' => 'GAM_AD_UNIT_PATH', 'tag' => $path, 'videoMasterSize' => '336x280', 'videoAdFormat' => '']);
         $this->post(route('admin.demand.quick.store'), $this->payload([
             'placement_mode' => 'existing', 'placement_id' => $video->id, 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => $path,
         ]))->assertSessionHasNoErrors();
@@ -189,6 +192,133 @@ final class VideoMasterSizeWorkflowTest extends TestCase
         $this->assertSame($url, $widget->direct_tag_template);
         $this->assertSame('VAST_URL', data_get($widget->configuration, 'input_kind'));
         $this->assertNull(data_get($widget->configuration, 'gam_ad_unit_path'));
+    }
+
+    public function test_content_video_defaults_to_mixed_and_explicit_linear_choice_survives_retagging(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video', 'video_master_size' => '640x480',
+        ]))->assertSessionHasNoErrors();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        parse_str(parse_url($widget->direct_tag_template, PHP_URL_QUERY), $query);
+        $this->assertArrayNotHasKey('vad_type', $query);
+        $this->assertSame('video', $query['ad_type']);
+        $attributes = data_get($this->published()->payload, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes');
+        $this->assertSame('mixed', $attributes['data-hm-video-ad-format']);
+        $this->assertSame('gam_video_path', $attributes['data-hm-vast-generated']);
+
+        $video = $this->video();
+        $sizes = $video->sizes->toArray();
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_mode' => 'existing', 'placement_id' => $video->id,
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video', 'video_ad_format' => 'video_only',
+        ]))->assertSessionHasNoErrors();
+        $this->assertSame('video_only', data_get($video->fresh()->format_settings, 'videoAdFormat'));
+        $this->assertSame($sizes, $this->video()->sizes->toArray());
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video',
+        ]))->assertSessionHasNoErrors();
+        parse_str(parse_url($widget->fresh()->direct_tag_template, PHP_URL_QUERY), $query);
+        $this->assertSame('linear', $query['vad_type']);
+        $this->assertSame('video_only', data_get($this->published()->payload, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes.data-hm-video-ad-format'));
+        $this->get(route('admin.demand.quick.create', ['site' => $this->site->id, 'placement' => $video->id]))
+            ->assertOk()->assertViewHas('quickInputs', fn ($inputs) => $inputs[$video->id]['videoAdFormat'] === 'video_only');
+    }
+
+    public function test_runtime_refresh_upgrades_only_canonical_generated_tags_and_is_idempotent(): void
+    {
+        config(['horus.video_content_url' => null]);
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video', 'video_master_size' => '336x280',
+        ]))->assertSessionHasNoErrors();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $legacy = $widget->direct_tag_template;
+        $version = $this->published();
+        $payload = $version->payload;
+        $tagPath = 'directDemand.placements.quick_video_floating.candidates.0.tag';
+        data_set($payload, $tagPath.'.scripts.0.url', 'https://cdn.horusmedia.net/runtime/video/hm-video-direct.0000000000000000.js');
+        $version->update(['payload' => $payload, 'checksum' => hash('sha256', app(\App\Services\StaticDelivery\CanonicalJson::class)->encode($payload))]);
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $count = $this->site->configVersions()->count();
+        $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $snapshot = app(\App\Services\StaticDelivery\StaticDeliverySnapshotBuilder::class)->build();
+        $configuration = json_decode($snapshot->files['configs/'.$this->site->public_key.'/production.json'], true, 512, JSON_THROW_ON_ERROR);
+        $attributes = data_get($configuration, $tagPath.'.container.attributes');
+        $this->assertSame((new GoogleVideoAdTag())->build('/123/video', [336, 280], 'mixed'), base64_decode($attributes['data-hm-vast-url'], true));
+        $this->assertSame('mixed', $attributes['data-hm-video-ad-format']);
+        $this->assertSame('gam_video_path', $attributes['data-hm-vast-generated']);
+        // Publication updates the recipe, without mutating the original input.
+        $this->assertSame($legacy, $widget->fresh()->direct_tag_template);
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
+    public function test_manual_restrictions_ad_rules_privacy_and_vmap_survive_mixed_publication(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $base = (new GoogleVideoAdTag())->build('/123/video', [400, 225]);
+        foreach ([$base, $base.'&ad_rule=1&npa=1&gdpr=1&gdpr_consent=reviewed', str_replace('output=vast', 'output=vmap', $base).'&ad_rule=1'] as $url) {
+            $this->post(route('admin.demand.quick.store'), $this->payload([
+                'tag' => $url, 'video_ad_format' => 'mixed',
+            ]))->assertSessionHasNoErrors();
+            $attributes = data_get($this->published()->payload, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes');
+            $this->assertSame($url, base64_decode($attributes['data-hm-vast-url'], true));
+            $this->assertSame('mixed', $attributes['data-hm-video-ad-format']);
+            $this->assertArrayNotHasKey('data-hm-vast-generated', $attributes);
+        }
+    }
+
+    public function test_stale_generated_metadata_does_not_erase_later_manual_template_changes(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video',
+        ]))->assertSessionHasNoErrors();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $manual = (new GoogleVideoAdTag())->build('/123/video', [400, 225]).'&ad_rule=1&npa=1';
+        $widget->update(['direct_tag_template' => $manual]);
+        $preview = app(SiteConfigPublisher::class)->preview($this->site, ConfigEnvironment::Production);
+        $attributes = data_get($preview, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes');
+        $this->assertSame($manual, base64_decode($attributes['data-hm-vast-url'], true));
+        $this->assertArrayNotHasKey('data-hm-vast-generated', $attributes);
+    }
+
+    public function test_ancestor_configuration_cannot_supply_generated_tag_provenance(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $manual = (new GoogleVideoAdTag())->build('/123/video', [400, 225]);
+        $this->post(route('admin.demand.quick.store'), $this->payload(['tag' => $manual]))->assertSessionHasNoErrors();
+        $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
+        $settings = $widget->configuration;
+        unset($settings['input_kind'], $settings['gam_ad_unit_path']);
+        $widget->update(['configuration' => $settings]);
+        $mapping = DemandPlacement::withoutGlobalScopes()->findOrFail($widget->demand_placement_id);
+        $mapping->update(['configuration' => array_replace($mapping->configuration, [
+            'input_kind' => 'GAM_VIDEO_PATH', 'gam_ad_unit_path' => '/123/video',
+        ])]);
+        $preview = app(SiteConfigPublisher::class)->preview($this->site, ConfigEnvironment::Production);
+        $attributes = data_get($preview, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes');
+        $this->assertSame($manual, base64_decode($attributes['data-hm-vast-url'], true));
+        $this->assertArrayNotHasKey('data-hm-vast-generated', $attributes);
+    }
+
+    public function test_invalid_or_non_video_format_selection_rolls_back_without_publication(): void
+    {
+        $versions = ConfigVersion::withoutGlobalScopes()->count();
+        $this->post(route('admin.demand.quick.store'), $this->payload(['video_ad_format' => 'nonlinear']))->assertSessionHasErrors('video_ad_format');
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_preset' => 'responsive_display', 'tag' => '/123/display', 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'video_ad_format' => 'mixed',
+        ]))->assertSessionHasErrors('video_ad_format');
+        $this->post(route('admin.demand.quick.store'), $this->payload([
+            'placement_preset' => 'rewarded', 'video_ad_format' => 'mixed',
+        ]))->assertSessionHasErrors('video_ad_format');
+        $this->assertSame($versions, ConfigVersion::withoutGlobalScopes()->count());
+        $this->assertSame(0, DemandWidget::withoutGlobalScopes()->count());
+        $this->assertSame(0, Placement::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
     public function test_video_edit_hydration_keeps_generated_and_full_vast_inputs_without_exposing_display_tags(): void
@@ -245,7 +375,7 @@ HTML;
     public function test_video_selectors_offer_exactly_six_sizes_and_retain_error_input(): void
     {
         $response = $this->withSession(['_old_input' => [
-            'placement_preset' => 'video_floating', 'video_master_size' => '400x300', 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video',
+            'placement_preset' => 'video_floating', 'video_master_size' => '400x300', 'video_ad_format' => 'video_only', 'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video',
         ]])->get(route('admin.demand.quick.create'))->assertOk();
         $html = $response->getContent();
         $this->assertSame(1, preg_match('/<select[^>]*name="video_master_size"[^>]*>(.*?)<\/select>/s', $html, $matches));
@@ -254,8 +384,12 @@ HTML;
         $this->assertMatchesRegularExpression('/<option value="400x300"[^>]*\sselected/', $matches[1]);
         $this->assertStringContainsString("['DISPLAY', 'STICKY', 'VIDEO', 'REWARDED'].includes(type)", $html);
         $this->assertStringNotContainsString("inputType.disabled = blocked || video", $html);
-        $this->assertStringContainsString('complete linear VAST URL', $html);
+        $this->assertStringContainsString('complete VAST URL for the selected video ad formats', $html);
         $this->assertStringContainsString('actual rendered size', $html);
+        $this->assertSame(1, preg_match('/<select[^>]*name="video_ad_format"[^>]*>(.*?)<\/select>/s', $html, $formats));
+        $this->assertSame(3, substr_count($formats[1], '<option '));
+        $this->assertMatchesRegularExpression('/<option value="video_only"[^>]*\sselected/', $formats[1]);
+        $this->assertStringContainsString('value="mixed"', $formats[1]);
     }
 
     public static function masterSizes(): array

@@ -139,6 +139,7 @@
                                     data-placement-type="{{ $placement->type->value }}"
                                     data-preset="{{ data_get($placement->metadata, 'placement_preset', '') }}"
                                     data-video-master-size="{{ data_get($placement->format_settings, 'videoMasterSize', '') }}"
+                                    data-video-ad-format="{{ data_get($placement->format_settings, 'videoAdFormat', '') }}"
                                     @selected(old('placement_id', $selectedPlacementId) === $placement->id)>
                                 {{ $placement->name }} · {{ $placement->code }}{{ $sizes ? ' · '.$sizes : '' }}
                             </option>
@@ -159,6 +160,18 @@
                 <span class="muted">Media ratio and maximum floating size. Inline video fills its container up to 640px; IMA receives its actual rendered size. Generated GAM tags use this master; full tags retain their configured size targeting. Leave unchanged to preserve a saved layout.</span>
                 <span class="muted" id="quick-video-size-current"></span>
                 @error('video_master_size')<span class="error">{{ $message }}</span>@enderror
+            </label>
+
+            <label class="full" id="quick-video-ad-format-wrap" style="display:none;">Video ad formats
+                <select class="hm-input" name="video_ad_format" id="quick-video-ad-format" disabled>
+                    <option value="">Keep saved setting / automatic</option>
+                    @foreach(\App\Services\Inventory\VideoAdFormat::choices() as $formatKey => $formatLabel)
+                        <option value="{{ $formatKey }}" @selected(old('video_ad_format') === $formatKey)>{{ $formatLabel }}</option>
+                    @endforeach
+                </select>
+                <span class="muted">With real content, automatic permits linear video and non-linear overlays. Rewarded and ad-only players remain linear-only. In mixed mode, full VAST/VMAP tags retain their explicit format restrictions; ad rules and privacy parameters remain intact.</span>
+                <span class="muted" id="quick-video-ad-format-current"></span>
+                @error('video_ad_format')<span class="error">{{ $message }}</span>@enderror
             </label>
 
             <label class="full" id="quick-input-type-wrap">Ad input
@@ -208,6 +221,9 @@
     const videoSize = document.getElementById('quick-video-size');
     const videoSizeWrap = document.getElementById('quick-video-size-wrap');
     const videoSizeCurrent = document.getElementById('quick-video-size-current');
+    const videoAdFormat = document.getElementById('quick-video-ad-format');
+    const videoAdFormatWrap = document.getElementById('quick-video-ad-format-wrap');
+    const videoAdFormatCurrent = document.getElementById('quick-video-ad-format-current');
     const submit = document.getElementById('quick-submit');
     const help = document.getElementById('quick-placement-help');
     if (!site || !preset || !useExisting || !mode || !existingWrap || !placement || !submit) return;
@@ -229,6 +245,12 @@
             videoSizeCurrent.textContent = video && useExisting.checked && option?.dataset.videoMasterSize
                 ? 'Saved master: ' + option.dataset.videoMasterSize.replace('x', '×') : '';
         }
+        if (videoAdFormat && videoAdFormatWrap) {
+            videoAdFormatWrap.style.display = video ? '' : 'none';
+            videoAdFormat.disabled = blocked || !video;
+            videoAdFormatCurrent.textContent = video && useExisting.checked && option?.dataset.videoAdFormat
+                ? 'Saved formats: ' + (option.dataset.videoAdFormat === 'video_only' ? 'linear video only' : 'linear video + non-linear overlays') : '';
+        }
         const pathSupported = ['DISPLAY', 'STICKY', 'VIDEO', 'REWARDED'].includes(type);
         inputType.querySelector('[value="GAM_AD_UNIT_PATH"]').disabled = !pathSupported;
         inputTypeWrap.style.display = '';
@@ -240,7 +262,7 @@
         tag.placeholder = path ? '/1234567/ad_unit' : (video ? 'HTTPS VAST/VMAP URL or a complete supported video provider tag.' : 'Paste a complete GPT or supported provider tag.');
         tagHelp.textContent = path
             ? (video
-                ? 'Paste only /NetworkCode/AdUnitCode, including any parent/child network code or nested ad unit path. Horus generates and saves the complete linear VAST URL, keeps fallback enabled, and supplies the actual page, player size, playback and consent signals at runtime.'
+                ? 'Paste only /NetworkCode/AdUnitCode, including any parent/child network code or nested ad unit path. Horus generates and saves the complete VAST URL for the selected video ad formats, keeps fallback enabled, and supplies the actual page, player size, playback and consent signals at runtime.'
                 : (type === 'REWARDED'
                 ? 'Paste /NetworkCode/AdUnitCode. Horus uses official GPT Rewarded: the visitor opts in and content access follows Google’s reward grant event. No display sizes are applied.'
                 : 'Paste only /Network_Code/Adunit_Code. Horus creates a separate GPT slot for each placement and uses that placement’s active sizes and responsive settings.'))
@@ -304,6 +326,7 @@
         tag.value = saved?.tag || '';
         // Opening an edit is not an explicit request to replace saved mappings.
         videoSize.value = '';
+        if (videoAdFormat) videoAdFormat.value = '';
         refreshInput();
     };
     site.addEventListener('change', () => { refreshMode(); loadSavedInput(); });

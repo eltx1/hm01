@@ -252,6 +252,7 @@ function runVideo(selectedContainer, options = {}) {
             pause() { this.paused = true; },
             play() {
                 this.paused = false;
+                if (options.contentPlay) return options.contentPlay(this);
                 if (options.contentPlayRejects) return Promise.reject(new Error('content-play-failed'));
                 return Promise.resolve();
             },
@@ -266,22 +267,40 @@ function runVideo(selectedContainer, options = {}) {
         ALL_ADS_COMPLETED: 'all-ads-completed',
         CONTENT_PAUSE_REQUESTED: 'content-pause-requested',
         CONTENT_RESUME_REQUESTED: 'content-resume-requested',
+        LINEAR_CHANGED: 'linear-changed',
+        USER_CLOSE: 'user-close',
     };
     class AdsManager {
         constructor() {
             this.listeners = {};
             this.destroyed = false;
             this.started = false;
+            this.stopCalls = 0;
+            this.ad = { linear: true, width: 300, height: 50, minSuggestedDuration: 0, ...(options.ads?.[managers.length] || options.ad || {}) };
             managers.push(this);
         }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
-        emit(name, event = {}) { (this.listeners[name] || []).forEach((callback) => callback(event)); }
-        init(width, height, mode) { this.initialized = [width, height, mode]; }
+        getAd() {
+            return this.adApi ||= {
+                isLinear: () => this.ad.linear,
+                getWidth: () => this.ad.width,
+                getHeight: () => this.ad.height,
+                getMinSuggestedDuration: () => this.ad.minSuggestedDuration,
+                getDuration: () => this.ad.duration ?? 10,
+            };
+        }
+        emit(name, event = {}) { (this.listeners[name] || []).slice().forEach((callback) => callback({ getAd: () => this.getAd(), ...event })); }
+        discardAdBreak() { this.discardCalls = (this.discardCalls || 0) + 1; this.emit('content-resume-requested'); }
+        stop() {
+            this.stopCalls++;
+            for (const event of options.stopEvents || ['complete', 'all-ads-completed']) this.emit(event);
+        }
+        init(width, height, mode) { this.initialized = [width, height, mode]; if (options.loadedDuringInit) this.emit(adEventTypes.LOADED); }
         setVolume(volume) { this.volume = volume; }
         start() {
             if (options.managerStartThrows) throw new Error('manager-start-failed');
             this.started = true;
-            this.emit(adEventTypes.LOADED);
+            if (!options.loadedDuringInit) this.emit(adEventTypes.LOADED);
             if (!options.deferMediaStart) this.emit(adEventTypes.STARTED);
         }
         resize(width, height, mode) { this.resized = [width, height, mode]; }
@@ -289,9 +308,9 @@ function runVideo(selectedContainer, options = {}) {
         destroy() { this.destroyed = true; }
     }
     class AdsLoader {
-        constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.pendingManager = null; loaders.push(this); }
+        constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.contentCompleteCalls = 0; this.pendingManager = null; loaders.push(this); }
         destroy() { this.destroyed = true; }
-        contentComplete() { this.contentCompleteCalled = true; }
+        contentComplete() { this.contentCompleteCalled = true; this.contentCompleteCalls++; }
         addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
         emitManagerLoaded() {
             const manager = this.pendingManager;
@@ -1647,3 +1666,374 @@ for (const gate of ['background', 'under-half-visible']) {
         target.__hmDestroy('dismissed');
     });
 }
+
+// Mixed-format regressions use deterministic IMA boundary doubles. They do not
+// claim live GAM eligibility, SDK rendering, or paid demand availability.
+function mixedContentFixture(overrides = {}, options = {}) {
+    const attributes = {
+        'data-hm-video-direct': '1',
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=336x280&cust_params=section%3Dnews&gdpr=1&gdpr_consent=fixture-consent&us_privacy=1YNN&npa=1').toString('base64'),
+        'data-hm-video-content-url': 'https://media.example/content.mp4',
+        'data-hm-video-width': '336', 'data-hm-video-height': '280',
+        'data-hm-video-inline-to-floating': '1',
+        ...overrides,
+    };
+    const target = container(attributes, 'mixed-content');
+    target.clientWidth = 640;
+    if (options.withChrome) {
+        const surface = container({ 'data-placement': 'video' });
+        surface.appendChild(target);
+        surface.insertBefore = function (child, next) {
+            const index = this.childNodes.indexOf(next);
+            this.childNodes.splice(index < 0 ? this.childNodes.length : index, 0, child);
+            child.parentNode = this;
+        };
+    }
+    const runtime = runVideo(target, options);
+    return { attributes, target, runtime, video: runtime.created.find(node => node.tagName === 'VIDEO') };
+}
+
+for (const format of [undefined, 'mixed', 'video_only']) {
+    test(`ordinary content declares its ${format || 'default mixed'} ad format without losing GAM privacy or manual targeting`, async () => {
+        const { target, runtime } = mixedContentFixture(format ? { 'data-hm-video-ad-format': format } : {});
+        await tick();
+        const request = runtime.requested[0], tag = new URL(request.adTagUrl);
+        assert.equal(tag.searchParams.get('vad_type'), format === 'video_only' ? 'linear' : null);
+        assert.equal(tag.searchParams.get('sz'), '336x280');
+        assert.equal(tag.searchParams.get('cust_params'), 'section=news');
+        assert.equal(tag.searchParams.get('gdpr'), '1');
+        assert.equal(tag.searchParams.get('gdpr_consent'), 'fixture-consent');
+        assert.equal(tag.searchParams.get('us_privacy'), '1YNN');
+        assert.equal(tag.searchParams.get('npa'), '1');
+        assert.equal(tag.searchParams.get('plcmt'), '2');
+        assert.equal(tag.searchParams.get('vpos'), 'preroll');
+        assert.equal(tag.searchParams.get('vpa'), 'auto');
+        assert.equal(tag.searchParams.get('vpmute'), '1');
+        assert.equal(request.linearAdSlotWidth, 640);
+        assert.equal(request.linearAdSlotHeight, 533);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+for (const [width, height] of [[320, 180], [336, 280], [400, 225]]) {
+    test(`nonlinear availability is the full safe compact ${width}x${height} area, never an invented GAM creative size`, async () => {
+        const { target, runtime } = mixedContentFixture({ 'data-hm-video-width': String(width), 'data-hm-video-height': String(height) });
+        await tick();
+        const request = runtime.requested[0], tag = new URL(request.adTagUrl);
+        assert.equal(request.nonLinearAdSlotWidth, width);
+        assert.equal(request.nonLinearAdSlotHeight, height);
+        assert.equal(tag.searchParams.get('vad_type'), null);
+        assert.equal(tag.searchParams.has('afvsz'), false);
+        assert.notEqual(request.forceNonLinearFullSlot, true);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('a nonlinear LOADED event resumes content, retains clickable SDK ownership and content-ended observation even before STARTED', async () => {
+    const clock = videoClock();
+    const { attributes, target, runtime } = mixedContentFixture({}, { ad: { linear: false, width: 300, height: 50 }, deferMediaStart: true, clock });
+    await tick();
+    const player = target.__hmVideoPlayer, video = runtime.created.find(node => node.tagName === 'VIDEO');
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(player.adMediaActive, false);
+    assert.equal(player.contentEndedAttached, true);
+    assert.equal(video.paused, false);
+    assert.equal(player.adLayer.style.pointerEvents, 'auto');
+    assert.equal(runtime.managers[0].destroyed, false);
+    clock.advance(60000);
+    await tick();
+    assert.equal(runtime.managers[0].destroyed, false, 'nonlinear LOADED retires linear media-start watchdog');
+    video.currentTime = 70; video.emit('timeupdate'); video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 1, 'an overlay blocks new manual breaks');
+    target.__hmDestroy('dismissed');
+});
+
+for (const terminal of ['user-close', 'complete', 'all-ads-completed']) {
+    test(`nonlinear ${terminal} without another terminal event leaves playable content and rejects duplicate callbacks`, async () => {
+        const { target, runtime } = mixedContentFixture({}, { ad: { linear: false, width: 300, height: 50 } });
+        await tick();
+        const manager = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+        video.currentTime = 1;
+        manager.emit(terminal);
+        await tick();
+        assert.notEqual(target.style.display, 'none');
+        assert.equal(video.paused, false);
+        assert.equal(target.__hmVideoPlayer.destroyed, false);
+        assert.equal(manager.destroyed, true);
+        assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none');
+        for (const event of ['user-close', 'complete', 'all-ads-completed', 'linear-changed', 'content-resume-requested']) manager.emit(event);
+        assert.equal(runtime.requested.length, 1);
+        assert.equal(target.__hmVideoPlayer.adMediaActive, false);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+for (const stopEvents of [[], ['complete', 'all-ads-completed', 'all-ads-completed']]) {
+    test(`five-second content ending under a nonlinear overlay stops that overlay and requests exactly one postroll (${stopEvents.length} stop callbacks)`, async () => {
+        const { attributes, target, runtime } = mixedContentFixture({}, {
+            contentDuration: 5, ads: [{ linear: false, width: 300, height: 50, minSuggestedDuration: 10 }, { linear: true }], stopEvents,
+        });
+        await tick();
+        const first = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+        video.currentTime = 2.6; video.emit('timeupdate');
+        assert.equal(runtime.requested.length, 1);
+        video.currentTime = 5; video.emit('ended');
+        await tick();
+        assert.equal(first.stopCalls, 1);
+        assert.equal(first.destroyed, true);
+        assert.equal(runtime.requested.length, 2);
+        assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpos'), 'postroll');
+        for (const event of ['user-close', 'complete', 'all-ads-completed', 'content-resume-requested']) first.emit(event);
+        video.emit('ended'); video.emit('timeupdate');
+        assert.equal(runtime.requested.length, 2);
+        runtime.managers[1].emit('all-ads-completed');
+        assert.equal(attributes['data-hm-video-status'], 'completed');
+        assert.equal(target.style.display, 'none', 'finished content never leaves a dead pinned surface');
+    });
+}
+
+test('LINEAR_CHANGED takes back the shared media element and restores nonlinear content ownership on the return transition', async () => {
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false, width: 300, height: 50 } });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+    manager.ad.linear = true;
+    manager.emit('linear-changed');
+    assert.equal(player.adMediaActive, true);
+    assert.equal(video.paused, true);
+    assert.equal(player.contentEndedAttached, false);
+    video.emit('ended'); video.emit('error');
+    assert.equal(player.contentEnded, false);
+    assert.equal(player.contentFailed, false);
+    assert.equal(runtime.requested.length, 1);
+    manager.ad.linear = false;
+    manager.emit('linear-changed');
+    await tick();
+    assert.equal(player.adMediaActive, false);
+    assert.equal(player.contentEndedAttached, true);
+    assert.equal(player.adLayer.style.pointerEvents, 'auto');
+    assert.equal(video.paused, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('viewport shrink retires an oversized nonlinear creative through IMA and never inflates the compact master', async () => {
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false, width: 300, height: 250 } });
+    await tick();
+    const manager = runtime.managers[0], player = target.__hmVideoPlayer;
+    assert.equal(manager.destroyed, false);
+    target.clientWidth = 240;
+    target.clientHeight = 200;
+    target.getBoundingClientRect = () => ({ top: 0, left: 0, width: 240, height: 200, right: 240, bottom: 200 });
+    runtime.sandbox.dispatchEvent(new runtime.sandbox.CustomEvent('resize'));
+    await tick();
+    assert.equal(manager.stopCalls, 1);
+    assert.equal(manager.destroyed, true);
+    assert.equal(player.size[0], 336);
+    assert.equal(player.size[1], 280);
+    assert.equal(target.style.aspectRatio, '336 / 280');
+    assert.notEqual(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('third-party mixed VAST URLs stay byte-for-byte intact while the IMA lifecycle supports nonlinear content', async () => {
+    const url = 'https://ads.example/vast?token=fixture%2Btoken&vad_type=linear_nonlinear&sz=300x50&custom=1';
+    const { target, runtime } = mixedContentFixture({ 'data-hm-vast-url': Buffer.from(url).toString('base64') }, { ad: { linear: false } });
+    await tick();
+    assert.equal(runtime.requested[0].adTagUrl, url);
+    assert.equal(target.__hmVideoPlayer.adMediaActive, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('midroll autoplay and mute declarations reflect content controls rather than stale startup defaults', async () => {
+    const { target, runtime } = mixedContentFixture();
+    await tick();
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.muted = false; video.currentTime = 55; video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 2);
+    const request = runtime.requested[1], tag = new URL(request.adTagUrl);
+    assert.equal(tag.searchParams.get('vpmute'), '0');
+    assert.equal(tag.searchParams.get('vpa'), 'auto');
+    assert.equal(request.willPlayMuted, false);
+    assert.equal(request.willAutoPlay, true);
+    target.__hmDestroy('dismissed');
+});
+
+test('an xml_vmap1 request preserves server-owned scheduling even without ad_rule', async () => {
+    const { target, runtime } = mixedContentFixture({ 'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&output=xml_vmap1&vpos=preroll').toString('base64') }, { cuePoints: [0, 20, -1] });
+    await tick();
+    const tag = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(tag.searchParams.get('output'), 'xml_vmap1');
+    assert.equal(tag.searchParams.get('vpos'), null);
+    runtime.managers[0].emit('content-resume-requested');
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.currentTime = 70; video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('a nonlinear postroll cannot resume already ended content or leave a pinned surface', async () => {
+    const { attributes, target, runtime } = mixedContentFixture({}, { ads: [{ linear: true }, { linear: false, width: 300, height: 50 }] });
+    await tick();
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.currentTime = 100; video.emit('ended');
+    await tick();
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpos'), 'postroll');
+    assert.equal(runtime.managers[1].stopCalls, 1);
+    assert.equal(attributes['data-hm-video-status'], 'completed');
+    assert.equal(target.style.display, 'none');
+    assert.equal(video.paused, true);
+});
+
+test('content failure during an active nonlinear overlay retires it and closes immediately', async () => {
+    const { attributes, target, runtime } = mixedContentFixture({}, { ad: { linear: false } });
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.emit('error');
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(attributes['data-hm-video-status'], 'content-error');
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 1);
+});
+
+test('a manual midroll cue passed during a live overlay is consumed rather than queued after USER_CLOSE', async () => {
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false } });
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.currentTime = 70; video.emit('timeupdate');
+    runtime.managers[0].emit('user-close');
+    await tick();
+    video.currentTime = 71; video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('unmuted midroll manager volume matches the request and GAM vpmute declaration', async () => {
+    const { target, runtime } = mixedContentFixture();
+    await tick();
+    runtime.managers[0].emit('all-ads-completed');
+    await tick();
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.muted = false; video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.managers[1].volume, 1);
+    assert.equal(runtime.requested[1].willPlayMuted, false);
+    assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpmute'), '0');
+    target.__hmDestroy('dismissed');
+});
+
+test('nonlinear USER_CLOSE honors an explicit content pause and leaves native play usable', async () => {
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false }, withChrome: true });
+    await tick();
+    const player = target.__hmVideoPlayer, video = runtime.created.find(node => node.tagName === 'VIDEO');
+    assert.ok(player.overlayPlay, 'fixture includes the real external chrome controls');
+    player.overlayPlay.click();
+    assert.equal(video.paused, true);
+    assert.equal(player.contentPausedByUser, true);
+    runtime.managers[0].emit('user-close');
+    await tick();
+    assert.equal(video.paused, true, 'closing the SDK overlay must not undo a content pause');
+    assert.equal(video.controls, true);
+    await video.play(); video.emit('play'); video.emit('playing');
+    assert.equal(player.contentPausedByUser, false);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('content error while the user paused beneath nonlinear still closes the finished surface', async () => {
+    const { attributes, target, runtime } = mixedContentFixture({}, { ad: { linear: false }, withChrome: true });
+    await tick();
+    target.__hmVideoPlayer.overlayPlay.click();
+    runtime.created.find(node => node.tagName === 'VIDEO').emit('error');
+    assert.equal(attributes['data-hm-video-status'], 'content-error');
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(target.__hmVideoPlayer.destroyed, true);
+});
+
+test('a stale nonlinear play rejection after explicit pause cannot mark user-paused content failed', async () => {
+    const pending = [];
+    const { attributes, target, runtime } = mixedContentFixture({}, {
+        ad: { linear: false }, withChrome: true,
+        contentPlay: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    });
+    await tick();
+    const player = target.__hmVideoPlayer, video = runtime.created.find(node => node.tagName === 'VIDEO');
+    player.overlayPlay.click();
+    for (const promise of pending) promise.reject(new Error('obsolete play operation failed'));
+    await tick();
+    assert.equal(player.destroyed, false);
+    assert.equal(player.contentFailed, false);
+    assert.equal(video.paused, true);
+    assert.notEqual(attributes['data-hm-video-status'], 'content-error');
+    target.__hmDestroy('dismissed');
+});
+
+test('an unsupported VMAP nonlinear break is discarded once without destroying later scheduled linear breaks', async () => {
+    const { target, runtime } = mixedContentFixture({
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&output=xml_vmap1').toString('base64'),
+    }, { ad: { linear: false }, cuePoints: [0, 20, -1] });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+    assert.equal(manager.discardCalls, 1);
+    assert.equal(manager.destroyed, false);
+    assert.equal(player.adMediaActive, false);
+    assert.equal(video.paused, false);
+    manager.emit('content-pause-requested'); manager.emit('started');
+    assert.equal(manager.discardCalls, 1);
+    assert.equal(player.adMediaActive, false);
+    manager.ad = { linear: true }; manager.adApi = null;
+    manager.emit('loaded'); manager.emit('content-pause-requested'); manager.emit('started');
+    assert.equal(player.adMediaActive, true);
+    assert.equal(video.paused, true);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('VMAP preloading a future linear LOADED does not pause content or replace the actual current ad', async () => {
+    const { target, runtime } = mixedContentFixture({}, { cuePoints: [0, 20, -1] });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+    manager.emit('content-resume-requested');
+    await tick();
+    const currentAd = player.currentAd;
+    const futureAd = { isLinear: () => true, getWidth: () => 400, getHeight: () => 225, getMinSuggestedDuration: () => 0 };
+    manager.emit('loaded', { getAd: () => futureAd });
+    assert.equal(video.paused, false);
+    assert.equal(player.adMediaActive, false);
+    assert.equal(player.currentAd, currentAd);
+    manager.emit('content-pause-requested', { getAd: () => futureAd });
+    assert.equal(video.paused, true);
+    assert.equal(player.adMediaActive, true);
+    assert.equal(player.currentAd, futureAd);
+    target.__hmDestroy('dismissed');
+});
+
+test('a preloaded LOADED for the next pod ad cannot replace a still-active nonlinear creative', async () => {
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false } });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0], video = runtime.created.find(node => node.tagName === 'VIDEO');
+    const currentAd = player.currentAd;
+    manager.emit('loaded', { getAd: () => ({ isLinear: () => true, getWidth: () => 400, getHeight: () => 225 }) });
+    assert.equal(player.currentAd, currentAd);
+    assert.equal(player.nonLinearAdActive, true);
+    assert.equal(player.adMediaActive, false);
+    assert.equal(video.paused, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('nonlinear LOADED during init is already ready and start cannot rearm the media watchdog', async () => {
+    const clock = videoClock();
+    const { target, runtime } = mixedContentFixture({}, { ad: { linear: false }, loadedDuringInit: true, deferMediaStart: true, clock });
+    await tick();
+    assert.equal(runtime.managers[0].started, true);
+    assert.equal(target.__hmVideoPlayer.nonLinearAdActive, true);
+    clock.advance(20000);
+    await tick();
+    assert.equal(runtime.managers[0].destroyed, false);
+    assert.equal(target.__hmVideoPlayer.destroyed, false);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});

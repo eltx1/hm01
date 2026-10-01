@@ -419,11 +419,17 @@
             contentStarted: false,
             contentEnded: false,
             contentFailed: false,
+            contentPausedByUser: false,
             contentPlayGeneration: 0,
             adRuntimeGeneration: 0,
             adMediaActive: false,
+            nonLinearAdActive: false,
+            currentAd: null,
+            adRequestIntent: null,
+            nonLinearRequestSize: null,
             preRollRequested: false,
             midRollRequested: false,
+            midRollConsumedByOverlay: false,
             postRollRequested: false,
             adBreakPending: false,
             currentBreak: null,
@@ -775,6 +781,7 @@
                 if (layout.size !== signature) {
                     layout.size = signature;
                     try { player.adsManager.resize(size[0], size[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal'); } catch (error) {}
+                    checkNonLinearFit(player);
                 }
             }
         };
@@ -865,6 +872,7 @@
             if (player.adsManager && player.adsManager.resize) {
                 var dimensions = managerDimensions(player);
                 player.adsManager.resize(dimensions[0], dimensions[1], window.google && window.google.ima ? window.google.ima.ViewMode.NORMAL : 'normal');
+                checkNonLinearFit(player);
             }
         } catch (error) {}
         try {
@@ -892,12 +900,120 @@
         }
     }
 
+    function mixedContentAds(player) {
+        return player.contentMode && !player.rewarded && !player.contentFailed
+            && player.container.getAttribute('data-hm-video-ad-format') !== 'video_only';
+    }
+
+    function adRulesTag(tag) {
+        return tag.searchParams.get('ad_rule') === '1' || /^(?:xml_)?vmap/i.test(tag.searchParams.get('output') || '');
+    }
+
+    function adPlaybackIntent(player) {
+        // Content breaks are requested automatically by the content timeline.
+        // Rewarded/click-to-start paths retain their actual click intent.
+        return { autoPlay: player.contentMode || player.video.autoplay === true, muted: player.video.muted === true };
+    }
+
+    function nonLinearDimensions(player, dimensions) {
+        var width = dimensions[0], height = dimensions[1];
+        if (player.inlineToFloating || player.floating) {
+            var viewportWidth = Number(window.innerWidth || document.documentElement.clientWidth || width);
+            var compactWidth = Math.min(player.size[0], Math.max(1, viewportWidth - 32));
+            // Account for safe-area insets using the same CSS contract as the
+            // floating surface, without changing/reparenting the playing IMA DOM.
+            if (document.body && document.body.appendChild && window.getComputedStyle) {
+                var probe = document.createElement('div');
+                probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;height:0;width:calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));';
+                document.body.appendChild(probe);
+                if (probe.getBoundingClientRect) compactWidth = Math.min(compactWidth, Math.max(1, probe.getBoundingClientRect().width));
+                if (probe.parentNode) probe.parentNode.removeChild(probe);
+            }
+            width = Math.min(width, Math.floor(compactWidth));
+            height = Math.min(height, Math.floor(compactWidth * player.size[1] / player.size[0]));
+        }
+        // Advertise the full usable area, never fabricated inventory sizes.
+        // IMA derives afvsz; short/small masters can legitimately support none.
+        return [Math.max(1, Math.floor(width)), Math.max(1, Math.floor(height))];
+    }
+
+    function updateContentAdUi(player) {
+        var active = player.adMediaActive || player.nonLinearAdActive;
+        if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = active ? 'auto' : 'none';
+        if (player.overlayControls) {
+            importantStyle(player.overlayControls.style, 'display', player.nonLinearAdActive ? 'flex' : 'none');
+            player.overlayPlay.textContent = player.video.paused ? 'Play' : 'Pause';
+            player.overlayPlay.setAttribute('aria-label', player.video.paused ? 'Play video content' : 'Pause video content');
+            player.overlayMute.textContent = player.video.muted ? 'Unmute' : 'Mute';
+            player.overlayMute.setAttribute('aria-label', player.video.muted ? 'Unmute video content' : 'Mute video content');
+        }
+        if (player.contentMode) player.video.controls = !active;
+    }
+
+    function installOverlayControls(player) {
+        if (!player.chrome || player.overlayControls) return;
+        var controls = document.createElement('div');
+        controls.setAttribute('data-hm-video-content-controls', '1');
+        controls.style.cssText = 'display:none;align-items:center;gap:6px;margin-left:auto;';
+        function button(label, name) {
+            var node = document.createElement('button');
+            node.type = 'button'; node.textContent = label;
+            node.setAttribute('data-hm-video-content-control', name);
+            node.style.cssText = 'box-sizing:border-box;height:44px;min-height:44px;min-width:44px;padding:0 7px;border:1px solid #637085;border-radius:6px;background:#10233d;color:#fff;font:600 11px system-ui;cursor:pointer;touch-action:manipulation;'.replace(/;/g, ' !important;');
+            controls.appendChild(node); return node;
+        }
+        player.overlayPlay = button('Pause', 'play');
+        player.overlayMute = button('Unmute', 'mute');
+        listenContent(player, player.overlayPlay, 'click', function (event) {
+            if (event && event.stopPropagation) event.stopPropagation();
+            if (!player.nonLinearAdActive || player.destroyed) return;
+            if (player.video.paused) { player.contentPausedByUser = false; resumeContent(player); }
+            else { player.contentPausedByUser = true; player.contentPlayGeneration += 1; player.video.pause(); }
+            updateContentAdUi(player);
+        });
+        listenContent(player, player.overlayMute, 'click', function (event) {
+            if (event && event.stopPropagation) event.stopPropagation();
+            if (!player.nonLinearAdActive || player.destroyed) return;
+            player.video.muted = !player.video.muted;
+            updateContentAdUi(player);
+        });
+        player.chrome.appendChild(controls); player.overlayControls = controls;
+    }
+
+    function currentAdFromEvent(event) {
+        try { return event && typeof event.getAd === 'function' ? event.getAd() : null; } catch (error) { return null; }
+    }
+
+    function nonLinearFits(player) {
+        if (!player.nonLinearAdActive || !player.currentAd) return true;
+        var ad = player.currentAd, size = nonLinearDimensions(player, playerDimensions(player.container, player.size));
+        var width = typeof ad.getWidth === 'function' ? Number(ad.getWidth()) : 0;
+        var height = typeof ad.getHeight === 'function' ? Number(ad.getHeight()) : 0;
+        return !(width > size[0] || height > size[1]);
+    }
+
+    function retireNonLinearAd(player, reason) {
+        if (!player || player.destroyed || !player.nonLinearAdActive || player.adRules) return;
+        var position = player.currentBreak;
+        var manager = player.adsManager;
+        // Retire callbacks before stop(), which may synchronously emit terminal
+        // events. Destroy below removes SDK assets/tracking, not just their CSS.
+        player.adRuntimeGeneration += 1;
+        try { if (manager && manager.stop) manager.stop(); } catch (error) {}
+        if (reason) player.container.setAttribute('data-hm-video-nonlinear-end', reason);
+        finishContentAdBreak(player, position);
+    }
+
+    function checkNonLinearFit(player) {
+        if (!nonLinearFits(player)) retireNonLinearAd(player, 'resize');
+    }
+
     function setContentMediaOwnership(player, adActive) {
         player.adMediaActive = adActive;
         player.contentPlayGeneration += 1;
         // A transparent IMA layer must not intercept native content controls
         // between breaks or when the browser requires a playback gesture.
-        if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = adActive ? 'auto' : 'none';
+        updateContentAdUi(player);
         if (!player.video || !player.contentEndedHandler) return;
         if (adActive && player.contentEndedAttached && player.video.removeEventListener) {
             try { player.video.removeEventListener('ended', player.contentEndedHandler); } catch (error) {}
@@ -933,6 +1049,9 @@
         player.displayContainer = null;
         player.adBreakPending = false;
         player.currentBreak = null;
+        player.nonLinearAdActive = false;
+        player.currentAd = null;
+        player.rejectedNonLinearAd = null;
         setContentMediaOwnership(player, false);
     }
 
@@ -944,7 +1063,7 @@
     }
 
     function markContentPlaying(player) {
-        if (!player || player.destroyed || player.contentFailed || player.adMediaActive) return;
+        if (!player || player.destroyed || player.contentFailed || player.adMediaActive || player.contentPausedByUser) return;
         tracePhase('Video content', player.container);
         player.contentStarted = true;
         player.container.setAttribute('data-hm-video-detail', '');
@@ -957,9 +1076,10 @@
             finishContentPlayer(player, 'content-error');
             return;
         }
+        if (player.contentPausedByUser) return;
         var generation = ++player.contentPlayGeneration;
         function currentAttempt() {
-            return !player.destroyed && !player.adMediaActive && generation === player.contentPlayGeneration;
+            return !player.destroyed && !player.adMediaActive && !player.contentPausedByUser && generation === player.contentPlayGeneration;
         }
         function failed(error) {
             if (!currentAttempt()) return;
@@ -968,6 +1088,9 @@
                 // Policy denial or an interrupted play is not broken media.
                 // Keep the native play control usable; never loop ad requests or
                 // pretend playback/impressions happened before actual playback.
+                // A failed content play must not leave a clickable overlay over
+                // the browser's native gesture control. Retire it without retry.
+                if (player.nonLinearAdActive) { retireNonLinearAd(player, 'content-activation'); return; }
                 player.video.controls = true;
                 if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = 'none';
                 setStatus(player.container, 'content-ready', name === 'NotAllowedError' ? 'user-activation-required' : 'playback-interrupted');
@@ -1027,6 +1150,7 @@
         cleanupContentAdRuntime(player);
         player.adBreakPending = true;
         player.currentBreak = position;
+        player.adRequestIntent = adPlaybackIntent(player);
         setStatus(player.container, 'requesting-' + position);
         if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = 'auto';
         var generation = player.adRuntimeGeneration;
@@ -1075,17 +1199,72 @@
                         var error = errorEvent && errorEvent.getError ? errorEvent.getError() : null;
                         if (currentRequest()) failContentAdBreak(player, error, 'playback-' + position, position);
                     });
-                    player.adsManager.addEventListener(adTypes.LOADED, function () {
-                        if (currentRequest()) setStatus(player.container, 'loaded-' + position);
+                    function applyAdMode(adEvent, takeLinearOwnership) {
+                        if (!currentRequest() || player.rejectingNonLinearBreak) return false;
+                        var ad = currentAdFromEvent(adEvent);
+                        if (!ad || typeof ad.isLinear !== 'function') return;
+                        if (player.rejectedNonLinearAd === ad) return false;
+                        player.currentAd = ad;
+                        player.nonLinearAdActive = !ad.isLinear();
+                        player.container.setAttribute('data-hm-video-ad-linearity', player.nonLinearAdActive ? 'nonlinear' : 'linear');
+                        // Linearity describes playback mode, not proof of a video
+                        // asset: IMA can render image/text demand as full-slot.
+                        try { if (typeof ad.getContentType === 'function') player.container.setAttribute('data-hm-video-ad-content-type', String(ad.getContentType() || '')); } catch (error) {}
+                        if (player.nonLinearAdActive && player.adRules) {
+                            // IMA HTML5 does not support VMAP overlays. Discard
+                            // only this unsupported break, preserving its schedule.
+                            window.clearTimeout(player.startupTimer);
+                            player.nonLinearAdActive = false;
+                            player.rejectedNonLinearAd = ad;
+                            player.adBreakPending = false; player.currentBreak = null;
+                            setContentMediaOwnership(player, false);
+                            player.rejectingNonLinearBreak = true;
+                            try { if (player.adsManager.discardAdBreak) player.adsManager.discardAdBreak(); } finally { player.rejectingNonLinearBreak = false; }
+                            resumeContent(player);
+                            return false;
+                        }
+                        if (player.nonLinearAdActive) {
+                            // Nonlinear readiness has no video-media startup phase.
+                            window.clearTimeout(player.startupTimer);
+                            if (!mixedContentAds(player) || player.contentEnded || position === 'postroll' || !nonLinearFits(player)) {
+                                retireNonLinearAd(player, player.contentEnded || position === 'postroll' ? 'content-ended' : 'unsupported');
+                                return false;
+                            }
+                            setContentMediaOwnership(player, false);
+                            resumeContent(player);
+                        } else if (takeLinearOwnership !== false) {
+                            setContentMediaOwnership(player, true);
+                            try { player.video.pause(); } catch (error) {}
+                        }
+                    }
+                    player.adsManager.addEventListener(adTypes.LOADED, function (adEvent) {
+                        if (!currentRequest()) return;
+                        // Preloaded VMAP/pod ads can LOADED well before their
+                        // cue. They must not pause content or replace an active ad.
+                        if (player.adRules || player.currentAd && (player.adMediaActive || player.nonLinearAdActive)) return;
+                        setStatus(player.container, 'loaded-' + position);
+                        applyAdMode(adEvent, false);
                     });
-                    player.adsManager.addEventListener(adTypes.STARTED, function () {
+                    if (adTypes.LINEAR_CHANGED) player.adsManager.addEventListener(adTypes.LINEAR_CHANGED, function (adEvent) {
+                        if (player.adRules && !player.adBreakPending && !player.adMediaActive && !player.nonLinearAdActive) return;
+                        applyAdMode(adEvent);
+                    });
+                    player.adsManager.addEventListener(adTypes.STARTED, function (adEvent) {
+                        if (applyAdMode(adEvent) === false) return;
                         if (!currentRequest()) return;
                         window.clearTimeout(player.startupTimer);
-                        tracePhase('Video start', player.container, { position: player.currentBreak });
-                    setStatus(player.container, 'started');
+                        tracePhase('Ad start', player.container, { position: player.currentBreak, linearity: player.nonLinearAdActive ? 'nonlinear' : 'linear', contentType: player.container.getAttribute('data-hm-video-ad-content-type') || '' });
+                        setStatus(player.container, 'started');
                     });
-                    if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function () {
+                    function nonLinearEnded() {
+                        if (currentRequest() && player.nonLinearAdActive) retireNonLinearAd(player, 'completed');
+                    }
+                    if (adTypes.USER_CLOSE) player.adsManager.addEventListener(adTypes.USER_CLOSE, nonLinearEnded);
+                    if (adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, nonLinearEnded);
+                    if (adTypes.SKIPPED) player.adsManager.addEventListener(adTypes.SKIPPED, nonLinearEnded);
+                    if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function (adEvent) {
                         if (!currentRequest()) return;
+                        if (applyAdMode(adEvent) === false || !currentRequest() || player.nonLinearAdActive) return;
                         if (player.adRules) player.adBreakPending = true;
                         // IMA may temporarily own this exact video element. Its
                         // media errors and ended events are not content failures.
@@ -1097,10 +1276,11 @@
                         // A VMAP may legitimately start with content and a
                         // later cue point. It has finished startup without an ad.
                         window.clearTimeout(player.startupTimer);
-                        if (player.adRules) {
+                        if (player.adRules && !player.nonLinearAdActive) {
                             player.adBreakPending = false;
                             player.currentBreak = null;
                         }
+                        // Content resumption does not mean an overlay finished.
                         setContentMediaOwnership(player, false);
                         resumeContent(player);
                     });
@@ -1119,17 +1299,20 @@
                     });
                     var dimensions = managerDimensions(player);
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
-                    if (player.adsManager.setVolume) player.adsManager.setVolume(0);
+                    if (!currentRequest() || !player.adsManager) return;
+                    if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
                     startAdManagerWhenViewable(player, function () {
                         if (currentRequest() && player.adsManager) {
-                            armStartupPhase('media-start');
+                            if (!player.nonLinearAdActive) armStartupPhase('media-start');
                             player.adsManager.start();
                         }
                     });
+                    if (!currentRequest() || !player.adsManager) return;
                     player.resizeHandler = function () {
                         if (!currentRequest() || !player.adsManager) return;
                         var resized = managerDimensions(player);
                         player.adsManager.resize(resized[0], resized[1], ima.ViewMode.NORMAL);
+                        checkNonLinearFit(player);
                     };
                     if (window.addEventListener) window.addEventListener('resize', player.resizeHandler);
                 } catch (error) {
@@ -1146,12 +1329,14 @@
             request.adTagUrl = resolvedVastUrl(vastUrl, player, dimensions, position);
             request.linearAdSlotWidth = dimensions[0];
             request.linearAdSlotHeight = dimensions[1];
-            request.nonLinearAdSlotWidth = dimensions[0];
-            request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
+            var nonLinearSize = nonLinearDimensions(player, dimensions);
+            player.nonLinearRequestSize = nonLinearSize;
+            request.nonLinearAdSlotWidth = nonLinearSize[0];
+            request.nonLinearAdSlotHeight = nonLinearSize[1];
             var contentDuration = Number(player.video && player.video.duration || 0);
             if (Number.isFinite(contentDuration) && contentDuration > 0) request.contentDuration = contentDuration;
-            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(true);
-            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(true);
+            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.adRequestIntent.autoPlay);
+            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.adRequestIntent.muted);
             if (request.setContinuousPlayback) request.setContinuousPlayback(false);
             tracePhase('VAST call', player.container, { position: player.currentBreak });
             player.adsLoader.requestAds(request);
@@ -1176,22 +1361,27 @@
         state.active = player;
         player.contentMode = true;
         player.contentUrl = contentUrl;
+        try { player.adRules = adRulesTag(new URL(vastUrl)); } catch (error) {}
         player.video.autoplay = false;
-        player.video.muted = true;
         player.video.controls = true;
         player.video.preload = 'metadata';
-        player.video.setAttribute('muted', '');
+        if (player.video.muted) player.video.setAttribute('muted', '');
         player.video.setAttribute('controls', '');
         player.video.setAttribute('preload', 'metadata');
         player.video.setAttribute('aria-label', 'Accompanying video content');
         var surface = placementSurface(player);
         if (surface && surface.style && !player.floating && !(player.viewport && player.viewport.portal)) surface.style.position = 'relative';
 
-        listenContent(player, player.video, 'playing', function () { markContentPlaying(player); });
+        installOverlayControls(player);
+        listenContent(player, player.video, 'play', function () { if (!player.adMediaActive) player.contentPausedByUser = false; });
+        listenContent(player, player.video, 'playing', function () { markContentPlaying(player); updateContentAdUi(player); });
+        listenContent(player, player.video, 'pause', function () { updateContentAdUi(player); });
+        listenContent(player, player.video, 'volumechange', function () { updateContentAdUi(player); });
         listenContent(player, player.video, 'error', function () {
             if (player.destroyed || player.adMediaActive) return;
             player.contentFailed = true;
             player.container.setAttribute('data-hm-video-content-error', player.contentStarted ? 'playback' : 'load');
+            if (player.nonLinearAdActive && !player.adRules) { retireNonLinearAd(player, 'content-error'); return; }
             // Before preroll, keep the surface alive so the independent VAST
             // request can still run when the placement becomes viewable. After
             // an ad break has completed, a later content failure must not leave
@@ -1201,18 +1391,33 @@
             }
         });
         listenContent(player, player.video, 'timeupdate', function () {
-            if (player.destroyed || player.adRules || player.midRollRequested || player.adBreakPending || !player.contentStarted || player.contentEnded) return;
+            if (player.destroyed || player.adRules || player.midRollRequested || player.midRollConsumedByOverlay || !player.contentStarted || player.contentEnded) return;
             var duration = Number(player.video.duration || 0);
             var current = Number(player.video.currentTime || 0);
             var ratio = Number(player.container.getAttribute('data-hm-video-mid-roll-ratio') || 0.5);
             ratio = Number.isFinite(ratio) ? Math.max(0.1, Math.min(0.9, ratio)) : 0.5;
             if (duration > 1 && current / duration >= ratio) {
+                if (player.adBreakPending) {
+                    if (player.nonLinearAdActive) {
+                        player.midRollConsumedByOverlay = true;
+                        player.container.setAttribute('data-hm-video-midroll-skipped', 'overlay-active');
+                    }
+                    return;
+                }
                 player.midRollRequested = true;
                 requestContentAdBreak(player, ima, vastUrl, 'midroll');
             }
         });
         player.contentEndedHandler = function () {
-            if (player.destroyed || player.contentEnded || player.adBreakPending) return;
+            if (player.destroyed || player.contentEnded || player.adBreakPending && !player.nonLinearAdActive) return;
+            // Content can end beneath a genuine overlay. Do not lose EOS, queue
+            // a missed midroll, or leave a five-second clip pinned indefinitely.
+            if (player.nonLinearAdActive && !player.adRules) {
+                var manager = player.adsManager;
+                player.adRuntimeGeneration += 1;
+                try { if (manager && manager.stop) manager.stop(); } catch (error) {}
+                cleanupContentAdRuntime(player);
+            }
             player.contentEnded = true;
             if (player.adRules) {
                 try {
@@ -1264,6 +1469,7 @@
         }
         state.active = player;
         player.started = true;
+        player.adRequestIntent = adPlaybackIntent(player);
         setStatus(player.container, 'requesting');
 
         function armStartupPhase(phase) {
@@ -1325,7 +1531,7 @@
                 });
                 var dimensions = managerDimensions(player);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
-                if (player.adsManager.setVolume) player.adsManager.setVolume(player.rewarded ? 1 : 0);
+                if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
                 startAdManagerWhenViewable(player, function () {
                     if (!player.destroyed && player.adsManager) {
                         armStartupPhase('media-start');
@@ -1352,8 +1558,8 @@
             request.linearAdSlotHeight = dimensions[1];
             request.nonLinearAdSlotWidth = dimensions[0];
             request.nonLinearAdSlotHeight = Math.max(1, Math.round(dimensions[1] / 3));
-            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.video.autoplay === true);
-            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.video.muted === true);
+            if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.adRequestIntent.autoPlay);
+            if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.adRequestIntent.muted);
             tracePhase('VAST call', player.container, { position: player.currentBreak });
             player.adsLoader.requestAds(request);
             if (player.rewarded) rewardEvent(player.container, 'horus:rewarded-opened', {});
@@ -1384,8 +1590,9 @@
             tag.searchParams.set('correlator', String(player.requestCorrelator || Date.now()));
         }
         var accompanyingAvailable = player.contentMode && !player.contentFailed;
-        tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
-        tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
+        var intent = player.adRequestIntent || adPlaybackIntent(player);
+        tag.searchParams.set('vpmute', intent.muted ? '1' : '0');
+        tag.searchParams.set('vpa', intent.autoPlay ? 'auto' : 'click');
         // GAM sz is inventory targeting, not the IMA rendering surface. Keep
         // explicit single/multi-size targeting stable while responsive inline
         // media grows. AdsRequest separately reports the actual measured area.
@@ -1395,12 +1602,13 @@
         var validTargetingSize = /^[1-9]\d*x[1-9]\d*(?:\|[1-9]\d*x[1-9]\d*)*$/.test(targetingSize)
             && targetingSize.split(/[x|]/).every(function (part) { return Number.isSafeInteger(Number(part)); });
         if (!validTargetingSize) tag.searchParams.set('sz', player.size[0] + 'x' + player.size[1]);
-        // This runtime implements linear IMA video only, not overlay ads.
-        tag.searchParams.set('vad_type', 'linear');
+        // Full manual tags retain their explicit format restriction. Generated
+        // mixed tags omit vad_type during publication, using saved provenance.
+        if (!mixedContentAds(player) && (!player.contentMode || !tag.searchParams.get('vad_type'))) tag.searchParams.set('vad_type', 'linear');
         if (!player.rewarded && accompanyingAvailable) {
             tag.searchParams.set('plcmt', '2');
             if (breakPosition) {
-                var adRulesRequest = tag.searchParams.get('ad_rule') === '1';
+                var adRulesRequest = adRulesTag(tag);
                 if (!adRulesRequest) tag.searchParams.set('vpos', breakPosition);
                 else tag.searchParams.delete('vpos');
                 tag.searchParams.set('vconp', '1');

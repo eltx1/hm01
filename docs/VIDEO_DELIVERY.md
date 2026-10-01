@@ -4,9 +4,13 @@
 
 Quick Monetize's **GAM ad unit path** mode accepts a validated path such as
 `/123456/video` or a supported parent/child network path with nested ad units.
-For Video placements the server builds and saves a linear GAM VAST template.
-The existing complete-tag mode continues accepting third-party VAST URLs.
-Generated tags do not disable fallback, impose a maximum ad duration, or assert
+Ordinary Video placements with valid HTTPS accompanying content default to
+**Linear video + non-linear overlays** (`format_settings.videoAdFormat=mixed`).
+Quick Monetize also offers `video_only`. Rewarded and ad-only inventory retain
+their linear lifecycle. Generated mixed GAM templates omit `vad_type`; generated
+video-only templates use `vad_type=linear`. Both retain `ad_type=video`.
+The complete-tag mode continues accepting third-party VAST URLs.
+Generated tags do not change ad-rule/network settings, disable fallback, impose a maximum ad duration, or assert
 user privacy/consent values. Previously saved publisher constraints are retained.
 
 The selectable video masters are 300×250, 320×180, 336×280, 400×225, 400×300 and
@@ -60,3 +64,75 @@ are no automatic auction retries. VMAP content-resume without preroll retires th
 initial startup watchdog and retains the SDK-owned future schedule. Existing
 consent, viewability, Click Guard and reward-completion requirements remain in
 force. Test fixtures use a simulated IMA boundary and never contact paid demand.
+
+## Mixed-format lifecycle and geometry
+
+Mixed support uses the existing IMA content player and ad display container.
+There is no GPT fallback, second renderer, auction retry, or synthetic impression.
+A true non-linear `LOADED` event resumes content, keeps the SDK layer clickable,
+and leaves content clock/EOS observation attached. `LINEAR_CHANGED` restores the
+correct ownership if the creative changes mode. Linear video and SDK-converted
+full-slot image/text ads continue through the linear pause/resume lifecycle.
+`isLinear()` describes playback mode, not evidence that the asset is a video.
+Diagnostics expose the SDK's current linearity and content type, when available.
+
+The non-linear request area is the full usable media area, conservatively capped
+to the future compact area when floating is enabled. Chrome is excluded. IMA,
+not Horus, derives `afvsz`; no arbitrary size list is added. For example, a
+336×280 compact player can accommodate rectangular image demand, whereas a
+320×180 player fits none of GAM's documented non-linear sizes. This is valid
+reduced eligibility, not a reason to enlarge the compact player or misstate sizes.
+If a true overlay no longer fits after a viewport shrink, it is retired through
+IMA instead of being cropped. No `forceNonLinearFullSlot` flag is enabled.
+See [GAM sizing parameters](https://support.google.com/admanager/answer/10678356?hl=en#afvsz)
+and the [IMA request reference](https://developers.google.com/interactive-media-ads/docs/sdks/html5/client-side/reference/class/google.ima.AdsRequest).
+
+While a true overlay is active, content Play/Pause and Mute controls occupy the
+existing separate 44px chrome rail. No control covers the creative. User pause
+intent survives overlay completion. SDK completion, close, content failure,
+content EOS and player dismissal all release ownership and stale callbacks.
+IMA owns the overlay duration; Horus does not replace it with a video-duration
+countdown. A midpoint reached under an active overlay is consumed rather than
+queued as an immediate back-to-back midroll. EOS retires that overlay and allows
+only the existing one postroll. A true non-linear postroll cannot continue content
+that has already ended and closes cleanly; a linear/full-slot postroll still plays.
+The normal pre/mid/post policy otherwise stays unchanged.
+
+VMAP remains SDK-scheduled and its manager survives between linear breaks. The
+HTML5 IMA compatibility matrix lists VMAP overlays as unsupported; GAM also
+excludes AdSense/AdX overlays when video ad rules are enabled. Mixed mode does
+not silently turn off those rules. Unexpected VMAP non-linear breaks are discarded
+without replacing the remaining schedule. Explicit `ad_rule=1` and VMAP output
+formats suppress Horus `vpos` injection. No network/account setting is changed.
+See [IMA compatibility](https://developers.google.com/interactive-media-ads/docs/sdks/html5/client-side/compatibility)
+and [GAM backfill eligibility](https://support.google.com/admanager/answer/1734048?hl=en).
+
+## Existing generated templates and truthful requests
+
+Publication rebuilds canonical legacy GAM-path templates from widget-level
+`GAM_VIDEO_PATH` provenance, its saved path, selected master and effective format.
+The old/new canonical template must match exactly. A manual URL, modified template,
+or inherited/ambiguous provenance is never treated as permission to remove an
+explicit restriction. Existing `demand:refresh-quick-runtimes` previews and then
+idempotently publishes the changed immutable recipes using its normal apply flow.
+
+Full manual content tags retain explicit `vad_type`, ad rules, privacy and custom
+parameters. A linear-only renderer safely rejects unsupported non-linear responses;
+it does not broaden an explicitly non-linear content tag into a linear auction.
+Other third-party URLs remain byte-for-byte unchanged. The established ad-only
+and rewarded fallback remains linear. The working manual tag was used only as
+structural evidence: its unrelated page URL, `npa=0`, `tfcd=0` and test parameters
+are not copied into generated production requests.
+
+For each request, `vpmute` (1/0), `vpa` (auto/click), IMA playback hints and actual
+manager volume use the same playback intent. Automatic content-timeline breaks
+remain auto; click/rewarded requests retain click intent. Page/description,
+consent, viewability and break-position signals remain truthful. A returned 303
+is still no-fill, not proof of a broken player or a guaranteed fixable filter.
+The earlier successful manual tag subsequently also returned 303 in the official
+inspector. Mixed support expands supported creative formats; it cannot promise
+auction fill or prove why any individual request was empty.
+
+Regression fixtures are deterministic IMA boundary doubles and local content,
+never paid ad requests. Their rendering and event tests verify Horus behavior,
+not Google's live auction eligibility or the exact creative returned in VSI.
