@@ -11,6 +11,7 @@ use App\Services\Reporting\GamAdUnitReportClient;
 use App\Services\Reporting\GamReportMoneyParser;
 use App\Services\Reporting\GamReportPending;
 use App\Services\Reporting\PerformanceMetrics;
+use App\Services\Reporting\SiteGamReportScope;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use RuntimeException;
@@ -30,6 +31,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
     public function __construct(
         private readonly GamAdUnitReportClient $google,
         private readonly GamReportMoneyParser $money,
+        private readonly SiteGamReportScope $scopes,
     ) {}
 
     public function fetch(ReportSourceConnection $connection, CarbonInterface $from, CarbonInterface $to,
@@ -56,7 +58,12 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         if (strtoupper((string) $connection->currency) !== $reportCurrency) {
             throw new RuntimeException('Site GAM reporting must use the canonical Horus report currency. Reconnect or normalize this reporting source.');
         }
-        $key = hash('sha256', $granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.$reportCurrency.'|'.implode(',', array_keys(self::COLUMNS)));
+        $scope = $this->scopes->ensure($binding);
+        if ($from->toDateString() < $scope['effective_from']) {
+            throw new RuntimeException('These dates precede the exact-site reporting cutover. Existing balances are preserved; compare and approve historical corrections separately.');
+        }
+        $connection->refresh();
+        $key = hash('sha256', $scope['fingerprint'].'|'.$granularity->value.'|'.$from->toDateString().'|'.$to->toDateString().'|'.$reportCurrency.'|'.implode(',', array_keys(self::COLUMNS)));
         $configuration = $connection->configuration ?? [];
         $jobId = data_get($configuration, 'google_jobs.'.$key.'.id');
         if (! $jobId) {
@@ -68,9 +75,9 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             }
             $date = fn (CarbonInterface $day): array => ['year' => $day->year, 'month' => $day->month, 'day' => $day->day];
             $query = [
-                'dimensions' => $granularity === ReportGranularity::Hourly ? ['DATE', 'HOUR', 'AD_UNIT_ID'] : ['DATE', 'AD_UNIT_ID'],
+                'dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'],
                 'columns' => array_keys(self::COLUMNS), 'adUnitView' => 'FLAT', 'dateRangeType' => 'CUSTOM_DATE',
-                'startDate' => $date($from), 'endDate' => $date($to), 'reportCurrency' => $reportCurrency,
+                'startDate' => $date($from), 'endDate' => $date($to), 'reportCurrency' => $reportCurrency, 'timeZoneType' => 'PUBLISHER',
                 'statement' => ['query' => 'WHERE AD_UNIT_ID = :unit', 'values' => [
                     ['key' => 'unit', 'value' => ['__type' => 'NumberValue', 'value' => $binding->ad_unit_id]],
                 ]],
@@ -83,20 +90,25 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             $configuration['source_network_currency'] = (string) $network['currencyCode'];
             $configuration['google_jobs'][$key] = [
                 'id' => $jobId, 'requested_at' => now()->toIso8601String(),
+                'scope_fingerprint' => $scope['fingerprint'],
                 'confirmed_report_currency' => $this->money->confirmedCurrency($response, $reportCurrency),
             ];
-            $connection->update(['configuration' => $configuration]);
+            $this->scopes->checkpoint($binding, $scope, $key, $configuration['google_jobs'][$key], (string) $network['currencyCode']);
+            $connection->refresh();
+        }
+        if (data_get($configuration, 'google_jobs.'.$key.'.scope_fingerprint') !== $scope['fingerprint']) {
+            throw new RuntimeException('The pending Google report does not prove the current website scope.');
         }
         $status = $this->google->call($binding->gamConnection, 'ReportService', 'getReportJobStatus', ['reportJobId' => $jobId]);
         if (($status['value'] ?? '') === 'FAILED') {
             unset($configuration['google_jobs'][$key]);
-            $connection->update(['configuration' => $configuration]);
+            $this->scopes->checkpoint($binding, $scope, $key, null);
             throw new RuntimeException('Google could not complete the ad-unit report. The request will be retried.');
         }
         if (($status['value'] ?? '') !== 'COMPLETED') {
             if (CarbonImmutable::parse($configuration['google_jobs'][$key]['requested_at'])->lt(now()->subHours(6))) {
                 unset($configuration['google_jobs'][$key]);
-                $connection->update(['configuration' => $configuration]);
+                $this->scopes->checkpoint($binding, $scope, $key, null);
                 throw new RuntimeException('Google report preparation expired. A new request will be scheduled automatically.');
             }
             throw new GamReportPending('Google is preparing the ad-unit report; synchronization will resume automatically.');
@@ -110,14 +122,16 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 $to,
                 $granularity,
                 data_get($configuration, 'google_jobs.'.$key.'.confirmed_report_currency'),
+                $scope,
             );
         } catch (\Throwable $exception) {
             // A completed Google job can still yield an invalid, stale, or
             // unexpected CSV. Do not pin retries to that same completed job.
             unset($configuration['google_jobs'][$key]);
-            $connection->update(['configuration' => $configuration]);
+            $this->scopes->checkpoint($binding, $scope, $key, null);
             throw $exception;
         }
+        $this->scopes->assertCurrent($binding, $scope);
 
         return [
             'rows' => $rows, 'external_report_id' => 'gam-unit:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
@@ -128,7 +142,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
     }
 
     private function parse(string $csv, SiteGamReportBinding $binding, ReportSourceConnection $connection,
-        CarbonInterface $from, CarbonInterface $to, ReportGranularity $granularity, ?string $confirmedReportCurrency): array
+        CarbonInterface $from, CarbonInterface $to, ReportGranularity $granularity, ?string $confirmedReportCurrency, array $scope): array
     {
         $stream = fopen('php://temp', 'w+');
         fwrite($stream, $csv);
@@ -139,7 +153,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 throw new RuntimeException('The Google report has no CSV header.');
             }
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
-            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...array_map(fn ($key) => 'Column.'.$key, array_keys(array_diff_key(self::COLUMNS, PerformanceMetrics::GOOGLE_COLUMNS)))];
+            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($key) => 'Column.'.$key, array_keys(array_diff_key(self::COLUMNS, PerformanceMetrics::GOOGLE_COLUMNS)))];
             if ($granularity === ReportGranularity::Hourly) {
                 $required[] = 'Dimension.HOUR';
             }
@@ -147,6 +161,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 throw new RuntimeException('The Google report is missing required dimensions or metrics.');
             }
             $buckets = [];
+            $seen = [];
             while (($values = fgetcsv($stream, escape: '')) !== false) {
                 if ($values === [null]) {
                     continue;
@@ -162,13 +177,16 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     throw new RuntimeException('The Google report contains data outside the selected ad unit or dates.');
                 }
                 $key = $day.':'.$hour;
-                if (isset($buckets[$key])) {
-                    throw new RuntimeException('The Google report contains duplicate date/hour rows.');
+                $siteName = strtolower(preg_replace('/\.$/D', '', trim($row['Dimension.SITE_NAME'])));
+                $identity = $key.'|'.$siteName;
+                if (isset($seen[$identity])) {
+                    throw new RuntimeException('The Google report contains duplicate date/hour/site rows.');
                 }
-                $buckets[$key] = [];
+                $seen[$identity] = true;
+                $metrics = [];
                 foreach (self::COLUMNS as $column => $field) {
                     if (! array_key_exists('Column.'.$column, $row)) {
-                        $buckets[$key][$field] = null;
+                        $metrics[$field] = null;
                         continue;
                     }
                     $rawValue = $row['Column.'.$column];
@@ -184,8 +202,13 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     if ($field !== 'revenue_micros' && $value < 0) {
                         throw new RuntimeException('The Google report contains a negative delivery metric.');
                     }
-                    $buckets[$key][$field] = $value;
+                    $metrics[$field] = $value;
                 }
+                // Keep the same Google Total metrics, but only for this exact
+                // registered hostname. Do not include siblings, www, parents,
+                // unknown/not-applicable sites or other units. No PQL Site
+                // filterability is assumed; SITE_NAME must exist in the CSV.
+                if ($siteName === $scope['hostname']) $buckets[$key] = $metrics;
             }
             $rows = [];
             $now = CarbonImmutable::now($connection->timezone);
@@ -200,6 +223,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                         'organization_id' => $binding->organization_id, 'site_id' => $binding->site_id,
                         'publisher_id' => $binding->site->publisher_id, 'gam_connection_id' => $binding->gam_connection_id,
                         'gam_ad_unit_id' => $binding->ad_unit_id,
+                        'gam_report_site' => $scope['hostname'], 'gam_report_scope' => $scope['fingerprint'],
                         // CSV_DUMP money is micros. The existing ledger stores hundredths, rounded once per aggregate.
                         'gross_revenue_minor' => ($micros < 0 ? -1 : 1) * intdiv(abs($micros) + 5000, 10000),
                     ];
