@@ -853,7 +853,7 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
     assert.equal(url.searchParams.get('plcmt'), null);
-    assert.equal(url.searchParams.get('sz'), '400x225');
+    assert.equal(url.searchParams.get('sz'), '400x300');
     assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
 });
@@ -1491,7 +1491,7 @@ for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300]
         const runtime = runVideo(target);
         await tick();
         const request = runtime.requested[0], tag = new URL(request.adTagUrl);
-        assert.equal(tag.searchParams.get('sz'), `${width}x${height}`);
+        assert.equal(tag.searchParams.get('sz'), '1x1');
         assert.equal(tag.searchParams.get('vad_type'), 'linear');
         assert.equal(tag.searchParams.get('nofb'), '1');
         assert.equal(tag.searchParams.get('max_ad_duration'), '15000');
@@ -1577,8 +1577,73 @@ test('measured dimensions reflect a constrained player box rather than its maste
     target.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, width: 280, height: 210, right: 280, bottom: 210 });
     const runtime = runVideo(target);
     await tick();
-    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('sz'), '280x210');
+    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('sz'), '640x480');
     assert.equal(runtime.requested[0].linearAdSlotWidth, 280);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 210);
     target.__hmDestroy('dismissed');
 });
+
+for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480]]) {
+    for (const configured of [`${width}x${height}`, '300x250|640x480', '1x1', null, '', '[width]x[height]', '0x0', '300x250|oops']) {
+        test(`enlarged inline ${width}x${height} keeps independent GAM targeting ${configured}`, async () => {
+            const tag = new URL('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&cust_params=section%3Dnews');
+            if (configured !== null) tag.searchParams.set('sz', configured);
+            const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from(tag.href).toString('base64'),
+                'data-hm-video-width': String(width), 'data-hm-video-height': String(height) };
+            const target = container(attrs), actualWidth = 900, actualHeight = 900 * height / width;
+            target.clientWidth = actualWidth;
+            target.getBoundingClientRect = () => ({ top: 0, left: 0, width: actualWidth, height: actualHeight, right: actualWidth, bottom: actualHeight });
+            const runtime = runVideo(target);
+            await tick();
+            const request = runtime.requested[0], resolved = new URL(request.adTagUrl);
+            const valid = configured === `${width}x${height}` || configured === '300x250|640x480' || configured === '1x1';
+            assert.equal(resolved.searchParams.get('sz'), valid ? configured : `${width}x${height}`);
+            assert.equal(resolved.searchParams.get('cust_params'), 'section=news');
+            assert.equal(request.linearAdSlotWidth, actualWidth);
+            assert.equal(request.linearAdSlotHeight, Math.round(actualHeight));
+            assert.equal(target.style.maxWidth, '960px');
+            assert.equal(target.style.aspectRatio, `${width} / ${height}`);
+            assert.equal(runtime.requested.length, 1);
+            target.__hmDestroy('dismissed');
+        });
+    }
+}
+
+test('client-width fallback reports an enlarged real layout instead of capping to the floating master', async () => {
+    const target = container({ 'data-hm-video-direct': '1', 'data-hm-video-width': '320', 'data-hm-video-height': '180',
+        'data-hm-vast-url': Buffer.from('https://ads.example/vast?sz=unchanged').toString('base64') });
+    target.clientWidth = 672;
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(runtime.requested[0].linearAdSlotWidth, 672);
+    assert.equal(runtime.requested[0].linearAdSlotHeight, 378);
+    assert.equal(runtime.requested[0].adTagUrl, 'https://ads.example/vast?sz=unchanged');
+    target.__hmDestroy('dismissed');
+});
+
+for (const gate of ['background', 'under-half-visible']) {
+    test(`a pending floating manager waits for actual foreground viewability: ${gate}`, async () => {
+        const target = container({ 'data-hm-video-direct': '1',
+            'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64') });
+        const runtime = runVideo(target, { deferManagerLoad: true });
+        await tick();
+        assert.equal(runtime.requested.length, 1);
+        target.__hmVideoPlayer.floating = true;
+        if (gate === 'background') runtime.sandbox.document.visibilityState = 'hidden';
+        else runtime.intersectionObservers[0].emit(0.25);
+        let starts = 0;
+        const manager = runtime.managers[0], originalStart = manager.start.bind(manager);
+        manager.start = () => { starts++; originalStart(); };
+        runtime.loaders[0].emitManagerLoaded();
+        assert.equal(manager.started, false);
+        runtime.intersectionObservers[0].emit(gate === 'background' ? 1 : 0.49);
+        assert.equal(manager.started, false);
+        runtime.sandbox.document.visibilityState = 'visible';
+        runtime.intersectionObservers[0].emit(0.6);
+        runtime.intersectionObservers[0].emit(1);
+        assert.equal(manager.started, true);
+        assert.equal(starts, 1);
+        assert.equal(runtime.requested.length, 1);
+        target.__hmDestroy('dismissed');
+    });
+}
