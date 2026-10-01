@@ -288,6 +288,16 @@ final class PlacementPresetBuilder
         return $this->inventory->updatePlacement($placement, $data, $actor, false);
     }
 
+    public function selectVideoAdFormat(Placement $placement, string $format, User $actor): Placement
+    {
+        $data = VideoAdFormat::apply([
+            'type' => $placement->type->value,
+            'format_settings' => (array) ($placement->format_settings ?? []),
+        ], $format);
+
+        return $this->inventory->updatePlacement($placement, $data, $actor, false);
+    }
+
     private function defaultQuickMountTarget(string $preset): string
     {
         return match ($preset) {

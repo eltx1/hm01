@@ -5,6 +5,7 @@ namespace App\Services\Demand;
 use App\Enums\DemandApprovalStatus;
 use App\Models\DemandPlacement;
 use App\Models\DemandWidget;
+use App\Services\Inventory\VideoAdFormat;
 use App\Services\Security\PublicProviderOriginValidator;
 use RuntimeException;
 
@@ -72,10 +73,25 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (! $widget?->direct_tag_template) return parent::generateDirectTag($placement);
 
         $html = trim((string) $widget->direct_tag_template);
+        $generatedVideo = false;
+        if ($quickManaged && data_get($widget->configuration, 'input_kind') === 'GAM_VIDEO_PATH'
+            && $placement->placement->type->value === 'VIDEO') {
+            $policy = $this->quickPlacementSizePolicy($placement);
+            $regenerated = (new GoogleVideoAdTag())->regenerate(
+                $html,
+                (string) data_get($widget->configuration, 'gam_ad_unit_path', ''),
+                $policy['fallback'],
+                VideoAdFormat::resolve('VIDEO', (array) ($placement->placement->format_settings ?? [])),
+            );
+            if ($regenerated !== null) {
+                $html = $regenerated;
+                $generatedVideo = true;
+            }
+        }
         $adUnitPath = (new GoogleAdUnitPath())->parse($html);
         if ($adUnitPath !== null) return $this->googleAdUnitPathRecipe($adUnitPath, $configuration, $placement);
         $vast = app(VastTagUrlParser::class)->parse($html);
-        if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement);
+        if ($vast !== null) return $this->vastRecipe($vast, $configuration, $placement, $generatedVideo);
 
         $this->assertSafeCustomHtml($html);
         if ($quickManaged) $this->assertNoQuickSelfNavigation($html);
@@ -207,7 +223,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
     }
 
     /** @param array{url:string,origin:string} $vast */
-    private function vastRecipe(array $vast, array $configuration, DemandPlacement $placement): array
+    private function vastRecipe(array $vast, array $configuration, DemandPlacement $placement, bool $generatedVideo = false): array
     {
         $placementType = $placement->placement->type->value;
         $rewarded = $placementType === 'REWARDED';
@@ -232,16 +248,16 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'data-hm-video-size-map' => json_encode($policy['mappings'], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             'data-hm-video-muted' => $rewarded ? '0' : '1',
             'data-hm-video-autoplay' => $rewarded ? '0' : '1',
+            'data-hm-video-ad-format' => VideoAdFormat::resolve($placementType, $formatSettings),
         ];
+        if ($generatedVideo) $attributes['data-hm-vast-generated'] = 'gam_video_path';
         $attributes += $this->vastUrlAttributes($vast['url']);
         if (! $rewarded) {
             if (($formatSettings['floatingPosition'] ?? null) === 'bottom_right') {
                 $attributes['data-hm-video-inline-to-floating'] = '1';
             }
-            $contentUrl = trim((string) config('horus.video_content_url'));
-            if ($contentUrl !== ''
-                && filter_var($contentUrl, FILTER_VALIDATE_URL)
-                && strtolower((string) parse_url($contentUrl, PHP_URL_SCHEME)) === 'https') {
+            $contentUrl = VideoAdFormat::contentUrl();
+            if ($contentUrl !== null) {
                 $attributes['data-hm-video-content-url'] = $contentUrl;
                 $attributes['data-hm-video-content-mode'] = 'accompanying';
                 $attributes['data-hm-video-breaks'] = 'pre,mid,post';

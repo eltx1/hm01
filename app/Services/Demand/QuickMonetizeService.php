@@ -19,6 +19,7 @@ use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\SiteConfigurationBuilder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Inventory\VideoAdFormat;
 use App\Services\Operations\PlatformControlService;
 use App\Services\Security\PublicProviderOriginValidator;
 use Illuminate\Support\Facades\DB;
@@ -212,7 +213,7 @@ final class QuickMonetizeService
     }
 
     /** @return array{account:DemandAccount,placement:Placement,placements:array<int,Placement>} */
-    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO', ?string $videoMasterSize = null): array
+    public function activate(Site $site, DemandNetwork $network, User $actor, string $tag, ?Placement $existingPlacement = null, ?string $preset = null, ?string $placementName = null, string $inputKind = 'AUTO', ?string $videoMasterSize = null, ?string $videoAdFormat = null): array
     {
         $tag = trim($tag);
         $inputKind = strtoupper(trim($inputKind));
@@ -285,7 +286,7 @@ final class QuickMonetizeService
         if (count($isolationOrigins) > 20) throw ValidationException::withMessages(['tag' => 'Quick Monetize supports at most 20 distinct provider resource origins per tag. Use Advanced setup for more complex provider tags.']);
         if ($existingPlacement) $this->assertPlacementReady($site, $existingPlacement);
 
-        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $adUnitPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName, $videoMasterSize, $gamVideoPath): array {
+        return DB::transaction(function () use ($site, $network, $actor, $tag, $vast, $adUnitPath, $scriptOrigins, $resourceOrigins, $isolationOrigins, $existingPlacement, $preset, $placementName, $videoMasterSize, $videoAdFormat, $gamVideoPath): array {
             $bundle = ($existingPlacement === null && $preset === 'responsive_display')
                 || data_get($existingPlacement?->metadata, 'responsive_bundle') === 'v1';
             $placement = $existingPlacement;
@@ -303,6 +304,12 @@ final class QuickMonetizeService
                     $placement = $this->placements->selectVideoMasterSize($placement, $videoMasterSize, $actor);
                 }
             }
+            if ($videoAdFormat !== null && $videoAdFormat !== '') {
+                if ($bundle) {
+                    throw ValidationException::withMessages(['video_ad_format' => 'Video ad formats require an ordinary Video placement.']);
+                }
+                $placement = $this->placements->selectVideoAdFormat($placement, $videoAdFormat, $actor);
+            }
             $placements ??= [$placement];
             foreach ($placements as $placement) {
                 $this->assertPlacementReady($site, $placement);
@@ -314,7 +321,7 @@ final class QuickMonetizeService
             if ($gamVideoPath !== null) {
                 $master = $placement->sizes->first(fn ($size): bool => $size->is_active && $size->size_type === 'FIXED' && $size->width && $size->height);
                 if (! $master) throw ValidationException::withMessages(['video_master_size' => 'The video placement needs an active master size.']);
-                $tag = (new GoogleVideoAdTag())->build($gamVideoPath, [(int) $master->width, (int) $master->height]);
+                $tag = (new GoogleVideoAdTag())->build($gamVideoPath, [(int) $master->width, (int) $master->height], VideoAdFormat::resolve('VIDEO', (array) ($placement->format_settings ?? [])));
                 $vast['url'] = $tag;
             }
 

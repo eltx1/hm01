@@ -15,6 +15,7 @@ use App\Services\Demand\QuickMonetizeService;
 use App\Services\Inventory\PlacementPresetBuilder;
 use App\Services\Inventory\PlacementPresetCatalog;
 use App\Services\Inventory\VideoMasterSize;
+use App\Services\Inventory\VideoAdFormat;
 use App\Services\Operations\PlatformControlService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -74,6 +75,7 @@ final class DirectDemandQuickMonetizeController extends Controller
                 'inputType' => $gamVideoPath || in_array($kind, ['GAM_AD_UNIT_PATH', 'GAM_REWARDED_PATH'], true) ? 'GAM_AD_UNIT_PATH' : 'PROVIDER_TAG',
                 'tag' => $gamVideoPath ?: (string) $widget->direct_tag_template,
                 'videoMasterSize' => (string) data_get($placements->get($placementId)?->format_settings, 'videoMasterSize', ''),
+                'videoAdFormat' => (string) data_get($placements->get($placementId)?->format_settings, 'videoAdFormat', ''),
             ];
         }
 
@@ -111,6 +113,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             'placement_id' => ['nullable', 'ulid', 'exists:placements,id'],
             'placement_name' => ['nullable', 'string', 'max:255'],
             'video_master_size' => ['nullable', Rule::in(array_keys(VideoMasterSize::choices()))],
+            'video_ad_format' => ['nullable', Rule::in(array_keys(VideoAdFormat::choices()))],
             'tag' => ['required', 'string', 'max:60000'],
             'tag_input_type' => ['nullable', Rule::in(['AUTO', 'PROVIDER_TAG', 'GAM_AD_UNIT_PATH'])],
         ]);
@@ -177,6 +180,7 @@ final class DirectDemandQuickMonetizeController extends Controller
             $data['placement_name'] ?? null,
             (string) ($data['tag_input_type'] ?? 'AUTO'),
             $data['video_master_size'] ?? null,
+            $data['video_ad_format'] ?? null,
         );
         $placement = $result['placement'];
         $account = $result['account'];

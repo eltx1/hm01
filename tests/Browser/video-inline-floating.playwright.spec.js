@@ -49,7 +49,7 @@ async function openPlayer(page, options = {}) {
             Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.testVisibility });
         }
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
-        window.managerInits = 0; window.managerResizes = [];
+        window.managerInits = 0; window.managerResizes = []; window.managerStops = 0; window.adClicks = 0; window.contentCompleteCalls = 0; window.videoManagers = [];
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
         window.contentPlayCalls = 0; window.contentPauseCalls = 0; window.contentLoadCalls = 0;
         const nativeLoad = HTMLMediaElement.prototype.load;
@@ -80,14 +80,28 @@ async function openPlayer(page, options = {}) {
             HTMLMediaElement.prototype.play = function () { window.contentPlayCalls++; return Promise.resolve(); };
             HTMLMediaElement.prototype.pause = function () { window.contentPauseCalls++; };
         }
+        if (options.rejectContentAutoplay) {
+            const nativePlay = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function (...args) {
+                if (!window.allowContentPlay) return Promise.reject(new DOMException('User activation required', 'NotAllowedError'));
+                return nativePlay.apply(this, args);
+            };
+        }
         class Manager {
-            constructor() { this.events = {}; window.videoManager = this; }
+            constructor() {
+                this.events = {};
+                this.ad = { linear: !options.nonlinear, width: 300, height: 50, minSuggestedDuration: 0, ...(options.ads?.[window.videoManagers.length] || options.ad || {}) };
+                window.videoManagers.push(this); window.videoManager = this;
+            }
             addEventListener(name, fn) { (this.events[name] ||= []).push(fn); }
-            emit(name) { (this.events[name] || []).forEach(fn => fn()); }
+            getAd() { return this.adApi ||= { isLinear: () => this.ad.linear, getWidth: () => this.ad.width, getHeight: () => this.ad.height, getMinSuggestedDuration: () => this.ad.minSuggestedDuration, getDuration: () => 10 }; }
+            emit(name) { (this.events[name] || []).slice().forEach(fn => fn({ getAd: () => this.getAd() })); }
+            discardAdBreak() { this.discardCalls = (this.discardCalls || 0) + 1; this.emit('content-resume'); }
+            stop() { window.managerStops++; if (!options.noStopEvents) { this.emit('complete'); this.emit('all-completed'); } }
             getCuePoints() { return []; }
             init(width, height) { window.managerInits++; this.dimensions = [width, height]; }
-            setVolume() {}
-            start() { window.adStarts++; this.emit('content-pause'); this.emit('started'); }
+            setVolume(value) { this.volume = value; }
+            start() { window.adStarts++; if (this.ad.linear) this.emit('content-pause'); this.emit('loaded'); this.emit('started'); }
             resize(width, height) { window.managerResizes.push([width, height]); this.dimensions = [width, height]; }
             destroy() { window.adDestroys++; if (options.pauseOnDestroy) document.querySelector('video')?.pause(); }
         }
@@ -98,6 +112,7 @@ async function openPlayer(page, options = {}) {
                     iframe.title = 'Deterministic IMA advertisement fixture';
                     iframe.style.cssText = 'display:block;width:100%;height:100%;border:0';
                     iframe.srcdoc = '<html><head><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:grid;place-items:center;background:radial-gradient(ellipse at 75% 10%,#224b7a,transparent 65%),linear-gradient(150deg,#050b1e,#102b49);color:#f6f8ff;font:14px system-ui,sans-serif;text-align:center}small{display:block;margin-bottom:14px;color:#ffd66b;font-size:10px;letter-spacing:.18em}strong{font-weight:500;letter-spacing:.02em}span{display:block;margin-top:12px;color:#9da9c2;font-size:10px}</style></head><body><div><small>HORUS MEDIA</small><strong>Every story has a next chapter</strong><span>Local ad fixture · No live inventory</span></div></body></html>';
+                    if (options.nonlinear) iframe.srcdoc = `<html><head><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}#creative{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);width:${options.ad?.width || 300}px;height:${options.ad?.height || 50}px;display:flex;align-items:center;justify-content:center;padding-right:30px;border:1px solid #eeb952;border-radius:5px;background:#112c49;color:white;font:12px system-ui,sans-serif;cursor:pointer}#close{position:absolute;right:3px;top:3px;width:24px;height:24px;border:0;border-radius:3px;background:#fff;color:#112c49;cursor:pointer}</style></head><body><div id="creative" role="link" tabindex="0" onclick="parent.adClicks++">Local nonlinear ad · Learn more<button id="close" aria-label="Close ad" onclick="event.stopPropagation();parent.videoManager.emit('user-close')">×</button></div></body></html>`;
                     iframe.dataset.testIma = '1'; iframe.addEventListener('load', () => window.imaFrameLoads++);
                     layer.appendChild(iframe); this.frame = iframe;
                 }
@@ -110,7 +125,9 @@ async function openPlayer(page, options = {}) {
                 requestAds(request) {
                     window.adRequests++;
                     window.lastAdTagUrl = request.adTagUrl || null;
+                    window.lastAdPlaybackIntent = { autoPlay: request.willAutoPlay, muted: request.willPlayMuted };
                     window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
+                    window.lastNonlinearDimensions = [request.nonLinearAdSlotWidth, request.nonLinearAdSlotHeight];
                     this.events.manager({ getAdsManager: (_video, settings) => {
                         window.lastRenderingSettings = {
                             enablePreloading: settings.enablePreloading,
@@ -121,12 +138,12 @@ async function openPlayer(page, options = {}) {
                     } });
                 }
                 destroy() {}
-                contentComplete() {}
+                contentComplete() { window.contentCompleteCalls++; }
             },
-            AdsRequest: class { setAdWillAutoPlay() {} setAdWillPlayMuted() {} setContinuousPlayback() {} },
+            AdsRequest: class { setAdWillAutoPlay(value) { this.willAutoPlay = value; } setAdWillPlayMuted(value) { this.willPlayMuted = value; } setContinuousPlayback() {} },
             AdsRenderingSettings: class {}, AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: 'manager' } },
             AdErrorEvent: { Type: { AD_ERROR: 'ad-error' } }, ViewMode: { NORMAL: 'normal' },
-            AdEvent: { Type: { LOADED: 'loaded', STARTED: 'started', COMPLETE: 'complete', SKIPPED: 'skipped', ALL_ADS_COMPLETED: 'all-completed', CONTENT_PAUSE_REQUESTED: 'content-pause', CONTENT_RESUME_REQUESTED: 'content-resume' } },
+            AdEvent: { Type: { LOADED: 'loaded', STARTED: 'started', COMPLETE: 'complete', SKIPPED: 'skipped', ALL_ADS_COMPLETED: 'all-completed', CONTENT_PAUSE_REQUESTED: 'content-pause', CONTENT_RESUME_REQUESTED: 'content-resume', LINEAR_CHANGED: 'linear-changed', USER_CLOSE: 'user-close' } },
         } }; };
         if (options.noObserver) window.IntersectionObserver = undefined;
         if (options.delayedSdk) {
@@ -139,6 +156,7 @@ async function openPlayer(page, options = {}) {
         // Deliberately omit the child floating attribute: cached pre-fix recipes
         // must still work through the loader's authoritative placement metadata.
         if (options.content) attributes['data-hm-video-content-url'] = 'https://reader.example/content.mp4';
+        if (options.adFormat) attributes['data-hm-video-ad-format'] = options.adFormat;
         const videoSettings = { autoMount: false, position: options.alwaysFloating ? 'bottom_right' : options.inlineOnly ? 'inline' : 'inline_to_bottom_right', floatingPosition: options.inlineOnly ? null : 'bottom_right', closeable: true, closeOutside: true };
         const placements = [{ code: 'video', type: 'VIDEO', format: { settings: videoSettings } }];
         const directPlacements = { video: { enabled: true, candidates: [{ network: 'TEST', tag: {
@@ -973,4 +991,237 @@ test('portal chrome does not count toward the media viewability needed to start 
     await scrollPage(page, partialScroll + 60);
     await rememberPlayingAd(page);
     await expectSamePlayingAd(page);
+});
+
+// These tests inspect actual browser layout and decoded content while IMA itself
+// remains an explicitly deterministic local test double, never a paid auction.
+test('mixed nonlinear creative stays clickable over decoded content and external content controls survive repeated inline-floating cycles', async ({ page }, testInfo) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, nonlinear: true, master: [336, 280], transformed: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/mixed-fixture&output=vast&env=vp' });
+    await expectDecodedContent(page);
+    const video = page.locator('video');
+    // Keep native 1x playback: WebKit/GStreamer rate changes can overwrite mute
+    // independently of this runtime, invalidating the initial-muted assertion.
+    const surface = page.locator('[data-placement="video"]');
+    // This enlarged 640x533 inline creative initially extends below a desktop
+    // viewport. Do not let iframe/control clicks trigger scrollIntoView on a
+    // fixed portal while its rAF handler is repositioning it from the anchor.
+    const inlineScroll = Math.max(0, await surface.evaluate(el => el.getBoundingClientRect().top + scrollY) - 64);
+    const expectFullyVisibleInline = async () => {
+        await expect.poll(() => surface.evaluate(el => {
+            const box = el.getBoundingClientRect();
+            return Math.abs(box.top - 64) < 1 && box.bottom <= innerHeight - 16
+                && getComputedStyle(el).clipPath === 'none';
+        })).toBe(true);
+    };
+    await scrollPage(page, inlineScroll);
+    await expectFullyVisibleInline();
+    await attachLayout(page, testInfo, 'mixed-nonlinear-before-interaction');
+    await testInfo.attach('mixed-nonlinear-before-interaction-geometry', {
+        contentType: 'application/json',
+        body: JSON.stringify(await surface.evaluate(el => ({
+            scrollY, clipPath: getComputedStyle(el).clipPath,
+            boxes: Object.fromEntries([
+                ['surface', el], ['media', el.querySelector('video')],
+                ['play', el.querySelector('[data-hm-video-content-control="play"]')],
+                ['mute', el.querySelector('[data-hm-video-content-control="mute"]')],
+                ['iframe', el.querySelector('[data-test-ima]')],
+            ].map(([name, node]) => [name, node?.getBoundingClientRect().toJSON()])),
+        }))),
+    });
+    // The requested muted autoplay intent must survive native media insertion
+    // and loading before any user control can change it, including in WebKit.
+    const toggle = page.locator('[data-hm-video-content-control="play"]');
+    const mute = page.locator('[data-hm-video-content-control="mute"]');
+    await expect.poll(() => video.evaluate(el => ({ muted: el.muted, defaultMuted: el.defaultMuted })))
+        .toEqual({ muted: true, defaultMuted: true });
+    await expect(mute).toHaveAttribute('aria-label', 'Unmute video content');
+    expect(await page.evaluate(() => window.lastAdPlaybackIntent)).toEqual({ autoPlay: true, muted: true });
+    expect(await page.evaluate(() => ({
+        muted: new URL(window.lastAdTagUrl).searchParams.get('vpmute'),
+        autoplay: new URL(window.lastAdTagUrl).searchParams.get('vpa'),
+        volume: window.videoManager.volume,
+    }))).toEqual({ muted: '1', autoplay: 'auto', volume: 0 });
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'auto');
+    const creative = page.frameLocator('[data-test-ima]').locator('#creative');
+    await expect(creative).toBeVisible();
+    await creative.click({ position: { x: 30, y: 25 } });
+    await expect.poll(() => page.evaluate(() => window.adClicks)).toBe(1);
+    await expect(toggle).toBeVisible();
+    await expect(mute).toBeVisible();
+    for (const control of [toggle, mute]) {
+        await expect.poll(() => control.evaluate(button => {
+            const box = button.getBoundingClientRect(), media = document.querySelector('video').getBoundingClientRect();
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return box.width >= 44 && box.height >= 44 && box.bottom <= media.top + 1 && (hit === button || button.contains(hit));
+        })).toBe(true);
+    }
+    await toggle.click();
+    await expect.poll(() => video.evaluate(el => el.paused)).toBe(true);
+    await mute.click();
+    await expect.poll(() => video.evaluate(el => el.muted)).toBe(false);
+    await mute.click();
+    await expect.poll(() => video.evaluate(el => el.muted)).toBe(true);
+    await toggle.click();
+    await expect.poll(() => video.evaluate(el => el.paused)).toBe(false);
+    expect(await page.evaluate(() => window.adClicks)).toBe(1);
+    await rememberPlayingAd(page);
+    const original = await inlineGeometry(page);
+    await attachLayout(page, testInfo, 'mixed-nonlinear-decoded-inline');
+    for (let cycle = 0; cycle < 2; cycle++) {
+        await scrollPage(page, 1400);
+        await assertFloating(page);
+        await expectCompactFloatingGeometry(page, [336, 280]);
+        await expectSamePlayingAd(page);
+        await expect(toggle).toBeVisible();
+        await expect(mute).toBeVisible();
+        if (!cycle) await attachLayout(page, testInfo, 'mixed-nonlinear-decoded-floating');
+        await scrollPage(page, inlineScroll);
+        await expectInline(page, original);
+        await expectFullyVisibleInline();
+        await expectSamePlayingAd(page);
+    }
+    await attachLayout(page, testInfo, 'mixed-nonlinear-decoded-returned');
+    await page.frameLocator('[data-test-ima]').getByRole('button', { name: 'Close ad' }).click();
+    await expect(page.locator('[data-test-ima]')).toHaveCount(0);
+    await expect(page.locator('[data-placement="video"]')).toBeVisible();
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'none');
+    await expect(toggle).toBeHidden();
+    await expect(mute).toBeHidden();
+});
+
+test('mixed nonlinear five-second content EOS retires the overlay and exactly one postroll, including stale duplicate callbacks', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, nonlinear: true, noStopEvents: true, master: [336, 280],
+        ads: [{ linear: false, width: 300, height: 50, minSuggestedDuration: 10 }, { linear: true }] });
+    await expectDecodedContent(page);
+    await page.evaluate(() => {
+        const video = document.querySelector('video');
+        Object.defineProperty(video, 'duration', { configurable: true, value: 5 });
+        video.currentTime = 2.6; video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    await scrollPage(page, 1400);
+    await assertFloating(page);
+    await page.evaluate(() => {
+        const video = document.querySelector('video');
+        window.overlayManager = window.videoManager;
+        video.currentTime = 5; video.dispatchEvent(new Event('ended'));
+    });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    expect(await page.evaluate(() => window.managerStops)).toBe(1);
+    await page.evaluate(() => {
+        for (const event of ['user-close', 'complete', 'all-completed', 'content-resume']) window.overlayManager.emit(event);
+        document.querySelector('video').dispatchEvent(new Event('ended'));
+        window.videoManager.emit('all-completed');
+        window.videoManager.emit('all-completed');
+    });
+    await expect(page.locator('[data-placement="video"]')).toBeHidden();
+    expect(await page.evaluate(() => window.adRequests)).toBe(2);
+});
+
+test('nonlinear creative that no longer fits after resize is stopped rather than cropped or enlarging compact media', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, nonlinear: true, master: [336, 280], ad: { width: 300, height: 250 } });
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.lastNonlinearDimensions)).toEqual([336, 280]);
+    await scrollPage(page, 1400);
+    await assertFloating(page);
+    await page.setViewportSize({ width: 280, height: 720 });
+    await expect.poll(() => page.evaluate(() => window.managerStops)).toBe(1);
+    await expect(page.locator('[data-test-ima]')).toHaveCount(0);
+    await expectCompactFloatingGeometry(page, [336, 280]);
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+test('mixed nonlinear autoplay refusal retires the overlay and leaves native gesture controls usable without another auction', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, nonlinear: true, rejectContentAutoplay: true, master: [336, 280] });
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-detail', 'user-activation-required');
+    await expect(page.locator('[data-test-ima]')).toHaveCount(0);
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'none');
+    expect(await page.locator('video').evaluate(video => video.controls)).toBe(true);
+    expect(await page.evaluate(() => window.managerStops)).toBe(1);
+    await page.evaluate(() => {
+        const button = document.createElement('button');
+        button.id = 'fixture-play'; button.textContent = 'Play content fixture';
+        button.onclick = () => { window.allowContentPlay = true; document.querySelector('video').play(); };
+        document.body.prepend(button);
+    });
+    await page.locator('#fixture-play').click();
+    await expectDecodedContent(page);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    expect(await page.evaluate(() => window.adClicks)).toBe(0);
+});
+
+test('a 200px inline rail keeps small third-party nonlinear controls unclipped and outside the creative', async ({ page }, testInfo) => {
+    await page.route('**/*', route => route.abort());
+    // 248px article minus its two 24px paddings yields exactly 200px media.
+    // A small third-party overlay fits this landscape surface; this fixture
+    // deliberately makes no claim that GAM's 200x200 square creative fits it.
+    await openPlayer(page, {
+        content: true, realContent: true, nonlinear: true, inlineOnly: true,
+        articleWidth: 248, master: [336, 280], ad: { width: 180, height: 50 },
+        vastUrl: 'https://ads.example/vast?fixture=small-third-party-overlay',
+    });
+    await expectDecodedContent(page);
+    const media = page.locator('[data-hm-video-direct]');
+    const rail = page.locator('[data-hm-video-chrome]');
+    const play = page.locator('[data-hm-video-content-control="play"]');
+    const mute = page.locator('[data-hm-video-content-control="mute"]');
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(200);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
+    await expect(play).toBeVisible();
+    await expect(mute).toBeVisible();
+    await expect.poll(() => rail.evaluate(chrome => {
+        const railBox = chrome.getBoundingClientRect();
+        const mediaBox = document.querySelector('[data-hm-video-direct]').getBoundingClientRect();
+        const controls = [...document.querySelectorAll('[data-hm-video-content-control], [data-placement="video"] [data-hm-placement-close]')];
+        const boxes = controls.map(button => button.getBoundingClientRect());
+        return controls.length === 3 && controls.every((button, index) => {
+            const box = boxes[index];
+            const hitPoints = [
+                [box.left + 2, box.top + box.height / 2],
+                [box.left + box.width / 2, box.top + box.height / 2],
+                [box.right - 2, box.top + box.height / 2],
+            ];
+            return box.width >= 44 && box.height >= 44
+                && box.left >= railBox.left && box.right <= railBox.right
+                && box.top >= railBox.top && box.bottom <= railBox.bottom
+                && box.bottom <= mediaBox.top + 0.5
+                && button.scrollWidth <= button.clientWidth
+                && hitPoints.every(([x, y]) => {
+                    const hit = document.elementFromPoint(x, y);
+                    return hit === button || button.contains(hit);
+                });
+        }) && boxes.every((box, index) => boxes.slice(index + 1).every(other =>
+            box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top));
+    })).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(true);
+    await mute.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.muted)).toBe(false);
+    await mute.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.muted)).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(false);
+    expect(await page.evaluate(() => ({ requests: window.adRequests, clicks: window.adClicks, stops: window.managerStops })))
+        .toEqual({ requests: 1, clicks: 0, stops: 0 });
+    await attachLayout(page, testInfo, 'mixed-narrow-third-party-controls');
+    await page.locator('article').evaluate(article => { article.style.maxWidth = '348px'; });
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(300);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeVisible();
+    await page.locator('article').evaluate(article => { article.style.maxWidth = '248px'; });
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(200);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
+    await page.frameLocator('[data-test-ima]').getByRole('button', { name: 'Close ad' }).click();
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeVisible();
+    await expect(play).toBeHidden();
+    await expect(mute).toBeHidden();
+    await expect(page.locator('[data-placement="video"]')).toBeVisible();
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });

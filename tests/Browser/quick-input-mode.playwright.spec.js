@@ -11,7 +11,7 @@ if (scripts.length !== 1) throw new Error('Expected one Quick Monetize form cont
 const blockedExpression = "{{ $hasBlockingReason ? 'true' : 'false' }}";
 if (!scripts[0].includes(blockedExpression)) throw new Error('Expected the server-rendered activation control.');
 const savedInputs = {
-    'existing-video': { inputType: 'GAM_AD_UNIT_PATH', tag: '/123,456/publisher/video', videoMasterSize: '400x300' },
+    'existing-video': { inputType: 'GAM_AD_UNIT_PATH', tag: '/123,456/publisher/video', videoMasterSize: '400x300', videoAdFormat: 'video_only' },
 };
 const controller = scripts[0].replace(blockedExpression, 'false')
     .replace('{{ \\Illuminate\\Support\\Js::from($quickInputs) }}', JSON.stringify(savedInputs))
@@ -42,7 +42,7 @@ async function open(page) {
                     <option value="existing-display" data-site-id="site-one" data-placement-type="DISPLAY" data-preset="responsive_display">Responsive member</option>
                     <option value="existing-sticky" data-site-id="site-one" data-placement-type="STICKY" data-preset="sticky_bottom">Sticky Bottom</option>
                     <option value="existing-rewarded" data-site-id="site-one" data-placement-type="REWARDED" data-preset="rewarded">Rewarded</option>
-                    <option value="existing-video" data-site-id="site-one" data-placement-type="VIDEO" data-preset="video_floating" data-video-master-size="400x300">Video</option>
+                    <option value="existing-video" data-site-id="site-one" data-placement-type="VIDEO" data-preset="video_floating" data-video-master-size="400x300" data-video-ad-format="video_only">Video</option>
                     <option value="second-display" data-site-id="site-two" data-placement-type="DISPLAY" data-preset="responsive_display">Other site's responsive</option>
                 </select>
                 <span id="quick-placement-help"></span>
@@ -52,6 +52,13 @@ async function open(page) {
                     <option value="">Keep saved size</option>
                     ${['300x250', '320x180', '336x280', '400x225', '400x300', '640x480'].map(size => `<option value="${size}">${size}</option>`).join('')}
                 </select><span id="quick-video-size-current"></span>
+            </label>
+            <label id="quick-video-ad-format-wrap">Video ad formats
+                <select name="video_ad_format" id="quick-video-ad-format" disabled>
+                    <option value="">Keep saved formats</option>
+                    <option value="mixed">Linear + nonlinear</option>
+                    <option value="video_only">Video only</option>
+                </select><span id="quick-video-ad-format-current"></span>
             </label>
             <label id="quick-input-type-wrap">Ad input
                 <select name="tag_input_type" id="quick-input-type">
@@ -135,7 +142,7 @@ test('floating video supports the existing GAM path dropdown and all six master 
     await expect(page.locator('#quick-tag-label')).toHaveText('Google Ad Manager ad unit path');
     await expect(page.locator('#quick-tag')).toHaveAttribute('placeholder', '/1234567/ad_unit');
     await expect(page.locator('#quick-tag')).toHaveAttribute('rows', '2');
-    await expect(page.locator('#quick-tag-help')).toContainText('complete linear VAST URL');
+    await expect(page.locator('#quick-tag-help')).toContainText('complete VAST URL for the selected video ad formats');
     await expect(page.locator('#quick-video-size-wrap')).toBeVisible();
     for (const size of ['300x250', '320x180', '336x280', '400x225', '400x300', '640x480']) {
         await page.locator('#quick-video-size').selectOption(size);
@@ -205,4 +212,34 @@ test('existing placements use their own surface and stay scoped to the selected 
         .map(option => ({ value: option.value, site: option.dataset.siteId }))
     )).toEqual([{ value: 'second-display', site: 'site-two' }]);
     expect(await formData(page)).toMatchObject({ site_id: 'site-two', placement_id: 'second-display', tag_input_type: 'PROVIDER_TAG', tag: '' });
+});
+
+
+test('ordinary video offers automatic, mixed and video-only formats only for video placement types', async ({ page }) => {
+    await open(page);
+    await page.locator('#quick-preset').selectOption('video_floating');
+    await expect(page.locator('#quick-video-ad-format-wrap')).toBeVisible();
+    await expect(page.locator('#quick-video-ad-format')).toBeEnabled();
+    await expect(page.locator('#quick-video-ad-format')).toHaveValue('');
+    expect(await formData(page)).toMatchObject({ video_ad_format: '' });
+    await page.locator('#quick-video-ad-format').selectOption('mixed');
+    expect(await formData(page)).toMatchObject({ video_ad_format: 'mixed' });
+    await page.locator('#quick-video-ad-format').selectOption('video_only');
+    expect(await formData(page)).toMatchObject({ video_ad_format: 'video_only' });
+    await page.locator('#quick-preset').selectOption('rewarded');
+    await expect(page.locator('#quick-video-ad-format')).toBeDisabled();
+    expect(await formData(page)).not.toHaveProperty('video_ad_format');
+    await page.locator('#quick-preset').selectOption('responsive_display');
+    await expect(page.locator('#quick-video-ad-format')).toBeDisabled();
+    expect(await formData(page)).not.toHaveProperty('video_ad_format');
+});
+
+test('existing ordinary video exposes its saved format and can switch explicitly to mixed', async ({ page }) => {
+    await open(page);
+    await page.locator('#quick-use-existing').check();
+    await page.locator('#quick-placement').selectOption('existing-video');
+    await expect(page.locator('#quick-video-ad-format')).toBeEnabled();
+    await expect(page.locator('#quick-video-ad-format-current')).toContainText('linear video only');
+    await page.locator('#quick-video-ad-format').selectOption('mixed');
+    expect(await formData(page)).toMatchObject({ placement_id: 'existing-video', video_ad_format: 'mixed' });
 });
