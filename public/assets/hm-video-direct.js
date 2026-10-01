@@ -340,7 +340,7 @@
         // The configured master remains the compact floating size and ratio.
         // Inline media fills the editorial column, capped on wide layouts; never
         // shrink an existing custom master wider than the normal inline cap.
-        return Math.max(960, Number(size[0]) || 0);
+        return Math.max(640, Number(size[0]) || 0);
     }
 
     function managerDimensions(player) {

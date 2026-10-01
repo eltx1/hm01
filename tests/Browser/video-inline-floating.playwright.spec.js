@@ -611,7 +611,7 @@ async function expectEnlargedInlineGeometry(page, master) {
         const article = document.querySelector('article'), articleBox = article.getBoundingClientRect();
         const css = getComputedStyle(article), scale = articleBox.width / article.offsetWidth;
         const available = article.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
-        const expectedWidth = Math.min(available, Math.max(960, master[0])) * scale;
+        const expectedWidth = Math.min(available, Math.max(640, master[0])) * scale;
         const box = media.getBoundingClientRect(), surface = document.querySelector('[data-placement="video"]').getBoundingClientRect();
         return Math.abs(box.width - expectedWidth) < 1
             && Math.abs(box.height - expectedWidth * master[1] / master[0]) < 1
@@ -660,7 +660,8 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
         await rememberPlayingAd(page);
         await expectEnlargedInlineGeometry(page, master);
         const box = await page.locator('[data-hm-video-direct]').boundingBox();
-        expect(box.width).toBeGreaterThan(master[0]);
+        if (master[0] < 640) expect(box.width).toBeGreaterThan(master[0]);
+        else expect(box.width).toBeCloseTo(master[0], 2);
         const request = await page.evaluate(() => ({ tag: window.lastAdTagUrl, size: window.lastAdDimensions }));
         expect(request.size).toEqual([Math.round(box.width), Math.round(box.height)]);
         expect(new URL(request.tag).searchParams.get('sz')).toBe(master.join('x'));
@@ -695,7 +696,7 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
             await expectEnlargedInlineGeometry(page, master);
             await expectMediaRatioAndManagerSize(page, master);
             const inlineBox = await page.locator('[data-hm-video-direct]').boundingBox();
-            if (viewport.width - 48 > master[0]) expect(inlineBox.width).toBeGreaterThan(master[0]);
+            if (Math.min(640, viewport.width - 48) > master[0]) expect(inlineBox.width).toBeGreaterThan(master[0]);
             expect(await surface.evaluate(el => {
                 const box = el.getBoundingClientRect(), article = document.querySelector('article').getBoundingClientRect();
                 return Math.abs((box.left + box.right) / 2 - (article.left + article.right) / 2) < 1
@@ -711,8 +712,8 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
         await expectInline(page);
         const restored = await page.locator('[data-hm-video-direct]').boundingBox();
         await expectEnlargedInlineGeometry(page, master);
-        expect(Math.abs(restored.width - 672)).toBeLessThan(1);
-        expect(Math.abs(restored.height - 672 * master[1] / master[0])).toBeLessThan(1);
+        expect(Math.abs(restored.width - 640)).toBeLessThan(1);
+        expect(Math.abs(restored.height - 640 * master[1] / master[0])).toBeLessThan(1);
         expect(await page.evaluate(() => window.managerResizes.length)).toBeGreaterThan(0);
         await expectSamePlayingAd(page);
     });
@@ -721,6 +722,7 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 812 }]) {
     test(`production 400x225 has truthful inline and compact floating measurements at ${viewport.width}px`, async ({ page }, testInfo) => {
         const master = [400, 225], availableInlineWidth = Math.min(720, viewport.width) - 48;
+        const expectedInlineWidth = Math.min(640, availableInlineWidth);
         // This is the former sizing rule calculated for the same article. It is
         // deliberately not presented as a screenshot or execution of old code.
         const previousInlineWidth = Math.min(master[0], availableInlineWidth);
@@ -732,8 +734,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 812 
         await expectMediaRatioAndManagerSize(page, master);
         const original = await inlineGeometry(page);
         const inline = await page.locator('[data-hm-video-direct]').boundingBox();
-        expect(inline.width).toBeCloseTo(availableInlineWidth, 2);
-        expect(inline.height).toBeCloseTo(availableInlineWidth * 9 / 16, 2);
+        expect(inline.width).toBeCloseTo(expectedInlineWidth, 2);
+        expect(inline.height).toBeCloseTo(expectedInlineWidth * 9 / 16, 2);
         if (viewport.width === 1280) expect(inline.width).toBeGreaterThan(previousInlineWidth);
         else expect(inline.width).toBeCloseTo(previousInlineWidth, 2);
         await attachLayout(page, testInfo, 'production400-inline-before-scroll');
@@ -779,7 +781,7 @@ for (const master of [[320, 180], [1200, 675]]) {
         await rememberPlayingAd(page);
         await expectEnlargedInlineGeometry(page, master);
         const inline = await inlineGeometry(page);
-        expect(inline.width).toBe(Math.max(960, master[0]));
+        expect(inline.width).toBe(Math.max(640, master[0]));
         await scrollPage(page, inline.y + inline.height + 80);
         await assertFloating(page);
         await expectCompactFloatingGeometry(page, master);
@@ -793,11 +795,11 @@ for (const master of [[320, 180], [1200, 675]]) {
 }
 
 test('a tall enlarged slot can float after partial exposure without requesting a hidden or under-viewable inline ad', async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 390 });
+    await page.setViewportSize({ width: 1280, height: 260 });
     await openPlayer(page, { master: [300, 250], articleWidth: 1400, belowFold: true,
         vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=300x250' });
     const slot = await inlineGeometry(page);
-    expect(slot.width).toBe(960);
+    expect(slot.width).toBe(640);
     await scrollPage(page, 0);
     expect(await page.evaluate(() => window.adRequests)).toBe(0);
     await scrollPage(page, slot.y - 80);
@@ -815,7 +817,7 @@ test('a tall enlarged slot can float after partial exposure without requesting a
         return { size: window.lastAdDimensions, actual: [Math.round(box.width), Math.round(box.height)] };
     });
     expect(request.size).toEqual(request.actual);
-    expect(request.actual[0]).toBe(300);
+    expect(request.actual[0]).toBeLessThan(300);
     await scrollPage(page, slot.y - 80);
     await expectInline(page, slot);
     await expectSamePlayingAd(page);
@@ -823,10 +825,12 @@ test('a tall enlarged slot can float after partial exposure without requesting a
 
 for (const options of [{ hiddenArticle: true }, { backgroundTab: true }]) {
     test(`hidden or background tall media must be encountered visibly before floating: ${JSON.stringify(options)}`, async ({ page }) => {
-        await page.setViewportSize({ width: 1280, height: 390 });
+        await page.setViewportSize({ width: 1280, height: 260 });
         await openPlayer(page, { ...options, master: [300, 250], articleWidth: 1400 });
         const slot = await inlineGeometry(page), surface = page.locator('[data-placement="video"]');
-        await scrollPage(page, 0);
+        // Put real media pixels in the viewport while it is still hidden or
+        // backgrounded, so the negative encounter assertion is meaningful.
+        await scrollPage(page, slot.y - 80);
         expect(await page.locator('[data-hm-video-direct]').evaluate(media => media.__hmVideoPlayer.wasInlineAnchorVisible)).toBe(false);
         await scrollPage(page, slot.y + slot.height + 80);
         await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
@@ -939,7 +943,7 @@ test('a body-owned portal tracks article width and horizontal reflow on every re
         await scrollPage(page, 1800);
         await assertFloating(page);
         await page.locator('article').evaluate((article, width) => { article.style.maxWidth = `${width}px`; }, width);
-        await expect.poll(() => page.locator('[data-hm-video-placeholder]').evaluate(anchor => anchor.getBoundingClientRect().width)).toBe(width - 48);
+        await expect.poll(() => page.locator('[data-hm-video-placeholder]').evaluate(anchor => anchor.getBoundingClientRect().width)).toBe(Math.min(640, width - 48));
         const reserved = await page.locator('[data-hm-video-placeholder]').evaluate(anchor => {
             const box = anchor.getBoundingClientRect();
             return { x: box.x + scrollX, y: box.y + scrollY, width: box.width, height: box.height,

@@ -1590,7 +1590,7 @@ for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300]
             if (configured !== null) tag.searchParams.set('sz', configured);
             const attrs = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from(tag.href).toString('base64'),
                 'data-hm-video-width': String(width), 'data-hm-video-height': String(height) };
-            const target = container(attrs), actualWidth = 900, actualHeight = 900 * height / width;
+            const target = container(attrs), actualWidth = 640, actualHeight = 640 * height / width;
             target.clientWidth = actualWidth;
             target.getBoundingClientRect = () => ({ top: 0, left: 0, width: actualWidth, height: actualHeight, right: actualWidth, bottom: actualHeight });
             const runtime = runVideo(target);
@@ -1601,7 +1601,7 @@ for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300]
             assert.equal(resolved.searchParams.get('cust_params'), 'section=news');
             assert.equal(request.linearAdSlotWidth, actualWidth);
             assert.equal(request.linearAdSlotHeight, Math.round(actualHeight));
-            assert.equal(target.style.maxWidth, '960px');
+            assert.equal(target.style.maxWidth, '640px');
             assert.equal(target.style.aspectRatio, `${width} / ${height}`);
             assert.equal(runtime.requested.length, 1);
             target.__hmDestroy('dismissed');
