@@ -589,7 +589,12 @@
         rail.setAttribute('data-hm-video-chrome', '1');
         rail.style.cssText = 'box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;height:44px;padding:0 56px 0 14px;border-radius:12px 12px 0 0;background:linear-gradient(110deg,#07132e,#050b1e);color:#f6f8ff;font:600 12px/1.4 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.02em;overflow:hidden;';
         rail.style.cssText = rail.style.cssText.replace(/;/g, ' !important;');
-        rail.textContent = 'Video';
+        var label = document.createElement('span');
+        label.textContent = 'Video';
+        label.setAttribute('data-hm-video-label', '1');
+        label.style.cssText = 'display:inline !important;flex:none !important;color:inherit !important;font:inherit !important;';
+        rail.appendChild(label);
+        player.chromeLabel = label;
         surface.insertBefore(rail, surface.firstChild || null);
         player.chrome = rail;
         importantStyle(player.container.style, 'margin', '0 auto');
@@ -940,6 +945,10 @@
     function updateContentAdUi(player) {
         var active = player.adMediaActive || player.nonLinearAdActive;
         if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = active ? 'auto' : 'none';
+        if (player.chromeLabel) {
+            var width = playerDimensions(player.container, player.size)[0];
+            importantStyle(player.chromeLabel.style, 'display', player.nonLinearAdActive && width < 260 ? 'none' : 'inline');
+        }
         if (player.overlayControls) {
             importantStyle(player.overlayControls.style, 'display', player.nonLinearAdActive ? 'flex' : 'none');
             player.overlayPlay.textContent = player.video.paused ? 'Play' : 'Pause';
@@ -1006,6 +1015,7 @@
 
     function checkNonLinearFit(player) {
         if (!nonLinearFits(player)) retireNonLinearAd(player, 'resize');
+        updateContentAdUi(player);
     }
 
     function setContentMediaOwnership(player, adActive) {

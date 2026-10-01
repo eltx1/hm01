@@ -1000,17 +1000,44 @@ test('mixed nonlinear creative stays clickable over decoded content and external
     await expectDecodedContent(page);
     const video = page.locator('video');
     await video.evaluate(el => { el.playbackRate = 0.5; });
+    const surface = page.locator('[data-placement="video"]');
+    // This enlarged 640x533 inline creative initially extends below a desktop
+    // viewport. Do not let iframe/control clicks trigger scrollIntoView on a
+    // fixed portal while its rAF handler is repositioning it from the anchor.
+    const inlineScroll = Math.max(0, await surface.evaluate(el => el.getBoundingClientRect().top + scrollY) - 64);
+    const expectFullyVisibleInline = async () => {
+        await expect.poll(() => surface.evaluate(el => {
+            const box = el.getBoundingClientRect();
+            return Math.abs(box.top - 64) < 1 && box.bottom <= innerHeight - 16
+                && getComputedStyle(el).clipPath === 'none';
+        })).toBe(true);
+    };
+    await scrollPage(page, inlineScroll);
+    await expectFullyVisibleInline();
+    await attachLayout(page, testInfo, 'mixed-nonlinear-before-interaction');
+    await testInfo.attach('mixed-nonlinear-before-interaction-geometry', {
+        contentType: 'application/json',
+        body: JSON.stringify(await surface.evaluate(el => ({
+            scrollY, clipPath: getComputedStyle(el).clipPath,
+            boxes: Object.fromEntries([
+                ['surface', el], ['media', el.querySelector('video')],
+                ['play', el.querySelector('[data-hm-video-content-control="play"]')],
+                ['mute', el.querySelector('[data-hm-video-content-control="mute"]')],
+                ['iframe', el.querySelector('[data-test-ima]')],
+            ].map(([name, node]) => [name, node?.getBoundingClientRect().toJSON()])),
+        }))),
+    });
     await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'auto');
     const creative = page.frameLocator('[data-test-ima]').locator('#creative');
     await expect(creative).toBeVisible();
     await creative.click({ position: { x: 30, y: 25 } });
-    expect(await page.evaluate(() => window.adClicks)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.adClicks)).toBe(1);
     const toggle = page.locator('[data-hm-video-content-control="play"]');
     const mute = page.locator('[data-hm-video-content-control="mute"]');
     await expect(toggle).toBeVisible();
     await expect(mute).toBeVisible();
     for (const control of [toggle, mute]) {
-        expect(await control.evaluate(button => {
+        await expect.poll(() => control.evaluate(button => {
             const box = button.getBoundingClientRect(), media = document.querySelector('video').getBoundingClientRect();
             const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
             return box.width >= 44 && box.height >= 44 && box.bottom <= media.top + 1 && (hit === button || button.contains(hit));
@@ -1036,8 +1063,9 @@ test('mixed nonlinear creative stays clickable over decoded content and external
         await expect(toggle).toBeVisible();
         await expect(mute).toBeVisible();
         if (!cycle) await attachLayout(page, testInfo, 'mixed-nonlinear-decoded-floating');
-        await scrollPage(page, 0);
+        await scrollPage(page, inlineScroll);
         await expectInline(page, original);
+        await expectFullyVisibleInline();
         await expectSamePlayingAd(page);
     }
     await attachLayout(page, testInfo, 'mixed-nonlinear-decoded-returned');
@@ -1114,4 +1142,72 @@ test('mixed nonlinear autoplay refusal retires the overlay and leaves native ges
     await expectDecodedContent(page);
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
     expect(await page.evaluate(() => window.adClicks)).toBe(0);
+});
+
+test('a 200px inline rail keeps small third-party nonlinear controls unclipped and outside the creative', async ({ page }, testInfo) => {
+    await page.route('**/*', route => route.abort());
+    // 248px article minus its two 24px paddings yields exactly 200px media.
+    // A small third-party overlay fits this landscape surface; this fixture
+    // deliberately makes no claim that GAM's 200x200 square creative fits it.
+    await openPlayer(page, {
+        content: true, realContent: true, nonlinear: true, inlineOnly: true,
+        articleWidth: 248, master: [336, 280], ad: { width: 180, height: 50 },
+        vastUrl: 'https://ads.example/vast?fixture=small-third-party-overlay',
+    });
+    await expectDecodedContent(page);
+    const media = page.locator('[data-hm-video-direct]');
+    const rail = page.locator('[data-hm-video-chrome]');
+    const play = page.locator('[data-hm-video-content-control="play"]');
+    const mute = page.locator('[data-hm-video-content-control="mute"]');
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(200);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
+    await expect(play).toBeVisible();
+    await expect(mute).toBeVisible();
+    await expect.poll(() => rail.evaluate(chrome => {
+        const railBox = chrome.getBoundingClientRect();
+        const mediaBox = document.querySelector('[data-hm-video-direct]').getBoundingClientRect();
+        const controls = [...document.querySelectorAll('[data-hm-video-content-control], [data-placement="video"] [data-hm-placement-close]')];
+        const boxes = controls.map(button => button.getBoundingClientRect());
+        return controls.length === 3 && controls.every((button, index) => {
+            const box = boxes[index];
+            const hitPoints = [
+                [box.left + 2, box.top + box.height / 2],
+                [box.left + box.width / 2, box.top + box.height / 2],
+                [box.right - 2, box.top + box.height / 2],
+            ];
+            return box.width >= 44 && box.height >= 44
+                && box.left >= railBox.left && box.right <= railBox.right
+                && box.top >= railBox.top && box.bottom <= railBox.bottom
+                && box.bottom <= mediaBox.top + 0.5
+                && button.scrollWidth <= button.clientWidth
+                && hitPoints.every(([x, y]) => {
+                    const hit = document.elementFromPoint(x, y);
+                    return hit === button || button.contains(hit);
+                });
+        }) && boxes.every((box, index) => boxes.slice(index + 1).every(other =>
+            box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top));
+    })).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(true);
+    await mute.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.muted)).toBe(false);
+    await mute.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.muted)).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(false);
+    expect(await page.evaluate(() => ({ requests: window.adRequests, clicks: window.adClicks, stops: window.managerStops })))
+        .toEqual({ requests: 1, clicks: 0, stops: 0 });
+    await attachLayout(page, testInfo, 'mixed-narrow-third-party-controls');
+    await page.locator('article').evaluate(article => { article.style.maxWidth = '348px'; });
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(300);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeVisible();
+    await page.locator('article').evaluate(article => { article.style.maxWidth = '248px'; });
+    await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(200);
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
+    await page.frameLocator('[data-test-ima]').getByRole('button', { name: 'Close ad' }).click();
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeVisible();
+    await expect(play).toBeHidden();
+    await expect(mute).toBeHidden();
+    await expect(page.locator('[data-placement="video"]')).toBeVisible();
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
