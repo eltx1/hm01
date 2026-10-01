@@ -25,7 +25,8 @@ use Illuminate\Validation\ValidationException;
 
 final class SiteGamReportingService
 {
-    public function __construct(private readonly GamAdUnitReportClient $google, private readonly AuditRecorder $audit) {}
+    public function __construct(private readonly GamAdUnitReportClient $google, private readonly AuditRecorder $audit,
+        private readonly SiteGamReportScope $scopes) {}
 
     public function availableConnections(Site $site): Builder
     {
@@ -73,6 +74,7 @@ final class SiteGamReportingService
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
                     $this->audit->record('reporting.site_gam.reenabled', $site->organization_id, $actor, $current);
                 }
+                $this->scopes->ensure($current);
 
                 return $current->fresh(['connection']);
             }
@@ -135,13 +137,14 @@ final class SiteGamReportingService
                 'ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode'],
                 'starts_on' => $starts->toDateString(), 'created_by' => $actor->id,
             ]);
+            $this->scopes->ensure($binding);
             $this->audit->record('reporting.site_gam.connected', $site->organization_id, $actor, $binding,
                 newValues: $binding->only(['site_id', 'gam_connection_id', 'network_code', 'ad_unit_id', 'starts_on']) + [
                     'report_currency' => $reportCurrency,
                     'source_network_currency' => $networkCurrency,
                 ]);
 
-            return $binding;
+            return $binding->fresh(['connection']);
         });
     }
 

@@ -21,7 +21,12 @@ MCM, Publisher GAM, and CSV reporting paths continue to operate.
 
 ## Data ownership and dates
 
-- A binding covers exactly one Google network and ad-unit ID. It uses Google's
+- A binding covers exactly one Google network and ad-unit ID intersected with the
+  website's registered hostname through Google's `SITE_NAME` dimension. Hostnames
+  are normalized from bare names or configured HTTP(S) URLs; scheme/path, case and
+  a terminal DNS root dot are removed. Subdomains and `www` stay distinct. The
+  hostname is automatic for current and future websites, with no extra input.
+  It uses Google's
   `FLAT` view: child units are excluded. Renaming an ad unit does not change its ID.
 - One active website owns a physical network/unit pair, even when the same network
   has several credential connections. Publisher-owned accounts are scoped to their
@@ -53,7 +58,13 @@ and total CPM/CPC/CPD revenue, including dynamic allocation. Every GAM query sen
 of the network's base currency. Google performs the reporting FX conversion using
 its report-currency rules; Horus stores the returned CSV_DUMP micros directly in
 USD and converts micros to minor units once per aggregate. Dates and the returned unit ID
-must match the binding. Malformed, oversized and failed downloads never create
+must match the binding. `SITE_NAME` is required; rows for another/unknown/not-applicable
+Site cannot contribute revenue or delivery metrics. The selected unit filter remains
+in Google; exact Site selection is also enforced locally without assuming PQL Site
+filter support. Neither `DOMAIN` nor Ad Exchange-only metrics substitute for the
+requested scope/Total metric. Optional performance-column fallback retains Site,
+unit, currency and every core finance metric; unsupported core queries fail visibly.
+Malformed, oversized and failed downloads never create
 zero-revenue reports. A completed, valid report fills omitted dates/hours with zero
 to correctly apply downward corrections. Download URLs are Google HTTPS URLs;
 temporary signatures are excluded from persisted operation responses.
@@ -69,6 +80,47 @@ Reporting. `php artisan reporting:sync-site-gam --site=<site-ulid>` runs the sam
 bounded reporting synchronization for one website. Google credentials remain in
 the existing GAM connection secret store. No credentials are entered in the site
 binding form.
+
+## Forward-only scope upgrade and historical review
+
+`site_report_scope` records a canonical fingerprint of binding, network, unit,
+exact hostname, currency, timezone, version and effective date. New/empty bindings
+use their usual start date. Existing bindings with stored daily/hourly facts
+automatically start exact-site attribution at the later of the current network
+day or the day after the last stored fact. An already imported current day therefore
+switches the following day. No binding must be recreated. Hostname changes create
+a new recorded forward scope; earlier scopes remain in operational history.
+
+The scheduler clamps its month windows and pending retries to that date. Google
+job keys include the fingerprint, and asynchronous checkpoint writes revalidate it.
+Financial rows carry the exact Site and fingerprint in their dimension provenance.
+Imports reject conflicting same-day provenance inside the financial transaction.
+Old amounts are neither overwritten nor duplicated by a new scope. Earlier balances
+remain unverified until a separate, private comparison preview and explicit
+historical-correction approval; this change does not alter statements, payouts or
+their existing approval rules. The site reporting view discloses that boundary.
+
+## Production compatibility gate
+
+Before release transfer/switch/migrations, the trusted-main deployment workflow
+streams `ops/audit/gam-site-scope-preflight.php` into the currently deployed app.
+It uses existing credentials to generate temporary report jobs for enabled active
+bindings: exact retained Total columns, `DATE + AD_UNIT_ID + SITE_NAME`, selected
+unit filter, `FLAT`, network-calendar yesterday and USD. It polls to completion
+and validates the CSV schema, unit/date and monetary currency proof. No fallback
+query is permitted in this preflight. Unsupported, failed, invalid or timed-out
+reports abort deployment before production code changes.
+
+The probe is bounded to 25 active bindings and a 180-second scheduling/poll budget
+(individual existing network/download timeouts still apply). A larger installation
+requires a reviewed batching adjustment, not a silent skip. With no active bindings,
+the gate reports zero tested bindings rather than proving live network compatibility.
+The incoming column contract has a test against the release connector.
+
+Only normal operational audit/authentication bookkeeping is written. No import, financial,
+source, binding or saved-report-definition writes occur. Public workflow output is
+limited to compatibility flags/counts and allowlisted failure codes; CSV, monetary
+amounts, identities, signed download URLs and raw errors are never published.
 
 References: [Google reporting workflow](https://developers.google.com/ad-manager/api/reporting),
 [report query](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.ReportQuery),

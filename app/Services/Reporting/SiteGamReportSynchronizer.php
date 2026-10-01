@@ -12,7 +12,7 @@ use Carbon\CarbonImmutable;
 
 final class SiteGamReportSynchronizer
 {
-    public function __construct(private readonly ReportImportService $imports) {}
+    public function __construct(private readonly ReportImportService $imports, private readonly SiteGamReportScope $scopes) {}
 
     public function sync(SiteGamReportBinding $binding): array
     {
@@ -23,9 +23,12 @@ final class SiteGamReportSynchronizer
             return [];
         }
         $now = CarbonImmutable::now($connection->timezone);
+        $scope = $this->scopes->ensure($binding);
+        $connection->refresh();
         $results = [];
         // Finish yesterday's in-flight request even when the calendar range has moved on.
         $pending = $connection->imports()->whereIn('status', ['PENDING', 'FAILED'])
+            ->whereDate('period_start', '>=', $scope['effective_from'])
             ->where(fn ($q) => $q->whereNull('next_retry_at')->orWhere('next_retry_at', '<=', now()))
             ->orderBy('created_at')->limit(2)->get();
         foreach ($pending as $job) {
@@ -45,7 +48,7 @@ final class SiteGamReportSynchronizer
             $this->next($connection, $key, $result, $intraday ? 60 : 360);
             $results[] = $result;
         }
-        $first = CarbonImmutable::parse($binding->starts_on->toDateString(), $connection->timezone);
+        $first = CarbonImmutable::parse($scope['effective_from'], $connection->timezone);
         $last = $binding->ends_on ? $now->subDay()->min(CarbonImmutable::parse($binding->ends_on->toDateString(), $connection->timezone)) : $now->subDay();
         for ($month = $first->startOfMonth(); $month->lte($last); $month = $month->addMonth()) {
             if (! $this->open($month->toDateString(), $connection->currency)) {

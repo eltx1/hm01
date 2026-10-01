@@ -63,6 +63,7 @@ class SiteGamReportingTest extends TestCase
     use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private object $google;
+    private string $reportHostname;
 
     private function context(): array
     {
@@ -75,6 +76,7 @@ class SiteGamReportingTest extends TestCase
         $user = $this->makeUser($org, RoleName::PublisherAdmin);
         $publisher = $this->makePublisherFor($user);
         $site = $this->makeSiteFor($publisher, $user);
+        $this->reportHostname = $site->primary_domain;
         $gam = $this->makeGamConnection($horus, $admin);
         $this->google = new class implements GamSoapTransportInterface
         {
@@ -93,6 +95,7 @@ class SiteGamReportingTest extends TestCase
             public int $jobs = 0;
 
             public ?string $reportCurrency = null;
+            public bool $rejectSiteDimension = false;
 
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
             {
@@ -104,6 +107,10 @@ class SiteGamReportingTest extends TestCase
                 app(GamSoapPayloadHydrator::class)->arguments($reflection->newInstanceWithoutConstructor(), $method, $payload, $namespace);
 
                 if ($method === 'runReportJob' && in_array('HOUR', $payload['reportJob']['reportQuery']['dimensions'], true)) {
+                    throw new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
+                }
+                if ($method === 'runReportJob' && $this->rejectSiteDimension
+                    && in_array('SITE_NAME', $payload['reportJob']['reportQuery']['dimensions'], true)) {
                     throw new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
                 }
 
@@ -128,15 +135,16 @@ class SiteGamReportingTest extends TestCase
         return app(SiteGamReportingService::class)->bind($context[3], $context[4]->id, 'Publisher unit', $context[0]);
     }
 
-    private function csv(array $rows = [['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 123450000']], bool $hourly = false): string
+    private function csv(array $rows = [['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 123450000']], bool $hourly = false, ?string $hostname = null): string
     {
         $stream = fopen('php://temp', 'w+');
-        fputcsv($stream, ['Dimension.DATE', ...($hourly ? ['Dimension.HOUR'] : []), 'Dimension.AD_UNIT_ID',
+        fputcsv($stream, ['Dimension.DATE', ...($hourly ? ['Dimension.HOUR'] : []), 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME',
             ...array_map(fn ($column) => 'Column.'.$column, array_keys(GamAdUnitReportConnector::COLUMNS))], escape: '');
         foreach ($rows as $row) {
             if (count($row) === ($hourly ? 9 : 8)) {
                 $row = [...$row, 40, 80, 7];
             }
+            array_splice($row, $hourly ? 3 : 2, 0, [$hostname ?? $this->reportHostname]);
             fputcsv($stream, $row, escape: '');
         }
         rewind($stream);
@@ -152,14 +160,166 @@ class SiteGamReportingTest extends TestCase
             CarbonImmutable::parse($to), ReportGranularity::Daily, ReportFinality::Finalized);
     }
 
+    public function test_import_intersects_selected_unit_and_exact_registered_site_without_changing_total_metrics(): void
+    {
+        $context = $this->context();
+        $context[3]->update(['primary_domain' => 'news.publisher.example']);
+        $this->reportHostname = 'news.publisher.example';
+        $binding = $this->bind($context);
+        $csv = $this->csv([['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 1000000']]);
+        foreach (['publisher.example', 'other.publisher.example', 'www.news.publisher.example', '(unknown)', '(Not applicable)'] as $foreignSite) {
+            $extra = $this->csv([['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 9000000']], hostname: $foreignSite);
+            $csv .= substr($extra, strpos($extra, "\n") + 1);
+        }
+        Http::fake(['storage.googleapis.com/*' => Http::response($csv)]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(100, (int) $row->gross_revenue_minor);
+        $this->assertSame(95, (int) $row->impressions);
+        $this->assertSame($this->reportHostname, data_get($row->dimension->external_dimensions, 'gam_report_site'));
+        $query = collect($this->google->calls)->firstWhere('method', 'runReportJob')['payload']['reportJob']['reportQuery'];
+        $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $query['dimensions']);
+        $this->assertSame('WHERE AD_UNIT_ID = :unit', $query['statement']['query']);
+        $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        $this->assertNotContains('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', $query['columns']);
+    }
+
+    public function test_unscoped_google_csv_and_unsupported_site_query_cannot_import_or_fallback(): void
+    {
+        $binding = $this->bind($this->context());
+        $csv = str_replace(['Dimension.AD_UNIT_ID,Dimension.SITE_NAME', ','.$this->reportHostname.','], ['Dimension.AD_UNIT_ID', ','], $this->csv());
+        Http::fake(['storage.googleapis.com/*' => Http::response($csv)]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertDatabaseCount('daily_reports', 0);
+        $this->google->rejectSiteDimension = true;
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertDatabaseCount('daily_reports', 0);
+        foreach (collect($this->google->calls)->where('method', 'runReportJob') as $call) {
+            $this->assertContains('SITE_NAME', $call['payload']['reportJob']['reportQuery']['dimensions']);
+            $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $call['payload']['reportJob']['reportQuery']['columns']);
+        }
+    }
+
+    public function test_existing_binding_automatically_scopes_forward_without_rewriting_history(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $old = DailyReport::withoutGlobalScopes()->sole();
+        $before = $old->getAttributes();
+        $configuration = $binding->connection->fresh()->configuration;
+        unset($configuration['site_report_scope']);
+        $binding->connection->update(['configuration' => $configuration]);
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 'US$ 2000000']]))]);
+        $results = app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
+        $this->assertCount(1, $results);
+        $this->assertSame(ReportImportStatus::Completed, $results[0]->status, $results[0]->error_message ?? '');
+        $scope = data_get($binding->connection->fresh()->configuration, 'site_report_scope');
+        $this->assertSame('2026-09-21', $scope['effective_from']);
+        $this->assertTrue($scope['historical_review_required']);
+        $this->assertSame($before, $old->fresh()->getAttributes());
+        $this->assertSame(2, DailyReport::withoutGlobalScopes()->count());
+        $historical = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $historical->status);
+        $this->assertStringContainsString('cutover', $historical->error_message);
+        $this->assertSame($before, $old->fresh()->getAttributes());
+    }
+
+    public function test_already_imported_today_is_preserved_and_automatic_scope_starts_next_network_day(): void
+    {
+        $binding = $this->bind($this->context());
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 'US$ 2000000']]))]);
+        $job = app(ReportImportService::class)->runConnection($binding->connection, $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $before = DailyReport::withoutGlobalScopes()->sole()->getAttributes();
+        $configuration = $binding->connection->fresh()->configuration;
+        unset($configuration['site_report_scope']);
+        $binding->connection->update(['configuration' => $configuration]);
+        $calls = count($this->google->calls);
+        $this->assertSame([], app(SiteGamReportSynchronizer::class)->sync($binding->fresh()));
+        $this->assertSame('2026-09-22', data_get($binding->connection->fresh()->configuration, 'site_report_scope.effective_from'));
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->sole()->getAttributes());
+        $this->assertCount($calls, $this->google->calls);
+    }
+
+    public function test_hostname_change_cannot_resume_the_previous_domains_pending_report(): void
+    {
+        $context = $this->context();
+        $binding = $this->bind($context);
+        $this->google->status = 'IN_PROGRESS';
+        $this->assertSame(ReportImportStatus::Pending, $this->import($binding)->status);
+        $oldScope = data_get($binding->connection->fresh()->configuration, 'site_report_scope');
+        $context[3]->update(['primary_domain' => 'another.publisher.example']);
+        $this->reportHostname = 'another.publisher.example';
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $job = $this->import($binding->fresh());
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertSame(2, $this->google->jobs);
+        $newScope = data_get($binding->connection->fresh()->configuration, 'site_report_scope');
+        $this->assertNotSame($oldScope['fingerprint'], $newScope['fingerprint']);
+        $this->assertSame('another.publisher.example', data_get(DailyReport::withoutGlobalScopes()->sole()->dimension->external_dimensions, 'gam_report_site'));
+    }
+
+    public function test_conflicting_same_day_scope_facts_are_not_overwritten_or_duplicated(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $dimensions = $row->dimension->external_dimensions;
+        unset($dimensions['gam_report_scope']);
+        $row->dimension->update(['external_dimensions' => $dimensions]);
+        $before = $row->getAttributes();
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertStringContainsString('historical comparison preview', $job->error_message);
+        $this->assertDatabaseCount('daily_reports', 1);
+        $this->assertSame($before, $row->fresh()->getAttributes());
+    }
+
+    public function test_scoped_downward_correction_zeroes_the_same_fact_when_only_another_site_remains(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv(hostname: 'different.publisher.example'))]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertDatabaseCount('daily_reports', 1);
+        $this->assertSame($row->id, DailyReport::withoutGlobalScopes()->sole()->id);
+        $this->assertSame(0, (int) $row->fresh()->gross_revenue_minor);
+        $this->assertSame(0, (int) $row->fresh()->impressions);
+    }
+
+    public function test_json_key_reordering_does_not_create_another_scope_or_cutover(): void
+    {
+        $binding = $this->bind($this->context());
+        $configuration = $binding->connection->configuration;
+        $original = $configuration['site_report_scope'];
+        $configuration['site_report_scope'] = array_reverse($original, true);
+        $binding->connection->update(['configuration' => $configuration]);
+        $events = \App\Models\AuditLog::query()->where('event', 'reporting.site_gam.exact_site_scope')->count();
+        $scope = app(\App\Services\Reporting\SiteGamReportScope::class)->ensure($binding->fresh());
+        $this->assertSame($original['fingerprint'], $scope['fingerprint']);
+        $this->assertSame($original['effective_from'], $scope['effective_from']);
+        $this->assertSame($events, \App\Models\AuditLog::query()->where('event', 'reporting.site_gam.exact_site_scope')->count());
+        $this->assertArrayNotHasKey('site_report_scope_history', $binding->connection->fresh()->configuration);
+    }
+
     public function test_finance_only_google_response_preserves_missing_metrics_instead_of_reporting_false_zeros(): void
     {
         $context = $this->context();
         $binding = $this->bind($context);
         $stream = fopen('php://temp', 'w+');
-        fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...array_map(fn ($column) => 'Column.'.$column,
+        fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($column) => 'Column.'.$column,
             array_keys(array_diff_key(GamAdUnitReportConnector::COLUMNS, \App\Services\Reporting\PerformanceMetrics::GOOGLE_COLUMNS)))], escape: '');
-        fputcsv($stream, ['2026-09-20', '12345', 120, 100, 20, 95, 3, 'US$ 123450000'], escape: '');
+        fputcsv($stream, ['2026-09-20', '12345', $this->reportHostname, 120, 100, 20, 95, 3, 'US$ 123450000'], escape: '');
         rewind($stream);
         Http::fake(['storage.googleapis.com/*' => Http::response(stream_get_contents($stream))]);
         fclose($stream);
@@ -380,7 +540,7 @@ class SiteGamReportingTest extends TestCase
             $revenue = $index === 2 ? '0' : 'US$ 12000000';
             $responses->push($this->csv([
                 ['2026-09-20', $unit, 30, 20, 10, 20, 0, $revenue],
-            ]));
+            ], hostname: $site->primary_domain));
             $job = $this->import($binding);
             $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
             $row = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->connection->id)->sole();
@@ -400,8 +560,8 @@ class SiteGamReportingTest extends TestCase
             ->push($this->csv([
                 ['2026-09-19', '70003', 5, 0, 5, 0, 0, '0'],
                 ['2026-09-20', '70003', 30, 20, 10, 20, 0, 'US$ 2500000'],
-            ]))
-            ->push($this->csv([['2026-09-21', '70003', 8, 2, 6, 2, 0, '0']]));
+            ], hostname: $third->site->primary_domain))
+            ->push($this->csv([['2026-09-21', '70003', 8, 2, 6, 2, 0, '0']], hostname: $third->site->primary_domain));
         $results = app(SiteGamReportSynchronizer::class)->sync($third->fresh());
         $this->assertCount(2, $results);
         foreach ($results as $job) {
@@ -682,7 +842,7 @@ class SiteGamReportingTest extends TestCase
         $this->assertCount(2, $queries);
         $this->assertSame(20, $queries[0]['payload']['reportJob']['reportQuery']['endDate']['day']);
         $this->assertSame(21, $queries[1]['payload']['reportJob']['reportQuery']['startDate']['day']);
-        $this->assertSame(['DATE', 'AD_UNIT_ID'], $queries[1]['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $queries[1]['payload']['reportJob']['reportQuery']['dimensions']);
         $this->assertSame(array_keys(GamAdUnitReportConnector::COLUMNS), $queries[1]['payload']['reportJob']['reportQuery']['columns']);
         $this->travel(5)->minutes();
         app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
@@ -723,7 +883,7 @@ class SiteGamReportingTest extends TestCase
         ]);
         $legacyKey = hash('sha256', 'HOURLY|2026-09-21|2026-09-21');
         $binding->connection->update(['status' => 'ERROR', 'last_error' => $legacy->error_message,
-            'configuration' => ['google_jobs' => [$legacyKey => ['id' => '999', 'requested_at' => now()->toIso8601String()]]]]);
+            'configuration' => array_replace($binding->connection->configuration, ['google_jobs' => [$legacyKey => ['id' => '999', 'requested_at' => now()->toIso8601String()]]])]);
         Http::fake(['storage.googleapis.com/*' => Http::sequence()
             ->push($this->csv([['2026-09-21', '12345', 120, 100, 20, 95, 3, 123450000]]))
             ->push($this->csv([['2026-09-21', '12345', 130, 108, 22, 101, 4, 135000000]]))
@@ -764,10 +924,10 @@ class SiteGamReportingTest extends TestCase
             'period_start' => $day, 'period_end' => $day->endOfDay(), 'idempotency_key' => hash('sha256', 'yesterday-hourly'),
             'error_message' => 'ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', 'next_retry_at' => now()->subMinute(),
         ]);
-        $binding->connection->update(['configuration' => ['sync_due' => [
+        $binding->connection->update(['configuration' => array_replace($binding->connection->configuration, ['sync_due' => [
             'daily_2026-09-01_2026-09-20' => now()->addHours(6)->toIso8601String(),
             'intraday_2026-09-21' => now()->addHour()->toIso8601String(),
-        ]]]);
+        ]])]);
         Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $results = app(SiteGamReportSynchronizer::class)->sync($binding->fresh());
         $this->assertCount(1, $results);

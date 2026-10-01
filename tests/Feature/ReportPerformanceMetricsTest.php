@@ -377,7 +377,7 @@ class ReportPerformanceMetricsTest extends TestCase
     {
         $client = \Mockery::mock(\App\Services\Reporting\GamAdUnitReportClient::class)->makePartial();
         $gam = new \App\Models\GamConnection;
-        $query = ['reportCurrency' => 'USD', 'dimensions' => ['DATE', 'AD_UNIT_ID'],
+        $query = ['reportCurrency' => 'USD', 'dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'],
             'statement' => ['query' => 'WHERE AD_UNIT_ID = :unit'],
             'columns' => array_keys(\App\Services\Reporting\Connectors\GamAdUnitReportConnector::COLUMNS)];
         $client->shouldReceive('call')->once()->with($gam, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]])

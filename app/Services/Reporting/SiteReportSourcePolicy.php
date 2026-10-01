@@ -33,6 +33,13 @@ final class SiteReportSourcePolicy
                 || $binding->gam_connection_id !== ($row['gam_connection_id'] ?? null)) {
                 throw ValidationException::withMessages(['source' => 'Ad-unit reports must come from the verified Google API binding for this website and date.']);
             }
+            $scope = app(SiteGamReportScope::class)->ensure($binding);
+            app(SiteGamReportScope::class)->assertCurrent($binding, $scope);
+            if (($row['gam_report_site'] ?? null) !== $scope['hostname']
+                || ($row['gam_report_scope'] ?? null) !== $scope['fingerprint'] || $row['date'] < $scope['effective_from']) {
+                throw ValidationException::withMessages(['source' => 'The Google report must prove the exact website hostname and current effective scope.']);
+            }
+            app(SiteGamReportScope::class)->assertNoConflictingFacts($connection, $row['date'], $scope['fingerprint']);
 
             return true;
         }
