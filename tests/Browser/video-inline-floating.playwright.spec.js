@@ -1001,7 +1001,8 @@ test('mixed nonlinear creative stays clickable over decoded content and external
         vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/mixed-fixture&output=vast&env=vp' });
     await expectDecodedContent(page);
     const video = page.locator('video');
-    await video.evaluate(el => { el.playbackRate = 0.5; });
+    // Keep native 1x playback: WebKit/GStreamer rate changes can overwrite mute
+    // independently of this runtime, invalidating the initial-muted assertion.
     const surface = page.locator('[data-placement="video"]');
     // This enlarged 640x533 inline creative initially extends below a desktop
     // viewport. Do not let iframe/control clicks trigger scrollIntoView on a
