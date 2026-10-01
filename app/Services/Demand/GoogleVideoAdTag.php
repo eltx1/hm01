@@ -7,7 +7,8 @@ use RuntimeException;
 final class GoogleVideoAdTag
 {
     /**
-     * Build a linear GAM VAST template. Page URL, actual size, placement,
+     * Build a linear GAM VAST template targeting the selected master size.
+     * Actual media dimensions are supplied separately to IMA. Page URL, placement,
      * correlator, playback and consent signals are supplied by the runtime/IMA.
      * https://support.google.com/admanager/answer/10655276
      *

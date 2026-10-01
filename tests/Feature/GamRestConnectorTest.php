@@ -183,6 +183,8 @@ class GamRestConnectorTest extends TestCase
 
     public function test_existing_non_usd_full_network_history_is_preserved_while_future_reporting_cuts_over_to_usd(): void
     {
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 12:00:00', 'UTC'));
+
         $this->seedIdentity();
         $this->seed(ReportingSeeder::class);
         $organization = $this->makeOrganization(OrganizationType::HorusMedia);

@@ -68,7 +68,7 @@
                     <option value="{{ $sizeKey }}" @selected(old('video_master_size') === $sizeKey)>{{ $dimensions[0] }}×{{ $dimensions[1] }}</option>
                 @endforeach
             </select>
-            <span class="muted">Maximum player dimensions. The player shrinks proportionally to fit its container or viewport; ad requests use its actual rendered size.</span>
+            <span class="muted">Media ratio and maximum floating size. Inline video fills its container up to 640px; IMA receives its actual rendered size. Generated GAM tags use this master; full tags retain their configured size targeting.</span>
             @error('video_master_size')<span class="error">{{ $message }}</span>@enderror
         </label>
         <label>Placement name<input class="hm-input" name="name" placeholder="Article responsive or Bottom anchor" required></label>

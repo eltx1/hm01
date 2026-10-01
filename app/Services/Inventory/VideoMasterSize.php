@@ -20,9 +20,9 @@ final class VideoMasterSize
     }
 
     /**
-     * The master is a maximum player size, not an advertised list of creative
-     * sizes. The browser fits it proportionally to the available surface and
-     * sends the actual rendered dimensions on each VAST request.
+     * The master defines the media ratio and maximum floating size. Inline
+     * media fills its container up to the runtime's inline cap. Generated GAM
+     * tags target this master; IMA independently receives actual rendered size.
      * Omitted input deliberately preserves legacy 16:9 inventory and mappings.
      */
     public static function apply(array $data, ?string $master): array

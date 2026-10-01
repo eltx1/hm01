@@ -331,9 +331,16 @@
             if (box.width > 0 && box.height > 0) return [Math.max(1, Math.round(box.width)), Math.max(1, Math.round(box.height))];
         }
         var width = Math.round(Number(container.clientWidth || fallback[0]));
-        width = Math.max(1, Math.min(fallback[0], width || fallback[0]));
+        width = Math.max(1, width || fallback[0]);
         var ratio = fallback[0] / fallback[1];
         return [width, Math.max(1, Math.round(width / ratio))];
+    }
+
+    function inlineWidthLimit(size) {
+        // The configured master remains the compact floating size and ratio.
+        // Inline media fills the editorial column, capped on wide layouts; never
+        // shrink an existing custom master wider than the normal inline cap.
+        return Math.max(640, Number(size[0]) || 0);
     }
 
     function managerDimensions(player) {
@@ -367,7 +374,7 @@
         container.style.display = 'block';
         container.style.width = rewarded ? '100vw' : '100%';
         container.style.height = rewarded ? '100vh' : 'auto';
-        container.style.maxWidth = rewarded ? 'none' : String(size[0]) + 'px';
+        container.style.maxWidth = rewarded ? 'none' : String(inlineWidthLimit(size)) + 'px';
         container.style.aspectRatio = rewarded ? 'auto' : String(size[0]) + ' / ' + String(size[1]);
         container.style.background = '#000';
         container.style.overflow = 'hidden';
@@ -531,7 +538,7 @@
 
     function releasePendingAdStart(player) {
         if (!player || player.destroyed || typeof player.pendingAdStart !== 'function') return false;
-        if (!player.rewarded && !player.floating && Number(player.visibleRatio || 0) < 0.5) return false;
+        if (!player.rewarded && (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5)) return false;
         var start = player.pendingAdStart;
         player.pendingAdStart = null;
         try { start(); return true; } catch (error) { return false; }
@@ -539,7 +546,8 @@
 
     function startAdManagerWhenViewable(player, start) {
         if (!player || player.destroyed || typeof start !== 'function') return;
-        if (player.rewarded || player.floating || Number(player.visibleRatio || 0) >= 0.5 || typeof window.IntersectionObserver !== 'function') {
+        var unmeasurableAdapter = typeof window.IntersectionObserver !== 'function' && !player.container.getBoundingClientRect;
+        if (player.rewarded || document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
             start();
             return;
         }
@@ -559,7 +567,7 @@
         surface.setAttribute('data-hm-video-master-width', String(player.size[0]));
         surface.setAttribute('data-hm-video-master-height', String(player.size[1]));
         surface.setAttribute('data-hm-video-floating-state', initiallyFloating ? 'floating' : 'inline');
-        var styles = { position: 'relative', display: 'block', width: player.size[0] + 'px', 'max-width': '100%',
+        var styles = { position: 'relative', display: 'block', width: '100%', 'max-width': inlineWidthLimit(player.size) + 'px',
             height: 'auto', 'min-height': '0', 'margin-left': 'auto', 'margin-right': 'auto', padding: '0',
             border: '0', 'border-radius': '12px', 'box-sizing': 'border-box', background: '#050b1e',
             'box-shadow': '0 8px 28px rgba(5,8,22,.16)', 'text-align': 'left', isolation: 'isolate' };
@@ -634,7 +642,7 @@
             if (!node || !node.getBoundingClientRect) return null;
             var rect = node.getBoundingClientRect(), view = viewportBox();
             var clip = { top: Math.max(view.top, rect.top), bottom: Math.min(view.bottom, rect.bottom), left: Math.max(view.left, rect.left), right: Math.min(view.right, rect.right) };
-            var hidden = node.isConnected === false || !(rect.width > 0 && rect.height > 0);
+            var hidden = document.visibilityState === 'hidden' || node.isConnected === false || !(rect.width > 0 && rect.height > 0);
             // getBoundingClientRect alone ignores clipping by scroll/overflow
             // ancestors. Keep the fallback as conservative as IntersectionObserver.
             if (window.getComputedStyle) {
@@ -658,8 +666,8 @@
             anchor.setAttribute('data-hm-video-placeholder', '1');
             anchor.setAttribute('aria-hidden', 'true');
             anchor.style.cssText = 'display:block;box-sizing:border-box;padding:0;border:0;pointer-events:none;';
-            write(anchor.style, 'width', player.size[0] + 'px');
-            write(anchor.style, 'max-width', '100%');
+            write(anchor.style, 'width', '100%');
+            write(anchor.style, 'max-width', inlineWidthLimit(player.size) + 'px');
             write(anchor.style, 'height', 'auto');
             write(anchor.style, 'aspect-ratio', player.size[0] + ' / ' + player.size[1]);
             write(anchor.style, 'box-sizing', 'content-box');
@@ -701,12 +709,16 @@
         }
         function accept(ratio, data) {
             player.visibleRatio = Math.max(0, Math.min(1, ratio));
-            if (!player.floating && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
+            if (!player.floating && document.visibilityState !== 'hidden' && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
+            // Seeing any part of the original media/anchor grants layout
+            // eligibility only. A tall inline player may never fit 50% in a
+            // short viewport; ad requests/starts still require real viewability.
+            if (!player.floating && document.visibilityState !== 'hidden' && data && !data.hidden && data.ratio > 0) player.wasInlineAnchorVisible = true;
             var outside = data ? !data.hidden && data.rect.bottom <= data.view.top + 1 : ratio <= 0.01;
             if (!player.floating && player.inlineToFloating && (player.wasInlineVisible || player.wasInlineAnchorVisible) && outside && (layout.scrolled || !data)) {
                 layout.reserve();
                 floatContentPlayer(player);
-                var floated = geometry(surface);
+                var floated = geometry(player.container);
                 player.visibleRatio = floated ? floated.ratio : 1;
             }
             notify();
@@ -734,7 +746,7 @@
                     }
                 }
             }
-            var data = geometry(player.floating ? surface : layout.anchor || player.container);
+            var data = geometry(player.floating ? player.container : layout.anchor || player.container);
             if (!data) { notify(); return; }
             if (layout.portal && !player.floating) {
                 var rect = data.rect, clip = data.clip;
@@ -1374,10 +1386,15 @@
         var accompanyingAvailable = player.contentMode && !player.contentFailed;
         tag.searchParams.set('vpmute', player.video.muted ? '1' : '0');
         tag.searchParams.set('vpa', player.contentMode ? 'auto' : (player.video.autoplay ? 'auto' : 'click'));
-        // The GAM sz parameter describes the primary video ad slot. A
-        // saved tag can outlive a responsive player-size change, so always
-        // align Google VAST requests with this request's actual player size.
-        tag.searchParams.set('sz', dimensions[0] + 'x' + dimensions[1]);
+        // GAM sz is inventory targeting, not the IMA rendering surface. Keep
+        // explicit single/multi-size targeting stable while responsive inline
+        // media grows. AdsRequest separately reports the actual measured area.
+        // Generated tags already target the selected master; incomplete tags
+        // use that same contract rather than inventing article-width inventory.
+        var targetingSize = tag.searchParams.get('sz') || '';
+        var validTargetingSize = /^[1-9]\d*x[1-9]\d*(?:\|[1-9]\d*x[1-9]\d*)*$/.test(targetingSize)
+            && targetingSize.split(/[x|]/).every(function (part) { return Number.isSafeInteger(Number(part)); });
+        if (!validTargetingSize) tag.searchParams.set('sz', player.size[0] + 'x' + player.size[1]);
         // This runtime implements linear IMA video only, not overlay ads.
         tag.searchParams.set('vad_type', 'linear');
         if (!player.rewarded && accompanyingAvailable) {
