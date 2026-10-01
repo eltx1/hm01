@@ -17,6 +17,14 @@ class ReportingServiceProvider extends ServiceProvider
             Route::middleware('horus')->group(function (): void {
                 Route::get('/admin/reporting', [AdminReportingController::class, 'index'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.index');
+                Route::prefix('/admin/reporting/gam-comparison')->middleware('permission:reporting.admin.view')->group(function (): void {
+                    $controller = \App\Http\Controllers\Admin\GamRevenueComparisonController::class;
+                    Route::get('/', [$controller, 'index'])->block(180, 10)->name('admin.reporting.gam-comparison');
+                    Route::post('/', [$controller, 'start'])->middleware('throttle:6,1')->block(180, 10)->name('admin.reporting.gam-comparison.start');
+                    Route::post('/{comparison}/poll', [$controller, 'poll'])->middleware('throttle:20,1')->block(180, 10)->name('admin.reporting.gam-comparison.poll');
+                    Route::get('/{comparison}/download', [$controller, 'download'])->block(180, 10)->name('admin.reporting.gam-comparison.download');
+                    Route::post('/{comparison}/discard', [$controller, 'discard'])->block(180, 10)->name('admin.reporting.gam-comparison.discard');
+                });
                 Route::get('/admin/reporting/websites', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'index'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.index');
                 Route::get('/admin/reporting/websites/{site}', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'show'])

@@ -127,3 +127,37 @@ References: [Google reporting workflow](https://developers.google.com/ad-manager
 [report columns](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.Column),
 [CSV download options](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.ReportDownloadOptions).
 Runtime API versions are resolved from the installed SDK, never these documentation URLs.
+
+## Private historical preview
+
+Horus administrators with `reporting.admin.view` can open **Private historical GAM
+preview** from Reporting. The preview accepts at most 31 completed network-local
+calendar days within the existing active binding. It independently requests
+`DATE`, `AD_UNIT_ID`, and `SITE_NAME` with the three core Total revenue,
+impression, and click columns, USD, the publisher/network timezone, and the exact
+selected ad-unit filter. The parser retains only the exact registered hostname
+using the same case/trailing-dot normalization as the forward importer.
+
+This report contract is not assumed to be supported by Google. An unsupported
+column/dimension combination, missing currency proof, malformed report, or absent
+exact-site row remains unavailable or unverified. There is no metric/scope
+fallback and a missing row is never presented as zero earnings. The production
+compatibility gate remains independent of this preview.
+
+The actor-bound server-side session holds up to three previews for 30 minutes.
+Session locks serialize requests, and a checkpoint is saved before submitting a
+Google job so an interrupted or uncertain attempt cannot be silently resubmitted.
+Each read, poll, and private download revalidates binding, source scope, query,
+stored facts, periods, and original-rule snapshots. Responses are private/no-store.
+Downloads omit raw source CSV, nonmatching sites, and complete financial models.
+No result is written to public files, fixtures, or repository artifacts.
+
+Daily projections preserve integer revenue micros, the importer's signed daily
+cent rounding, original persisted rule versions, existing per-fact deductions,
+and the calculator's allocation remainder. Unknown/default-only rules, mixed
+identities/currencies, unsupported dimensions, multiple stored facts, allocation
+mismatches, and non-open periods withhold projections. Separate approved
+adjustments are explicitly excluded and unchanged. This feature has no apply
+endpoint and never calls financial importers, scope initialization, source or
+scheduler checkpoint writers, period closing, statement, balance, or payout
+writers. A preview does not establish replacement approval or settlement safety.

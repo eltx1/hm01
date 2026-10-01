@@ -5,6 +5,7 @@
 <div class="reports-page">
 <header class="report-page-heading"><div><p class="eyebrow">REVENUE INTELLIGENCE</p><h2>Performance overview</h2><p class="muted">A clear view of your revenue and the publishers behind it.</p></div><span class="report-state"><span aria-hidden="true">●</span> Finalized data · {{ $summary['currency'] }}</span></header>
 <nav class="report-finance-links" aria-label="Report views"><a class="hm-button-primary" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from']->toDateString(), 'to' => $summary['to']->toDateString(), 'metrics' => $reportMetrics]) }}">Website reports →</a></nav>
+<p><a class="text-link" href="{{ route('admin.reporting.gam-comparison') }}">Private historical GAM preview</a></p>
 <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
 @if(!$summary['available'])<x-empty-state title="No finalized reports for these dates" description="Try another period or check source imports below. Missing reports do not mean zero revenue." />@endif
 <section class="report-metrics" aria-label="Performance totals">

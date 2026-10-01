@@ -11,6 +11,11 @@ final class SecureResponseHeaders
     public function handle(Request $request, Closure $next): Response
     {
         $response = $next($request);
+        if ($request->is('admin/reporting/gam-comparison', 'admin/reporting/gam-comparison/*')) {
+            $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
+            $response->headers->set('Pragma', 'no-cache');
+            $response->headers->set('Referrer-Policy', 'no-referrer');
+        }
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', 'DENY');
         // OAuth and private setup responses can require stricter referrer privacy.
