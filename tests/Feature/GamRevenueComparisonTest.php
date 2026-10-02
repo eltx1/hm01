@@ -127,6 +127,7 @@ class GamRevenueComparisonTest extends TestCase
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
         $response = $this->post(route('admin.reporting.gam-comparison.start'), $this->startPayload($site))->assertRedirect();
         $entry = array_values(session('private_gam_revenue_comparisons'))[0];
+        $this->fixture('reports-gam-preview-pending', $this->get($response->headers->get('Location'))->assertOk());
         $this->post(route('admin.reporting.gam-comparison.start'), $this->startPayload($site))->assertRedirect($response->headers->get('Location'));
         $this->assertCount(1, $google->queries);
         $query = $google->queries[0];
@@ -159,7 +160,8 @@ class GamRevenueComparisonTest extends TestCase
             ->assertJsonPath('result.replacement_approved', false)
             ->assertDontSee('other.test.example')->assertDontSee('scheduler-checkpoint');
         $this->assertStringContainsString('no-store', $download->headers->get('Cache-Control'));
-        $this->get($response->headers->get('Location'))->assertOk()->assertSee('No parent-domain')->assertSee('2.01')->assertSee('Metric basis changed or unversioned');
+        $rendered = $this->get($response->headers->get('Location'))->assertOk()->assertSee('No parent-domain')->assertSee('2.01')->assertSee('Metric basis changed or unversioned');
+        $this->fixture('reports-gam-preview-completed', $rendered);
         $this->post(route('admin.reporting.gam-comparison.discard', $entry['id']))->assertRedirect();
         $this->get(route('admin.reporting.gam-comparison.download', $entry['id']))->assertNotFound();
         $this->assertSame($before, $this->financialSnapshot());
@@ -219,7 +221,8 @@ class GamRevenueComparisonTest extends TestCase
         $this->assertSame('FAILED', $entry['job']['status']);
         $this->post(route('admin.reporting.gam-comparison.start'), $this->startPayload($site))->assertRedirect();
         $this->assertSame(1, count(array_filter($google->calls, fn ($method) => $method === 'runReportJob')));
-        $this->get(route('admin.reporting.gam-comparison', ['comparison' => $entry['id']]))->assertOk()->assertDontSee('private-secret-must-not-escape');
+        $failed = $this->get(route('admin.reporting.gam-comparison', ['comparison' => $entry['id']]))->assertOk()->assertDontSee('private-secret-must-not-escape');
+        $this->fixture('reports-gam-preview-failed', $failed);
         $entry['job'] = ['status' => 'STARTING'];
         $this->withSession(['private_gam_revenue_comparisons' => [$entry['id'] => $entry]]);
         $this->post(route('admin.reporting.gam-comparison.start'), $this->startPayload($site))->assertRedirect();
@@ -285,5 +288,16 @@ class GamRevenueComparisonTest extends TestCase
         $day = $service->compare($context, $snapshot, $fresh)['days'][0];
         $this->assertNull($day['projected']);
         $this->assertContains('MULTIPLE_STORED_FACTS_NO_ALLOCATION', $day['flags']);
+    }
+
+    private function fixture(string $name, \Illuminate\Testing\TestResponse $response): void
+    {
+        // Only synthetic data created in this test reaches browser artifacts.
+        if (getenv('HORUS_UI_FIXTURES') !== '1') return;
+        $directory = storage_path('framework/testing/form-experience');
+        if (! is_dir($directory)) mkdir($directory, 0755, true);
+        $html = str_replace('</head>', '<link rel="stylesheet" href="/fixture.css"></head>', $response->getContent());
+        $html = str_replace('</body>', '<script type="module" src="/fixture.js"></script></body>', $html);
+        file_put_contents($directory.'/'.$name.'.html', $html);
     }
 }

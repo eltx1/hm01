@@ -33,7 +33,7 @@
             @if($job['status'] === 'STARTING')
                 <p role="alert">The request was interrupted or its outcome is uncertain. This attempt will not be submitted again. Discard it only if you intentionally want to request a new report.</p>
             @elseif($job['status'] === 'FAILED')
-                <p role="alert">{{ $job['error'] }}. Preview unavailable or unverified. No alternative scope, currency or metric was substituted.</p>
+                <p class="breakable" role="alert">{{ $job['error'] }}. Preview unavailable or unverified. No alternative scope, currency or metric was substituted.</p>
             @elseif($job['status'] === 'PENDING')
                 <p>Google is preparing the report. Wait at least 15 seconds between refreshes.</p>
                 <form method="POST" action="{{ route('admin.reporting.gam-comparison.poll', $selected['id']) }}">@csrf<button class="hm-button-secondary">Refresh status</button></form>
