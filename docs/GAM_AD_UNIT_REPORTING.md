@@ -133,12 +133,14 @@ Runtime API versions are resolved from the installed SDK, never these documentat
 Horus administrators with `reporting.admin.view` can open **Private historical GAM
 preview** from Reporting. The preview accepts at most 31 completed network-local
 calendar days within the existing active binding. It independently requests
-`DATE`, `AD_UNIT_ID`, and `SITE_NAME` with the three core Total revenue,
+`DATE`, `AD_UNIT_ID`, and `SITE_NAME` with the three core Ad Exchange revenue,
 impression, and click columns, USD, the publisher/network timezone, and the exact
 selected ad-unit filter. The parser retains only the exact registered hostname
 using the same case/trailing-dot normalization as the forward importer.
 
-This report contract is not assumed to be supported by Google. An unsupported
+The shared `SiteGamReportMetrics::BASIS` and finance columns bind the preview to
+the canonical Ad Exchange contract. This report contract is not assumed to be
+supported by Google. An unsupported
 column/dimension combination, missing currency proof, malformed report, or absent
 exact-site row remains unavailable or unverified. There is no metric/scope
 fallback and a missing row is never presented as zero earnings. The production
@@ -151,6 +153,11 @@ Each read, poll, and private download revalidates binding, source scope, query,
 stored facts, periods, and original-rule snapshots. Responses are private/no-store.
 Downloads omit raw source CSV, nonmatching sites, and complete financial models.
 No result is written to public files, fixtures, or repository artifacts.
+
+Legacy rows without `gam_report_basis` remain explicitly labeled Total-era /
+unversioned; they are never relabeled as Ad Exchange. The preview separately
+identifies the new basis, and explains that an old-to-new difference may combine a
+metric-basis change and a scope change. It is not an approved correction.
 
 Daily projections preserve integer revenue micros, the importer's signed daily
 cent rounding, original persisted rule versions, existing per-fact deductions,

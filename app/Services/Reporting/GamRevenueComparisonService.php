@@ -42,6 +42,7 @@ final class GamRevenueComparisonService
             'report_source_id' => $binding->connection->report_source_id,
             'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id,
             'network_currency' => $network['currencyCode'], 'currency' => 'USD', 'timezone' => $network['timeZone'],
+            'metric_basis' => SiteGamReportMetrics::BASIS,
             'from' => $from, 'to' => $to, 'captured_at' => now()->toIso8601String(),
             'binding_fingerprint' => $this->fingerprint($binding),
         ];
@@ -49,6 +50,7 @@ final class GamRevenueComparisonService
 
     public function assertContext(array $context): SiteGamReportBinding
     {
+        if (($context['metric_basis'] ?? null) !== SiteGamReportMetrics::BASIS) $this->invalid('The metric basis changed. Start a new preview.');
         $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['site', 'connection.source', 'gamConnection'])->find($context['binding_id']);
         if (! $binding) $this->invalid('The binding changed. Start a new preview.');
         $this->validateBinding($binding);
@@ -70,7 +72,7 @@ final class GamRevenueComparisonService
     {
         $date = fn (string $day) => array_combine(['year', 'month', 'day'], array_map('intval', explode('-', $day)));
         return [
-            'dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'], 'columns' => GamRevenueComparisonCsv::COLUMNS,
+            'dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'], 'columns' => GamRevenueComparisonCsv::columns(),
             'adUnitView' => 'FLAT', 'dateRangeType' => 'CUSTOM_DATE',
             'startDate' => $date($context['from']), 'endDate' => $date($context['to']),
             'timeZoneType' => 'PUBLISHER', 'reportCurrency' => 'USD',
@@ -80,7 +82,7 @@ final class GamRevenueComparisonService
         ];
     }
 
-    public function queryHash(array $context): string { return $this->hash($this->query($context)); }
+    public function queryHash(array $context): string { return $this->hash(['metric_basis' => $context['metric_basis'], 'query' => $this->query($context)]); }
 
     public function start(array $entry): array
     {
@@ -164,17 +166,27 @@ final class GamRevenueComparisonService
             $comparable = $observed && $facts && ! array_intersect($flags, [
                 'MIXED_CURRENCY', 'MIXED_STORED_IDENTITY', 'UNVERIFIED_STORED_UNIT', 'MIXED_STORED_HOST',
                 'UNSUPPORTED_STORED_DIMENSIONS', 'UNVERIFIED_STORED_AMOUNT', 'MULTIPLE_STORED_FACTS_NO_ALLOCATION',
+                'UNVERIFIED_STORED_METRIC_BASIS',
             ]);
+            $storedBases = array_values(array_unique(array_map(function ($row) {
+                $external = json_decode($row['dimension']['external_dimensions'] ?? '{}', true) ?? [];
+                $basis = $external['gam_report_basis'] ?? 'LEGACY_TOTAL_UNVERSIONED';
+                return is_string($basis) ? $basis : 'UNVERIFIED_STORED_METRIC_BASIS';
+            }, $facts)));
             $days[] = [
                 'date' => $date, 'stored' => $mixedCurrency || ! $facts || ! $storedAmountsVerified ? null : $stored, 'fresh' => $new,
                 'gross_delta_minor' => $comparable ? $new['gross_revenue_minor'] - $stored['gross_revenue_minor'] : null,
                 'impressions_delta' => $comparable ? $new['impressions'] - $stored['impressions'] : null,
+                'stored_metric_bases' => $storedBases, 'fresh_metric_basis' => SiteGamReportMetrics::BASIS,
+                'basis_change' => $storedBases !== [SiteGamReportMetrics::BASIS],
                 'projected' => $projection, 'flags' => array_values(array_unique($flags)),
                 'original_rule_version_id' => count($facts) === 1 ? ($facts[0]['fact']['revenue_rule_version_id'] ?? null) : null,
             ];
         }
         return ['days' => $days, 'exact_site_observed' => $fresh['exact_site_observed'], 'excluded_site_rows' => $fresh['excluded_site_rows'],
-            'replacement_approved' => false, 'notice' => 'Comparison evidence only. No replacement or settlement safety is established. Separate approved adjustments are excluded and unchanged.'];
+            'metric_basis' => SiteGamReportMetrics::BASIS, 'replacement_approved' => false,
+            'basis_notice' => 'Legacy amounts without row-level basis metadata are Total-era/unversioned. Their difference from exact-site Ad Exchange may combine a metric-basis change and a scope change; it is not an approved correction.',
+            'notice' => 'Comparison evidence only. No replacement or settlement safety is established. Separate approved adjustments are excluded and unchanged.'];
     }
 
     private function factFlags(array $row, array $context, string $date): array
@@ -192,7 +204,8 @@ final class GamRevenueComparisonService
         $external = json_decode($dimension['external_dimensions'] ?? '{}', true) ?? [];
         if (($external['gam_ad_unit_id'] ?? null) !== $context['ad_unit_id']) $flags[] = 'UNVERIFIED_STORED_UNIT';
         if (isset($external['gam_report_site']) && $external['gam_report_site'] !== $context['hostname']) $flags[] = 'MIXED_STORED_HOST';
-        if (array_diff(array_keys($external), ['gam_ad_unit_id', 'gam_report_site', 'gam_report_scope'])) $flags[] = 'UNSUPPORTED_STORED_DIMENSIONS';
+        if (array_diff(array_keys($external), ['gam_ad_unit_id', 'gam_report_site', 'gam_report_scope', 'gam_report_basis'])) $flags[] = 'UNSUPPORTED_STORED_DIMENSIONS';
+        if (isset($external['gam_report_basis']) && $external['gam_report_basis'] !== SiteGamReportMetrics::BASIS) $flags[] = 'UNVERIFIED_STORED_METRIC_BASIS';
         $scopeMatches = match ($rule['scope_type'] ?? '') {
             'GLOBAL' => empty($rule['scope_id']),
             'PUBLISHER' => ($rule['scope_id'] ?? null) === $context['publisher_id'],
@@ -279,7 +292,7 @@ final class GamRevenueComparisonService
 
     public static function errorCode(\Throwable $error): string
     {
-        foreach (['COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', 'INVALID_DIMENSION_FILTERS', 'TIME_ZONE_TYPE_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'CURRENCY_CODE_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'AD_UNIT_VIEW_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'DUPLICATE_CSV_ROW', 'OUT_OF_SCOPE_DATE', 'OUT_OF_SCOPE_UNIT', 'INVALID_CSV_HEADERS', 'GOOGLE_REPORT_FAILED', 'NETWORK_IDENTITY_CHANGED', 'POLL_LIMIT_REACHED'] as $code) {
+        foreach (['COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', 'INVALID_DIMENSION_FILTERS', 'TIME_ZONE_TYPE_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'CURRENCY_CODE_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'AD_UNIT_VIEW_NOT_SUPPORTED_FOR_REQUESTED_REPORT', 'DUPLICATE_CSV_ROW', 'OUT_OF_SCOPE_DATE', 'OUT_OF_SCOPE_UNIT', 'INVALID_CSV_HEADERS', 'GOOGLE_REPORT_FAILED', 'NETWORK_IDENTITY_CHANGED', 'POLL_LIMIT_REACHED', 'METRIC_BASIS_CHANGED'] as $code) {
             if (str_contains($error->getMessage(), $code)) return $code;
         }
         return 'PREVIEW_UNAVAILABLE_OR_UNVERIFIED';

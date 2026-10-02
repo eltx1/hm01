@@ -98,7 +98,11 @@ class GamRevenueComparisonTest extends TestCase
             {
                 $query = $this->queries[(int) $jobId - 1];
                 $columns = array_map(fn ($key) => 'Column.'.$key, $query['columns']);
-                return implode(',', ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...$columns])."\n2026-09-01,456,news.test.example,USD 2005000,20,2\n2026-09-01,456,other.test.example,USD 9000000,90,9\n";
+                $selected = ['AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'USD 2005000', 'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => '20', 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => '2'];
+                $other = ['AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'USD 9000000', 'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => '90', 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => '9'];
+                return implode(',', ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...$columns])."\n"
+                    .implode(',', ['2026-09-01', '456', 'news.test.example', ...array_map(fn ($column) => $selected[$column], $query['columns'])])."\n"
+                    .implode(',', ['2026-09-01', '456', 'other.test.example', ...array_map(fn ($column) => $other[$column], $query['columns'])])."\n";
             }
         };
         $this->app->instance(GamAdUnitReportClient::class, $google);
@@ -128,6 +132,8 @@ class GamRevenueComparisonTest extends TestCase
         $query = $google->queries[0];
         $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $query['dimensions']);
         $this->assertSame('WHERE AD_UNIT_ID = :unit', $query['statement']['query']);
+        $this->assertSame(array_keys(\App\Services\Reporting\SiteGamReportMetrics::FINANCE_COLUMNS), $query['columns']);
+        $this->assertStringNotContainsString('TOTAL_LINE_ITEM', json_encode($query));
         $this->assertSame('456', $query['statement']['values'][0]['value']['value']);
         $this->assertSame('USD', $query['reportCurrency']);
         $this->assertSame('PUBLISHER', $query['timeZoneType']);
@@ -145,12 +151,15 @@ class GamRevenueComparisonTest extends TestCase
             ->assertJsonPath('result.days.0.projected.horus_earnings_minor', 49)
             ->assertJsonPath('result.days.0.projected.mcm_partner_earnings_minor', 9)
             ->assertJsonPath('result.days.0.flags', [])
+            ->assertJsonPath('result.days.0.stored_metric_bases', ['LEGACY_TOTAL_UNVERSIONED'])
+            ->assertJsonPath('result.days.0.fresh_metric_basis', 'AD_EXCHANGE_V1')
+            ->assertJsonPath('result.days.0.basis_change', true)
             ->assertJsonPath('result.days.1.fresh', null)
             ->assertJsonPath('result.days.1.gross_delta_minor', null)
             ->assertJsonPath('result.replacement_approved', false)
             ->assertDontSee('other.test.example')->assertDontSee('scheduler-checkpoint');
         $this->assertStringContainsString('no-store', $download->headers->get('Cache-Control'));
-        $this->get($response->headers->get('Location'))->assertOk()->assertSee('No parent-domain')->assertSee('2.01');
+        $this->get($response->headers->get('Location'))->assertOk()->assertSee('No parent-domain')->assertSee('2.01')->assertSee('Metric basis changed or unversioned');
         $this->post(route('admin.reporting.gam-comparison.discard', $entry['id']))->assertRedirect();
         $this->get(route('admin.reporting.gam-comparison.download', $entry['id']))->assertNotFound();
         $this->assertSame($before, $this->financialSnapshot());
@@ -260,14 +269,18 @@ class GamRevenueComparisonTest extends TestCase
             ['fact.gross_revenue_minor', 'not-money', 'UNVERIFIED_STORED_AMOUNT'],
             ['rule.effective_from', '2026-10-01', 'UNVERIFIED_ORIGINAL_RULE'],
             ['rule.effective_to', '2026-08-31', 'UNVERIFIED_ORIGINAL_RULE'],
+            ['dimension.external_dimensions', json_encode(['gam_ad_unit_id' => '456', 'gam_report_basis' => 'UNRECOGNIZED']), 'UNVERIFIED_STORED_METRIC_BASIS'],
         ] as [$key, $value, $flag]) {
             $changed = $snapshot;
             data_set($changed['facts'][0], $key, $value);
             $day = $service->compare($context, $changed, $fresh)['days'][0];
             $this->assertNull($day['projected'], $flag);
             $this->assertContains($flag, $day['flags']);
-            if (in_array($flag, ['MIXED_CURRENCY', 'UNVERIFIED_STORED_UNIT', 'MIXED_STORED_HOST', 'UNVERIFIED_STORED_AMOUNT'], true)) $this->assertNull($day['gross_delta_minor']);
+            if (in_array($flag, ['MIXED_CURRENCY', 'UNVERIFIED_STORED_UNIT', 'MIXED_STORED_HOST', 'UNVERIFIED_STORED_AMOUNT', 'UNVERIFIED_STORED_METRIC_BASIS'], true)) $this->assertNull($day['gross_delta_minor']);
         }
+        $knownBasis = $snapshot;
+        $knownBasis['facts'][0]['dimension']['external_dimensions'] = json_encode(['gam_ad_unit_id' => '456', 'gam_report_basis' => 'AD_EXCHANGE_V1']);
+        $this->assertFalse($service->compare($context, $knownBasis, $fresh)['days'][0]['basis_change']);
         $snapshot['facts'][] = $snapshot['facts'][0];
         $day = $service->compare($context, $snapshot, $fresh)['days'][0];
         $this->assertNull($day['projected']);

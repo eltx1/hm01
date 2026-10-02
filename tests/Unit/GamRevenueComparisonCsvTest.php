@@ -11,7 +11,7 @@ use RuntimeException;
 class GamRevenueComparisonCsvTest extends TestCase
 {
     // Synthetic fixtures only. Never use private publisher evidence here.
-    private const CONTEXT = ['hostname' => 'news.test.example', 'ad_unit_id' => '456', 'network_currency' => 'USD', 'from' => '2026-09-01', 'to' => '2026-09-30'];
+    private const CONTEXT = ['hostname' => 'news.test.example', 'ad_unit_id' => '456', 'network_currency' => 'USD', 'metric_basis' => 'AD_EXCHANGE_V1', 'from' => '2026-09-01', 'to' => '2026-09-30'];
 
     public function test_exact_site_and_unit_keep_micros_and_signed_daily_rounding(): void
     {
@@ -116,6 +116,13 @@ class GamRevenueComparisonCsvTest extends TestCase
         $this->assertSame($marked, $confirmed);
     }
 
+    public function test_a_report_from_a_different_metric_contract_is_rejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('METRIC_BASIS_CHANGED');
+        $this->analyze([], ['metric_basis' => 'LEGACY_TOTAL_UNVERSIONED']);
+    }
+
     public function test_even_excluded_rows_must_have_proven_currency(): void
     {
         $this->expectException(RuntimeException::class);
@@ -124,7 +131,7 @@ class GamRevenueComparisonCsvTest extends TestCase
 
     private static function headers(): array
     {
-        return ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($column) => 'Column.'.$column, GamRevenueComparisonCsv::COLUMNS)];
+        return ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Column.AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', 'Column.AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS', 'Column.AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS'];
     }
 
     private function analyze(array $rows, array $context = [], ?string $confirmed = null): array

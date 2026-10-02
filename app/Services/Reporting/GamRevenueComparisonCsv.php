@@ -7,13 +7,17 @@ use RuntimeException;
 /** Private projection only. No rows from this parser can enter an importer. */
 final class GamRevenueComparisonCsv
 {
-    public const COLUMNS = ['TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS', 'TOTAL_LINE_ITEM_LEVEL_CLICKS'];
+    public static function columns(): array
+    {
+        return array_keys(SiteGamReportMetrics::FINANCE_COLUMNS);
+    }
 
     public function __construct(private readonly GamReportMoneyParser $money) {}
 
     public function analyze(string $csv, array $context, ?string $confirmedCurrency): array
     {
-        $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($key) => 'Column.'.$key, self::COLUMNS)];
+        if (($context['metric_basis'] ?? null) !== SiteGamReportMetrics::BASIS) throw new RuntimeException('METRIC_BASIS_CHANGED');
+        $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($key) => 'Column.'.$key, self::columns())];
         $stream = fopen('php://temp', 'w+');
         fwrite($stream, $csv);
         rewind($stream);
@@ -40,12 +44,12 @@ final class GamRevenueComparisonCsv
                 $identity = $day.'|'.$host;
                 if (isset($seen[$identity])) throw new RuntimeException('DUPLICATE_CSV_ROW');
                 $seen[$identity] = true;
-                $micros = $this->money->parse($row['Column.'.self::COLUMNS[0]], 'USD', $context['network_currency'], $confirmedCurrency);
+                $micros = $this->money->parse($row['Column.AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE'], 'USD', $context['network_currency'], $confirmedCurrency);
                 $metrics = [
                     'revenue_micros' => $micros,
                     'gross_revenue_minor' => self::minor($micros),
-                    'impressions' => $this->counter($row['Column.'.self::COLUMNS[1]]),
-                    'clicks' => $this->counter($row['Column.'.self::COLUMNS[2]]),
+                    'impressions' => $this->counter($row['Column.AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS']),
+                    'clicks' => $this->counter($row['Column.AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS']),
                 ];
                 if ($host !== $context['hostname']) { $excluded++; continue; }
                 $days[$day] = $metrics;
