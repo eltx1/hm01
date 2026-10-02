@@ -27,7 +27,10 @@ final class GamRevenueComparisonCsv
             $headers = fgetcsv($stream, escape: '');
             if (! is_array($headers)) throw new RuntimeException('INVALID_CSV_HEADERS');
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
-            if (array_diff($required, $headers) || array_diff($headers, $required) || count(array_unique($headers)) !== count($headers)) {
+            // Google automatically includes AD_UNIT_NAME when AD_UNIT_ID is
+            // requested. It is descriptive only; never use it for scope or grain.
+            $allowed = [...$required, 'Dimension.AD_UNIT_NAME'];
+            if (array_diff($required, $headers) || array_diff($headers, $allowed) || count(array_unique($headers)) !== count($headers)) {
                 throw new RuntimeException('INVALID_CSV_HEADERS');
             }
             while (($values = fgetcsv($stream, escape: '')) !== false) {

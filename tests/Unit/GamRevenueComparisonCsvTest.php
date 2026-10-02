@@ -34,6 +34,19 @@ class GamRevenueComparisonCsvTest extends TestCase
         $this->assertStringNotContainsString('other.test.example', json_encode($result));
     }
 
+    public function test_google_automatic_ad_unit_name_is_allowed_but_never_used_as_scope_or_output(): void
+    {
+        $stream = fopen('php://temp', 'w+');
+        fputcsv($stream, ['Dimension.AD_UNIT_NAME', ...self::headers()], escape: '');
+        fputcsv($stream, ['Synthetic, descriptive unit name', '2026-09-01', '456', 'news.test.example', '15000', '3', '1'], escape: '');
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        $result = (new GamRevenueComparisonCsv(new GamReportMoneyParser))->analyze($csv, self::CONTEXT, null);
+        $this->assertSame($this->analyze([['2026-09-01', '456', 'news.test.example', '15000', '3', '1']]), $result);
+        $this->assertStringNotContainsString('Synthetic', json_encode($result));
+    }
+
     public function test_absent_site_is_missing_evidence_and_not_a_zero_daily_row(): void
     {
         $result = $this->analyze([['2026-09-01', '456', 'other.test.example', '0', '0', '0']]);
@@ -87,7 +100,9 @@ class GamRevenueComparisonCsvTest extends TestCase
     public function test_missing_extra_and_duplicate_headers_fail_closed(): void
     {
         $headers = self::headers();
-        foreach ([array_slice($headers, 1), [...$headers, 'Column.UNRELATED'], [...$headers, $headers[0]]] as $bad) {
+        foreach ([array_slice($headers, 1), [...$headers, 'Column.UNRELATED'], [...$headers, $headers[0]],
+            [...$headers, 'Dimension.AD_UNIT_NAME', 'Dimension.AD_UNIT_NAME'],
+            [...$headers, 'Dimension.COUNTRY_NAME']] as $bad) {
             try {
                 (new GamRevenueComparisonCsv(new GamReportMoneyParser))->analyze(implode(',', $bad)."\n", self::CONTEXT, null);
                 $this->fail('Invalid headers were accepted.');

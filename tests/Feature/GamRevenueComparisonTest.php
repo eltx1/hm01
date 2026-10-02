@@ -100,9 +100,9 @@ class GamRevenueComparisonTest extends TestCase
                 $columns = array_map(fn ($key) => 'Column.'.$key, $query['columns']);
                 $selected = ['AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'USD 2005000', 'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => '20', 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => '2'];
                 $other = ['AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'USD 9000000', 'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => '90', 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => '9'];
-                return implode(',', ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...$columns])."\n"
-                    .implode(',', ['2026-09-01', '456', 'news.test.example', ...array_map(fn ($column) => $selected[$column], $query['columns'])])."\n"
-                    .implode(',', ['2026-09-01', '456', 'other.test.example', ...array_map(fn ($column) => $other[$column], $query['columns'])])."\n";
+                return implode(',', ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.AD_UNIT_NAME', 'Dimension.SITE_NAME', ...$columns])."\n"
+                    .implode(',', ['2026-09-01', '456', 'Synthetic unit name', 'news.test.example', ...array_map(fn ($column) => $selected[$column], $query['columns'])])."\n"
+                    .implode(',', ['2026-09-01', '456', 'Synthetic unit name', 'other.test.example', ...array_map(fn ($column) => $other[$column], $query['columns'])])."\n";
             }
         };
         $this->app->instance(GamAdUnitReportClient::class, $google);
