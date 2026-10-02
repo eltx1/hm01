@@ -392,3 +392,36 @@ test('website operations tables scroll inside their cards on narrow screens', as
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: info.outputPath('workspace-admin-site-mobile.png'), fullPage: false });
 });
+
+for (const state of ['pending', 'completed', 'failed']) {
+    test(`private GAM preview ${state}: bounded forms and basis warnings fit both themes`, async ({ page }, info) => {
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await open(page, `reports-gam-preview-${state}`);
+        await expect(page.getByRole('heading', { name: 'Historical revenue comparison', exact: true })).toBeVisible();
+        await expect(page.getByLabel('Website', { exact: true })).toContainText('news.test.example');
+        await expect(page.getByLabel('From', { exact: true })).toHaveValue('2026-09-01');
+        await expect(page.getByLabel('To', { exact: true })).toHaveValue('2026-09-02');
+        await expect(page.getByRole('button', { name: 'Request private preview', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /apply|replace|import|payout/i })).toHaveCount(0);
+        if (state === 'completed') {
+            await expect(page.getByRole('table')).toContainText('LEGACY_TOTAL_UNVERSIONED');
+            await expect(page.getByRole('table')).toContainText('Exact-site AdX gross');
+            await expect(page.getByRole('table')).toContainText('Metric basis changed or unversioned');
+            await expect(page.getByRole('table')).toContainText('NO_EXACT_SITE_ROW');
+            await expect(page.getByRole('table')).toContainText('2.01');
+            await expect(page.getByRole('link', { name: 'Download private preview JSON', exact: true })).toBeVisible();
+        } else {
+            await expect(page.getByRole('link', { name: 'Download private preview JSON', exact: true })).toHaveCount(0);
+            if (state === 'pending') await expect(page.getByRole('button', { name: 'Refresh status', exact: true })).toBeVisible();
+            else await expect(page.getByRole('alert')).toContainText('COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
+        }
+        for (const theme of ['dark', 'light']) {
+            await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+            await page.screenshot({ path: info.outputPath(`gam-preview-${state}-${theme}.png`), fullPage: true });
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+        expect(errors).toEqual([]);
+    });
+}
