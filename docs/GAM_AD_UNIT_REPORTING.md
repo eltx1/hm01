@@ -46,14 +46,16 @@ MCM, Publisher GAM, and CSV reporting paths continue to operate.
 
 `reporting:sync-site-gam` runs every five minutes through the existing scheduler.
 It requires no permanent worker. Each binding uses the Google network timezone.
-Current-day hourly estimates refresh hourly. Daily reports refresh every six
+Current-day daily estimates refresh hourly. Daily reports refresh every six
 hours for each open month, including the initial current-month backfill. Google
 preparation is asynchronous: pending job IDs are persisted and resumed instead of
 blocking the administrator's save request. Requests have bounded SOAP timeouts;
 failures back off and expired preparation jobs are retried.
 
-Reports request total impressions, clicks, requests, responses, unmatched requests
-and total CPM/CPC/CPD revenue, including dynamic allocation. Every GAM query sends
+Website reports use the explicit `AD_EXCHANGE_V1` basis: Ad Exchange impressions,
+clicks, revenue, ad requests and responses served. The exact Google columns are
+defined in `SiteGamReportMetrics`; full-network reporting retains its separate
+existing contract. Every website GAM query sends
 `reportCurrency=USD`, regardless
 of the network's base currency. Google performs the reporting FX conversion using
 its report-currency rules; Horus stores the returned CSV_DUMP micros directly in
@@ -61,9 +63,14 @@ USD and converts micros to minor units once per aggregate. Dates and the returne
 must match the binding. `SITE_NAME` is required; rows for another/unknown/not-applicable
 Site cannot contribute revenue or delivery metrics. The selected unit filter remains
 in Google; exact Site selection is also enforced locally without assuming PQL Site
-filter support. Neither `DOMAIN` nor Ad Exchange-only metrics substitute for the
-requested scope/Total metric. Optional performance-column fallback retains Site,
-unit, currency and every core finance metric; unsupported core queries fail visibly.
+filter support. `DOMAIN` and unscoped totals never substitute for the requested
+exact hostname. Optional Ad Exchange Active View columns may be omitted after
+an explicit unsupported-column response, while Site, unit, currency and all five
+core Ad Exchange metrics remain unchanged. Missing Active View counters stay null.
+Unfilled impressions are always unavailable for this contract; Horus does not
+substitute Total unfilled impressions or infer them from requests. The existing
+internal unmatched-request calculation remains distinct from unfilled impressions.
+Unsupported core queries fail visibly.
 Malformed, oversized and failed downloads never create
 zero-revenue reports. A completed, valid report fills omitted dates/hours with zero
 to correctly apply downward corrections. Download URLs are Google HTTPS URLs;
@@ -84,16 +91,17 @@ binding form.
 ## Forward-only scope upgrade and historical review
 
 `site_report_scope` records a canonical fingerprint of binding, network, unit,
-exact hostname, currency, timezone, version and effective date. New/empty bindings
+exact hostname, metric basis, currency, timezone, version and effective date. New/empty bindings
 use their usual start date. Existing bindings with stored daily/hourly facts
 automatically start exact-site attribution at the later of the current network
 day or the day after the last stored fact. An already imported current day therefore
 switches the following day. No binding must be recreated. Hostname changes create
 a new recorded forward scope; earlier scopes remain in operational history.
+Changing the basis from legacy Total to Ad Exchange also versions this scope.
 
 The scheduler clamps its month windows and pending retries to that date. Google
 job keys include the fingerprint, and asynchronous checkpoint writes revalidate it.
-Financial rows carry the exact Site and fingerprint in their dimension provenance.
+Financial rows carry the exact Site, `gam_report_basis` and fingerprint in their dimension provenance.
 Imports reject conflicting same-day provenance inside the financial transaction.
 Old amounts are neither overwritten nor duplicated by a new scope. Earlier balances
 remain unverified until a separate, private comparison preview and explicit
@@ -105,11 +113,20 @@ their existing approval rules. The site reporting view discloses that boundary.
 Before release transfer/switch/migrations, the trusted-main deployment workflow
 streams `ops/audit/gam-site-scope-preflight.php` into the currently deployed app.
 It uses existing credentials to generate temporary report jobs for enabled active
-bindings: exact retained Total columns, `DATE + AD_UNIT_ID + SITE_NAME`, selected
+bindings: the five mandatory Ad Exchange columns, `DATE + AD_UNIT_ID + SITE_NAME`, selected
 unit filter, `FLAT`, network-calendar yesterday and USD. It polls to completion
 and validates the CSV schema, unit/date and monetary currency proof. No fallback
-query is permitted in this preflight. Unsupported, failed, invalid or timed-out
+query is permitted to satisfy this preflight. Optional Active View availability
+does not replace any mandatory metric. Unsupported, failed, invalid or timed-out
 reports abort deployment before production code changes.
+
+For a column/dimension incompatibility only, the first rejected binding receives
+at most six diagnostic profiles: the three finance metrics together and each
+mandatory column individually, preserving the original scope. Each receives one
+submission and at most one status check within a further 180-second budget.
+Pending reports remain inconclusive. Even compatible subsets never turn the
+original rejection into a successful gate. Output contains fixed profile names
+and compatibility flags only.
 
 The probe is bounded to 25 active bindings and a 180-second scheduling/poll budget
 (individual existing network/download timeouts still apply). A larger installation

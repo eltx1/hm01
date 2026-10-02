@@ -36,6 +36,7 @@ final class SiteReportSourcePolicy
             $scope = app(SiteGamReportScope::class)->ensure($binding);
             app(SiteGamReportScope::class)->assertCurrent($binding, $scope);
             if (($row['gam_report_site'] ?? null) !== $scope['hostname']
+                || ($row['gam_report_basis'] ?? null) !== SiteGamReportMetrics::BASIS
                 || ($row['gam_report_scope'] ?? null) !== $scope['fingerprint'] || $row['date'] < $scope['effective_from']) {
                 throw ValidationException::withMessages(['source' => 'The Google report must prove the exact website hostname and current effective scope.']);
             }

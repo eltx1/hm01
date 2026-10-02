@@ -31,12 +31,12 @@
         <dl><dt>Currency / timezone</dt><dd>{{ $reportBinding->connection->currency }} · {{ $reportBinding->connection->timezone }}</dd><dt>Last successful import</dt><dd>{{ $reportBinding->connection->last_successful_import_at ?? 'Waiting for the first automatic synchronization' }}</dd><dt>Last finalized import</dt><dd>{{ $reportBinding->connection->last_finalized_import_at ?? 'Pending' }}</dd></dl>
         @php($exactSiteScope = data_get($reportBinding->connection->configuration, 'site_report_scope'))
         @if($exactSiteScope)
-            <p>Exact reporting scope: selected unit + {{ $exactSiteScope['hostname'] }} · From {{ $exactSiteScope['effective_from'] }} · Total revenue in USD</p>
+            <p>Exact reporting scope: selected unit + {{ $exactSiteScope['hostname'] }} · From {{ $exactSiteScope['effective_from'] }} · {{ ($exactSiteScope['metric_basis'] ?? '') === \App\Services\Reporting\SiteGamReportMetrics::BASIS ? 'Ad Exchange revenue in USD' : 'Legacy Total revenue basis; awaiting forward upgrade' }}</p>
             @if($exactSiteScope['historical_review_required'] ?? false)
                 <p role="alert">Earlier stored reporting through {{ $exactSiteScope['preserved_history_through'] }} is preserved and has not been revalidated against the exact website. Compare and approve any historical correction before relying on those amounts for settlement.</p>
             @endif
         @else
-            <p class="muted">The next automatic synchronization records the exact website scope and a forward-only cutover. Already stored financial days are preserved for separate review.</p>
+            <p class="muted">The next automatic synchronization records the exact website scope, Ad Exchange basis and a forward-only cutover. Already stored financial days are preserved for separate review.</p>
         @endif
         @if($reportBinding->connection->last_error)<p role="alert">Latest refresh failed: {{ $reportBinding->connection->last_error }}</p><p class="muted">The timestamps above show earlier successful imports. Their data is preserved while the failed refresh retries automatically.</p>@endif
     @else
@@ -62,7 +62,7 @@
             <label>Ad unit<input class="hm-input" name="ad_unit" list="gam-report-unit-options" value="{{ old('ad_unit', session()->has('reporting_gam_connection_id') && session('reporting_gam_connection_id') !== $reportBinding?->gam_connection_id ? '' : $reportBinding?->ad_unit_id) }}" placeholder="Search by name, code or ID" autocomplete="off" maxlength="255" required aria-describedby="gam-report-unit-help"></label>
             <datalist id="gam-report-unit-options"></datalist>
             <small id="gam-report-unit-help" data-unit-feedback aria-live="polite">Select a search result or enter the exact name, code or ID.</small>
-            <p class="muted">Reports cover the selected unit only, excluding child units, and only Google's Site rows matching this website's registered hostname. Parent domains, sibling subdomains and www are not combined. Horus requests USD and uses Google's network timezone. New sources start in the current open month after previously imported days; existing-source scope upgrades start after stored history. Historical corrections require separate comparison and approval. Ad delivery settings stay as configured.</p>
+            <p class="muted">Reports use Ad Exchange revenue, impressions and clicks for the selected unit only, excluding child units, and only Google's Site rows matching this website's registered hostname. Parent domains, sibling subdomains and www are not combined. Horus requests USD and uses Google's network timezone. Active View appears when its Ad Exchange counters are available; unfilled impressions are unavailable for this report. New sources start in the current open month after previously imported days; existing-source scope upgrades start after stored history. Historical corrections require separate comparison and approval. Ad delivery settings stay as configured.</p>
             <button class="hm-button-primary">{{ $reportBinding ? 'Update reporting connection' : 'Connect reports' }}</button>
         </form>
         <p class="muted">Synchronization checks every five minutes. Today's daily totals are estimates refreshed every hour; completed days refresh every six hours while the financial period is open. Google may take time to prepare a report.</p>

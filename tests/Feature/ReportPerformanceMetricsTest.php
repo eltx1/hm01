@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\{OrganizationType, ReportFinality, ReportGranularity, ReportImportStatus, ReportSourceCode, RevenueRuleScope, RoleName};
 use App\Models\{DailyReport, FinancialPeriod, MonthlyReport, PublisherStatement, ReportDimension, ReportSource, ReportSourceConnection};
-use App\Services\Reporting\{FinancialPeriodService, PerformanceMetrics, PublisherPerformanceService, ReportImportService, RevenueRuleService, UnifiedReportService};
+use App\Services\Reporting\{FinancialPeriodService, PerformanceMetrics, PublisherPerformanceService, ReportImportService, RevenueRuleService, SiteGamReportMetrics, UnifiedReportService};
 use Carbon\CarbonImmutable;
 use Database\Seeders\{InventoryDeliverySeeder, ReportingSeeder};
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -373,23 +373,41 @@ class ReportPerformanceMetricsTest extends TestCase
         file_put_contents($directory.'/'.$name.'.html', $html);
     }
 
-    public function test_optional_google_column_failure_retries_financial_columns_once_without_changing_currency_or_scope(): void
+    public function test_optional_adx_column_failure_retries_core_columns_once_without_changing_currency_or_scope(): void
     {
         $client = \Mockery::mock(\App\Services\Reporting\GamAdUnitReportClient::class)->makePartial();
         $gam = new \App\Models\GamConnection;
         $query = ['reportCurrency' => 'USD', 'dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'],
             'statement' => ['query' => 'WHERE AD_UNIT_ID = :unit'],
-            'columns' => array_keys(\App\Services\Reporting\Connectors\GamAdUnitReportConnector::COLUMNS)];
+            'columns' => array_keys(SiteGamReportMetrics::COLUMNS)];
+        $client->shouldReceive('call')->once()->with($gam, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]])
+            ->andThrow(new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS'));
+        $base = $query;
+        $base['columns'] = array_keys(SiteGamReportMetrics::CORE_COLUMNS);
+        $client->shouldReceive('call')->once()->with($gam, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $base]])
+            ->andReturn(['id' => '77']);
+        $this->assertSame(['id' => '77'], $client->runPerformanceReport($gam, $query, array_keys(SiteGamReportMetrics::OPTIONAL_COLUMNS)));
+        $client = \Mockery::mock(\App\Services\Reporting\GamAdUnitReportClient::class)->makePartial();
+        $client->shouldReceive('call')->once()->andThrow(new \RuntimeException('PERMISSION_DENIED'));
+        $this->expectExceptionMessage('PERMISSION_DENIED');
+        $client->runPerformanceReport($gam, $query, array_keys(SiteGamReportMetrics::OPTIONAL_COLUMNS));
+    }
+
+    public function test_network_wide_optional_column_fallback_keeps_the_existing_total_metric_family(): void
+    {
+        $client = \Mockery::mock(\App\Services\Reporting\GamAdUnitReportClient::class)->makePartial();
+        $gam = new \App\Models\GamConnection;
+        $query = ['reportCurrency' => 'USD', 'dimensions' => ['DATE', 'AD_UNIT_ID'],
+            'columns' => array_keys(\App\Services\Reporting\Connectors\GamReportConnector::COLUMNS)];
+        $this->assertContains('TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE', $query['columns']);
+        $this->assertNotContains('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', $query['columns']);
         $client->shouldReceive('call')->once()->with($gam, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]])
             ->andThrow(new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS'));
         $base = $query;
         $base['columns'] = array_values(array_diff($query['columns'], array_keys(PerformanceMetrics::GOOGLE_COLUMNS)));
         $client->shouldReceive('call')->once()->with($gam, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $base]])
-            ->andReturn(['id' => '77']);
-        $this->assertSame(['id' => '77'], $client->runPerformanceReport($gam, $query));
-        $client = \Mockery::mock(\App\Services\Reporting\GamAdUnitReportClient::class)->makePartial();
-        $client->shouldReceive('call')->once()->andThrow(new \RuntimeException('PERMISSION_DENIED'));
-        $this->expectExceptionMessage('PERMISSION_DENIED');
-        $client->runPerformanceReport($gam, $query);
+            ->andReturn(['id' => '78']);
+
+        $this->assertSame(['id' => '78'], $client->runPerformanceReport($gam, $query));
     }
 }

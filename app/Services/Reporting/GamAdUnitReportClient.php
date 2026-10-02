@@ -16,7 +16,7 @@ class GamAdUnitReportClient
         private readonly GamOperationExecutor $operations,
     ) {}
 
-    public function runPerformanceReport(GamConnection $connection, array $query): array
+    public function runPerformanceReport(GamConnection $connection, array $query, ?array $optionalColumns = null): array
     {
         try {
             return $this->call($connection, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
@@ -26,7 +26,7 @@ class GamAdUnitReportClient
             if (! str_contains($exception->getMessage(), 'COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS')) {
                 throw $exception;
             }
-            $query['columns'] = array_values(array_diff($query['columns'], array_keys(PerformanceMetrics::GOOGLE_COLUMNS)));
+            $query['columns'] = array_values(array_diff($query['columns'], $optionalColumns ?? array_keys(PerformanceMetrics::GOOGLE_COLUMNS)));
 
             return $this->call($connection, 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
         }
