@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Services\Reporting\Connectors\GamAdUnitReportConnector;
 use App\Services\Reporting\GamReportMoneyParser;
+use App\Services\Reporting\SiteGamReportMetrics;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\TestCase;
 
@@ -23,20 +24,31 @@ class GamSiteScopePreflightTest extends TestCase
             public string $status = 'COMPLETED';
             public bool $unsupported = false;
             public bool $missingSite = false;
+            public bool $rejectCombined = false;
+            public array $unsupportedColumns = [];
+            public array $calls = [];
+            public bool $failOther = false;
             public function call($connection, string $service, string $method, array $payload = []): array
             {
+                $this->calls[] = $method;
                 if ($method === 'getCurrentNetwork') return ['networkCode' => '123', 'currencyCode' => 'USD', 'timeZone' => 'UTC'];
                 if ($method === 'runReportJob') {
                     $this->queries[] = $payload['reportJob']['reportQuery'];
-                    if ($this->unsupported) throw new \RuntimeException('COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS secret-must-not-escape');
-                    return ['id' => '1', 'reportQuery' => ['reportCurrency' => 'USD']];
+                    if ($this->failOther) throw new \RuntimeException('private authorization error');
+                    $columns = $payload['reportJob']['reportQuery']['columns'];
+                    if ($this->unsupported || ($this->rejectCombined && count($columns) === 5) || array_intersect($columns, $this->unsupportedColumns)) {
+                        throw new \RuntimeException('COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS secret-must-not-escape');
+                    }
+                    return ['id' => (string) count($this->queries), 'reportQuery' => ['reportCurrency' => 'USD']];
                 }
                 if ($method === 'getReportJobStatus') return ['value' => $this->status];
                 throw new \RuntimeException('Unexpected operation');
             }
             public function download($connection, string $id): string
             {
-                $headers = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...($this->missingSite ? [] : ['Dimension.SITE_NAME']), ...array_map(fn ($column) => 'Column.'.$column, \HorusGamSiteScopePreflight::COLUMNS)];
+                $this->calls[] = 'download';
+                $columns = $this->queries[(int) $id - 1]['columns'];
+                $headers = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', ...($this->missingSite ? [] : ['Dimension.SITE_NAME']), ...array_map(fn ($column) => 'Column.'.$column, $columns)];
                 return implode(',', $headers)."\n"; // Header-only is still a completed compatible schema.
             }
         };
@@ -53,7 +65,9 @@ class GamSiteScopePreflightTest extends TestCase
         $result = \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser);
         $this->assertTrue($result['compatible']);
         $this->assertSame(1, $result['validated_bindings']);
-        $this->assertSame(array_keys(GamAdUnitReportConnector::COLUMNS), \HorusGamSiteScopePreflight::COLUMNS);
+        $this->assertSame(SiteGamReportMetrics::COLUMNS, GamAdUnitReportConnector::COLUMNS);
+        $this->assertSame(array_keys(SiteGamReportMetrics::CORE_COLUMNS), \HorusGamSiteScopePreflight::COLUMNS);
+        $this->assertSame(SiteGamReportMetrics::BASIS, $result['metric_basis']);
         $query = $google->queries[0];
         $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $query['dimensions']);
         $this->assertSame('USD', $query['reportCurrency']);
@@ -63,16 +77,88 @@ class GamSiteScopePreflightTest extends TestCase
         $this->assertArrayNotHasKey('revenue', $result);
     }
 
-    public function test_unsupported_query_is_terminal_without_metric_or_scope_fallback(): void
+    public function test_unsupported_query_stays_terminal_after_bounded_same_scope_diagnostics(): void
     {
         $google = $this->google();
         $google->unsupported = true;
         try {
             \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser);
             $this->fail('Unsupported report must fail deployment preflight.');
-        } catch (\RuntimeException $error) {
+        } catch (\HorusGamSiteScopeCompatibilityFailure $error) {
             $this->assertSame('COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS', \HorusGamSiteScopePreflight::safeError($error));
+            $this->assertCount(7, $google->queries);
+            $this->assertCount(6, $error->diagnostics['probes']);
+            $this->assertSame(['unsupported'], array_values(array_unique(array_column($error->diagnostics['probes'], 'status'))));
+            $this->assertStringNotContainsString('secret-must-not-escape', json_encode($error->diagnostics));
+            foreach ($google->queries as $query) {
+                $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $query['dimensions']);
+                $this->assertSame($google->queries[0]['statement'], $query['statement']);
+                $this->assertSame('USD', $query['reportCurrency']);
+                $this->assertSame('PUBLISHER', $query['timeZoneType']);
+                $this->assertSame('FLAT', $query['adUnitView']);
+                $this->assertSame($google->queries[0]['startDate'], $query['startDate']);
+                $this->assertSame($google->queries[0]['endDate'], $query['endDate']);
+            }
+        }
+    }
+
+    public function test_diagnostics_identify_request_column_rejection_but_never_accept_a_smaller_contract(): void
+    {
+        $google = $this->google();
+        $google->unsupportedColumns = ['AD_EXCHANGE_TOTAL_REQUESTS'];
+        try {
+            \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser);
+            $this->fail('Compatible individual columns must never allow deployment.');
+        } catch (\HorusGamSiteScopeCompatibilityFailure $error) {
+            $states = array_column($error->diagnostics['probes'], 'status', 'profile');
+            $this->assertSame('compatible', $states['AD_EXCHANGE_FINANCE']);
+            $this->assertSame('compatible', $states['AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE']);
+            $this->assertSame('unsupported', $states['AD_EXCHANGE_TOTAL_REQUESTS']);
+            $this->assertCount(7, $google->queries);
+        }
+    }
+
+    public function test_accepted_but_pending_or_invalid_schema_probe_is_inconclusive_without_polling_retries(): void
+    {
+        foreach (['pending', 'missing_site'] as $case) {
+            $google = $this->google();
+            $google->rejectCombined = true;
+            $google->status = $case === 'pending' ? 'IN_PROGRESS' : 'COMPLETED';
+            $google->missingSite = $case === 'missing_site';
+            try {
+                \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser);
+                $this->fail('Diagnostic-only query may not pass the contract.');
+            } catch (\HorusGamSiteScopeCompatibilityFailure $error) {
+                $this->assertSame(['inconclusive'], array_values(array_unique(array_column($error->diagnostics['probes'], 'status'))));
+                $this->assertSame(6, count(array_filter($google->calls, fn ($call) => $call === 'getReportJobStatus')));
+                $this->assertCount(7, $google->queries);
+            }
+        }
+    }
+
+    public function test_diagnostic_deadline_bounds_calls_and_other_errors_do_not_trigger_probes(): void
+    {
+        $google = $this->google();
+        $google->unsupported = true;
+        $time = 0;
+        $clock = static function () use (&$time): float { return $time += 40; };
+        try {
+            \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser, $clock);
+            $this->fail('The original rejection must remain terminal.');
+        } catch (\HorusGamSiteScopeCompatibilityFailure $error) {
+            $this->assertCount(3, $google->queries); // Original plus two bounded diagnostic attempts.
+            $this->assertCount(4, array_filter($error->diagnostics['probes'], fn ($probe) => $probe['status'] === 'inconclusive'));
+        }
+
+        $google = $this->google();
+        $google->failOther = true;
+        try {
+            \HorusGamSiteScopePreflight::run($this->cases(), $google, new GamReportMoneyParser);
+            $this->fail('Unrelated API errors must remain terminal.');
+        } catch (\RuntimeException $error) {
+            $this->assertNotInstanceOf(\HorusGamSiteScopeCompatibilityFailure::class, $error);
             $this->assertCount(1, $google->queries);
+            $this->assertSame('PREFLIGHT_FAILED', \HorusGamSiteScopePreflight::safeError($error));
         }
     }
 

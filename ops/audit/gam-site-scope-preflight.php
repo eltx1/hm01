@@ -2,18 +2,25 @@
 
 declare(strict_types=1);
 
+final class HorusGamSiteScopeCompatibilityFailure extends RuntimeException
+{
+    public function __construct(public readonly array $diagnostics)
+    {
+        parent::__construct('COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
+    }
+}
+
 /** Stream into the CURRENT production app before deploying changed import code.
  * Only Google report jobs and existing sanitized operational API audits are made.
  * Never import money, save report definitions, or emit CSV/identities/amounts.
  */
 final class HorusGamSiteScopePreflight
 {
-    // Incoming release contract, checked against the connector in regression
+    // Incoming mandatory Ad Exchange contract, checked against the connector in regression
     // tests. Do not derive this from the old deployed connector at runtime.
     public const COLUMNS = [
-        'TOTAL_AD_REQUESTS', 'TOTAL_RESPONSES_SERVED', 'TOTAL_UNMATCHED_AD_REQUESTS',
-        'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS', 'TOTAL_LINE_ITEM_LEVEL_CLICKS', 'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE',
-        'TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS', 'TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', 'TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS',
+        'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_RESPONSES_SERVED',
+        'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS', 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS', 'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE',
     ];
     public static function run(array $cases, $google, $money, ?callable $clock = null, ?callable $pause = null): array
     {
@@ -43,7 +50,16 @@ final class HorusGamSiteScopePreflight
             ];
             // Exact candidate query only. An unsupported query stops deployment;
             // never silently drop SITE_NAME, change metrics, or broaden filters.
-            $response = $google->call($case['connection'], 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+            try {
+                $response = $google->call($case['connection'], 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+            } catch (Throwable $error) {
+                if (self::safeError($error) !== 'COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS') throw $error;
+                // Diagnose only the first rejected binding. Individual probes are
+                // evidence, never an alternate contract that can permit deployment.
+                throw new HorusGamSiteScopeCompatibilityFailure(self::diagnoseColumns(
+                    $case, $query, $currency, $day->toDateString(), $google, $money, $clock,
+                ));
+            }
             $id = (string) ($response['id'] ?? '');
             if (! ctype_digit($id)) throw new RuntimeException('INVALID_REPORT_JOB');
             $jobs[] = $case + ['job_id' => $id, 'day' => $day->toDateString(), 'network_currency' => $currency,
@@ -63,7 +79,45 @@ final class HorusGamSiteScopePreflight
             if ($jobs !== []) $pause();
         }
         return ['schema_version' => 1, 'compatible' => true, 'active_bindings' => count($cases),
-            'validated_bindings' => $validated, 'scope' => 'AD_UNIT_AND_EXACT_SITE', 'currency' => 'USD'];
+            'validated_bindings' => $validated, 'scope' => 'AD_UNIT_AND_EXACT_SITE', 'currency' => 'USD',
+            'metric_basis' => 'AD_EXCHANGE_V1', 'viewability' => 'OPTIONAL'];
+    }
+
+    private static function diagnoseColumns(array $case, array $query, string $networkCurrency, string $day, $google, $money, callable $clock): array
+    {
+        $profiles = ['AD_EXCHANGE_FINANCE' => array_slice(self::COLUMNS, 2)];
+        foreach (self::COLUMNS as $column) $profiles[$column] = [$column];
+        $deadline = $clock() + 180;
+        $probes = [];
+        foreach ($profiles as $profile => $columns) {
+            $state = 'inconclusive';
+            // One attempt and at most one status request per fixed profile. Leave
+            // enough time for the client's bounded URL request and CSV download.
+            if ($clock() < $deadline - 85) {
+                try {
+                    $probe = $query;
+                    $probe['columns'] = $columns;
+                    $response = $google->call($case['connection'], 'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $probe]]);
+                    $id = (string) ($response['id'] ?? '');
+                    if (! ctype_digit($id)) throw new RuntimeException('INVALID_REPORT_JOB');
+                    if ($clock() < $deadline - 70) {
+                        $status = $google->call($case['connection'], 'ReportService', 'getReportJobStatus', ['reportJobId' => $id]);
+                        if (($status['value'] ?? '') === 'COMPLETED' && $clock() < $deadline - 55) {
+                            self::validateCsv($google->download($case['connection'], $id), $case + [
+                                'day' => $day, 'network_currency' => $networkCurrency,
+                                'confirmed_currency' => $money->confirmedCurrency($response, 'USD'),
+                            ], $columns, $money);
+                            $state = 'compatible';
+                        }
+                    }
+                } catch (Throwable $error) {
+                    if (self::safeError($error) === 'COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS') $state = 'unsupported';
+                }
+            }
+            $probes[] = ['profile' => $profile, 'status' => $state];
+        }
+
+        return ['coverage' => 'FIRST_REJECTED_BINDING', 'probes' => $probes];
     }
 
     private static function validateCsv(string $csv, array $job, array $columns, $money): void
@@ -84,7 +138,7 @@ final class HorusGamSiteScopePreflight
                 if ($row['Dimension.DATE'] !== $job['day'] || $row['Dimension.AD_UNIT_ID'] !== $job['unit_id']) throw new RuntimeException('INVALID_SCOPED_CSV');
                 foreach ($columns as $column) {
                     $value = $row['Column.'.$column];
-                    if ($column === 'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE') {
+                    if ($column === 'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE') {
                         $money->parse($value, 'USD', $job['network_currency'], $job['confirmed_currency']);
                     } elseif (! preg_match('/^\d{1,15}$/D', $value)) throw new RuntimeException('INVALID_SCOPED_CSV');
                 }
@@ -119,6 +173,8 @@ try {
     $result = HorusGamSiteScopePreflight::run($cases, app(App\Services\Reporting\GamAdUnitReportClient::class), app(App\Services\Reporting\GamReportMoneyParser::class));
     echo json_encode($result, JSON_THROW_ON_ERROR).PHP_EOL;
 } catch (Throwable $error) {
-    echo json_encode(['schema_version' => 1, 'compatible' => false, 'reason' => HorusGamSiteScopePreflight::safeError($error)], JSON_THROW_ON_ERROR).PHP_EOL;
+    $result = ['schema_version' => 1, 'compatible' => false, 'metric_basis' => 'AD_EXCHANGE_V1', 'reason' => HorusGamSiteScopePreflight::safeError($error)];
+    if ($error instanceof HorusGamSiteScopeCompatibilityFailure) $result['diagnostics'] = $error->diagnostics;
+    echo json_encode($result, JSON_THROW_ON_ERROR).PHP_EOL;
     exit(1);
 }

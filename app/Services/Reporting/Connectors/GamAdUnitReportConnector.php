@@ -10,23 +10,15 @@ use App\Services\Reporting\Contracts\ReportSourceConnectorInterface;
 use App\Services\Reporting\GamAdUnitReportClient;
 use App\Services\Reporting\GamReportMoneyParser;
 use App\Services\Reporting\GamReportPending;
-use App\Services\Reporting\PerformanceMetrics;
 use App\Services\Reporting\SiteGamReportScope;
+use App\Services\Reporting\SiteGamReportMetrics;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use RuntimeException;
 
 final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
 {
-    public const COLUMNS = [
-        'TOTAL_AD_REQUESTS' => 'ad_requests',
-        'TOTAL_RESPONSES_SERVED' => 'matched_requests',
-        'TOTAL_UNMATCHED_AD_REQUESTS' => 'unfilled_requests',
-        'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS' => 'impressions',
-        'TOTAL_LINE_ITEM_LEVEL_CLICKS' => 'clicks',
-        'TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE' => 'revenue_micros',
-        ...PerformanceMetrics::GOOGLE_COLUMNS,
-    ];
+    public const COLUMNS = SiteGamReportMetrics::COLUMNS;
 
     public function __construct(
         private readonly GamAdUnitReportClient $google,
@@ -82,7 +74,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     ['key' => 'unit', 'value' => ['__type' => 'NumberValue', 'value' => $binding->ad_unit_id]],
                 ]],
             ];
-            $response = $this->google->runPerformanceReport($binding->gamConnection, $query);
+            $response = $this->google->runPerformanceReport($binding->gamConnection, $query, array_keys(SiteGamReportMetrics::OPTIONAL_COLUMNS));
             $jobId = (string) ($response['id'] ?? '');
             if (! ctype_digit($jobId)) {
                 throw new RuntimeException('Google did not return a valid report job ID.');
@@ -136,7 +128,9 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         return [
             'rows' => $rows, 'external_report_id' => 'gam-unit:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
             'totals' => collect(array_values(self::COLUMNS))->reject(fn ($column) => $column === 'revenue_micros')
-                ->push('gross_revenue_minor')->mapWithKeys(fn ($column) => [$column => array_sum(array_column($rows, $column))])->all(),
+                ->push('gross_revenue_minor')
+                ->filter(fn ($column) => collect($rows)->every(fn ($row) => array_key_exists($column, $row) && $row[$column] !== null))
+                ->mapWithKeys(fn ($column) => [$column => array_sum(array_column($rows, $column))])->all(),
             'pending_key' => $key,
         ];
     }
@@ -153,7 +147,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 throw new RuntimeException('The Google report has no CSV header.');
             }
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
-            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($key) => 'Column.'.$key, array_keys(array_diff_key(self::COLUMNS, PerformanceMetrics::GOOGLE_COLUMNS)))];
+            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', ...array_map(fn ($key) => 'Column.'.$key, array_keys(SiteGamReportMetrics::CORE_COLUMNS))];
             if ($granularity === ReportGranularity::Hourly) {
                 $required[] = 'Dimension.HOUR';
             }
@@ -204,7 +198,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                     }
                     $metrics[$field] = $value;
                 }
-                // Keep the same Google Total metrics, but only for this exact
+                // Use Google Ad Exchange metrics only for this exact
                 // registered hostname. Do not include siblings, www, parents,
                 // unknown/not-applicable sites or other units. No PQL Site
                 // filterability is assumed; SITE_NAME must exist in the CSV.
@@ -224,6 +218,10 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                         'publisher_id' => $binding->site->publisher_id, 'gam_connection_id' => $binding->gam_connection_id,
                         'gam_ad_unit_id' => $binding->ad_unit_id,
                         'gam_report_site' => $scope['hostname'], 'gam_report_scope' => $scope['fingerprint'],
+                        'gam_report_basis' => SiteGamReportMetrics::BASIS,
+                        // Google provides no equivalent AdX unfilled-impression
+                        // counter here. Never fabricate it from request counts.
+                        'unfilled_impressions' => null,
                         // CSV_DUMP money is micros. The existing ledger stores hundredths, rounded once per aggregate.
                         'gross_revenue_minor' => ($micros < 0 ? -1 : 1) * intdiv(abs($micros) + 5000, 10000),
                     ];
