@@ -425,3 +425,110 @@ for (const state of ['pending', 'completed', 'failed']) {
         expect(errors).toEqual([]);
     });
 }
+
+for (const state of ['ready', 'blocked', 'applied']) {
+    test(`private GAM correction ${state}: honest evidence and review controls fit both themes`, async ({ page }, info) => {
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await open(page, `reports-gam-correction-${state}`);
+        await expect(page.getByRole('heading', { name: 'Review a historical revenue correction', exact: true })).toBeVisible();
+        await expect(page.getByLabel('Website', { exact: true })).toBeVisible();
+        await expect(page.getByText(/strictly before the existing forward reporting cutover/)).toBeVisible();
+        const daily = page.getByRole('region', { name: 'Daily correction comparison in USD', exact: true });
+        await expect(daily).toBeVisible();
+        await expect(daily).toContainText('LEGACY_TOTAL_UNVERSIONED');
+        await expect(daily).toContainText('AD_EXCHANGE_V1');
+        const apply = page.getByRole('button', { name: 'Apply reviewed correction', exact: true });
+        const refresh = page.getByRole('button', { name: 'Request fresh evidence', exact: true });
+        if (state === 'applied') await expect(refresh).toHaveCount(0);
+        else {
+            await expect(refresh).toBeVisible();
+            const replacement = page.locator('form').filter({ has: refresh });
+            await expect(replacement).toHaveAttribute('method', 'POST');
+            await expect(replacement).toHaveAttribute('action', /\/admin\/reporting\/gam-corrections\/[^/]+\/replace$/);
+            expect(await replacement.evaluate(element => Object.keys(Object.fromEntries(new FormData(element))))).toEqual(['_token']);
+        }
+        if (state === 'ready') {
+            await expect(apply).toBeVisible();
+            await expect(daily).toContainText('ESTIMATED → FINALIZED');
+            await expect(page.locator('[name="confirm_review"]')).not.toBeChecked();
+            await expect(page.locator('[name="confirm_review"]')).toHaveAttribute('required', '');
+            await expect(page.getByLabel('Reason for approval', { exact: true })).toHaveAttribute('minlength', '12');
+            await expect(page.locator('[name="digest"]')).toHaveValue(/^[a-f0-9]{64}$/);
+            await daily.locator('summary').first().click();
+            const details = daily.locator('details').first();
+            await expect(details).toContainText('Demand-partner deductions');
+            await expect(details).toContainText('Net revenue');
+            await expect(details).toContainText('MCM partner earnings');
+            await expect(details).toContainText('Responses served');
+            await expect(details).toContainText('Active View viewable impressions');
+            await expect(details).toContainText('Active View measurable impressions');
+            await expect(details).toContainText('Legacy Total counters are not preserved');
+        } else {
+            await expect(apply).toHaveCount(0);
+            await expect(page.locator('[name="confirm_review"], [name="digest"], [name="reason"]')).toHaveCount(0);
+            if (state === 'blocked') {
+                await expect(page.getByText('Entire candidate blocked', { exact: true })).toBeVisible();
+                await expect(daily).toContainText('Missing exact-site row; not zero');
+                await expect(page.getByRole('region', { name: 'Correction totals in USD', exact: true })).toHaveCount(0);
+                await expect(page.getByText(/Whole-range totals are withheld/)).toBeVisible();
+            } else {
+                await expect(page.getByRole('heading', { name: 'Applied correction receipt', exact: true })).toBeVisible();
+                await expect(page.getByRole('status')).toContainText('This correction was applied');
+                await expect(page.getByText('Before evidence hash', { exact: true })).toBeVisible();
+                await expect(page.getByText('After evidence hash', { exact: true })).toBeVisible();
+                for (const stage of ['Before application', 'After application']) {
+                    await page.getByText(`${stage}: recorded daily evidence`, { exact: true }).click();
+                    await expect(page.getByRole('region', { name: `${stage} daily evidence`, exact: true })).toBeVisible();
+                }
+            }
+        }
+        for (const theme of ['dark', 'light']) {
+            await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+            await page.screenshot({ path: info.outputPath(`reports-gam-correction-${state}-${theme}.png`), fullPage: true });
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+        expect(errors).toEqual([]);
+    });
+}
+
+test('private GAM correction requires explicit review and sends only server-evidence approval fields', async ({ page }) => {
+    await open(page, 'reports-gam-correction-ready');
+    const apply = page.getByRole('button', { name: 'Apply reviewed correction', exact: true });
+    const form = page.locator('form').filter({ has: apply });
+    const requests = [];
+    page.on('request', request => {
+        if (new URL(request.url()).pathname.endsWith('/apply')) requests.push(request);
+    });
+    await apply.click();
+    expect(requests).toHaveLength(0);
+    expect(await form.evaluate(element => element.checkValidity())).toBe(false);
+    await page.getByLabel('Reason for approval', { exact: true }).fill('Reviewed the original rule and exact-site evidence.');
+    await apply.click();
+    expect(requests).toHaveLength(0);
+    await page.locator('[name="confirm_review"]').check();
+    expect(await form.evaluate(element => element.checkValidity())).toBe(true);
+    const fields = await form.evaluate(element => Object.fromEntries(new FormData(element)));
+    expect(Object.keys(fields).sort()).toEqual(['_token', 'confirm_review', 'digest', 'reason']);
+    expect(fields.digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(fields.confirm_review).toBe('1');
+    expect(fields._token).toBeTruthy();
+    const [request] = await Promise.all([
+        page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/apply')),
+        apply.click(),
+    ]);
+    expect(request.method()).toBe('POST');
+    expect(Object.fromEntries(new URLSearchParams(request.postData()))).toEqual(fields);
+});
+
+test('private GAM correction approval remains usable without JavaScript', async ({ browser }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await open(page, 'reports-gam-correction-ready');
+    await page.locator('[name="confirm_review"]').check();
+    await page.getByLabel('Reason for approval', { exact: true }).fill('Reviewed the exact site and original allocations.');
+    await expect(page.locator('[name="confirm_review"]')).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Apply reviewed correction', exact: true })).toBeVisible();
+    await context.close();
+});

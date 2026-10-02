@@ -11,7 +11,8 @@ final class SecureResponseHeaders
     public function handle(Request $request, Closure $next): Response
     {
         $response = $next($request);
-        if ($request->is('admin/reporting/gam-comparison', 'admin/reporting/gam-comparison/*')) {
+        if ($request->is('admin/reporting/gam-comparison', 'admin/reporting/gam-comparison/*',
+            'admin/reporting/gam-corrections', 'admin/reporting/gam-corrections/*')) {
             $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
             $response->headers->set('Pragma', 'no-cache');
             $response->headers->set('Referrer-Policy', 'no-referrer');

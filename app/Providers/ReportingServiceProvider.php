@@ -25,6 +25,17 @@ class ReportingServiceProvider extends ServiceProvider
                     Route::get('/{comparison}/download', [$controller, 'download'])->block(180, 10)->name('admin.reporting.gam-comparison.download');
                     Route::post('/{comparison}/discard', [$controller, 'discard'])->block(180, 10)->name('admin.reporting.gam-comparison.discard');
                 });
+                Route::prefix('/admin/reporting/gam-corrections')->middleware([
+                    'permission:reporting.admin.view', 'permission:reporting.import', 'permission:finance.adjustments.approve',
+                ])->group(function (): void {
+                    $controller = \App\Http\Controllers\Admin\GamRevenueCorrectionController::class;
+                    Route::get('/', [$controller, 'index'])->name('admin.reporting.gam-corrections');
+                    Route::post('/', [$controller, 'start'])->middleware('throttle:6,1')->block(180, 10)->name('admin.reporting.gam-corrections.start');
+                    Route::get('/{correction}', [$controller, 'show'])->name('admin.reporting.gam-corrections.show');
+                    Route::post('/{correction}/poll', [$controller, 'poll'])->middleware('throttle:20,1')->block(180, 10)->name('admin.reporting.gam-corrections.poll');
+                    Route::post('/{correction}/apply', [$controller, 'apply'])->middleware('throttle:6,1')->block(180, 10)->name('admin.reporting.gam-corrections.apply');
+                    Route::post('/{correction}/replace', [$controller, 'replace'])->middleware('throttle:6,1')->block(180, 10)->name('admin.reporting.gam-corrections.replace');
+                });
                 Route::get('/admin/reporting/websites', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'index'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.index');
                 Route::get('/admin/reporting/websites/{site}', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'show'])

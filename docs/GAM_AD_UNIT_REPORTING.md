@@ -185,3 +185,57 @@ adjustments are explicitly excluded and unchanged. This feature has no apply
 endpoint and never calls financial importers, scope initialization, source or
 scheduler checkpoint writers, period closing, statement, balance, or payout
 writers. A preview does not establish replacement approval or settlement safety.
+
+## Reviewed historical correction
+
+The separate **Historical corrections** page requires a Horus administrator with
+`reporting.admin.view`, `reporting.import`, and `finance.adjustments.approve` on
+every action. Each candidate belongs to its requesting administrator. Preparing
+or refreshing a candidate writes only private correction evidence and normal
+Google operation/authentication bookkeeping. It does not import financial facts.
+
+A candidate covers at most 31 completed network-calendar days within one month,
+entirely before the existing verified forward scope's effective date. It uses the
+same five mandatory Ad Exchange metrics and optional Active View pair as forward
+reporting. The full requested range must have exactly one verified existing daily
+fact, its original applicable rule version, and an observed exact-Site Google row
+for every day. Missing rows remain unobserved, never inferred zero; an incomplete
+range cannot silently become an eligible subset. Request a deliberately narrower
+range if necessary. Existing estimates can be proposed as finalized only for
+completed days, with that transition shown explicitly alongside all allocations.
+
+Candidates are durable, bounded to six unexpired unapplied candidates per actor,
+and expire for application after one hour. Ready, blocked or failed candidates
+can be explicitly superseded by a request for fresh evidence; their evidence is
+retained and the replacement requires another review. In-flight and applied
+candidates cannot be superseded. An uncertain initial Google request is
+recorded before submission and is never automatically resubmitted. Polling is
+bounded, and completed evidence fixes the query, Google job, original snapshot,
+daily proposal and recursively canonicalized digest. Downloaded comparison JSON
+is not an apply payload. Submitted amounts, rules and scope are never trusted.
+
+Application requires the administrator to review the daily changes, confirm the
+review, submit the exact candidate digest and provide a reason. Inside the normal
+source import lock and one database transaction, the service locks the network,
+site, binding, source, period, facts, dimensions and original rules. It rechecks
+the captured identities, complete fact/rule snapshot and downstream finance state.
+Only an unambiguous OPEN period is supported. Existing monthly snapshots,
+statements (including drafts), payouts, settlements, affiliate commissions,
+overlapping pending imports, hourly facts and pending adjustments block this path.
+Approved separate adjustments remain unchanged and part of the freshness check.
+
+The service replaces the identified daily rows in place, increments revisions,
+records exact historical Ad Exchange provenance and retains each original rule
+and deduction. It never rewinds the forward scope or its Google/scheduler jobs.
+Unsupported old Total performance counters are cleared; only fresh Ad Exchange
+counters contribute. Existing calculator rounding and signed-revenue policy remain
+unchanged. An API correction import and exact reconciliation are committed with an
+immutable receipt containing complete bounded before/after facts, dimensions,
+rules, finance evidence, hashes and the approving actor/reason. Receipts are not
+operational audit logs and are excluded from pruning; migration rollback refuses
+to discard applied receipts. Repeated application returns the same receipt.
+
+This capability does not automatically approve candidates, reopen periods,
+regenerate statements, alter payments, or expose a reversal action. A closed or
+materialized period needs a separately reviewed accounting procedure. Possessing
+a candidate or deploying this feature does not authorize applying it.
