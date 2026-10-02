@@ -89,9 +89,12 @@ final class SiteGamReportScope
         });
     }
 
-    public function assertCurrent(SiteGamReportBinding $binding, array $scope): void
+    public function assertCurrent(SiteGamReportBinding $binding, array $scope, bool $lock = false): void
     {
-        $binding->load('site', 'connection');
+        $binding->load([
+            'site' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+            'connection' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+        ]);
         $stored = data_get($binding->connection?->configuration, 'site_report_scope');
         if (! is_array($stored) || ! $this->valid($scope) || ! $this->valid($stored)
             || $scope['version'] !== self::VERSION || $scope['metric_basis'] !== SiteGamReportMetrics::BASIS

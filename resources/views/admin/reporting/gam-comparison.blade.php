@@ -5,6 +5,9 @@
 <div class="reports-page">
     <header class="report-page-heading"><div><p class="eyebrow">PRIVATE ADMIN REVIEW</p><h2>Historical revenue comparison</h2><p class="muted">Fresh Google Ad Exchange revenue for the selected ad unit and exact registered hostname, compared with stored daily facts and their original revenue-rule versions. Preview only: balances, imports, adjustments and payouts remain unchanged.</p></div></header>
     <p><a class="text-link" href="{{ route('admin.reporting.index') }}">Back to reports</a></p>
+    @if(auth()->user()->isHorusAdministrator() && auth()->user()->hasPermission('reporting.admin.view') && auth()->user()->hasPermission('reporting.import') && auth()->user()->hasPermission('finance.adjustments.approve'))
+        <p><a class="text-link" href="{{ route('admin.reporting.gam-corrections') }}">Review a historical correction</a> · Request separate evidence and review every proposed change before applying.</p>
+    @endif
     @if($errors->any())<section class="workspace-section" role="alert">@foreach($errors->all() as $error)<p>{{ $error }}</p>@endforeach</section>@endif
     <article class="workspace-section"><h3>Choose a completed period</h3>
         <p>Up to 31 completed days, within the existing binding's effective dates. Google network timezone and USD apply. No parent-domain, sibling-site, other-unit or alternative-metric substitution is allowed.</p>

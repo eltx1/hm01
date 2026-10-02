@@ -48,10 +48,16 @@ final class GamRevenueComparisonService
         ];
     }
 
-    public function assertContext(array $context): SiteGamReportBinding
+    public function assertContext(array $context, bool $lock = false): SiteGamReportBinding
     {
         if (($context['metric_basis'] ?? null) !== SiteGamReportMetrics::BASIS) $this->invalid('The metric basis changed. Start a new preview.');
-        $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['site', 'connection.source', 'gamConnection'])->find($context['binding_id']);
+        $binding = SiteGamReportBinding::withoutGlobalScopes()->when($lock, fn ($q) => $q->lockForUpdate())
+            ->with([
+                'site' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+                'connection' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate())
+                    ->with(['source' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate())]),
+                'gamConnection' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+            ])->find($context['binding_id']);
         if (! $binding) $this->invalid('The binding changed. Start a new preview.');
         $this->validateBinding($binding);
         if (! hash_equals($context['binding_fingerprint'], $this->fingerprint($binding))) $this->invalid('The binding or source changed. Start a new preview.');
@@ -117,7 +123,7 @@ final class GamRevenueComparisonService
         return $job;
     }
 
-    public function snapshot(array $context): array
+    public function snapshot(array $context, bool $lock = false): array
     {
         // Include all site sources and all facts for this source. That exposes
         // mixed identities rather than silently selecting a convenient subset.
@@ -125,7 +131,13 @@ final class GamRevenueComparisonService
             ->where(fn ($q) => $q->where('report_source_connection_id', $context['source_connection_id'])
                 ->orWhereHas('dimension', fn ($q) => $q->where('site_id', $context['site_id'])))
             ->whereDate('report_date', '>=', $context['from'])->whereDate('report_date', '<=', $context['to'])
-            ->with(['dimension', 'revenueRuleVersion.rule' => fn ($q) => $q->withoutGlobalScopes(), 'period'])
+            ->when($lock, fn ($q) => $q->lockForUpdate())
+            ->with([
+                'dimension' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+                'revenueRuleVersion' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate())
+                    ->with(['rule' => fn ($q) => $q->withoutGlobalScopes()->when($lock, fn ($q) => $q->lockForUpdate())]),
+                'period' => fn ($q) => $q->when($lock, fn ($q) => $q->lockForUpdate()),
+            ])
             ->orderBy('id')->limit(129)->get();
         if ($rows->count() > 128) $this->invalid('This window has too many stored dimensions. Choose a smaller window for review.');
         $facts = $rows->map(fn ($row) => [
@@ -136,7 +148,7 @@ final class GamRevenueComparisonService
         return ['fingerprint' => $this->hash($facts), 'facts' => $facts, 'adjustments' => 'Separate approved adjustments are excluded and remain unchanged.'];
     }
 
-    public function compare(array $context, array $snapshot, array $fresh): array
+    public function compare(array $context, array $snapshot, array $fresh, bool $allowCompletedDayEstimates = false): array
     {
         $days = [];
         for ($day = CarbonImmutable::parse($context['from']); $day->toDateString() <= $context['to']; $day = $day->addDay()) {
@@ -145,7 +157,7 @@ final class GamRevenueComparisonService
             $flags = [];
             $stored = array_fill_keys(['gross_revenue_minor', 'impressions', 'publisher_earnings_minor', 'horus_earnings_minor', 'mcm_partner_earnings_minor'], 0);
             if (count($facts) !== 1) $flags[] = count($facts) ? 'MULTIPLE_STORED_FACTS_NO_ALLOCATION' : 'NO_ORIGINAL_RULE';
-            foreach ($facts as $row) $flags = array_merge($flags, $this->factFlags($row, $context, $date));
+            foreach ($facts as $row) $flags = array_merge($flags, $this->factFlags($row, $context, $date, $allowCompletedDayEstimates));
             $storedAmountsVerified = ! in_array('UNVERIFIED_STORED_AMOUNT', $flags, true);
             if ($storedAmountsVerified) {
                 foreach ($facts as $row) foreach ($stored as $field => $_) $stored[$field] += (int) ($row['fact'][$field] ?? 0);
@@ -189,7 +201,7 @@ final class GamRevenueComparisonService
             'notice' => 'Comparison evidence only. No replacement or settlement safety is established. Separate approved adjustments are excluded and unchanged.'];
     }
 
-    private function factFlags(array $row, array $context, string $date): array
+    private function factFlags(array $row, array $context, string $date, bool $allowCompletedDayEstimates = false): array
     {
         $fact = $row['fact']; $dimension = $row['dimension'] ?? []; $version = $row['rule_version'] ?? []; $rule = $row['rule'] ?? [];
         $flags = [];
@@ -197,7 +209,9 @@ final class GamRevenueComparisonService
             || ($dimension['organization_id'] ?? null) !== $context['organization_id'] || ($dimension['publisher_id'] ?? null) !== $context['publisher_id']
             || ($dimension['gam_connection_id'] ?? null) !== $context['gam_connection_id']) $flags[] = 'MIXED_STORED_IDENTITY';
         if ($fact['currency'] !== 'USD') $flags[] = 'MIXED_CURRENCY';
-        if ($fact['finality'] !== 'FINALIZED') $flags[] = 'NON_FINALIZED_FACT';
+        if ($fact['finality'] !== 'FINALIZED'
+            && (! $allowCompletedDayEstimates || $fact['finality'] !== 'ESTIMATED'
+                || $date >= CarbonImmutable::now($context['timezone'])->toDateString())) $flags[] = 'NON_FINALIZED_FACT';
         foreach (['placement_id', 'demand_network_id', 'bidder_id', 'advertiser_id', 'campaign_id', 'country_code', 'device', 'browser', 'operating_system', 'ad_size'] as $key) {
             if (! empty($dimension[$key])) $flags[] = 'UNSUPPORTED_STORED_DIMENSIONS';
         }
