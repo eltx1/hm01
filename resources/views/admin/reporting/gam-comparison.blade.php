@@ -10,9 +10,9 @@
         <p>Up to 31 completed days, within the existing binding's effective dates. Google network timezone and USD apply. No parent-domain, sibling-site, other-unit or alternative-metric substitution is allowed.</p>
         <form method="POST" action="{{ route('admin.reporting.gam-comparison.start') }}" class="form-stack">
             @csrf
-            <label>Website<select class="hm-input" name="site_id" required>@foreach($sites as $site)<option value="{{ $site->id }}" @selected(old('site_id', data_get($selected, 'context.site_id')) === $site->id)>{{ $site->primary_domain }}</option>@endforeach</select></label>
-            <label>From<input class="hm-input" type="date" name="from" required value="{{ old('from', data_get($selected, 'context.from', now()->subMonthNoOverflow()->startOfMonth()->toDateString())) }}"></label>
-            <label>To<input class="hm-input" type="date" name="to" required value="{{ old('to', data_get($selected, 'context.to', now()->subMonthNoOverflow()->endOfMonth()->toDateString())) }}"></label>
+            <div><label for="gam-preview-site">Website</label><select id="gam-preview-site" class="hm-input" name="site_id" required>@foreach($sites as $site)<option value="{{ $site->id }}" @selected(old('site_id', data_get($selected, 'context.site_id')) === $site->id)>{{ $site->primary_domain }}</option>@endforeach</select></div>
+            <div><label for="gam-preview-from">From</label><input id="gam-preview-from" class="hm-input" type="date" name="from" required value="{{ old('from', data_get($selected, 'context.from', now()->subMonthNoOverflow()->startOfMonth()->toDateString())) }}"></div>
+            <div><label for="gam-preview-to">To</label><input id="gam-preview-to" class="hm-input" type="date" name="to" required value="{{ old('to', data_get($selected, 'context.to', now()->subMonthNoOverflow()->endOfMonth()->toDateString())) }}"></div>
             <button class="hm-button-primary">Request private preview</button>
         </form>
         <p class="muted">Three previews maximum, available only in this admin session for 30 minutes. Repeated requests reuse the same attempt. Failed or interrupted requests are not automatically restarted.</p>
