@@ -14,7 +14,7 @@ use RuntimeException;
 /** Versioned forward-only attribution, independent of ad serving. */
 final class SiteGamReportScope
 {
-    public const VERSION = 'AD_UNIT_AND_EXACT_SITE_V1';
+    public const VERSION = 'AD_UNIT_AND_EXACT_SITE_V2';
 
     public function __construct(private readonly AuditRecorder $audit) {}
 
@@ -50,6 +50,7 @@ final class SiteGamReportScope
             $configuration = (array) ($connection->configuration ?? []);
             $current = $configuration['site_report_scope'] ?? null;
             if (is_array($current) && ($current['version'] ?? '') === self::VERSION
+                && ($current['metric_basis'] ?? '') === SiteGamReportMetrics::BASIS
                 && ($current['hostname'] ?? '') === $hostname && ($current['binding_id'] ?? '') === $binding->id
                 && ($current['network_code'] ?? '') === $binding->network_code && ($current['ad_unit_id'] ?? '') === $binding->ad_unit_id
                 && ($current['currency'] ?? '') === $connection->currency && ($current['timezone'] ?? '') === $connection->timezone
@@ -68,7 +69,7 @@ final class SiteGamReportScope
                     ->max(CarbonImmutable::parse($last, $connection->timezone)->addDay());
             }
             $scope = [
-                'version' => self::VERSION, 'binding_id' => $binding->id,
+                'version' => self::VERSION, 'metric_basis' => SiteGamReportMetrics::BASIS, 'binding_id' => $binding->id,
                 'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id,
                 'hostname' => $hostname, 'currency' => $connection->currency, 'timezone' => $connection->timezone,
                 'effective_from' => $starts->toDateString(), 'recorded_at' => now()->toIso8601String(),
@@ -93,6 +94,7 @@ final class SiteGamReportScope
         $binding->load('site', 'connection');
         $stored = data_get($binding->connection?->configuration, 'site_report_scope');
         if (! is_array($stored) || ! $this->valid($scope) || ! $this->valid($stored)
+            || $scope['version'] !== self::VERSION || $scope['metric_basis'] !== SiteGamReportMetrics::BASIS
             || ! hash_equals($scope['fingerprint'], $stored['fingerprint'])
             || $scope['hostname'] !== $this->hostname((string) $binding->site?->primary_domain)
             || $scope['binding_id'] !== $binding->id || $scope['ad_unit_id'] !== $binding->ad_unit_id
@@ -134,7 +136,7 @@ final class SiteGamReportScope
 
     private function valid(array $scope): bool
     {
-        foreach (['version', 'binding_id', 'network_code', 'ad_unit_id', 'hostname', 'currency', 'timezone', 'effective_from', 'fingerprint'] as $key) {
+        foreach (['version', 'metric_basis', 'binding_id', 'network_code', 'ad_unit_id', 'hostname', 'currency', 'timezone', 'effective_from', 'fingerprint'] as $key) {
             if (! is_string($scope[$key] ?? null) || $scope[$key] === '') return false;
         }
         return preg_match('/^\d{4}-\d{2}-\d{2}$/D', $scope['effective_from']) === 1
@@ -144,7 +146,7 @@ final class SiteGamReportScope
     private function fingerprint(array $scope): string
     {
         $keys = [
-            'version', 'binding_id', 'network_code', 'ad_unit_id', 'hostname', 'currency', 'timezone', 'effective_from',
+            'version', 'metric_basis', 'binding_id', 'network_code', 'ad_unit_id', 'hostname', 'currency', 'timezone', 'effective_from',
         ];
         return hash('sha256', json_encode(array_combine($keys, array_map(fn ($key) => $scope[$key] ?? null, $keys)), JSON_THROW_ON_ERROR));
     }
