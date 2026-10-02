@@ -430,10 +430,14 @@ class SiteGamReportingTest extends TestCase
         $this->assertNull($row->active_view_viewable_impressions);
         $this->assertNull($row->active_view_measurable_impressions);
         $this->assertNull($row->viewability_bp);
-        $this->assertSame([
+        $expectedTotals = [
             'ad_requests' => 120, 'matched_requests' => 100, 'impressions' => 95,
             'clicks' => 3, 'gross_revenue_minor' => 12345,
-        ], $job->source_totals);
+        ];
+        $sourceTotals = $job->source_totals;
+        ksort($expectedTotals);
+        ksort($sourceTotals); // MySQL JSON objects do not preserve insertion order.
+        $this->assertSame($expectedTotals, $sourceTotals);
         foreach (['active_view_viewable_impressions', 'active_view_measurable_impressions', 'unfilled_impressions'] as $field) {
             $this->assertArrayNotHasKey($field, $job->source_totals);
         }
