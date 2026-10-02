@@ -37,8 +37,7 @@ class GamRevenueComparisonTest extends TestCase
         $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
         $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
         $publisher = $this->makePublisherFor($user);
-        $site = Site::withoutGlobalScopes()->create([
-            'organization_id' => $user->organization_id, 'publisher_id' => $publisher->id,
+        $site = $this->makeSiteFor($publisher, $user, [
             'display_name' => 'Synthetic News', 'primary_domain' => 'news.test.example',
         ]);
         $gam = $this->makeGamConnection($admin->organization, $admin, ['network_code' => '123']);
