@@ -20,7 +20,7 @@ use App\Services\Reporting\SiteGamReportMetrics;
 use App\Services\Reporting\SiteGamReportScope;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Connection;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -34,15 +34,35 @@ use Tests\TestCase;
 /** Requires an isolated MySQL test database; SQLite cannot prove this invariant. */
 final class GamRevenueCorrectionConcurrencyTest extends TestCase
 {
-    use DatabaseMigrations, InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites;
+    use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites;
 
-    #[DataProvider('concurrentChanges')]
-    public function test_apply_revalidates_current_committed_evidence_despite_an_older_repeatable_read_snapshot(string $kind): void
+    protected function setUp(): void
     {
+        parent::setUp();
+
+        // Skip before installing any database lifecycle hook. In particular,
+        // SQLite must not run migrations or register their rollback callback.
         if (DB::connection()->getDriverName() !== 'mysql') {
             $this->markTestSkipped('This regression requires two real MySQL connections and REPEATABLE READ.');
         }
 
+        $database = DB::getDefaultConnection();
+        RefreshDatabaseState::$migrated = false;
+        $this->beforeApplicationDestroyed(function () use ($database): void {
+            $connection = DB::connection($database);
+            while ($connection->transactionLevel() > 0) $connection->rollBack();
+            DB::purge('gam_correction_concurrent_writer');
+            RefreshDatabaseState::$migrated = false;
+            // These tests own an isolated schema and commit their fixtures.
+            // Drop it directly rather than exercising unrelated down() methods.
+            $this->artisan('db:wipe', ['--database' => $database, '--drop-views' => true, '--force' => true])->assertExitCode(0);
+        });
+        $this->artisan('migrate:fresh', ['--database' => $database, '--force' => true])->assertExitCode(0);
+    }
+
+    #[DataProvider('concurrentChanges')]
+    public function test_apply_revalidates_current_committed_evidence_despite_an_older_repeatable_read_snapshot(string $kind): void
+    {
         $fixture = $this->committedFixture();
         $service = app(GamRevenueCorrectionService::class);
         $candidate = $service->start($fixture['site'], '2026-09-01', '2026-09-01', $fixture['admin']);
