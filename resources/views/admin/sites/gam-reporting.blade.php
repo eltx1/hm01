@@ -33,7 +33,7 @@
         @if($exactSiteScope)
             <p>Exact reporting scope: selected unit + {{ $exactSiteScope['hostname'] }} · From {{ $exactSiteScope['effective_from'] }} · {{ ($exactSiteScope['metric_basis'] ?? '') === \App\Services\Reporting\SiteGamReportMetrics::BASIS ? 'Ad Exchange revenue in USD' : 'Legacy Total revenue basis; awaiting forward upgrade' }}</p>
             @if($exactSiteScope['historical_review_required'] ?? false)
-                <p role="alert">Earlier stored reporting through {{ $exactSiteScope['preserved_history_through'] }} is preserved and has not been revalidated against the exact website. Compare and approve any historical correction before relying on those amounts for settlement.</p>
+                <p role="alert">Earlier stored reporting through {{ $exactSiteScope['preserved_history_through'] }} is outside forward synchronization. Corrected days are documented in private correction receipts. Unresolved history still requires verification before settlement.</p>
             @endif
         @else
             <p class="muted">The next automatic synchronization records the exact website scope, Ad Exchange basis and a forward-only cutover. Already stored financial days are preserved for separate review.</p>

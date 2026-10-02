@@ -1,0 +1,218 @@
+name: Private historical GAM operation
+
+# Intentionally manual only. No push, schedule, or workflow_run trigger.
+# Production environment protection rules and whether dispatch is enabled in
+# the live repository have not been verified by this implementation.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Bounded private operation (apply requires prior review and digest)
+        type: choice
+        options: [discover, prepare, poll, status, apply]
+        default: discover
+        required: true
+      operation:
+        description: Opaque operation token (64 lowercase hexadecimal characters)
+        type: string
+        required: true
+      actor_fingerprint:
+        description: Verified reviewer fingerprint (64 lowercase hexadecimal characters)
+        type: string
+        required: true
+      digest:
+        description: Reviewed operation digest (required for apply; lowercase hexadecimal)
+        type: string
+        required: false
+      batch_limit:
+        description: Maximum number of windows per invocation (1 to 6)
+        type: choice
+        options: ['1', '2', '3', '4', '5', '6']
+        default: '1'
+        required: true
+      verify_run_id:
+        description: Successful Verify production live run for this exact main SHA
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: horus-private-historical-correction
+  cancel-in-progress: false
+
+jobs:
+  private-operation:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      MODE: ${{ inputs.mode }}
+      OPERATION: ${{ inputs.operation }}
+      ACTOR_FINGERPRINT: ${{ inputs.actor_fingerprint }}
+      DIGEST: ${{ inputs.digest }}
+      BATCH_LIMIT: ${{ inputs.batch_limit }}
+      VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
+
+    steps:
+      - name: Require exact trusted production proof chain
+        id: trust
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const os = require('os');
+            const path = require('path');
+            const crypto = require('crypto');
+            const { execFileSync } = require('child_process');
+            let temporary;
+            try {
+              const env = process.env;
+              const token = /^[0-9a-f]{64}$/;
+              const positiveId = value => /^[1-9][0-9]*$/.test(String(value)) && Number.isSafeInteger(Number(value));
+              const requireTrue = value => { if (!value) throw new Error('UNTRUSTED'); };
+              requireTrue(context.repo.owner === 'eltx1' && context.repo.repo === 'hm01'
+                && context.payload.repository?.full_name === 'eltx1/hm01'
+                && context.payload.repository.id === 1315038901);
+              requireTrue(context.eventName === 'workflow_dispatch' && context.ref === 'refs/heads/main');
+              requireTrue(/^[0-9a-f]{40}$/.test(context.sha));
+              requireTrue(['discover', 'prepare', 'poll', 'status', 'apply'].includes(env.MODE));
+              requireTrue(token.test(env.OPERATION) && token.test(env.ACTOR_FINGERPRINT));
+              requireTrue(!env.DIGEST || token.test(env.DIGEST));
+              requireTrue(env.MODE !== 'apply' || token.test(env.DIGEST));
+              requireTrue(/^[1-6]$/.test(env.BATCH_LIMIT) && positiveId(env.VERIFY_RUN_ID));
+
+              const repository = `${context.repo.owner}/${context.repo.repo}`;
+              const common = { owner: context.repo.owner, repo: context.repo.repo };
+              const kinds = {
+                verify: { name: 'Verify production live', path: '.github/workflows/verify-production-live.yml', events: ['workflow_run', 'workflow_dispatch'] },
+                deploy: { name: 'Deploy production', path: '.github/workflows/deploy-production.yml', events: ['workflow_run', 'workflow_dispatch'] },
+                validation: { name: 'Production release validation', path: '.github/workflows/production-release.yml', events: ['push'] },
+              };
+              const checkRun = (run, runId, kind) => {
+                const expected = kinds[kind];
+                requireTrue(Number(run.id) === Number(runId) && positiveId(run.run_attempt));
+                requireTrue(run.status === 'completed' && run.conclusion === 'success');
+                requireTrue(run.name === expected.name && run.path === expected.path && expected.events.includes(run.event));
+                requireTrue(run.head_branch === 'main' && run.head_sha === context.sha);
+                requireTrue(run.repository?.full_name === repository && run.head_repository?.full_name === repository);
+                requireTrue(Number(run.repository.id) === Number(context.payload.repository.id));
+                requireTrue(Number(run.head_repository.id) === Number(context.payload.repository.id));
+              };
+              const runs = [];
+              const trustedRun = async (runId, kind) => {
+                requireTrue(positiveId(runId));
+                const { data: run } = await github.rest.actions.getWorkflowRun({ ...common, run_id: Number(runId) });
+                checkRun(run, runId, kind);
+                const { data: attempt } = await github.rest.actions.getWorkflowRunAttempt({ ...common, run_id: Number(runId), attempt_number: run.run_attempt });
+                checkRun(attempt, runId, kind);
+                requireTrue(Number(attempt.run_attempt) === Number(run.run_attempt));
+                requireTrue(Number.isFinite(Date.parse(attempt.run_started_at)) && Number.isFinite(Date.parse(attempt.updated_at)));
+                runs.push({ id: Number(runId), attempt: Number(run.run_attempt), kind });
+                return attempt;
+              };
+
+              temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'private-gam-trust-'));
+              fs.chmodSync(temporary, 0o700);
+              const immutableArtifact = async (run, name, maxBytes) => {
+                const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, { ...common, run_id: run.id, per_page: 100 });
+                const matches = artifacts.filter(artifact => artifact.name === name);
+                requireTrue(matches.length === 1);
+                const artifact = matches[0];
+                requireTrue(positiveId(artifact.id) && artifact.expired === false);
+                requireTrue(Number.isSafeInteger(artifact.size_in_bytes) && artifact.size_in_bytes > 0 && artifact.size_in_bytes <= maxBytes);
+                requireTrue(/^sha256:[0-9a-f]{64}$/.test(artifact.digest));
+                requireTrue(Number(artifact.workflow_run?.id) === Number(run.id));
+                requireTrue(artifact.workflow_run?.head_sha === context.sha && artifact.workflow_run?.head_branch === 'main');
+                requireTrue(Number(artifact.workflow_run?.repository_id) === Number(context.payload.repository.id));
+                requireTrue(Number(artifact.workflow_run?.head_repository_id) === Number(context.payload.repository.id));
+                // A stale artifact from an earlier rerun is not an attempt proof.
+                const created = Date.parse(artifact.created_at);
+                requireTrue(Number.isFinite(created) && created >= Date.parse(run.run_started_at) && created <= Date.parse(run.updated_at));
+                const downloaded = await github.rest.actions.downloadArtifact({ ...common, artifact_id: artifact.id, archive_format: 'zip' });
+                const bytes = Buffer.from(downloaded.data);
+                requireTrue(bytes.length > 0 && bytes.length <= maxBytes);
+                requireTrue(`sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}` === artifact.digest);
+                const archive = path.join(temporary, `${artifact.id}.zip`);
+                fs.writeFileSync(archive, bytes, { mode: 0o600 });
+                return archive;
+              };
+              const entry = (archive, filename, maxBuffer = 16384) => {
+                const names = execFileSync('unzip', ['-Z1', archive], { encoding: 'utf8', maxBuffer: 65536, stdio: ['ignore', 'pipe', 'pipe'] }).split('\n');
+                requireTrue(names.filter(name => name === filename).length === 1);
+                return execFileSync('unzip', ['-p', archive, filename], { maxBuffer, stdio: ['ignore', 'pipe', 'pipe'] });
+              };
+              const proof = (archive, filename) => {
+                const values = Object.create(null);
+                for (const line of entry(archive, filename).toString('utf8').trim().split('\n')) {
+                  const match = /^([a-z][a-z0-9_]*)=(.*)$/.exec(line);
+                  requireTrue(match && !Object.hasOwn(values, match[1]));
+                  values[match[1]] = match[2];
+                }
+                requireTrue(values.schema_version === '1' && values.release_sha === context.sha);
+                return values;
+              };
+
+              const verify = await trustedRun(env.VERIFY_RUN_ID, 'verify');
+              const liveArchive = await immutableArtifact(verify, 'horus-production-live-proof', 65536);
+              const live = proof(liveArchive, 'live-proof.env');
+              requireTrue(live.verify_run_id === String(verify.id) && live.verify_run_attempt === String(verify.run_attempt));
+              requireTrue(positiveId(live.deploy_run_id));
+
+              const deploy = await trustedRun(live.deploy_run_id, 'deploy');
+              const deployArchive = await immutableArtifact(deploy, 'horus-production-deploy-proof', 65536);
+              const deployed = proof(deployArchive, 'deploy-proof.env');
+              requireTrue(deployed.deploy_run_id === String(deploy.id) && deployed.deploy_run_attempt === String(deploy.run_attempt));
+              requireTrue(token.test(deployed.artifact_sha256) && positiveId(deployed.validation_run_id));
+
+              const validation = await trustedRun(deployed.validation_run_id, 'validation');
+              const releaseArchive = await immutableArtifact(validation, `horus-media-platform-${context.sha}`, 536870912);
+              const checksums = entry(releaseArchive, 'CHECKSUMS.txt').toString('utf8').trim();
+              requireTrue(checksums === `${deployed.artifact_sha256}  release/horus-media-platform.zip`);
+              const releaseBytes = entry(releaseArchive, 'horus-media-platform.zip', 536870912);
+              requireTrue(crypto.createHash('sha256').update(releaseBytes).digest('hex') === deployed.artifact_sha256);
+
+              // Recheck current attempts after artifact downloads, before secrets.
+              for (const expected of runs) {
+                const { data: current } = await github.rest.actions.getWorkflowRun({ ...common, run_id: expected.id });
+                checkRun(current, expected.id, expected.kind);
+                requireTrue(Number(current.run_attempt) === expected.attempt);
+              }
+              core.setOutput('release_sha', context.sha);
+              core.setOutput('artifact_sha256', deployed.artifact_sha256);
+            } catch {
+              // Never expose API responses, proof contents, paths, or exceptions.
+              core.setFailed('TRUST_PROOF_INVALID');
+            } finally {
+              if (temporary) {
+                try { fs.rmSync(temporary, { recursive: true, force: true }); } catch { /* no raw diagnostics */ }
+              }
+            }
+
+      - name: Checkout the exact trusted release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare standalone result validator
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Run bounded private operation
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.trust.outputs.release_sha }}
+          ARTIFACT_SHA256: ${{ steps.trust.outputs.artifact_sha256 }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: bash ops/audit/private-historical-correction.sh
