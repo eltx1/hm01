@@ -17,12 +17,19 @@ final class UnfilledEvidenceClassificationTest extends TestCase
 
     private function records(string $reason = 'SERVICE_DISABLED', string $label = '(Not applicable)'): array
     {
-        $soap = array_fill(0, 3, [['csv' => "Dimension.SITE_NAME,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n{$label},12345\n"]]);
+        $soap = array_fill(0, 3, [
+            ['query' => ['dimensions' => ['DATE', 'AD_UNIT_ID', 'SITE_NAME'], 'columns' => ['TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS'],
+                'statement' => ['query' => 'WHERE AD_UNIT_ID = :unit', 'values' => [['value' => ['value' => '456']]]],
+                'startDate' => ['year' => 2026, 'month' => 10, 'day' => 1], 'endDate' => ['year' => 2026, 'month' => 10, 'day' => 2]],
+                'hostname' => 'exact.example'],
+            ['csv' => "Dimension.DATE,Dimension.AD_UNIT_ID,Dimension.SITE_NAME,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-10-01,456,{$label},12345\n"],
+        ]);
         $rest = array_fill(0, 3, [
             ['request' => ['method' => 'GET', 'path' => 'networks/123456']],
             ['response' => ['error' => ['status' => 'PERMISSION_DENIED', 'code' => 403, 'message' => 'PRIVATE_HOST.EXAMPLE private project',
                 'details' => [['@type' => 'type.googleapis.com/google.rpc.ErrorInfo', 'domain' => 'googleapis.com', 'reason' => $reason,
                     'metadata' => ['consumer' => 'projects/123456']]]]]],
+            ['reason' => 'REST_ACCESS_BLOCKED'],
         ]);
         $soap[0][] = ['summary' => ['schema_version' => 1, 'metric' => 'TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS',
             'scope' => 'AD_UNIT_AND_EXACT_SITE', 'period' => 'LAST_SEVEN_COMPLETE_DAYS', 'bindings' => 3,
@@ -86,8 +93,29 @@ final class UnfilledEvidenceClassificationTest extends TestCase
         $rest[0][0]['request']['method'] = 'POST';
         try { Evidence::classify($soap, $rest); $this->fail('Write request accepted'); }
         catch (RuntimeException $e) { $this->assertSame('EVIDENCE_INVALID', $e->getMessage()); }
-        [$soap, $rest] = $this->records(); $soap[0][1]['summary']['bindings'] = 2;
+        [$soap, $rest] = $this->records(); $soap[0][2]['summary']['bindings'] = 2;
         $this->expectExceptionMessage('EVIDENCE_INVALID'); Evidence::classify($soap, $rest);
+    }
+
+    public function test_truncated_malformed_and_out_of_scope_csv_is_rejected(): void
+    {
+        foreach (["Dimension.SITE_NAME\n(Not applicable)\n", "Dimension.DATE,Dimension.AD_UNIT_ID,Dimension.SITE_NAME,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-10-01,999,(Not applicable),1\n",
+            "Dimension.DATE,Dimension.AD_UNIT_ID,Dimension.SITE_NAME,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-10-03,456,(Not applicable),1\n",
+            "Dimension.DATE,Dimension.AD_UNIT_ID,Dimension.SITE_NAME,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-10-01,456,(Not applicable),-1\n"] as $csv) {
+            [$soap, $rest] = $this->records(); $soap[0][1]['csv'] = $csv;
+            try { Evidence::classify($soap, $rest); $this->fail('Invalid CSV accepted'); }
+            catch (RuntimeException $e) { $this->assertSame('EVIDENCE_INVALID', $e->getMessage()); }
+        }
+    }
+
+    public function test_missing_or_unrelated_rest_records_are_rejected(): void
+    {
+        foreach ([[], [['ignored' => true]], [['reason' => 'REST_ACCESS_BLOCKED']],
+            [['request' => ['method' => 'GET', 'path' => 'networks/123456']]]] as $records) {
+            [$soap, $rest] = $this->records(); $rest[0] = $records;
+            try { Evidence::classify($soap, $rest); $this->fail('Incomplete REST evidence accepted'); }
+            catch (RuntimeException $e) { $this->assertSame('EVIDENCE_INVALID', $e->getMessage()); }
+        }
     }
 
     public function test_filesystem_requires_exact_release_timestamp_single_directory_and_regular_files(): void

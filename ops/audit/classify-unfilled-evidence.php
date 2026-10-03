@@ -86,19 +86,49 @@ final class HorusUnfilledEvidence
 
     private static function soapCategories(array $records): array
     {
+        $queries = array_values(array_filter($records, static fn ($r) => isset($r['query'])));
+        if (count($queries) !== 1) throw new RuntimeException('EVIDENCE_INVALID');
+        $query = $queries[0]['query'];
+        $hostname = $queries[0]['hostname'] ?? null;
+        $unit = $query['statement']['values'][0]['value']['value'] ?? null;
+        if (($query['dimensions'] ?? null) !== ['DATE', 'AD_UNIT_ID', 'SITE_NAME']
+            || ($query['columns'] ?? null) !== ['TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS']
+            || ($query['statement']['query'] ?? null) !== 'WHERE AD_UNIT_ID = :unit'
+            || ! is_string($unit) || ! ctype_digit($unit) || ! is_string($hostname)
+            || ! filter_var($hostname, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)
+            || ! str_contains($hostname, '.')) throw new RuntimeException('EVIDENCE_INVALID');
+        $date = static function ($value): string {
+            if (! is_array($value) || ! is_int($value['year'] ?? null)
+                || ! is_int($value['month'] ?? null) || ! is_int($value['day'] ?? null)
+                || ! checkdate($value['month'], $value['day'], $value['year'])) throw new RuntimeException('EVIDENCE_INVALID');
+            return sprintf('%04d-%02d-%02d', $value['year'], $value['month'], $value['day']);
+        };
+        $from = $date($query['startDate'] ?? null); $to = $date($query['endDate'] ?? null);
+        if ($from > $to || (new DateTimeImmutable($from))->diff(new DateTimeImmutable($to))->days > 6) throw new RuntimeException('EVIDENCE_INVALID');
         $csvs = array_values(array_filter($records, static fn ($r) => isset($r['csv'])));
         if (count($csvs) !== 1 || ! is_string($csvs[0]['csv'])) throw new RuntimeException('EVIDENCE_INVALID');
         $stream = fopen('php://temp', 'w+'); fwrite($stream, $csvs[0]['csv']); rewind($stream);
-        $categories = [];
+        $categories = []; $seen = [];
         try {
             $headers = fgetcsv($stream, escape: '');
             if (! is_array($headers) || count(array_unique($headers)) !== count($headers)) throw new RuntimeException('EVIDENCE_INVALID');
+            $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
+            $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS'];
+            if (array_diff($required, $headers) || count(array_unique($headers)) !== count($headers)) throw new RuntimeException('EVIDENCE_INVALID');
             $position = array_search('Dimension.SITE_NAME', $headers, true);
             if ($position === false) throw new RuntimeException('EVIDENCE_INVALID');
             while (($row = fgetcsv($stream, escape: '')) !== false) {
                 if ($row === [null]) continue;
                 if (count($row) !== count($headers)) throw new RuntimeException('EVIDENCE_INVALID');
+                $value = array_combine($headers, $row); $day = $value['Dimension.DATE'];
+                $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $day);
+                if ($parsed === false || $parsed->format('Y-m-d') !== $day || $day < $from || $day > $to
+                    || $value['Dimension.AD_UNIT_ID'] !== $unit
+                    || ! preg_match('/^\d{1,15}$/D', $value['Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS'])) throw new RuntimeException('EVIDENCE_INVALID');
                 $label = strtolower(trim($row[$position]));
+                $normalized = preg_replace('/\.$/D', '', $label); $key = $day.'|'.$normalized;
+                if (isset($seen[$key]) || $normalized === $hostname) throw new RuntimeException('EVIDENCE_INVALID');
+                $seen[$key] = true;
                 $category = match ($label) {
                     '(not applicable)' => 'NOT_APPLICABLE', '(unknown)', 'unknown' => 'UNKNOWN', '' => 'EMPTY',
                     default => filter_var(rtrim($label, '.'), FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)
@@ -113,9 +143,16 @@ final class HorusUnfilledEvidence
 
     private static function restCause(array $records): array
     {
-        $stage = 'UNKNOWN'; $status = 'UNKNOWN'; $reasons = []; $hasError = false;
+        $stage = 'UNKNOWN'; $status = 'UNKNOWN'; $reasons = []; $hasError = false; $terminal = false; $requests = 0;
+        if ($records === []) throw new RuntimeException('EVIDENCE_INVALID');
         foreach ($records as $record) {
+            if ($terminal || count($record) !== 1 || ! in_array(array_key_first($record), ['request', 'response', 'reason'], true)) throw new RuntimeException('EVIDENCE_INVALID');
+            if (isset($record['reason'])) {
+                if ($requests === 0 || $record['reason'] !== 'REST_ACCESS_BLOCKED') throw new RuntimeException('EVIDENCE_INVALID');
+                $terminal = true;
+            }
             if (isset($record['request'])) {
+                $requests++;
                 $request = $record['request'];
                 if ($hasError || ($request['method'] ?? null) !== 'GET' || ! is_string($request['path'] ?? null)) throw new RuntimeException('EVIDENCE_INVALID');
                 $stage = match (true) {
@@ -137,6 +174,7 @@ final class HorusUnfilledEvidence
                 }
             }
         }
+        if (! $terminal || $requests === 0) throw new RuntimeException('EVIDENCE_INVALID');
         $reasonList = array_keys($reasons); sort($reasonList);
         return ['rest_stage' => $stage, 'rest_status' => $status, 'structured_error_present' => $hasError,
             'rest_reasons' => $reasonList === [] ? ['UNCLASSIFIED'] : $reasonList];
