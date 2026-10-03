@@ -42,7 +42,7 @@ final class PublisherFinanceService
                 ->where('finality', ReportFinality::Estimated->value)
                 ->whereDate('report_date', '>=', now()->subDay()->toDateString())
                 ->whereDate('report_date', '<=', now()->addDay()->toDateString())
-                ->with('connection')
+                ->with(['connection.source', 'dimension'])
                 ->get();
             $todayRows = $todayCandidates->filter(function (DailyReport $row): bool {
                 $timezone = $row->connection?->timezone ?: config('reporting.default_timezone', 'UTC');
@@ -69,8 +69,9 @@ final class PublisherFinanceService
             return [
                 'currency' => $currency,
                 'today_available' => $todayRows->isNotEmpty(),
-                'today_impressions' => (int) $todayRows->sum('impressions'),
-                'today_clicks' => (int) $todayRows->sum('clicks'),
+                'today_metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($todayRows),
+                'today_impressions' => app(ReportMetricBasis::class)->counter($todayRows, 'impressions'),
+                'today_clicks' => app(ReportMetricBasis::class)->counter($todayRows, 'clicks'),
                 'today_estimated_earnings_minor' => (int) $todayRows->sum('publisher_earnings_minor'),
                 'today_updated_at' => $todayRows->sortByDesc('updated_at')->first()?->updated_at,
                 'estimated_earnings_minor' => (int) $currentRows
@@ -126,6 +127,7 @@ final class PublisherFinanceService
         $primary = $overview['currencies']->firstWhere('currency', $canonicalCurrency) ?? [
             'currency' => $canonicalCurrency,
             'today_available' => false,
+            'today_metric_basis_incomplete' => false,
             'today_impressions' => 0,
             'today_clicks' => 0,
             'today_estimated_earnings_minor' => 0,
@@ -137,18 +139,23 @@ final class PublisherFinanceService
             'paid_minor' => 0,
         ];
 
-        $impressions = DailyReport::withoutGlobalScopes()
+        $query = DailyReport::withoutGlobalScopes()
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
-            ->where('currency', $canonicalCurrency)
-            ->where('finality', ReportFinality::Finalized->value)
-            ->whereDate('report_date', '>=', now()->startOfMonth()->toDateString())
-            ->whereDate('report_date', '<=', now()->toDateString())
-            ->sum('impressions');
+            ->join('report_dimensions', 'report_dimensions.id', '=', 'daily_reports.report_dimension_id')
+            ->where('daily_reports.currency', $canonicalCurrency)
+            ->where('daily_reports.finality', ReportFinality::Finalized->value)
+            ->whereDate('daily_reports.report_date', '>=', now()->startOfMonth()->toDateString())
+            ->whereDate('daily_reports.report_date', '<=', now()->toDateString())
+            ->selectRaw('COUNT(*) as metric_fact_count');
+        app(ReportMetricBasis::class)->selectCounters($query, ['impressions']);
+        $performance = $query->first();
 
         return [
             'canonical_currency' => $canonicalCurrency,
             'primary' => $primary,
-            'impressions' => (int) $impressions,
+            'impressions' => (int) $performance->metric_fact_count === 0 ? 0
+                : ($performance->impressions === null ? null : (int) $performance->impressions),
+            'metric_basis_incomplete' => (int) $performance->metric_basis_incomplete > 0,
             'statements' => $overview['statements']->where('currency', $canonicalCurrency)->values(),
             'legacy_currency_count' => $overview['currencies']->where('currency', '!=', $canonicalCurrency)->count(),
         ];

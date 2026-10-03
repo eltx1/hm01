@@ -54,7 +54,7 @@
     $metrics = collect([
         ['Total publishers', $totalPublishers],
         ['Total websites', $totalWebsites],
-        ['Managed impressions', $reporting ? number_format($reporting['managed_impressions']) : null],
+        ['Managed impressions', $reporting ? \App\Services\Reporting\PerformanceMetrics::display('impressions', $reporting['managed_impressions']) : null],
         ['Gross revenue · '.($reporting['currency'] ?? 'USD'), $reporting ? \App\Support\Money::formatMinor((int) $reporting['gross_revenue_minor']).' '.$reporting['currency'] : null],
         ['Horus margin · '.($reporting['currency'] ?? 'USD'), $reporting && $showInternalMargin ? \App\Support\Money::formatMinor((int) $reporting['horus_margin_minor']).' '.$reporting['currency'] : null],
         ['Publisher payable · '.($reporting['currency'] ?? 'USD'), $reporting ? \App\Support\Money::formatMinor((int) $reporting['outstanding_publisher_payments_minor']).' '.$reporting['currency'] : null],

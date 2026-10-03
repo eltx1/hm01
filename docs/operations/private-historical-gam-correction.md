@@ -229,6 +229,15 @@ when PHP/vendor are unavailable locally; static inspection is not a PHP test pas
 Production diagnosis and financial application are separate operations; the diagnostic
 automatically applies no historical correction.
 
+Website GAM performance displays require persisted `AD_EXCHANGE_V1`, site, unit,
+and scope provenance. Legacy facts retain their ledger amounts and audit history,
+but their counters are unavailable in the Ad Exchange reporting projection.
+If a selected day or period contains any such fact, its performance totals and
+derived ratios stay unavailable; verified daily rows remain visible individually.
+An old stored zero does not establish missing Ad Exchange coverage. This read-only
+projection applies to reports, dashboards and CSV; financial settlement inputs and
+unrelated full-network or provider report sources keep their existing behavior.
+
 ## Finite observed-day coverage
 
 The one-time operation freezes its original fact census through the manifest's

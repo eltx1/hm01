@@ -44,16 +44,18 @@ final class UnifiedReportService
         $publisherAdjustment = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'publisher_impact_minor', 0));
         $horusAdjustment = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'horus_impact_minor', 0));
         $mcmAdjustment = (int) $adjustments->sum(fn ($adjustment) => (int) data_get($adjustment->metadata, 'mcm_partner_impact_minor', 0));
+        $performance = app(PerformanceMetrics::class)->summarize($rows, 'gross_revenue_minor');
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
-            'performance' => app(PerformanceMetrics::class)->summarize($rows, 'gross_revenue_minor'),
+            'performance' => $performance,
+            'metric_basis_incomplete' => $performance['metric_basis_incomplete'],
             'available' => $rows->isNotEmpty(),
             'updated_at' => $rows->max('updated_at'),
             'daily_revenue' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
-                ->map(fn ($group, $date) => ['date' => $date, ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'), 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'), 'impressions' => (int) $group->sum('impressions')])->values(),
-            'managed_impressions' => (int) $rows->sum('impressions'),
-            'horus_gam_impressions' => (int) $horusGam->sum('impressions'),
+                ->map(fn ($group, $date) => ['date' => $date, ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'), 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor')])->values(),
+            'managed_impressions' => $performance['impressions'],
+            'horus_gam_impressions' => app(ReportMetricBasis::class)->counter($horusGam, 'impressions'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
             'net_revenue_minor' => max(0, (int) $rows->sum('net_revenue_minor') - $adjustmentTotal),
             'publisher_earnings_minor' => max(0, (int) $rows->sum('publisher_earnings_minor') - $publisherAdjustment),
@@ -86,16 +88,17 @@ final class UnifiedReportService
         $currency = $this->currency($currency);
         $rows = $this->daily($from, $to, $currency)
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
-            ->with(['dimension.site', 'dimension.placement'])
+            ->with(['dimension.site', 'dimension.placement', 'connection.source'])
             ->get();
-        $impressions = (int) $rows->sum('impressions');
+        $impressions = app(ReportMetricBasis::class)->counter($rows, 'impressions');
         $revenue = (int) $rows->sum('publisher_earnings_minor');
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
             'impressions' => $impressions,
+            'metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($rows),
             'revenue_minor' => $revenue,
-            'ecpm_micros' => $impressions > 0 ? (int) round($revenue * 10000 / $impressions) : 0,
+            'ecpm_micros' => $impressions === null ? null : ($impressions > 0 ? (int) round($revenue * 10000 / $impressions) : 0),
             'websites' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'placements' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
             'payment_balance_minor' => (int) ($this->latestPublisherStatements($currency, $publisher->id)
@@ -248,7 +251,6 @@ final class UnifiedReportService
         return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
             'label' => $labelFor ? $labelFor($group->first()) : $label,
             ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'),
-            'impressions' => (int) $group->sum('impressions'),
             'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
             'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),
             'publisher_earnings_minor' => (int) $group->sum('publisher_earnings_minor'),
@@ -260,7 +262,8 @@ final class UnifiedReportService
     {
         return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
             'label' => $label,
-            'impressions' => (int) $group->sum('impressions'),
+            'impressions' => app(ReportMetricBasis::class)->counter($group, 'impressions'),
+            'metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($group),
             'publisher_earnings_minor' => (int) $group->sum('publisher_earnings_minor'),
         ])->sortByDesc('publisher_earnings_minor')->values();
     }

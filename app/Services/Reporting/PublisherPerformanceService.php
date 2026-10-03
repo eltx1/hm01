@@ -21,7 +21,7 @@ final class PublisherPerformanceService
             ->whereDate('report_date', '>=', $from)
             ->whereDate('report_date', '<=', $to)
             ->whereIn('finality', [ReportFinality::Estimated->value, ReportFinality::Finalized->value])
-            ->with('dimension.site')
+            ->with(['dimension.site', 'connection.source'])
             ->get();
 
         return [
