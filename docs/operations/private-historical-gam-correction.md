@@ -136,6 +136,27 @@ Application permission checks and every service guard still apply to CLI executi
 
 ## Verification
 
+The immediate main successor of reviewed release `708ab326a5241b3ee098dd622a5f8e2e1266d978`
+also runs the standalone read-only `verify-historical-correction.php` before any
+production transfer. The protected deploy checks current main and that first
+parent, streams the incoming reader over pinned SSH, and holds the existing deploy
+lock while verifying the current immutable release and its pinned artifact marker.
+It reads the existing operation, facts and receipts without advancing an operation
+or querying Google. A runner-only validator reconstructs counts and boolean checks;
+raw stdout, stderr and invalid output are suppressed. A sound structural audit can
+succeed with unresolved exact-site Google evidence: remaining zero, nonzero and
+unknown stored values are classifications, never proof of missing Google revenue.
+Money zero/nonzero/unknown counts partition the remaining facts. The additional
+`remaining_money_known_nonzero` count also detects known nonzero fields on facts
+with another unknown monetary field. Counter nonzero and unknown counts can
+overlap: a known impression is retained even when another counter is null. Counter
+zero requires all ten counter fields to be valid zero; do not sum the overlapping
+counter counts as a fact census.
+Later releases skip this bounded audit; the financial activation is unchanged.
+
+Run `node --test tests/Browser/historical-correction-audit-workflow.test.js` for the
+audit trust, deployment lock, release-marker and closed-output boundary tests.
+
 Run `php artisan test --filter=GamHistoricalOperationTest` and the existing correction
 service suites against SQLite and the project's MySQL contract runtime. Run
 `node --test tests/Browser/private-historical-correction-workflow.test.js` for trust,
