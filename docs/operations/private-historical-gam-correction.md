@@ -136,34 +136,91 @@ Application permission checks and every service guard still apply to CLI executi
 
 ## Verification
 
-The immediate main successor of reviewed release `708ab326a5241b3ee098dd622a5f8e2e1266d978`
-also runs the standalone read-only `verify-historical-correction.php` before any
-production transfer. The protected deploy checks current main and that first
-parent, streams the incoming reader over pinned SSH, and holds the existing deploy
-lock while verifying the current immutable release and its pinned artifact marker.
-It reads the existing operation, facts and receipts without advancing an operation
-or querying Google. A runner-only validator reconstructs counts and boolean checks;
-raw stdout, stderr and invalid output are suppressed. A sound structural audit can
-succeed with unresolved exact-site Google evidence: remaining zero, nonzero and
-unknown stored values are classifications, never proof of missing Google revenue.
-Money zero/nonzero/unknown counts partition the remaining facts. The additional
-`remaining_money_known_nonzero` count also detects known nonzero fields on facts
-with another unknown monetary field. Counter nonzero and unknown counts can
-overlap: a known impression is retained even when another counter is null. Counter
-zero requires all ten counter fields to be valid zero; do not sum the overlapping
-counter counts as a fact census.
-Later releases skip this bounded audit; the financial activation is unchanged.
+The completed receipt audit verified the fixed 96-fact census: 35 corrected facts
+covered by six matching receipts and 61 unchanged, blocked facts with all money
+fields zero. All twelve structural, provenance and reporting-parity checks passed.
+Of those 61 remaining facts, 59 had all ten stored counters zero; exactly two had
+known nonzero counters. An absent exact-site Google row remains unresolved even
+when its stored money is zero.
+
+The immediate main successor of verified audit release
+`d64d4b6cdb086a38ab8388764bb324898a8304a5` runs the standalone
+`verify-historical-correction.php` before any production transfer. The protected
+deploy checks current main and that first parent, streams the incoming reader over
+pinned SSH, and holds the existing deploy lock while verifying the current immutable
+release and pinned artifact SHA-256
+`f9872bdd99095ef08723288c32b4beab42988f61f9d645f20cb181385bf60e6f`.
+Later releases skip this bounded diagnostic. The separate financial activation
+workflow, manifest, base, operation and digest remain unchanged.
+
+The reader first revalidates the original fixed operation, inventory, all receipts,
+all twelve core proofs and the exact 59-zero/two-nonzero stored-counter profile.
+Only those two unchanged, zero-money `NO_EXACT_SITE_ROW` facts are eligible. It
+reports each counter's zero/nonzero/unknown **row counts**, grouped by opaque source
+and month ordinals from the full fixed census. It never outputs source or fact IDs,
+dates, domains, counter values, monetary amounts, job IDs, report URLs or raw errors.
+A failed selection or changed source scope cannot widen the two-fact selection.
+
+A target needs a fresh report only if a directly comparable AdX or ActiveView field
+is nonzero. If all its nonzero fields are unrequested video or unfilled metrics,
+that target is explicitly counted as `unsupported_only_skipped`; its fresh supported
+fields and exact-site evidence remain unknown. Each eligible target can start one
+one-day selected-ad-unit report using the exact-site report query and AdX columns.
+ActiveView columns are requested only when needed for a stored nonzero ActiveView
+counter. There are at most two actual Google report starts, with no fallback,
+restart, alternate unit/site or Total metric query. The scheduling budget is 150
+monotonic seconds, with at most three polls per target; no new call starts after the
+budget. An in-flight call retains the existing client's transport/download timeout,
+and the unchanged six-minute audit step is the outer process bound.
+
+Fresh output contains only bounded row counts: completed reports, exact-site
+observed or absent, selected-unit day observed, and `nonmatching_site_observed`.
+The last count includes blank or unattributed Site labels as well as named Site
+labels that do not match; it is not proof of another verified website. For each
+counter, fresh zero/nonzero/unknown/unavailable states count rows and never reveal
+values. Absent or unfinished exact-site evidence leaves supported fields unknown,
+including ActiveView. The four unrequested video/unfilled counters are unavailable;
+ActiveView can also be unavailable on a completed exact row with an explicit null
+for an unsupported or unrequested optional column. Fresh revenue output classifies
+the existing parsed `gross_revenue_minor` field as zero/nonzero/unknown. This uses
+the existing daily ledger minor-unit basis, not unrounded Google micros, and never
+prints an amount. Within one field the mutually exclusive states sum to the group's
+row count; counts across different fields can overlap and must not be summed.
+
+After any report attempt, the reader obtains a new read-only snapshot, repeats all
+twelve core proofs, and checks unchanged targets and source scope. Top-level
+`status`, `counts` and `checks` describe this final snapshot. A Google timeout or
+failure can leave `counter_probe.status` INCONCLUSIVE while the final core proof
+remains OK; changed facts, receipts or source scope make the top-level result FAILED.
+COMPLETE means the bounded diagnostic finished, including explicit unsupported-only
+skips (`UNSUPPORTED_COUNTERS`); it does not prove missing rows are zero or authorize
+any correction. Completed reports plus unsupported-only skips plus still-inconclusive
+rows account for exactly two targets.
+
+The runner accepts only the full closed version-2 diagnostic schema for success,
+including all twelve true core checks, the fixed census/count profile, five true
+probe checks and consistent bounded group counts. Original version-1 sanitized
+failures remain supported. Incomplete successful payloads, unknown fields/enums,
+unbounded ordinals, duplicate keys, inconsistent exit status and malformed output
+are rejected without printing their contents. Raw stdout and stderr are suppressed.
+The diagnostic neither advances the financial operation nor writes source facts,
+allocations, receipts or its manifest. Existing Google operational audit/authentication
+bookkeeping may occur through the ordinary report client; all financial protections
+and application permission checks remain intact.
 
 Run `node --test tests/Browser/historical-correction-audit-workflow.test.js` for the
-audit trust, deployment lock, release-marker and closed-output boundary tests.
+audit trust, deployment lock, release-marker, schema and public privacy boundary tests.
+Run `php artisan test --filter=HistoricalCorrectionReadOnlyAuditTest` for the fixed census,
+target selection, bounded report orchestration, absence, unsupported fields and
+final-snapshot drift cases.
 
 Run `php artisan test --filter=GamHistoricalOperationTest` and the existing correction
 service suites against SQLite and the project's MySQL contract runtime. Run
 `node --test tests/Browser/private-historical-correction-workflow.test.js` for trust,
 argument and output-boundary tests. PHP execution requires the supported CI runtime
 when PHP/vendor are unavailable locally; static inspection is not a PHP test pass.
-Production dry-run discovery/preparation and actual application are separate from
-source tests and require the exact deployed, trusted main revision.
+Production diagnosis and financial application are separate operations; the diagnostic
+automatically applies no historical correction.
 
 ## Finite observed-day coverage
 

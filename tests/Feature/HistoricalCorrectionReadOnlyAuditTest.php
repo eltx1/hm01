@@ -344,6 +344,287 @@ final class HistoricalCorrectionReadOnlyAuditTest extends TestCase
         } finally { DB::setDefaultConnection($default); DB::purge($name); }
     }
 
+    public function test_counter_targets_are_only_the_two_frozen_zero_money_rows_with_stable_ordinals(): void
+    {
+        $fixture = $this->counterFixture();
+        $targets = $this->targets($fixture);
+        $this->assertCount(2, $targets);
+        $this->assertSame(['synthetic-fact-95', 'synthetic-fact-96'], array_map(fn ($target) => $target['row']['fact']['id'], $targets));
+        $this->assertSame([1, 1], array_column($targets, 'source_ordinal'));
+        $this->assertSame([4, 4], array_column($targets, 'month_ordinal'));
+        $this->assertSame(61, $this->inspect($fixture)['counts']['remaining_money_zero']);
+        foreach ($targets as $target) $this->assertSame('zero', Audit::classify($target['row']['fact'], Audit::MONEY_FIELDS));
+        foreach ([94, 95] as $index) {
+            $changed = $fixture;
+            $changed['facts'][$index]['fact']['impressions']++;
+            $this->assertNull($this->targets($changed), 'Changed hashes must stop all Google work.');
+        }
+        $withMoney = $this->fixture([], [95 => ['impressions' => 1, 'other_adjustments_minor' => -1], 96 => ['clicks' => 1]]);
+        $this->assertSame('OK', $this->inspect($withMoney)['status']);
+        $this->assertNull($this->targets($withMoney), 'Even a hash-authenticated nonzero money field is out of scope.');
+        $this->assertNull($this->targets($this->fixture([], [96 => ['impressions' => 1]])));
+        $this->assertNull($this->targets($this->fixture([], [94 => ['clicks' => 1], 95 => ['clicks' => 1], 96 => ['clicks' => 1]])));
+        $this->assertNull($this->targets($this->fixture([], [95 => ['impressions' => 1, 'active_view_viewable_impressions' => null], 96 => ['clicks' => 1]])));
+        $changed = $fixture;
+        $changed['candidates'][0]['context']['ad_unit_id'] = '999999';
+        $this->assertNull($this->targets($changed), 'Frozen parent evidence cannot be replaced.');
+    }
+
+    public function test_counter_groups_keep_absence_optional_unknowns_and_unsupported_metrics_separate(): void
+    {
+        $fixture = $this->counterFixture(); $targets = $this->targets($fixture);
+        $fresh = [0 => ['days' => [$targets[0]['date'] => ['impressions' => 8, 'clicks' => 0, 'gross_revenue_minor' => -1,
+            'ad_requests' => 0, 'matched_requests' => 0, 'active_view_viewable_impressions' => null,
+            'active_view_measurable_impressions' => null]], 'source_rows' => 1, 'excluded_site_rows' => 0],
+            1 => ['days' => [], 'source_rows' => 3, 'excluded_site_rows' => 3]];
+        $group = Audit::counterGroups($targets, $fresh)[0];
+        $this->assertSame(2, $group['rows']);
+        $this->assertSame(1, $group['stored']['impressions']['nonzero']);
+        $this->assertSame(1, $group['fresh']['exact_site_observed']);
+        $this->assertSame(1, $group['fresh']['exact_site_absent']);
+        $this->assertSame(2, $group['fresh']['unit_day_observed']);
+        $this->assertSame(1, $group['fresh']['nonmatching_site_observed']);
+        $this->assertSame(['zero' => 0, 'nonzero' => 1, 'unknown' => 1], $group['fresh']['revenue']);
+        $this->assertSame(['zero' => 0, 'nonzero' => 1, 'unknown' => 1, 'unavailable' => 0], $group['fresh']['fields']['impressions']);
+        $this->assertSame(['zero' => 0, 'nonzero' => 0, 'unknown' => 1, 'unavailable' => 1], $group['fresh']['fields']['active_view_viewable_impressions']);
+        foreach (array_diff(Audit::COUNTER_FIELDS, Audit::FRESH_COUNTER_FIELDS) as $field) {
+            $this->assertSame(['zero' => 0, 'nonzero' => 0, 'unknown' => 0, 'unavailable' => 2], $group['fresh']['fields'][$field]);
+        }
+        $unknown = $targets; $unknown[0]['row']['fact']['impressions'] = null;
+        $this->assertSame(1, Audit::counterGroups($unknown)[0]['stored']['impressions']['unknown']);
+        $json = json_encode($group);
+        foreach (['synthetic-', '2020-', 'example.test', 'revenue_micros', 'gross_revenue_minor'] as $private) $this->assertStringNotContainsString($private, $json);
+    }
+
+    public function test_counter_probe_rolls_back_before_google_and_rechecks_core_without_changing_evidence(): void
+    {
+        $fixture = $this->counterFixture(); $frozen = serialize($fixture); $bundle = $this->bundle($fixture);
+        $active = false; $reads = $starts = $polls = 0; $elapsed = 0; $optional = [];
+        $pdo = new class($active) {
+            public function __construct(public bool &$active) {}
+            public function exec(string $sql): void { if (str_starts_with($sql, 'START')) $this->active = true; }
+            public function inTransaction(): bool { return $this->active; }
+            public function rollBack(): void { $this->active = false; }
+        };
+        $connection = new class($pdo) {
+            public function __construct(public object $pdo) {}
+            public function getDriverName(): string { return 'mysql'; }
+            public function transactionLevel(): int { return 0; }
+            public function useWriteConnectionWhenReading(): void {}
+            public function setReconnector(callable $callback): void {}
+            public function getPdo(): object { return $this->pdo; }
+        };
+        $result = Audit::probeCounters(
+            function ($contexts) use ($connection, $bundle, &$reads): array {
+                $reads++;
+                if ($reads === 2) $this->assertCount(2, $contexts);
+                return Audit::withReadOnlySnapshot($connection, fn () => $bundle);
+            },
+            function ($target) use (&$active): array {
+                $this->assertFalse($active);
+                return array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]);
+            },
+            function ($context, $activeView) use (&$active, &$starts, &$optional): array {
+                $this->assertFalse($active); $starts++; $optional[] = $activeView; return ['status' => 'PENDING'];
+            },
+            function ($context, $job) use (&$active, &$polls): array {
+                $this->assertFalse($active); $polls++;
+                return ['status' => 'COMPLETED', 'id' => 'synthetic-private-report', 'result' => [
+                    'days' => [], 'exact_site_observed' => false, 'source_rows' => 1, 'excluded_site_rows' => 1]];
+            }, static function () use (&$elapsed) { return $elapsed; }, static function ($seconds) use (&$elapsed): void { $elapsed += $seconds; },
+        );
+        $this->assertSame('OK', $result['status']);
+        $this->assertSame('COMPLETE', $result['counter_probe']['status']);
+        $this->assertSame([2, 2, 2], [$reads, $starts, $polls]);
+        $this->assertSame([false, true], $optional);
+        $this->assertNotContains(false, $result['counter_probe']['checks']);
+        $this->assertSame(2, $result['counter_probe']['groups'][0]['fresh']['exact_site_absent']);
+        $this->assertSame($frozen, serialize($fixture));
+        $this->assertSame($bundle['result']['counts'], $result['counts']);
+        $this->assertSame($bundle['result']['checks'], $result['checks']);
+        $this->assertProbePublicOnly($result);
+    }
+
+    public function test_counter_probe_pending_jobs_stop_at_six_polls_and_preserve_verified_money(): void
+    {
+        $bundle = $this->bundle($this->counterFixture()); $reads = $starts = $polls = 0; $time = 0;
+        $result = Audit::probeCounters(function () use ($bundle, &$reads) { $reads++; return $bundle; },
+            fn ($target) => array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]),
+            function () use (&$starts) { $starts++; return ['status' => 'PENDING']; },
+            function ($context, $job) use (&$polls) { $polls++; return $job; },
+            static function () use (&$time) { return $time; }, static function ($seconds) use (&$time): void { $time += $seconds; });
+        $this->assertSame([2, 2, 6], [$reads, $starts, $polls]);
+        $this->assertSame('OK', $result['status']);
+        $this->assertSame('INCONCLUSIVE', $result['counter_probe']['status']);
+        $this->assertSame('REPORT_TIMEOUT', $result['counter_probe']['reason']);
+        $this->assertSame(61, $result['counts']['remaining_money_zero']);
+        $this->assertNotContains(false, $result['counter_probe']['checks']);
+        $this->assertSame(2, $result['counter_probe']['groups'][0]['fresh']['fields']['impressions']['unknown']);
+        $this->assertSame(0, $result['counter_probe']['groups'][0]['fresh']['exact_site_absent']);
+        $this->assertProbePublicOnly($result);
+    }
+
+    public function test_counter_probe_time_budget_and_google_failures_are_bounded_and_sanitized(): void
+    {
+        $bundle = $this->bundle($this->counterFixture()); $starts = 0; $time = 0;
+        $context = fn ($target) => array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]);
+        $result = Audit::probeCounters(fn () => $bundle, $context,
+            function () use (&$starts, &$time) { $starts++; $time = Audit::PROBE_SECONDS; return ['status' => 'PENDING']; },
+            fn () => $this->fail('No polls after the total budget.'),
+            static function () use (&$time) { return $time; }, static fn () => null);
+        $this->assertSame(1, $starts);
+        $this->assertSame(0, $result['counter_probe']['polls']);
+        $this->assertSame('REPORT_TIMEOUT', $result['counter_probe']['reason']);
+        $result = Audit::probeCounters(fn () => $bundle, $context,
+            static fn () => throw new \RuntimeException('synthetic-secret report-id https://private.example.test 12345'),
+            fn () => $this->fail('Failed starts cannot poll.'), static fn () => 0, static fn () => null);
+        $this->assertSame(2, $result['counter_probe']['reports_started']);
+        $this->assertSame(0, $result['counter_probe']['polls']);
+        $this->assertSame('GOOGLE_REPORT_FAILED', $result['counter_probe']['reason']);
+        $this->assertSame('OK', $result['status']);
+        $this->assertProbePublicOnly($result);
+    }
+
+    public function test_counter_probe_preflight_core_targets_and_binding_guards_prevent_google(): void
+    {
+        $good = $this->bundle($this->counterFixture());
+        foreach (['core', 'targets', 'scope'] as $guard) {
+            $bundle = $good;
+            if ($guard === 'core') $bundle['result'] = Audit::failure('AUDIT_MISMATCH');
+            if ($guard === 'targets') $bundle['targets'] = null;
+            if ($guard === 'scope') $bundle['scope_valid'] = false;
+            $never = fn () => $this->fail('Google must not run without all preflight guards.');
+            $result = Audit::probeCounters(fn () => $bundle, $never, $never, $never);
+            $this->assertSame('FAILED', $result['status']);
+            $this->assertSame('SKIPPED', $result['counter_probe']['status']);
+            $this->assertSame(0, $result['counter_probe']['reports_started']);
+        }
+        $result = Audit::probeCounters(fn () => $good,
+            fn ($target) => array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date'], 'ad_unit_id' => '999999']),
+            fn () => $this->fail('A rebound unit must never be queried.'), fn () => $this->fail('No jobs exist.'),
+            static fn () => 0, static fn () => null);
+        $this->assertSame(0, $result['counter_probe']['reports_started']);
+        $this->assertSame('RECHECK_FAILED', $result['counter_probe']['reason']);
+        $this->assertSame('FAILED', $result['status']);
+        $this->assertFalse($result['counter_probe']['checks']['scope_rechecked']);
+        $this->assertFalse($result['checks']['provenance_valid']);
+    }
+
+    public function test_counter_probe_skips_unsupported_only_targets_without_any_google_call(): void
+    {
+        $bundle = $this->bundle($this->fixture([], [95 => ['video_starts' => 1], 96 => ['unfilled_requests' => 1]]));
+        $reads = 0;
+        $never = fn () => $this->fail('Unsupported-only counters cannot benefit from an AdX report.');
+        $result = Audit::probeCounters(function () use ($bundle, &$reads) { $reads++; return $bundle; }, $never, $never, $never);
+        $this->assertSame(2, $reads);
+        $this->assertSame('OK', $result['status']);
+        $this->assertSame('COMPLETE', $result['counter_probe']['status']);
+        $this->assertSame('UNSUPPORTED_COUNTERS', $result['counter_probe']['reason']);
+        $this->assertSame(0, $result['counter_probe']['reports_started']);
+        $this->assertSame(2, $result['counter_probe']['reports_skipped']);
+        $this->assertSame(2, $result['counter_probe']['groups'][0]['fresh']['unsupported_only_skipped']);
+        $this->assertSame(2, $result['counter_probe']['groups'][0]['fresh']['fields']['impressions']['unknown']);
+        $this->assertSame(0, $result['counter_probe']['groups'][0]['fresh']['exact_site_absent']);
+        $this->assertProbePublicOnly($result);
+    }
+
+    public function test_counter_probe_stops_existing_jobs_when_the_second_context_changes(): void
+    {
+        $bundle = $this->bundle($this->counterFixture()); $contexts = 0; $starts = 0;
+        $result = Audit::probeCounters(fn () => $bundle,
+            function ($target) use (&$contexts) {
+                $context = array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]);
+                if (++$contexts === 2) $context['network_currency'] = 'EUR';
+                return $context;
+            },
+            function () use (&$starts) { $starts++; return ['status' => 'PENDING']; },
+            fn () => $this->fail('An observed scope change must stop every further Google call.'),
+            static fn () => 0, static fn () => null);
+        $this->assertSame(1, $starts);
+        $this->assertSame(0, $result['counter_probe']['polls']);
+        $this->assertSame('FAILED', $result['status']);
+        $this->assertFalse($result['counter_probe']['checks']['scope_rechecked']);
+    }
+
+    public function test_counter_probe_poll_scope_drift_is_sticky_despite_unchanged_final_database(): void
+    {
+        $bundle = $this->bundle($this->counterFixture());
+        $result = Audit::probeCounters(fn () => $bundle,
+            fn ($target) => array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]),
+            static fn () => ['status' => 'PENDING'],
+            static fn () => throw new \RuntimeException('NETWORK_IDENTITY_CHANGED'), static fn () => 0, static fn () => null);
+        $this->assertSame('FAILED', $result['status']);
+        $this->assertTrue($result['counter_probe']['checks']['core_rechecked']);
+        $this->assertFalse($result['counter_probe']['checks']['scope_rechecked']);
+        $this->assertSame('RECHECK_FAILED', $result['counter_probe']['reason']);
+        $this->assertFalse($result['checks']['provenance_valid']);
+    }
+
+    public function test_counter_probe_final_drift_uses_latest_core_and_cannot_keep_stale_success(): void
+    {
+        $fixture = $this->counterFixture(); $before = $this->bundle($fixture);
+        $fixture['facts'][95]['fact']['net_revenue_minor'] = 1;
+        $after = $this->bundle($fixture); $reads = 0;
+        $result = Audit::probeCounters(function () use (&$reads, $before, $after) { return ++$reads === 1 ? $before : $after; },
+            fn ($target) => array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]),
+            static fn () => ['status' => 'PENDING'], static fn ($context, $job) => $job,
+            static fn () => 0, static fn () => null);
+        $this->assertSame('FAILED', $result['status']);
+        $this->assertSame(1, $result['counts']['remaining_money_nonzero']);
+        $this->assertFalse($result['checks']['remaining_hashes_match']);
+        $this->assertTrue($result['counter_probe']['checks']['initial_core_verified']);
+        $this->assertFalse($result['counter_probe']['checks']['core_rechecked']);
+        $this->assertSame('RECHECK_FAILED', $result['counter_probe']['reason']);
+    }
+
+    public function test_counter_probe_uses_only_fixed_one_day_adx_report_contract(): void
+    {
+        $target = $this->targets($this->counterFixture())[0];
+        $context = array_replace($target['parent_context'], ['from' => $target['date'], 'to' => $target['date']]);
+        $query = Audit::counterQuery($context, true);
+        $this->assertSame(array_keys(\App\Services\Reporting\SiteGamReportMetrics::CORE_COLUMNS), Audit::counterQuery($context)['columns']);
+        $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME'], $query['dimensions']);
+        $this->assertSame(array_keys(\App\Services\Reporting\SiteGamReportMetrics::COLUMNS), $query['columns']);
+        $this->assertCount(7, $query['columns']);
+        $this->assertSame('FLAT', $query['adUnitView']);
+        $this->assertSame('USD', $query['reportCurrency']);
+        $this->assertSame('PUBLISHER', $query['timeZoneType']);
+        $this->assertSame($query['startDate'], $query['endDate']);
+        $this->assertSame('WHERE AD_UNIT_ID = :unit', $query['statement']['query']);
+    }
+
+    private function counterFixture(): array
+    {
+        return $this->fixture([], [95 => ['impressions' => 17, 'video_starts' => 2],
+            96 => ['clicks' => 3, 'active_view_viewable_impressions' => 8]]);
+    }
+
+    private function targets(array $fixture): ?array
+    {
+        return Audit::counterTargets($fixture['manifest'], $fixture['inventory'], $fixture['facts'], $fixture['candidates'], $this->inspect($fixture));
+    }
+
+    private function bundle(array $fixture): array
+    {
+        return ['result' => $this->inspect($fixture), 'targets' => $this->targets($fixture), 'scope_valid' => true];
+    }
+
+    private function assertProbePublicOnly(array $result): void
+    {
+        $this->assertSame(['schema_version', 'status', 'reason', 'counts', 'checks', 'counter_probe'], array_keys($result));
+        $probe = $result['counter_probe'];
+        $this->assertSame(['status', 'reason', 'target_rows', 'reports_started', 'reports_completed', 'reports_skipped', 'polls', 'checks', 'groups'], array_keys($probe));
+        $this->assertSame(Audit::PROBE_CHECKS, array_keys($probe['checks']));
+        foreach ($probe['groups'] as $group) {
+            $this->assertSame(Audit::COUNTER_FIELDS, array_keys($group['stored']));
+            $this->assertSame(Audit::COUNTER_FIELDS, array_keys($group['fresh']['fields']));
+            foreach ($group['stored'] as $states) $this->assertSame($group['rows'], array_sum($states));
+            foreach ($group['fresh']['fields'] as $states) $this->assertSame($group['rows'], array_sum($states));
+        }
+        $json = json_encode($result);
+        foreach (['synthetic-', '2020-', 'example.test', '12345', 'revenue_micros', ...Audit::MONEY_FIELDS] as $private) $this->assertStringNotContainsString($private, $json);
+    }
+
     private function inspect(array $fixture): array
     {
         return Audit::inspect($fixture['manifest'], $fixture['inventory'], $fixture['facts'], $fixture['receipts'],
@@ -363,22 +644,29 @@ final class HistoricalCorrectionReadOnlyAuditTest extends TestCase
             'query_hash' => $candidate['query_hash'], 'job' => $candidate['job'], 'proposal' => $candidate['proposal']]);
     }
 
-    private function fixture(array $remainingFields = []): array
+    private function fixture(array $remainingFields = [], array $targetFields = []): array
     {
         $operation = Audit::hash(['synthetic-operation']);
         $dimension = ['id' => 'synthetic-dimension', 'dimension_hash' => 'synthetic-dimension-hash',
-            'site_id' => 'synthetic-site', 'publisher_id' => 'synthetic-publisher'];
+            'site_id' => 'synthetic-site', 'publisher_id' => 'synthetic-publisher',
+            'organization_id' => 'synthetic-organization', 'gam_connection_id' => 'synthetic-gam'];
         $original = [];
         for ($i = 1; $i <= 96; $i++) {
             $date = (new \DateTimeImmutable('2020-01-01'))->modify('+'.($i - 1).' days')->format('Y-m-d');
             $fact = ['id' => 'synthetic-fact-'.$i, 'currency' => 'USD', 'report_date' => $date,
-                'report_dimension_id' => $dimension['id'], 'revision' => 1];
+                'report_dimension_id' => $dimension['id'], 'revision' => 1, 'organization_id' => 'synthetic-organization',
+                'report_source_connection_id' => 'synthetic-source-1'];
             $fact += array_fill_keys([...Audit::MONEY_FIELDS, ...Audit::COUNTER_FIELDS], 0);
             if ($i > 35) $fact = array_replace($fact, $remainingFields);
+            if (isset($targetFields[$i])) $fact = array_replace($fact, $targetFields[$i]);
             $original[] = ['fact' => $fact, 'dimension' => $dimension];
         }
         $facts = $original;
-        $context = ['site_id' => 'synthetic-site', 'source_connection_id' => 'synthetic-source-1', 'currency' => 'USD'];
+        $context = ['site_id' => 'synthetic-site', 'source_connection_id' => 'synthetic-source-1', 'currency' => 'USD',
+            'organization_id' => 'synthetic-organization', 'publisher_id' => 'synthetic-publisher', 'gam_connection_id' => 'synthetic-gam',
+            'binding_id' => 'synthetic-binding', 'binding_fingerprint' => Audit::hash(['synthetic-binding']),
+            'hostname' => 'synthetic.example.test', 'ad_unit_id' => '12345', 'from' => '2020-01-01', 'to' => '2020-04-05',
+            'metric_basis' => 'AD_EXCHANGE_V1', 'network_currency' => 'USD'];
         $parent = ['id' => 'synthetic-parent', 'status' => 'BLOCKED', 'actor_id' => 'synthetic-actor',
             'context' => $context, 'snapshot' => $this->snapshot($original), 'query_hash' => Audit::hash(['synthetic-query']),
             'job' => ['status' => 'COMPLETED', 'result' => ['days' => []]], 'proposal' => []];

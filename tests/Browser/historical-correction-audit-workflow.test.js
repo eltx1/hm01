@@ -11,8 +11,8 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 const workflow = readFileSync(path.join(root, '.github/workflows/deploy-production.yml'), 'utf8');
 const wrapper = path.join(root, 'ops/audit/historical-correction-audit.sh');
 const validator = path.join(root, 'ops/audit/validate-historical-correction-audit.mjs');
-const base = '708ab326a5241b3ee098dd622a5f8e2e1266d978';
-const artifact = '16a8869b50351e095c2b9943a50ec58c0cb7cc598149226bd9585f50bf6aa222';
+const base = 'd64d4b6cdb086a38ab8388764bb324898a8304a5';
+const artifact = 'f9872bdd99095ef08723288c32b4beab42988f61f9d645f20cb181385bf60e6f';
 const sha = 'a'.repeat(40);
 const privateText = 'PRIVATE-PUBLISHER.example person@example.test 2030-01-02 9876.54 RAW-SQL-ERROR';
 const countKeys = ['initial_daily_facts', 'sources', 'applied_windows', 'unique_receipts', 'corrected_facts',
@@ -23,12 +23,42 @@ const countKeys = ['initial_daily_facts', 'sources', 'applied_windows', 'unique_
 const checkKeys = ['manifest_identity', 'manifest_digest', 'inventory_matches', 'coverage_complete',
     'receipts_match', 'corrected_hashes_match', 'remaining_hashes_match', 'remaining_money_valid',
     'currency_valid', 'provenance_valid', 'admin_reporting_parity', 'publisher_reporting_parity'];
-const safeResult = () => ({ schema_version: 1, status: 'OK', reason: 'NONE',
-    counts: { ...Object.fromEntries(countKeys.map(key => [key, 0])), initial_daily_facts: 96, sources: 2,
+const counterFields = ['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks',
+    'video_starts', 'completed_views', 'active_view_viewable_impressions', 'active_view_measurable_impressions',
+    'unfilled_impressions'];
+const unsupportedFields = ['unfilled_requests', 'video_starts', 'completed_views', 'unfilled_impressions'];
+const probeCheckKeys = ['initial_core_verified', 'targets_verified', 'core_rechecked', 'targets_unchanged', 'scope_rechecked'];
+const groupResult = (rows = 2, source = 1, month = 1) => ({ source_ordinal: source, month_ordinal: month, rows,
+    stored: Object.fromEntries(counterFields.map(key => [key, { zero: key === 'impressions' ? 0 : rows,
+        nonzero: key === 'impressions' ? rows : 0, unknown: 0 }])),
+    fresh: { reports_completed: rows, exact_site_observed: rows, exact_site_absent: 0, unit_day_observed: rows,
+        nonmatching_site_observed: 0, unsupported_only_skipped: 0,
+        fields: Object.fromEntries(counterFields.map(key => [key, { zero: unsupportedFields.includes(key) ? 0 : rows,
+            nonzero: 0, unknown: 0, unavailable: unsupportedFields.includes(key) ? rows : 0 }])),
+        revenue: { zero: rows, nonzero: 0, unknown: 0 } } });
+const safeResult = () => ({ schema_version: 2, status: 'OK', reason: 'NONE',
+    counts: { ...Object.fromEntries(countKeys.map(key => [key, 0])), initial_daily_facts: 96, sources: 3,
         applied_windows: 6, unique_receipts: 6, corrected_facts: 35, blocked_facts: 61, covered_facts: 96,
-        remaining_facts: 61, remaining_money_zero: 40, remaining_money_nonzero: 21, remaining_money_known_nonzero: 21,
-        remaining_counters_nonzero: 61 },
-    checks: Object.fromEntries(checkKeys.map(key => [key, true])) });
+        remaining_facts: 61, remaining_money_zero: 61, remaining_counters_zero: 59, remaining_counters_nonzero: 2 },
+    checks: Object.fromEntries(checkKeys.map(key => [key, true])),
+    counter_probe: { status: 'COMPLETE', reason: 'NONE', target_rows: 2, reports_started: 2, reports_completed: 2,
+        reports_skipped: 0, polls: 2, checks: Object.fromEntries(probeCheckKeys.map(key => [key, true])), groups: [groupResult()] } });
+const failureResult = () => {
+    const result = safeResult();
+    result.schema_version = 1; result.status = 'FAILED'; result.reason = 'AUDIT_MISMATCH';
+    result.checks.receipts_match = false;
+    delete result.counter_probe;
+    return result;
+};
+const unknownFresh = (group, completed = 0) => {
+    group.fresh.reports_completed = completed;
+    group.fresh.exact_site_observed = 0; group.fresh.exact_site_absent = completed;
+    group.fresh.unit_day_observed = 0; group.fresh.nonmatching_site_observed = 0;
+    for (const key of counterFields) if (!unsupportedFields.includes(key)) {
+        group.fresh.fields[key] = { zero: 0, nonzero: 0, unknown: group.rows, unavailable: 0 };
+    }
+    group.fresh.revenue = { zero: 0, nonzero: 0, unknown: group.rows };
+};
 
 test('streamed PHP reader and runner output boundary agree on the closed public protocol', () => {
     const reader = readFileSync(path.join(root, 'ops/audit/verify-historical-correction.php'), 'utf8');
@@ -36,6 +66,8 @@ test('streamed PHP reader and runner output boundary agree on the closed public 
         .matchAll(/'([a-z_]+)'/g)].map(match => match[1]);
     assert.deepEqual(keys('COUNT_KEYS'), countKeys);
     assert.deepEqual(keys('CHECK_KEYS'), checkKeys);
+    assert.deepEqual(keys('COUNTER_FIELDS'), counterFields);
+    assert.deepEqual(keys('PROBE_CHECKS'), probeCheckKeys);
     assert.match(reader, /exit\(\$result\['status'\] === 'OK' \? 0 : 1\)/);
 });
 
@@ -253,19 +285,19 @@ function validate(raw, transport = '0') {
     } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-test('validator permits sound structural evidence with nonzero stored unresolved money and informational drift', () => {
+test('validator accepts only the full fixed-profile v2 probe and preserves opaque group counts', () => {
     const result = safeResult();
-    result.counts.other_record_drift = 1;
+    result.counter_probe.groups = [groupResult(1, 1, 1), groupResult(1, 3, 96)];
     assert.deepEqual(publicResult(validate(result), 'NONE', 0), result);
 });
 
-test('validator preserves failed evidence as nonzero without requiring all remaining money to be zero', () => {
-    const result = safeResult(); result.status = 'FAILED'; result.reason = 'AUDIT_MISMATCH'; result.checks.receipts_match = false;
+test('validator preserves original sanitized v1 failure counts including wider drift', () => {
+    const result = failureResult(); result.counts.other_record_drift = 97;
     assert.deepEqual(publicResult(validate(result, '10'), 'AUDIT_MISMATCH'), result);
 });
 
-test('validator preserves overlapping unknown and known nonzero money or counters', () => {
-    const result = safeResult();
+test('validator retains overlapping unknown and known nonzero classifications on failed core evidence', () => {
+    const result = failureResult();
     result.counts.remaining_money_zero = 0;
     result.counts.remaining_money_nonzero = 0;
     result.counts.remaining_money_unknown = 61;
@@ -273,14 +305,74 @@ test('validator preserves overlapping unknown and known nonzero money or counter
     result.counts.remaining_counters_zero = 0;
     result.counts.remaining_counters_nonzero = 61;
     result.counts.remaining_counters_unknown = 61;
+    assert.deepEqual(publicResult(validate(result, '10'), 'AUDIT_MISMATCH'), result);
+});
+
+test('completed exact-site absence is unknown and can coexist with other-site rows', () => {
+    const result = safeResult(), group = result.counter_probe.groups[0];
+    unknownFresh(group, 2);
+    group.fresh.unit_day_observed = 2; group.fresh.nonmatching_site_observed = 2;
     assert.deepEqual(publicResult(validate(result), 'NONE', 0), result);
 });
+
+test('unsupported optional ActiveView is unavailable only for completed exact rows', () => {
+    const result = safeResult();
+    for (const key of ['active_view_viewable_impressions', 'active_view_measurable_impressions']) {
+        result.counter_probe.groups[0].fresh.fields[key] = { zero: 0, nonzero: 0, unknown: 0, unavailable: 2 };
+    }
+    assert.deepEqual(publicResult(validate(result), 'NONE', 0), result);
+});
+
+test('Google timeout remains inconclusive while the final core proof is current and sound', () => {
+    const result = safeResult();
+    result.counter_probe.status = 'INCONCLUSIVE'; result.counter_probe.reason = 'REPORT_TIMEOUT';
+    result.counter_probe.reports_completed = 1; result.counter_probe.polls = 6;
+    unknownFresh(result.counter_probe.groups[0], 1);
+    assert.deepEqual(publicResult(validate(result), 'NONE', 0), result);
+});
+
+test('completed unsupported-only diagnosis keeps exact-site evidence unknown without queries', () => {
+    const result = safeResult(), probe = result.counter_probe, group = probe.groups[0];
+    probe.status = 'COMPLETE'; probe.reason = 'UNSUPPORTED_COUNTERS';
+    probe.reports_started = 0; probe.reports_completed = 0; probe.reports_skipped = 2; probe.polls = 0;
+    group.stored.impressions = { zero: 2, nonzero: 0, unknown: 0 };
+    group.stored.video_starts = { zero: 0, nonzero: 2, unknown: 0 };
+    unknownFresh(group); group.fresh.unsupported_only_skipped = 2;
+    assert.deepEqual(publicResult(validate(result), 'NONE', 0), result);
+});
+
+for (const reason of ['CORE_AUDIT_FAILED', 'TARGET_SCOPE_MISMATCH', 'SOURCE_SCOPE_CHANGED']) {
+    test(`probe safely skips ${reason} with explicit failed core evidence`, () => {
+        const result = safeResult(), probe = result.counter_probe;
+        result.status = 'FAILED'; result.reason = 'AUDIT_MISMATCH'; result.checks.inventory_matches = false;
+        probe.status = 'SKIPPED'; probe.reason = reason;
+        probe.reports_started = 0; probe.reports_completed = 0; probe.polls = 0;
+        probe.checks = Object.fromEntries(probeCheckKeys.map(key => [key, false]));
+        probe.checks.initial_core_verified = reason !== 'CORE_AUDIT_FAILED';
+        if (reason === 'SOURCE_SCOPE_CHANGED') {
+            probe.checks.targets_verified = true;
+            unknownFresh(probe.groups[0]);
+        } else { probe.target_rows = 0; probe.groups = []; }
+        assert.deepEqual(publicResult(validate(result, '10'), 'AUDIT_MISMATCH'), result);
+    });
+}
+
+for (const completed of [0, 2]) {
+    test(`final core drift fails even after ${completed} completed Google reports`, () => {
+        const result = safeResult(), probe = result.counter_probe;
+        result.status = 'FAILED'; result.reason = 'AUDIT_MISMATCH'; result.checks.remaining_hashes_match = false;
+        result.counts.hash_issues = 1;
+        probe.status = 'INCONCLUSIVE'; probe.reason = 'RECHECK_FAILED'; probe.checks.core_rechecked = false;
+        probe.reports_completed = completed;
+        if (completed === 0) unknownFresh(probe.groups[0]);
+        assert.deepEqual(publicResult(validate(result, '10'), 'AUDIT_MISMATCH'), result);
+    });
+}
 
 test('transport preserves genuine failed audit counts and checks with exactly one public failure', () => {
     const fixture = shellFixture();
     try {
-        const result = safeResult(); result.status = 'FAILED'; result.reason = 'AUDIT_MISMATCH'; result.checks.receipts_match = false;
-        result.counts.missing_receipts = 1;
+        const result = failureResult(); result.counts.missing_receipts = 1;
         writeFileSync(path.join(fixture.directory, 'expected.json'), JSON.stringify(result) + '\n');
         assert.deepEqual(publicResult(fixture.run({ PHP_FIXTURE_MODE: 'handled-failure' }), 'AUDIT_MISMATCH'), result);
         assert.deepEqual(readdirSync(path.join(fixture.directory, 'runner')), []);
@@ -302,7 +394,7 @@ for (const [label, change, transport = '0'] of [
     ['false OK check', r => ({ ...r, checks: { ...r.checks, coverage_complete: false } })],
     ['failed with NONE', r => ({ ...r, status: 'FAILED' })],
     ['OK with error reason', r => ({ ...r, reason: 'AUDIT_FAILED' })],
-    ['duplicate key', r => JSON.stringify(r).replace('"schema_version":1', '"schema_version":1,"schema_version":1')],
+    ['duplicate key', r => JSON.stringify(r).replace('"schema_version":2', '"schema_version":2,"schema_version":2')],
     ['multiple documents', r => JSON.stringify(r) + '\n' + JSON.stringify(r)],
     ['raw prefix', r => privateText + JSON.stringify(r)],
     ['oversized input', () => ' '.repeat(16385)],
@@ -315,4 +407,97 @@ for (const [label, change, transport = '0'] of [
     assert.equal(execution.status, 2);
     assert.equal(execution.stdout, '');
     assert.equal(execution.stderr, '');
+});
+
+for (const [label, mutate, transport = '0'] of [
+    ['legacy successful reader', r => { r.schema_version = 1; delete r.counter_probe; }],
+    ['missing probe', r => { delete r.counter_probe; }],
+    ['wrong successful source profile', r => { r.counts.sources = 2; }],
+    ['wrong successful fact profile', r => { r.counts.initial_daily_facts = 97; }],
+    ['nonzero money masquerading as this fixed zero-money probe', r => { r.counts.remaining_money_zero = 60; r.counts.remaining_money_nonzero = 1; }],
+    ['wrong successful counter profile', r => { r.counts.remaining_counters_zero = 58; r.counts.remaining_counters_nonzero = 3; }],
+    ['successful informational drift', r => { r.counts.other_record_drift = 1; }],
+    ['extra raw probe field', r => { r.counter_probe.private = privateText; }],
+    ['missing probe field', r => { delete r.counter_probe.polls; }],
+    ['unknown probe status', r => { r.counter_probe.status = privateText; }],
+    ['unknown probe reason', r => { r.counter_probe.reason = privateText; }],
+    ['COMPLETE with error reason', r => { r.counter_probe.reason = 'GOOGLE_REPORT_FAILED'; }],
+    ['INCONCLUSIVE with NONE reason', r => { r.counter_probe.status = 'INCONCLUSIVE'; }],
+    ['SKIPPED with successful core', r => { r.counter_probe.status = 'SKIPPED'; r.counter_probe.reason = 'SOURCE_SCOPE_CHANGED'; }],
+    ['unsupported reason without skipped rows', r => { r.counter_probe.reason = 'UNSUPPORTED_COUNTERS'; }],
+    ['missing initial core proof', r => { r.counter_probe.checks.initial_core_verified = false; }],
+    ['missing final core proof', r => { r.counter_probe.checks.core_rechecked = false; }],
+    ['missing final target proof', r => { r.counter_probe.checks.targets_unchanged = false; }],
+    ['missing final source proof', r => { r.counter_probe.checks.scope_rechecked = false; }],
+    ['string probe boolean', r => { r.counter_probe.checks.core_rechecked = 'true'; }],
+    ['extra raw probe check', r => { r.counter_probe.checks[privateText] = true; }],
+    ['third target', r => { r.counter_probe.target_rows = 3; }],
+    ['single target widening', r => { r.counter_probe.target_rows = 1; }],
+    ['third fresh report', r => { r.counter_probe.reports_started = 3; }],
+    ['extra polling round', r => { r.counter_probe.polls = 7; }],
+    ['completion without polling', r => { r.counter_probe.polls = 0; }],
+    ['more completions than starts', r => { r.counter_probe.reports_started = 1; }],
+    ['excess skipped rows', r => { r.counter_probe.reports_skipped = 3; }],
+    ['started and skipped overlap', r => { r.counter_probe.reports_skipped = 1; }],
+    ['missing groups', r => { r.counter_probe.groups = []; }],
+    ['nonarray groups', r => { r.counter_probe.groups = {}; }],
+    ['third group', r => { r.counter_probe.groups = [groupResult(1, 1, 1), groupResult(1, 2, 1), groupResult(1, 3, 1)]; }],
+    ['duplicate ordinal pair', r => { r.counter_probe.groups = [groupResult(1), groupResult(1)]; }],
+    ['unsorted ordinal pairs', r => { r.counter_probe.groups = [groupResult(1, 3, 1), groupResult(1, 1, 1)]; }],
+    ['zero source ordinal', r => { r.counter_probe.groups[0].source_ordinal = 0; }],
+    ['unbounded source ordinal', r => { r.counter_probe.groups[0].source_ordinal = 4; }],
+    ['string ordinal', r => { r.counter_probe.groups[0].source_ordinal = '1'; }],
+    ['zero month ordinal', r => { r.counter_probe.groups[0].month_ordinal = 0; }],
+    ['unbounded month ordinal', r => { r.counter_probe.groups[0].month_ordinal = 97; }],
+    ['date instead of month ordinal', r => { r.counter_probe.groups[0].month_ordinal = privateText; }],
+    ['group size mismatch', r => { r.counter_probe.groups[0].rows = 1; }],
+    ['zero group rows', r => { r.counter_probe.groups[0].rows = 0; }],
+    ['raw group identity', r => { r.counter_probe.groups[0].source_id = privateText; }],
+    ['missing stored counter', r => { delete r.counter_probe.groups[0].stored.clicks; }],
+    ['extra stored counter', r => { r.counter_probe.groups[0].stored[privateText] = { zero: 2, nonzero: 0, unknown: 0 }; }],
+    ['raw stored value', r => { r.counter_probe.groups[0].stored.impressions.nonzero = privateText; }],
+    ['negative stored count', r => { r.counter_probe.groups[0].stored.impressions.nonzero = -1; }],
+    ['fractional stored count', r => { r.counter_probe.groups[0].stored.impressions.nonzero = 1.5; }],
+    ['excess stored count', r => { r.counter_probe.groups[0].stored.impressions.nonzero = 3; }],
+    ['invalid stored partition', r => { r.counter_probe.groups[0].stored.impressions.zero = 1; }],
+    ['stored unknown within selected fixed targets', r => { r.counter_probe.groups[0].stored.clicks = { zero: 1, nonzero: 0, unknown: 1 }; }],
+    ['all zero selected counters', r => { r.counter_probe.groups[0].stored.impressions = { zero: 2, nonzero: 0, unknown: 0 }; }],
+    ['raw fresh payload', r => { r.counter_probe.groups[0].fresh.csv = privateText; }],
+    ['missing exact-site classification', r => { delete r.counter_probe.groups[0].fresh.exact_site_absent; }],
+    ['inconsistent completion census', r => { r.counter_probe.groups[0].fresh.reports_completed = 1; }],
+    ['exact and absent overlapping', r => { r.counter_probe.groups[0].fresh.exact_site_absent = 1; }],
+    ['exact rows without unit-day evidence', r => { r.counter_probe.groups[0].fresh.unit_day_observed = 0; }],
+    ['other-site evidence without source rows', r => { const g = r.counter_probe.groups[0]; unknownFresh(g, 2); g.fresh.nonmatching_site_observed = 1; }],
+    ['unreported group skip', r => { r.counter_probe.groups[0].fresh.unsupported_only_skipped = 1; }],
+    ['missing fresh counter', r => { delete r.counter_probe.groups[0].fresh.fields.impressions; }],
+    ['extra fresh counter', r => { r.counter_probe.groups[0].fresh.fields[privateText] = {}; }],
+    ['raw fresh counter value', r => { r.counter_probe.groups[0].fresh.fields.clicks.zero = privateText; }],
+    ['extra fresh field state', r => { r.counter_probe.groups[0].fresh.fields.clicks[privateText] = 1; }],
+    ['invalid fresh partition', r => { r.counter_probe.groups[0].fresh.fields.clicks.unknown = 1; }],
+    ['unavailable required AdX field', r => { r.counter_probe.groups[0].fresh.fields.impressions = { zero: 0, nonzero: 0, unknown: 0, unavailable: 2 }; }],
+    ['observed unrequested video field', r => { r.counter_probe.groups[0].fresh.fields.video_starts = { zero: 2, nonzero: 0, unknown: 0, unavailable: 0 }; }],
+    ['absent report interpreted as zero counters', r => { const g = r.counter_probe.groups[0]; g.fresh.exact_site_observed = 0; g.fresh.exact_site_absent = 2; }],
+    ['absent report interpreted as unavailable ActiveView', r => { const g = r.counter_probe.groups[0]; unknownFresh(g, 2); g.fresh.fields.active_view_viewable_impressions = { zero: 0, nonzero: 0, unknown: 0, unavailable: 2 }; }],
+    ['absent report interpreted as zero money', r => { const g = r.counter_probe.groups[0]; unknownFresh(g, 2); g.fresh.revenue = { zero: 2, nonzero: 0, unknown: 0 }; }],
+    ['money amount leakage', r => { r.counter_probe.groups[0].fresh.revenue.amount = privateText; }],
+    ['missing fresh money classification', r => { delete r.counter_probe.groups[0].fresh.revenue; }],
+    ['successful core with failed final recheck', r => { r.counter_probe.status = 'INCONCLUSIVE'; r.counter_probe.reason = 'RECHECK_FAILED'; r.counter_probe.checks.targets_unchanged = false; }],
+    ['failed core with COMPLETE probe', r => { r.status = 'FAILED'; r.reason = 'AUDIT_MISMATCH'; r.checks.receipts_match = false; }, '10'],
+    ['timeout after all reports completed', r => { r.counter_probe.status = 'INCONCLUSIVE'; r.counter_probe.reason = 'REPORT_TIMEOUT'; }],
+]) test(`closed v2 probe rejects ${label} without private output`, () => {
+    const result = safeResult(); mutate(result);
+    const execution = validate(result, transport);
+    assert.equal(execution.status, 2);
+    assert.equal(execution.stdout, '');
+    assert.equal(execution.stderr, '');
+});
+
+test('transport suppresses private content hidden at the deepest probe boundary', () => {
+    const fixture = shellFixture();
+    try {
+        const result = safeResult(); result.counter_probe.groups[0].fresh.fields.impressions.value = privateText;
+        writeFileSync(path.join(fixture.directory, 'expected.json'), JSON.stringify(result));
+        assert.deepEqual(publicResult(fixture.run(), 'RESULT_INVALID'), { schema_version: 1, status: 'FAILED', reason: 'RESULT_INVALID' });
+        assert.deepEqual(readdirSync(path.join(fixture.directory, 'runner')), []);
+    } finally { fixture.cleanup(); }
 });

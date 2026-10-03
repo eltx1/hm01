@@ -320,6 +320,238 @@ final class HorusHistoricalCorrectionAudit
         return $result;
     }
 
+    public const FRESH_COUNTER_FIELDS = ['ad_requests', 'matched_requests', 'impressions', 'clicks',
+        'active_view_viewable_impressions', 'active_view_measurable_impressions'];
+    public const PROBE_CHECKS = ['initial_core_verified', 'targets_verified', 'core_rechecked', 'targets_unchanged', 'scope_rechecked'];
+    public const PROBE_REASONS = ['NONE', 'CORE_AUDIT_FAILED', 'TARGET_SCOPE_MISMATCH', 'SOURCE_SCOPE_CHANGED',
+        'REPORT_TIMEOUT', 'GOOGLE_REPORT_FAILED', 'RECHECK_FAILED', 'UNSUPPORTED_COUNTERS'];
+    public const PROBE_SECONDS = 150;
+    public const PROBE_POLLS = 3;
+
+    /** Private targets only. This is called after the unchanged full core proof. */
+    public static function counterTargets(array $manifest, array $inventory, array $facts, array $candidates, array $core): ?array
+    {
+        if ($core['status'] !== 'OK' || $core['counts']['remaining_money_zero'] !== 61
+            || $core['counts']['remaining_counters_zero'] !== 59 || $core['counts']['remaining_counters_nonzero'] !== 2
+            || $core['counts']['remaining_counters_unknown'] !== 0) return null;
+        $sources = array_values(array_filter(array_keys($manifest['records']), fn ($key) => str_starts_with($key, 'source:')));
+        sort($sources, SORT_STRING);
+        $months = array_values(array_unique(array_map(fn ($row) => substr($row['fact']['report_date'], 0, 7), $facts)));
+        sort($months, SORT_STRING);
+        $targets = [];
+        foreach ($facts as $row) {
+            $fact = $row['fact']; $dimension = $row['dimension']; $key = 'daily:'.$fact['id'];
+            $coverage = $manifest['coverage'][$key] ?? [];
+            if (($coverage['state'] ?? null) === 'CORRECTED' || ! self::anyKnownNonzero($fact, self::COUNTER_FIELDS, true)) continue;
+            $parents = array_values(array_filter($manifest['windows'], fn ($window) => $window['key'] === ($coverage['parent_window'] ?? null)));
+            $parent = count($parents) === 1 ? $parents[0] : [];
+            $matching = array_values(array_filter($candidates, fn ($candidate) => $candidate['id'] === ($parent['candidate_id'] ?? null)));
+            $candidate = count($matching) === 1 ? $matching[0] : [];
+            $context = $candidate['context'] ?? [];
+            $date = substr($fact['report_date'], 0, 10);
+            $source = array_search('source:'.($fact['report_source_connection_id'] ?? ''), $sources, true);
+            $month = array_search(substr($date, 0, 7), $months, true);
+            $hash = self::hash([$fact, $dimension]);
+            $original = array_values(array_filter($candidate['snapshot']['facts'] ?? [], fn ($original) => $original['fact']['id'] === $fact['id']));
+            if (count($targets) >= 2 || $source === false || $month === false
+                || ($coverage['state'] ?? null) !== 'BLOCKED' || ($coverage['reason'] ?? null) !== 'NO_EXACT_SITE_ROW'
+                || self::classify($fact, self::MONEY_FIELDS) !== 'zero' || self::classify($fact, self::COUNTER_FIELDS, true) !== 'nonzero'
+                || ! self::equalHash($manifest['records'][$key] ?? null, $hash) || ! self::equalHash($inventory['records'][$key] ?? null, $hash)
+                || count($original) !== 1 || ! self::equalHash(self::hash([$original[0]['fact'], $original[0]['dimension']]), $hash)
+                || ($context['source_connection_id'] ?? null) !== ($fact['report_source_connection_id'] ?? null)
+                || ($context['site_id'] ?? null) !== ($dimension['site_id'] ?? null)
+                || ($context['organization_id'] ?? null) !== ($fact['organization_id'] ?? null)
+                || ($context['organization_id'] ?? null) !== ($dimension['organization_id'] ?? null)
+                || ($context['publisher_id'] ?? null) !== ($dimension['publisher_id'] ?? null)
+                || ($context['gam_connection_id'] ?? null) !== ($dimension['gam_connection_id'] ?? null)
+                || ($context['currency'] ?? null) !== 'USD' || $date < ($context['from'] ?? '') || $date > ($context['to'] ?? '')
+                || ! is_string($context['binding_fingerprint'] ?? null) || ! is_string($context['hostname'] ?? null)
+                || ! is_string($context['ad_unit_id'] ?? null) || ! ctype_digit($context['ad_unit_id'])) return null;
+            $targets[] = ['source_ordinal' => $source + 1, 'month_ordinal' => $month + 1,
+                'date' => $date, 'row' => $row, 'parent_context' => $context];
+        }
+        usort($targets, fn ($a, $b) => [$a['source_ordinal'], $a['month_ordinal'], $a['date'], $a['row']['fact']['id']]
+            <=> [$b['source_ordinal'], $b['month_ordinal'], $b['date'], $b['row']['fact']['id']]);
+        return count($targets) === 2 ? $targets : null;
+    }
+
+    /** Only fixed row-count flags cross the output boundary. No values or identities. */
+    public static function counterGroups(array $targets, array $results = [], array $skipped = []): array
+    {
+        $groups = [];
+        foreach ($targets as $index => $target) {
+            $key = $target['source_ordinal'].':'.$target['month_ordinal'];
+            if (! isset($groups[$key])) {
+                $groups[$key] = ['source_ordinal' => $target['source_ordinal'], 'month_ordinal' => $target['month_ordinal'], 'rows' => 0,
+                    'stored' => array_fill_keys(self::COUNTER_FIELDS, ['zero' => 0, 'nonzero' => 0, 'unknown' => 0]),
+                    'fresh' => ['reports_completed' => 0, 'unsupported_only_skipped' => 0, 'exact_site_observed' => 0, 'exact_site_absent' => 0,
+                        'unit_day_observed' => 0, 'nonmatching_site_observed' => 0,
+                        'revenue' => ['zero' => 0, 'nonzero' => 0, 'unknown' => 0],
+                        'fields' => array_fill_keys(self::COUNTER_FIELDS, ['zero' => 0, 'nonzero' => 0, 'unknown' => 0, 'unavailable' => 0])]];
+            }
+            $group = &$groups[$key]; $group['rows']++;
+            $group['fresh']['unsupported_only_skipped'] += isset($skipped[$index]) ? 1 : 0;
+            $fresh = $results[$index] ?? null;
+            $observed = $fresh !== null && isset($fresh['days'][$target['date']]);
+            if ($fresh !== null) {
+                $group['fresh']['reports_completed']++;
+                $group['fresh'][$observed ? 'exact_site_observed' : 'exact_site_absent']++;
+                $group['fresh']['unit_day_observed'] += (int) ($fresh['source_rows'] > 0);
+                $group['fresh']['nonmatching_site_observed'] += (int) ($fresh['excluded_site_rows'] > 0);
+            }
+            $group['fresh']['revenue'][$observed ? self::classify($fresh['days'][$target['date']], ['gross_revenue_minor']) : 'unknown']++;
+            foreach (self::COUNTER_FIELDS as $field) {
+                $group['stored'][$field][self::classify($target['row']['fact'], [$field], true)]++;
+                $state = ! in_array($field, self::FRESH_COUNTER_FIELDS, true) ? 'unavailable'
+                    : ($observed ? self::classify($fresh['days'][$target['date']], [$field], true) : 'unknown');
+                if ($observed && str_starts_with($field, 'active_view_')
+                    && array_key_exists($field, $fresh['days'][$target['date']]) && $fresh['days'][$target['date']][$field] === null) $state = 'unavailable';
+                $group['fresh']['fields'][$field][$state]++;
+            }
+            unset($group);
+        }
+        return array_values($groups);
+    }
+
+    /** Injectable orchestration tests use the same bounds and fail-closed output as production. */
+    public static function probeCounters(callable $read, callable $context, callable $start, callable $poll,
+        ?callable $clock = null, ?callable $pause = null): array
+    {
+        $clock ??= static fn (): float => hrtime(true) / 1e9;
+        $pause ??= static fn (int $seconds) => sleep($seconds);
+        // read() must finish and roll back before context() can make its first Google call.
+        $before = $read([]);
+        $result = $before['result']; $result['schema_version'] = 2;
+        $probe = ['status' => 'SKIPPED', 'reason' => 'CORE_AUDIT_FAILED', 'target_rows' => 0,
+            'reports_started' => 0, 'reports_completed' => 0, 'reports_skipped' => 0, 'polls' => 0,
+            'checks' => array_fill_keys(self::PROBE_CHECKS, false), 'groups' => []];
+        $probe['checks']['initial_core_verified'] = $result['status'] === 'OK';
+        $targets = $before['targets'] ?? null;
+        if ($result['status'] !== 'OK') return $result + ['counter_probe' => $probe];
+        if (! is_array($targets) || count($targets) !== 2) {
+            $probe['reason'] = 'TARGET_SCOPE_MISMATCH';
+            $result['status'] = 'FAILED'; $result['reason'] = 'AUDIT_MISMATCH';
+            return $result + ['counter_probe' => $probe];
+        }
+        $probe['checks']['targets_verified'] = true;
+        $probe['target_rows'] = 2;
+        $probe['groups'] = self::counterGroups($targets);
+        if (($before['scope_valid'] ?? false) !== true) {
+            $probe['reason'] = 'SOURCE_SCOPE_CHANGED';
+            $result['status'] = 'FAILED'; $result['reason'] = 'AUDIT_MISMATCH';
+            $result['checks']['provenance_valid'] = false;
+            return $result + ['counter_probe' => $probe];
+        }
+        $probe['status'] = 'INCONCLUSIVE'; $probe['reason'] = 'REPORT_TIMEOUT';
+        $deadline = $clock() + self::PROBE_SECONDS;
+        $contexts = $jobs = $fresh = $skipped = [];
+        $reportFailure = $scopeChanged = false;
+        foreach ($targets as $index => $target) {
+            if (! self::anyKnownNonzero($target['row']['fact'], self::FRESH_COUNTER_FIELDS, true)) {
+                $skipped[$index] = true; $probe['reports_skipped']++; continue;
+            }
+            if ($clock() >= $deadline) break;
+            try {
+                $contexts[$index] = $context($target);
+                // Validate exact original identity again before starting a fresh report.
+                foreach ($target['parent_context'] as $field => $value) {
+                    if (in_array($field, ['from', 'to', 'captured_at'], true)) continue;
+                    if (($contexts[$index][$field] ?? null) !== $value) throw new RuntimeException('SOURCE_SCOPE_CHANGED');
+                }
+                if (($contexts[$index]['from'] ?? null) !== $target['date'] || ($contexts[$index]['to'] ?? null) !== $target['date']) {
+                    throw new RuntimeException('SOURCE_SCOPE_CHANGED');
+                }
+                if ($clock() >= $deadline) break;
+                $probe['reports_started']++;
+                $jobs[$index] = $start($contexts[$index], self::anyKnownNonzero($target['row']['fact'],
+                    ['active_view_viewable_impressions', 'active_view_measurable_impressions'], true));
+            } catch (Throwable $error) {
+                $reportFailure = true;
+                $scopeChanged = $scopeChanged || self::scopeChanged($error);
+                $probe['reason'] = $scopeChanged ? 'SOURCE_SCOPE_CHANGED' : 'GOOGLE_REPORT_FAILED';
+                if ($scopeChanged) break;
+            }
+        }
+        // Both reports start before polling. No new jobs, restarts, unscoped or Total fallbacks.
+        for ($round = 0; $round < self::PROBE_POLLS && $jobs && ! $scopeChanged && $clock() < $deadline; $round++) {
+            $pause(min($round === 0 ? 10 : 15, max(0, (int) floor($deadline - $clock()))));
+            foreach ($jobs as $index => $job) {
+                if ($clock() >= $deadline) break;
+                try {
+                    $probe['polls']++;
+                    $job = $poll($contexts[$index], $job);
+                    if (($job['status'] ?? null) === 'COMPLETED') {
+                        $value = $job['result'] ?? [];
+                        $date = $targets[$index]['date'];
+                        if (! is_array($value['days'] ?? null) || array_diff(array_keys($value['days']), [$date])
+                            || ($value['days'] !== [] && (! isset($value['days'][$date]) || ! is_array($value['days'][$date])))
+                            || ! is_int($value['source_rows'] ?? null) || $value['source_rows'] < 0
+                            || ! is_int($value['excluded_site_rows'] ?? null) || $value['excluded_site_rows'] < 0
+                            || $value['source_rows'] !== $value['excluded_site_rows'] + count($value['days'])
+                            || ($value['exact_site_observed'] ?? null) !== ($value['days'] !== [])) throw new RuntimeException('INVALID_REPORT_RESULT');
+                        $fresh[$index] = $value; $probe['reports_completed']++; unset($jobs[$index]);
+                    } elseif (($job['status'] ?? null) === 'PENDING') $jobs[$index] = $job;
+                    else throw new RuntimeException('INVALID_REPORT_STATUS');
+                } catch (Throwable $error) {
+                    $reportFailure = true; $scopeChanged = $scopeChanged || self::scopeChanged($error);
+                    $probe['reason'] = $scopeChanged ? 'SOURCE_SCOPE_CHANGED' : 'GOOGLE_REPORT_FAILED'; unset($jobs[$index]);
+                    if ($scopeChanged) break 2;
+                }
+            }
+        }
+        $probe['groups'] = self::counterGroups($targets, $fresh, $skipped);
+        try {
+            // Full core proof + exact target hashes + current binding fingerprints, under a new read-only snapshot.
+            $after = $read($contexts);
+            $result = $after['result']; $result['schema_version'] = 2;
+            $probe['checks']['core_rechecked'] = $result['status'] === 'OK';
+            $probe['checks']['targets_unchanged'] = is_array($after['targets'] ?? null)
+                && self::equalHash(self::hash($targets), self::hash($after['targets']));
+            $probe['checks']['scope_rechecked'] = ($after['scope_valid'] ?? false) === true && ! $scopeChanged;
+            if (in_array(false, $probe['checks'], true)) {
+                $probe['reason'] = 'RECHECK_FAILED';
+                $result['status'] = 'FAILED'; $result['reason'] = 'AUDIT_MISMATCH';
+                if (! $probe['checks']['scope_rechecked']) $result['checks']['provenance_valid'] = false;
+                if (! $probe['checks']['targets_unchanged']) $result['checks']['remaining_hashes_match'] = false;
+            } elseif ($probe['reports_completed'] + $probe['reports_skipped'] === 2 && ! $reportFailure) {
+                $probe['status'] = 'COMPLETE'; $probe['reason'] = $probe['reports_skipped'] > 0 ? 'UNSUPPORTED_COUNTERS' : 'NONE';
+            }
+        } catch (Throwable) {
+            $result = self::failure('SNAPSHOT_UNAVAILABLE'); $result['schema_version'] = 2;
+            $probe['reason'] = 'RECHECK_FAILED';
+        }
+        return $result + ['counter_probe' => $probe];
+    }
+
+    private static function scopeChanged(Throwable $error): bool
+    {
+        return $error instanceof Illuminate\Validation\ValidationException
+            || in_array($error->getMessage(), ['SOURCE_SCOPE_CHANGED', 'NETWORK_IDENTITY_CHANGED',
+                'METRIC_BASIS_CHANGED', 'INVALID_REPORT_CURRENCY'], true);
+    }
+
+    /** One actual runReportJob attempt per target: deliberately no optional-column fallback. */
+    public static function counterQuery(array $context, bool $activeView = false): array
+    {
+        $query = app(App\Services\Reporting\GamHistoricalCorrectionReport::class)->query($context);
+        if ($context['from'] !== $context['to']) throw new RuntimeException('SOURCE_SCOPE_CHANGED');
+        if (! $activeView) $query['columns'] = array_keys(App\Services\Reporting\SiteGamReportMetrics::CORE_COLUMNS);
+        return $query;
+    }
+
+    public static function startCounterReport(array $context, bool $activeView = false): array
+    {
+        $binding = app(App\Services\Reporting\GamRevenueComparisonService::class)->assertContext($context);
+        $query = self::counterQuery($context, $activeView);
+        $response = app(App\Services\Reporting\GamAdUnitReportClient::class)->call($binding->gamConnection,
+            'ReportService', 'runReportJob', ['reportJob' => ['reportQuery' => $query]]);
+        $id = (string) ($response['id'] ?? '');
+        if (! ctype_digit($id)) throw new RuntimeException('INVALID_REPORT_JOB');
+        return ['id' => $id, 'status' => 'PENDING',
+            'confirmed_currency' => app(App\Services\Reporting\GamReportMoneyParser::class)->confirmedCurrency($response, 'USD'),
+            'next_poll_at' => now()->addSeconds(10)->timestamp, 'polls' => 0];
+    }
+
     /** Each service is checked against its own full reporting filters, never the operation subset. */
     public static function reportingParity(array $facts): array
     {
@@ -396,7 +628,12 @@ final class HorusHistoricalCorrectionAudit
 
     public static function readCurrent(array $manifest, ?callable $beforeRead = null): array
     {
-        return self::withReadOnlySnapshot(Illuminate\Support\Facades\DB::connection(), static function () use ($manifest, $beforeRead): array {
+        return self::readEvidence($manifest, $beforeRead)['result'];
+    }
+
+    public static function readEvidence(array $manifest, ?callable $beforeRead = null, bool $withTargets = false, array $contexts = []): array
+    {
+        return self::withReadOnlySnapshot(Illuminate\Support\Facades\DB::connection(), static function () use ($manifest, $beforeRead, $withTargets, $contexts): array {
             if ($beforeRead) $beforeRead();
             $inventory = app(App\Services\Reporting\GamHistoricalInventory::class)->discover(self::THROUGH);
             $ids = [];
@@ -413,7 +650,18 @@ final class HorusHistoricalCorrectionAudit
             $receipts = App\Models\GamRevenueCorrectionReceipt::whereIn('id', $receiptIds)->orWhereIn('correction_id', $candidateIds)->get()
                 ->map(fn ($receipt) => ['attributes' => $receipt->getAttributes(), 'before' => $receipt->before,
                     'after' => $receipt->after, 'context' => $receipt->context])->all();
-            return self::inspect($manifest, $inventory, $facts, $receipts, $candidates, self::reportingParity($facts));
+            $result = self::inspect($manifest, $inventory, $facts, $receipts, $candidates, self::reportingParity($facts));
+            $targets = $withTargets ? self::counterTargets($manifest, $inventory, $facts, $candidates, $result) : null;
+            $scopeValid = is_array($targets);
+            if ($scopeValid) {
+                try {
+                    $comparison = app(App\Services\Reporting\GamRevenueComparisonService::class);
+                    // assertContext is local DB validation; context() itself calls Google and must wait for rollback.
+                    foreach ($targets as $target) $comparison->assertContext($target['parent_context']);
+                    foreach ($contexts as $context) $comparison->assertContext($context);
+                } catch (Throwable) { $scopeValid = false; }
+            }
+            return ['result' => $result, 'targets' => $targets, 'scope_valid' => $scopeValid];
         });
     }
 }
@@ -451,8 +699,24 @@ try {
     $app->bootstrapWith([Illuminate\Foundation\Bootstrap\RegisterProviders::class]);
     $stage = 'AUDIT_FAILED';
     $result = HorusHistoricalCorrectionAudit::withManifest(storage_path('app/private/gam-historical-operations'),
-        static fn (array $manifest): array => HorusHistoricalCorrectionAudit::readCurrent($manifest,
-            static fn () => $app->bootstrapWith([Illuminate\Foundation\Bootstrap\BootProviders::class])));
+        static function (array $manifest) use ($app): array {
+            $booted = false;
+            return HorusHistoricalCorrectionAudit::probeCounters(
+                static function (array $contexts) use ($manifest, $app, &$booted): array {
+                    return HorusHistoricalCorrectionAudit::readEvidence($manifest, static function () use ($app, &$booted): void {
+                        if (! $booted) { $app->bootstrapWith([Illuminate\Foundation\Bootstrap\BootProviders::class]); $booted = true; }
+                    }, true, $contexts);
+                },
+                static function (array $target): array {
+                    $comparison = app(App\Services\Reporting\GamRevenueComparisonService::class);
+                    // Check the original binding immediately before context() makes any network call.
+                    $binding = $comparison->assertContext($target['parent_context']);
+                    return $comparison->context($binding->site, $target['date'], $target['date']);
+                },
+                static fn (array $context, bool $activeView): array => HorusHistoricalCorrectionAudit::startCounterReport($context, $activeView),
+                static fn (array $context, array $job): array => app(App\Services\Reporting\GamHistoricalCorrectionReport::class)->poll($context, $job),
+            );
+        });
 } catch (Throwable $error) {
     $reason = in_array($error->getMessage(), HorusHistoricalCorrectionAudit::REASONS, true) ? $error->getMessage() : $stage;
     $result = HorusHistoricalCorrectionAudit::failure($reason);
