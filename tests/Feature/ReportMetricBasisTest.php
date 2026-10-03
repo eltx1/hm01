@@ -352,10 +352,10 @@ class ReportMetricBasisTest extends TestCase
             $this->assertCount(3, $summary['days']);
             $csv = $this->get(route($route, [...$parameters, 'export' => 'csv']))->assertOk()->streamedContent();
             $rows = $this->csvRows($csv);
-            $this->assertSame('Publisher earnings (USD)', $rows[0][7]);
-            $this->assertSame([self::FROM, '', '', '', '', '', '', '27.30', '0.00', '27.30'], $rows[1]);
-            $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '0.00', '0.00', '0.00'], $rows[2]);
-            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '11', '27.30', '0.00', '27.30'], $rows[3]);
+            $this->assertSame('Publisher earnings (USD)', $rows[0][8]);
+            $this->assertSame([self::FROM, '', '', '', '', '', '', '', '27.30', '0.00', '27.30'], $rows[1]);
+            $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00', '0.00', '0.00'], $rows[2]);
+            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '100', '11', '27.30', '0.00', '27.30'], $rows[3]);
             $this->assertStringNotContainsString('Gross revenue', $csv);
             $this->assertStringNotContainsString('876543', $csv);
         }
@@ -364,9 +364,9 @@ class ReportMetricBasisTest extends TestCase
         $csv = $this->get(route('admin.reporting.websites.show', ['site' => $site, ...$parameters, 'export' => 'csv']))
             ->assertOk()->streamedContent();
         $rows = $this->csvRows($csv);
-        $this->assertSame([self::FROM, '', '', '', '', '', '', '39.00'], $rows[1]);
-        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '0.00'], $rows[2]);
-        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '11', '39.00'], $rows[3]);
+        $this->assertSame([self::FROM, '', '', '', '', '', '', '', '39.00'], $rows[1]);
+        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00'], $rows[2]);
+        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '11', '39.00'], $rows[3]);
         $this->assertStringNotContainsString('876543', $csv);
     }
 

@@ -27,7 +27,10 @@ class WebsiteReportController extends Controller
         return view('admin.reporting.websites', [
             'sites' => $sites, 'search' => $search,
             'from' => $request->validated('from'), 'to' => $request->validated('to'),
-            'metrics' => $request->selectedMetrics(['has_site_ad_exchange' => $totals->contains('has_site_ad_exchange', true)]), 'currency' => $reports->currency(),
+            'metrics' => $request->selectedMetrics([
+                'has_site_ad_exchange' => $totals->contains('has_site_ad_exchange', true),
+                'has_other_sources' => $totals->contains('has_other_sources', true),
+            ]), 'currency' => $reports->currency(),
             'totals' => $totals,
         ]);
     }

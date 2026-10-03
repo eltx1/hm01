@@ -72,6 +72,10 @@ final class PerformanceMetrics
     /** Keep the source-supported request metric separate from unfilled impressions. */
     public static function defaultColumns(array $totals = []): array
     {
+        if (($totals['has_site_ad_exchange'] ?? false) && ($totals['has_other_sources'] ?? false)) {
+            return array_keys(self::COLUMNS);
+        }
+
         return array_values(array_diff(array_keys(self::COLUMNS), [
             ($totals['has_site_ad_exchange'] ?? false) ? 'unfilled_impressions' : 'ad_exchange_unmatched_requests',
         ]));

@@ -138,7 +138,7 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
         $this->assertSame([20, null], $summary['days']->pluck(self::METRIC)->all());
         $legacy->update(['ad_requests' => 0, 'matched_requests' => 0]);
         $this->assertNull($service->summary($site, self::TO, self::TO)[self::METRIC]);
-        $this->fixture('publisher-legacy', $this->actingAs($context[1])->get(route('publisher.reports.index', ['from' => self::FROM, 'to' => self::TO]))->assertOk());
+        $this->fixture('publisher-legacy', $this->actingAs($context[1])->get(route('publisher.reporting.index', ['from' => self::FROM, 'to' => self::TO]))->assertOk());
 
         $other = $connection->replicate();
         $other->connection_type = 'TEST';
@@ -173,12 +173,12 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
             if ($name !== 'directory') $this->assertCsv($route, $params + $extra);
         }
         $this->actingAs($user);
-        foreach (['publisher.reports.index', 'publisher.finance.overview'] as $route) {
+        foreach (['publisher.reporting.index', 'publisher.finance.overview'] as $route) {
             $response = $this->get(route($route, $params))->assertOk()->assertSee('Ad Exchange unmatched requests')
                 ->assertSee('not empty ad slots')->assertSee('Unfilled impressions are a different source metric');
             $this->assertContains(self::METRIC, $response->viewData('reportMetrics'));
             $this->assertNotContains('unfilled_impressions', $response->viewData('reportMetrics'));
-            if ($route === 'publisher.reports.index') $this->fixture('publisher', $response);
+            if ($route === 'publisher.reporting.index') $this->fixture('publisher', $response);
             $this->assertCsv($route, $params);
             // An old/custom URL cannot bring back the unsupported default card.
             // Explicit detail selection remains distinct and is not silently relabeled.
@@ -189,8 +189,33 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
             $this->assertStringContainsString('Ad Exchange unmatched requests', $cards);
             $this->assertStringNotContainsString('Unfilled impressions', $cards);
         }
-        $all = $this->get(route('publisher.reports.index', $params + ['customize' => 1, 'metrics' => array_keys(PerformanceMetrics::COLUMNS)]))->assertOk();
+        $all = $this->get(route('publisher.reporting.index', $params + ['customize' => 1, 'metrics' => array_keys(PerformanceMetrics::COLUMNS)]))->assertOk();
         $this->assertCount(7, $all->viewData('reportMetrics'));
+    }
+
+    public function test_mixed_directory_defaults_preserve_each_sources_distinct_metric(): void
+    {
+        $context = [$admin, $user, $publisher, $site, $connection] = $this->context();
+        $this->import($context);
+        $otherSite = $this->makeSiteFor($publisher, $user, [
+            'display_name' => 'Synthetic other-source website', 'primary_domain' => 'other-request-fixture.example',
+        ]);
+        $other = $connection->replicate();
+        $other->connection_id = 'synthetic-directory-other';
+        $other->save();
+        $this->import([$admin, $user, $publisher, $otherSite, $other], metrics: ['unfilled_impressions' => 9], provenance: false);
+        $this->classify($connection);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $params = ['from' => self::FROM, 'to' => self::FROM];
+        $response = $this->get(route('admin.reporting.websites.index', $params))->assertOk();
+        $this->assertContains(self::METRIC, $response->viewData('metrics'));
+        $this->assertContains('unfilled_impressions', $response->viewData('metrics'));
+        $totals = $response->viewData('totals');
+        $this->assertSame(20, $totals[$site->id][self::METRIC]);
+        $this->assertSame(9, $totals[$otherSite->id]['unfilled_impressions']);
+        $this->assertNull($totals[$otherSite->id][self::METRIC]);
+        $selected = $this->get(route('admin.reporting.websites.index', $params + ['metrics' => ['impressions']]))->assertOk();
+        $this->assertSame(['impressions'], $selected->viewData('metrics'));
     }
 
     private function assertCsv(string $route, array $params): void
