@@ -235,7 +235,7 @@ final class HorusHistoricalCorrectionAudit
                 $corrected[$id] = $receiptId;
                 $hash = self::hash([$row['fact'], $row['dimension']]);
                 $present = $current[$id] ?? null;
-                if (! $present || ! self::equalHash($hash, self::hash([$present['fact'], $present['dimension']])) $correctedHashIssues++;
+                if (! $present || ! self::equalHash($hash, self::hash([$present['fact'], $present['dimension']]))) $correctedHashIssues++;
                 $coverage = $manifest['coverage']['daily:'.$id] ?? [];
                 if (($coverage['state'] ?? null) !== 'CORRECTED' || ($coverage['receipt_id'] ?? null) !== $receiptId
                     || ! self::equalHash($coverage['receipt_digest'] ?? null, $attributes['digest'])
