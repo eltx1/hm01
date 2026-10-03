@@ -151,6 +151,33 @@ class GamRestUnfilledProbeTest extends TestCase
         $this->assertSame('REUSED', $result['probes'][0]['definition_status']);
     }
 
+    public function test_protobuf_filter_defaults_are_equivalent_when_omitted_or_explicit(): void
+    {
+        $definition = HorusGamRestUnfilledProbe::definition($this->binding());
+        $variants = [];
+        foreach ([false, true] as $explicitDefaults) {
+            $variant = $definition;
+            foreach ($variant['filters'][0]['andFilter']['filters'] as &$filter) {
+                if ($explicitDefaults) {
+                    $filter['fieldFilter']['metricValueType'] = 'PRIMARY';
+                    $filter['fieldFilter']['timePeriodIndex'] = 0;
+                } else {
+                    unset($filter['fieldFilter']['operation']);
+                }
+            }
+            unset($filter);
+            $variants[] = $variant;
+        }
+        foreach ($variants as $variant) {
+            [$result, $calls] = $this->execute(fn ($verb, $path) => $path === 'networks/12345/reports'
+                ? ['reports' => [$this->report($variant)]] : ($path === 'networks/12345/reports/100' ? $this->report($variant) : null));
+            $this->assertSame('REUSED', $result['probes'][0]['definition_status']);
+            $this->assertSame('COMPLETED', $result['probes'][0]['query_status']);
+            $creates = array_filter($calls, static fn (array $call): bool => $call[0] === 'POST' && $call[1] === 'networks/12345/reports');
+            $this->assertSame([], $creates);
+        }
+    }
+
     public function test_incomplete_report_listing_never_creates_a_duplicate(): void
     {
         [$result, $calls] = $this->execute(fn ($verb, $path) => $path === 'networks/12345/reports' ? ['reports' => [], 'nextPageToken' => 'more'] : null);
