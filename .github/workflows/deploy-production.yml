@@ -143,6 +143,26 @@ jobs:
             core.setOutput('active', commit.sha === sha && main.commit.sha === sha
               && commit.parents?.[0]?.sha === base && commit.parents.length <= 2 ? 'true' : 'false');
 
+      - name: Require saved Unfilled evidence classification release
+        id: unfilled_evidence
+        continue-on-error: true
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo = { owner: 'eltx1', repo: 'hm01' };
+            const sha = process.env.RELEASE_SHA;
+            const base = '7be80e9dff9d53cb82fe9dea9c007ac749adf1f4';
+            if (context.repo.owner !== repo.owner || context.repo.repo !== repo.repo
+                || context.payload.repository?.id !== 1315038901
+                || context.ref !== 'refs/heads/main' || !/^[0-9a-f]{40}$/.test(sha)) {
+              core.setFailed('UNFILLED_EVIDENCE_TRUST_INVALID');
+              return;
+            }
+            const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: sha });
+            const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
+            core.setOutput('active', commit.sha === sha && main.commit.sha === sha
+              && commit.parents?.[0]?.sha === base && commit.parents.length <= 2 ? 'true' : 'false');
+
       - name: Require bounded historical receipt audit release
         id: historical_audit
         uses: actions/github-script@v8
@@ -250,6 +270,31 @@ jobs:
           # Reconstruct closed fields rather than forwarding any remote strings.
           node ops/audit/validate-unfilled-probe.mjs "$result" 2>/dev/null || \
             echo '{"schema_version":1,"reason":"PROBE_RESULT_INVALID"}'
+
+      - name: Classify saved Unfilled evidence without new Google requests
+        if: steps.unfilled_evidence.outputs.active == 'true'
+        continue-on-error: true
+        shell: bash
+        timeout-minutes: 2
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          result="$RUNNER_TEMP/gam-unfilled-evidence.json"
+          errors="$RUNNER_TEMP/gam-unfilled-evidence.stderr"
+          trap 'rm -f "$result" "$errors"' EXIT
+          if ! cat ops/audit/classify-unfilled-evidence.php | \
+            ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && timeout 30 php" > "$result" 2> "$errors"; then
+            echo '{"schema_version":1,"reason":"EVIDENCE_EXECUTION_FAILED"}'
+            exit 0
+          fi
+          node ops/audit/validate-unfilled-evidence.mjs "$result" 2>/dev/null || \
+            echo '{"schema_version":1,"reason":"EVIDENCE_RESULT_INVALID"}'
 
       - name: Transfer validated release and deployment tooling
         shell: bash
