@@ -77,3 +77,29 @@ identifiers, counters, metadata and evidence paths stay private on the server.
 The existing SOAP/REST probe remains restricted to PR242 and will not be rerun
 by this successor. The classification itself does not enable ingestion or
 establish support for exact-host reporting.
+
+## Manual REST-only retest after API enablement
+
+`Diagnose exact-site Unfilled REST` is an explicit `workflow_dispatch` action with
+no inputs. It never runs on pushes, pull requests, schedules or deployment events.
+After the owner confirms that the Ad Manager API is enabled in the existing
+credential's Cloud project, run it on `main` from GitHub Actions. It requires the
+current `main` SHA to match the active atomic production release and shares the
+production deployment concurrency lock. If main has not finished ordinary
+release deployment, wait for that deployment before manually running the test.
+
+The workflow streams the existing bounded REST report helper plus a REST-only
+application wrapper through the existing pinned SSH connection. It runs no SOAP
+report and deploys no application files. The same selected unit, exact hostname,
+source timezone and last seven complete dates remain mandatory. It may reuse or
+create the original minimal unscheduled HIDDEN diagnostic definition with existing
+access; it never enables an API, grants access, changes credentials or imports facts.
+A run is bounded by the existing 180-second helper budget and a 240-second remote
+process limit. Results are still diagnostic, not proof of support unless exact-host
+rows actually appear. Structured access-denial enums are included immediately to
+avoid another release merely to identify a repeated access failure.
+
+Execution options: GitHub Actions → Diagnose exact-site Unfilled REST → Run
+workflow → main, or an already authorized GitHub CLI session:
+`gh workflow run diagnose-unfilled-rest.yml --repo eltx1/hm01 --ref main`.
+No workflow dispatch is performed as part of introducing this operational tool.
