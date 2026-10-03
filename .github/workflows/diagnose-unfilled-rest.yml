@@ -1,0 +1,105 @@
+name: Diagnose exact-site Unfilled REST
+
+# Explicit manual action only, after the existing Google API service is enabled.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Do not overlap an application release swap. No deployment is performed here.
+concurrency:
+  group: horus-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'eltx1/hm01'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: production
+    env:
+      EXPECTED_RELEASE: ${{ github.sha }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - name: Require current trusted main
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.payload.repository?.id !== 1315038901 || context.repo.owner !== 'eltx1'
+                || context.repo.repo !== 'hm01' || context.ref !== 'refs/heads/main'
+                || context.eventName !== 'workflow_dispatch' || !/^[a-f0-9]{40}$/.test(context.sha)) {
+              core.setFailed('DIAGNOSTIC_TRUST_INVALID');
+              return;
+            }
+            const { data: main } = await github.rest.repos.getBranch({
+              owner: context.repo.owner, repo: context.repo.repo, branch: 'main',
+            });
+            if (main.commit.sha !== context.sha) core.setFailed('DIAGNOSTIC_MAIN_MOVED');
+
+      - name: Checkout trusted diagnostic tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Configure existing pinned SSH trust
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$EXPECTED_RELEASE" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Verify current deployed release before diagnostic
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set +x
+          set -euo pipefail
+          marker="$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+            "cat '$REMOTE_HOME/htdocs/app.horusmedia.net/.horus-release'")"
+          grep -Fxq "release_id=$EXPECTED_RELEASE" <<< "$marker"
+          resolved="$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+            "readlink -f '$REMOTE_HOME/htdocs/app.horusmedia.net'")"
+          [[ "$resolved" == "$REMOTE_HOME/releases/$EXPECTED_RELEASE" ]]
+
+      - name: Run bounded REST-only exact-site report diagnostic
+        shell: bash
+        timeout-minutes: 5
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          result="$RUNNER_TEMP/rest-unfilled-diagnostic.json"
+          errors="$RUNNER_TEMP/rest-unfilled-diagnostic.stderr"
+          trap 'rm -f "$result" "$errors"' EXIT
+          if ! { cat ops/audit/gam-rest-unfilled-probe.php; tail -n +4 ops/audit/gam-rest-unfilled-diagnostic.php; } | \
+            ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HORUS_EXPECTED_RELEASE='$EXPECTED_RELEASE' timeout 240 php" > "$result" 2> "$errors"; then
+            echo '{"schema_version":1,"diagnostic":"REST_UNFILLED_ONLY","reason":"EXECUTION_FAILED"}'
+            exit 1
+          fi
+          # Only closed enum/boolean diagnostic results cross into public logs.
+          node ops/audit/validate-rest-unfilled-diagnostic.mjs "$result" 2>/dev/null || {
+            echo '{"schema_version":1,"diagnostic":"REST_UNFILLED_ONLY","reason":"RESULT_INVALID"}'
+            exit 1
+          }

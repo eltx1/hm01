@@ -38,7 +38,8 @@ const restReasons = new Set(['CAPACITY_EXCEEDED', 'INVALID_CASE', 'NETWORK_METAD
     'RESULT_DATE_RANGE_MISMATCH', 'INVALID_ROWS', 'DUPLICATE_ROWS', 'ROWS_INCOMPLETE', 'EVIDENCE_WRITE_FAILED',
     'REST_ACCESS_BLOCKED', 'REST_INCOMPATIBLE', 'REST_INVALID_ARGUMENT', 'REST_RESOURCE_EXHAUSTED',
     'REST_TIMEOUT', 'REST_NOT_FOUND', 'REST_UNAVAILABLE', 'REST_FAILED', 'DRY_RUN', 'NO_ROWS', 'POLL_LIMIT']);
-function validateRest(input, bindings) {
+export function validateRest(input, bindings) {
+    check(Number.isInteger(bindings) && bindings >= 0 && bindings <= 25);
     check(input && input.schema_version === 1 && input.metric === 'UNFILLED_IMPRESSIONS'
         && input.scope === 'AD_UNIT_AND_EXACT_SITE' && input.period === 'LAST_SEVEN_COMPLETE_DAYS'
         && typeof input.dry_run === 'boolean' && input.bindings === bindings
