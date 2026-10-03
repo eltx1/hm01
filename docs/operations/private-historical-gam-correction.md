@@ -1,6 +1,6 @@
 # Private historical GAM correction operations
 
-This manual-only wrapper delegates all financial changes to the existing
+This private wrapper delegates all financial changes to the existing
 `GamRevenueCorrectionService::start/poll/apply`. It does not change the correction
 service, importers, reporting bindings, forward cutover, revenue rules, periods,
 statements, payments, accounts, or credentials. No scheduler or repository comment
@@ -10,9 +10,10 @@ can execute it.
 
 The wrapper must be reviewed, merged, validated, deployed, and live-verified on
 the exact main commit. Review actual production environment protections and the
-supported workflow-dispatch capability before attempting a run: neither is proven
-by adding this workflow. Missing dispatch or approval capabilities are blockers;
-do not substitute a comment/repository-event trigger or browser credential reuse.
+supported workflow-dispatch capability before attempting a manual run: neither is
+proven by adding this workflow. The separately authorized one-time path below
+retains the native verification event; never spoof a dispatch event or substitute
+an arbitrary comment/repository-event trigger or browser credential reuse.
 
 Use the existing authorized application administrator whose login was independently
 verified. Compute SHA-256 of the lowercased, trimmed login identifier privately.
@@ -29,6 +30,44 @@ live-verification run for the exact current main commit. The workflow verifies
 linked validation/deployment/live artifacts, workflow paths, repository, events,
 attempts, main SHA, and production release marker/immutable directory. It holds
 the existing server deployment lock while running the command.
+
+## Finite activation release
+
+The immutable `ops/audit/historical-gam-correction-once.json` contract activates
+one automatic operation after the successful `Verify production live` completion
+for its first main release. That release must have the approved deployed base
+`37569a88ef6180266de313d00487445e6d475079` as its first parent, and the contract
+must be absent in that base. Both ordinary two-parent and squash merges work.
+Later releases, including deleting and re-adding the file, do not activate another
+operation. A new main commit before this merge requires a new internal review;
+do not quietly change the approved base to make activation pass.
+
+The native `workflow_run` event must match the exact main SHA, repository identity,
+workflow path and authoritative workflow ID, successful run ID and current attempt.
+The existing live/deploy/release artifact chain is checked in full. Current main
+and every attempt are rechecked after downloads. The runner checks out that same
+release. The remote server verifies both the deployed release marker and activation
+file checksum while holding the deployment lock. Permissions and secrets are the
+existing read-only GitHub permissions and pinned production SSH transport.
+
+The fixed operation inventories all historical sources through `2026-10-02`.
+It uses one window per step, substantive internal review before application, and
+private receipts for each committed change. The operation-scoped actor selector
+is a pseudonymous commitment to the separately verified existing administrator;
+it is not authentication and does not prevent dictionary confirmation of guessed
+login identifiers. The public contract contains no raw login, reusable login hash,
+site allowlist, financial amounts, or new access credentials.
+
+`execute-once` is available only to this automatic transport path, not as a dispatch
+input. It advances the private operation for at most 900 seconds between bounded
+steps, with five-second spacing. Candidate expiry and existing uncertainty guards
+remain unchanged. Unfinished or blocked historical coverage returns `FAILED` /
+`INCOMPLETE`, retaining counts and reason codes. An unexpected later failure also
+retains the last known progress. The 20-minute workflow timeout remains the outer
+bound; a forced process interruption can leave a receipt checkpoint requiring
+reconciliation on retry. Rerun the existing failed job on this same activation
+release to resume the same operation and receipts; do not create a new workflow
+chain level, substitute another operation token, or claim unresolved rows are done.
 
 ## Modes and internal review
 
@@ -104,3 +143,34 @@ argument and output-boundary tests. PHP execution requires the supported CI runt
 when PHP/vendor are unavailable locally; static inspection is not a PHP test pass.
 Production dry-run discovery/preparation and actual application are separate from
 source tests and require the exact deployed, trusted main revision.
+
+## Finite observed-day coverage
+
+The one-time operation freezes its original fact census through the manifest's
+historical date bound. Later reporting days are outside that authorization and
+cannot enter it on a retry. The original census and every full-window candidate
+remain private and auditable.
+
+When a completed full-window query lacks exact-site days, that candidate stays
+BLOCKED. The operation may create strict contiguous child ranges only from its
+actually observed days that also have valid original facts and allocations. Each
+child binds its ancestors' immutable evidence hashes, digests and exact fact IDs,
+then obtains its own fresh Google query, snapshot, independent review and digest.
+The original candidate is never rewritten as a smaller report. An absent or
+invalid day remains untouched and explicitly unresolved, including an old zero.
+
+Private fact-level coverage accounts for every original fact as forward-scoped,
+already corrected, pending, ready, or blocked. Applied child receipts mark those
+same IDs corrected. Preserved parent windows are excluded from leaf-window totals,
+so their children and unresolved days are not counted twice. An automatic run with
+remaining blocked coverage reports INCOMPLETE even if other windows committed;
+it is never a claim that all historical accounts have been corrected.
+
+The existing six-active-candidate limit remains unchanged. Preserved completed
+BLOCKED parents can occupy it until their one-hour expiry. CAPACITY_REACHED stops
+the bounded invocation with committed progress retained. After those completed
+parents expire, a permitted retry of the same activation release can prepare the
+remaining NEW children using fresh queries. Their expired parent evidence selects
+only the allowed days; it never substitutes for fresh child evidence. In-flight
+or ambiguous submissions are never restarted. Every financial write still passes
+the unchanged correction-service locks, current evidence and settlement checks.

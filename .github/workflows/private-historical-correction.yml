@@ -1,9 +1,14 @@
 name: Private historical GAM operation
 
-# Intentionally manual only. No push, schedule, or workflow_run trigger.
+# The automatic route activates only on the first immutable manifest release.
+# Later verified releases are a no-op; manual bounded operations remain available.
 # Production environment protection rules and whether dispatch is enabled in
 # the live repository have not been verified by this implementation.
 on:
+  workflow_run:
+    workflows: [Verify production live]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -45,7 +50,10 @@ concurrency:
 
 jobs:
   private-operation:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: >-
+      ${{ github.ref == 'refs/heads/main' &&
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -70,34 +78,94 @@ jobs:
             const { execFileSync } = require('child_process');
             let temporary;
             try {
-              const env = process.env;
+              const env = { ...process.env };
+              const automatic = context.eventName === 'workflow_run';
               const token = /^[0-9a-f]{64}$/;
               const positiveId = value => /^[1-9][0-9]*$/.test(String(value)) && Number.isSafeInteger(Number(value));
               const requireTrue = value => { if (!value) throw new Error('UNTRUSTED'); };
               requireTrue(context.repo.owner === 'eltx1' && context.repo.repo === 'hm01'
                 && context.payload.repository?.full_name === 'eltx1/hm01'
                 && context.payload.repository.id === 1315038901);
-              requireTrue(context.eventName === 'workflow_dispatch' && context.ref === 'refs/heads/main');
-              requireTrue(/^[0-9a-f]{40}$/.test(context.sha));
-              requireTrue(['discover', 'prepare', 'poll', 'status', 'apply'].includes(env.MODE));
-              requireTrue(token.test(env.OPERATION) && token.test(env.ACTOR_FINGERPRINT));
+              requireTrue((context.eventName === 'workflow_dispatch' || automatic) && context.ref === 'refs/heads/main');
+              const releaseSha = automatic ? context.payload.workflow_run?.head_sha : context.sha;
+              requireTrue(/^[0-9a-f]{40}$/.test(releaseSha) && context.sha === releaseSha);
+              const repository = `${context.repo.owner}/${context.repo.repo}`;
+              const common = { owner: context.repo.owner, repo: context.repo.repo };
+              let activationHash = '';
+              if (automatic) {
+                requireTrue(context.payload.action === 'completed');
+                const eventRun = context.payload.workflow_run;
+                requireTrue(eventRun.name === 'Verify production live' && eventRun.path === '.github/workflows/verify-production-live.yml');
+                requireTrue(eventRun.status === 'completed' && eventRun.conclusion === 'success' && eventRun.head_branch === 'main');
+                requireTrue(eventRun.event === 'workflow_run' && positiveId(eventRun.id) && positiveId(eventRun.run_attempt));
+                requireTrue(eventRun.repository?.full_name === repository && eventRun.head_repository?.full_name === repository);
+                requireTrue(eventRun.repository?.id === 1315038901 && eventRun.head_repository?.id === 1315038901);
+                const { data: main } = await github.rest.git.getRef({ ...common, ref: 'heads/main' });
+                requireTrue(main.object?.sha === releaseSha);
+                const activationPath = 'ops/audit/historical-gam-correction-once.json';
+                const { data: content } = await github.rest.repos.getContent({ ...common, path: activationPath, ref: releaseSha });
+                requireTrue(content.type === 'file' && content.encoding === 'base64' && content.size > 0 && content.size <= 4096);
+                const bytes = Buffer.from(content.content, 'base64');
+                requireTrue(bytes.length === content.size);
+                const activation = JSON.parse(bytes.toString('utf8'));
+                const expected = {
+                  schema_version: 1,
+                  operation: '43c093f93251f353c7ba306e44d4c1e36a03e835bbd0d6ebe2463ae3fbe8cf45',
+                  actor_selector: '4cf689eb22a69a19a1838d98a97efb33c47c8a88ddca10d1faba79b847582f07',
+                  through: '2026-10-02',
+                  activation_base_sha: '37569a88ef6180266de313d00487445e6d475079',
+                  budget_seconds: 900,
+                  batch_limit: 1,
+                };
+                requireTrue(JSON.stringify(activation) === JSON.stringify(expected));
+                activationHash = crypto.createHash('sha256').update(bytes).digest('hex');
+                requireTrue(activationHash === '9e8a62704cc8b322f1ef0ecc8b6baacb2220ea41740f83a685c5c11f58808f26');
+                const { data: commit } = await github.rest.repos.getCommit({ ...common, ref: releaseSha });
+                requireTrue(commit.sha === releaseSha && commit.parents.length >= 1 && commit.parents.length <= 2);
+                // Main's first-parent edge identifies this single activation release.
+                // A later release, even one re-adding the file, cannot activate it.
+                if (commit.parents[0].sha !== activation.activation_base_sha) {
+                  core.setOutput('active', 'false');
+                  return;
+                }
+                try {
+                  await github.rest.repos.getContent({ ...common, path: activationPath, ref: activation.activation_base_sha });
+                  throw new Error('UNTRUSTED');
+                } catch (error) { requireTrue(error.status === 404); }
+                env.MODE = 'execute-once';
+                env.OPERATION = activation.operation;
+                env.ACTOR_FINGERPRINT = '';
+                env.ACTOR_SELECTOR = activation.actor_selector;
+                env.DIGEST = '';
+                env.BATCH_LIMIT = String(activation.batch_limit);
+                env.VERIFY_RUN_ID = String(eventRun.id);
+              }
+              requireTrue((automatic && env.MODE === 'execute-once') || (!automatic && ['discover', 'prepare', 'poll', 'status', 'apply'].includes(env.MODE)));
+              requireTrue(token.test(env.OPERATION) && token.test(automatic ? env.ACTOR_SELECTOR : env.ACTOR_FINGERPRINT));
               requireTrue(!env.DIGEST || token.test(env.DIGEST));
               requireTrue(env.MODE !== 'apply' || token.test(env.DIGEST));
               requireTrue(/^[1-6]$/.test(env.BATCH_LIMIT) && positiveId(env.VERIFY_RUN_ID));
 
-              const repository = `${context.repo.owner}/${context.repo.repo}`;
-              const common = { owner: context.repo.owner, repo: context.repo.repo };
               const kinds = {
                 verify: { name: 'Verify production live', path: '.github/workflows/verify-production-live.yml', events: ['workflow_run', 'workflow_dispatch'] },
                 deploy: { name: 'Deploy production', path: '.github/workflows/deploy-production.yml', events: ['workflow_run', 'workflow_dispatch'] },
                 validation: { name: 'Production release validation', path: '.github/workflows/production-release.yml', events: ['push'] },
               };
+              if (automatic) {
+                for (const kind of Object.values(kinds)) {
+                  const { data: workflow } = await github.rest.actions.getWorkflow({ ...common, workflow_id: path.basename(kind.path) });
+                  requireTrue(positiveId(workflow.id) && workflow.path === kind.path && workflow.name === kind.name);
+                  kind.id = Number(workflow.id);
+                }
+                requireTrue(Number(context.payload.workflow_run.workflow_id) === kinds.verify.id);
+              }
               const checkRun = (run, runId, kind) => {
                 const expected = kinds[kind];
                 requireTrue(Number(run.id) === Number(runId) && positiveId(run.run_attempt));
                 requireTrue(run.status === 'completed' && run.conclusion === 'success');
                 requireTrue(run.name === expected.name && run.path === expected.path && expected.events.includes(run.event));
-                requireTrue(run.head_branch === 'main' && run.head_sha === context.sha);
+                if (automatic) requireTrue(Number(run.workflow_id) === expected.id);
+                requireTrue(run.head_branch === 'main' && run.head_sha === releaseSha);
                 requireTrue(run.repository?.full_name === repository && run.head_repository?.full_name === repository);
                 requireTrue(Number(run.repository.id) === Number(context.payload.repository.id));
                 requireTrue(Number(run.head_repository.id) === Number(context.payload.repository.id));
@@ -126,7 +194,7 @@ jobs:
                 requireTrue(Number.isSafeInteger(artifact.size_in_bytes) && artifact.size_in_bytes > 0 && artifact.size_in_bytes <= maxBytes);
                 requireTrue(/^sha256:[0-9a-f]{64}$/.test(artifact.digest));
                 requireTrue(Number(artifact.workflow_run?.id) === Number(run.id));
-                requireTrue(artifact.workflow_run?.head_sha === context.sha && artifact.workflow_run?.head_branch === 'main');
+                requireTrue(artifact.workflow_run?.head_sha === releaseSha && artifact.workflow_run?.head_branch === 'main');
                 requireTrue(Number(artifact.workflow_run?.repository_id) === Number(context.payload.repository.id));
                 requireTrue(Number(artifact.workflow_run?.head_repository_id) === Number(context.payload.repository.id));
                 // A stale artifact from an earlier rerun is not an attempt proof.
@@ -152,24 +220,26 @@ jobs:
                   requireTrue(match && !Object.hasOwn(values, match[1]));
                   values[match[1]] = match[2];
                 }
-                requireTrue(values.schema_version === '1' && values.release_sha === context.sha);
+                requireTrue(values.schema_version === '1' && values.release_sha === releaseSha);
                 return values;
               };
 
               const verify = await trustedRun(env.VERIFY_RUN_ID, 'verify');
+              if (automatic) requireTrue(verify.event === 'workflow_run' && Number(verify.run_attempt) === Number(context.payload.workflow_run.run_attempt));
               const liveArchive = await immutableArtifact(verify, 'horus-production-live-proof', 65536);
               const live = proof(liveArchive, 'live-proof.env');
               requireTrue(live.verify_run_id === String(verify.id) && live.verify_run_attempt === String(verify.run_attempt));
               requireTrue(positiveId(live.deploy_run_id));
 
               const deploy = await trustedRun(live.deploy_run_id, 'deploy');
+              if (automatic) requireTrue(deploy.event === 'workflow_run');
               const deployArchive = await immutableArtifact(deploy, 'horus-production-deploy-proof', 65536);
               const deployed = proof(deployArchive, 'deploy-proof.env');
               requireTrue(deployed.deploy_run_id === String(deploy.id) && deployed.deploy_run_attempt === String(deploy.run_attempt));
               requireTrue(token.test(deployed.artifact_sha256) && positiveId(deployed.validation_run_id));
 
               const validation = await trustedRun(deployed.validation_run_id, 'validation');
-              const releaseArchive = await immutableArtifact(validation, `horus-media-platform-${context.sha}`, 536870912);
+              const releaseArchive = await immutableArtifact(validation, `horus-media-platform-${releaseSha}`, 536870912);
               const checksums = entry(releaseArchive, 'CHECKSUMS.txt').toString('utf8').trim();
               requireTrue(checksums === `${deployed.artifact_sha256}  release/horus-media-platform.zip`);
               const releaseBytes = entry(releaseArchive, 'horus-media-platform.zip', 536870912);
@@ -181,7 +251,19 @@ jobs:
                 checkRun(current, expected.id, expected.kind);
                 requireTrue(Number(current.run_attempt) === expected.attempt);
               }
-              core.setOutput('release_sha', context.sha);
+              if (automatic) {
+                const { data: main } = await github.rest.git.getRef({ ...common, ref: 'heads/main' });
+                requireTrue(main.object?.sha === releaseSha);
+              }
+              core.setOutput('active', 'true');
+              core.setOutput('mode', env.MODE);
+              core.setOutput('operation', env.OPERATION);
+              core.setOutput('actor_fingerprint', env.ACTOR_FINGERPRINT);
+              core.setOutput('actor_selector', automatic ? env.ACTOR_SELECTOR : '');
+              core.setOutput('digest', env.DIGEST);
+              core.setOutput('batch_limit', env.BATCH_LIMIT);
+              core.setOutput('activation_sha256', activationHash);
+              core.setOutput('release_sha', releaseSha);
               core.setOutput('artifact_sha256', deployed.artifact_sha256);
             } catch {
               // Never expose API responses, proof contents, paths, or exceptions.
@@ -193,20 +275,32 @@ jobs:
             }
 
       - name: Checkout the exact trusted release tooling
+        if: steps.trust.outputs.active == 'true'
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.trust.outputs.release_sha }}
           persist-credentials: false
 
       - name: Prepare standalone result validator
+        if: steps.trust.outputs.active == 'true'
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
           coverage: none
 
       - name: Run bounded private operation
+        if: steps.trust.outputs.active == 'true'
         shell: bash
         env:
+          MODE: ${{ steps.trust.outputs.mode }}
+          OPERATION: ${{ steps.trust.outputs.operation }}
+          ACTOR_FINGERPRINT: ${{ steps.trust.outputs.actor_fingerprint }}
+          ACTOR_SELECTOR: ${{ steps.trust.outputs.actor_selector }}
+          DIGEST: ${{ steps.trust.outputs.digest }}
+          BATCH_LIMIT: ${{ steps.trust.outputs.batch_limit }}
+          ACTIVATION_SHA256: ${{ steps.trust.outputs.activation_sha256 }}
+          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           RELEASE_SHA: ${{ steps.trust.outputs.release_sha }}
           ARTIFACT_SHA256: ${{ steps.trust.outputs.artifact_sha256 }}
           REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}

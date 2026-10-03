@@ -6,6 +6,7 @@ use App\Models\GamRevenueCorrection;
 use App\Models\GamRevenueCorrectionReceipt;
 use App\Models\Site;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 
 /** Private orchestration only. The existing correction service owns every financial write. */
 final class GamHistoricalOperation
@@ -23,13 +24,33 @@ final class GamHistoricalOperation
 
     public function run(string $mode, string $operation, string $actorFingerprint, int $limit = 1, ?string $digest = null): array
     {
+        return $this->operate($mode, $operation, $actorFingerprint, $limit, $digest);
+    }
+
+    /** One step of the separately authorized, finite deployment operation. */
+    public function advanceOneTime(array $contract): array
+    {
+        $keys = array_keys($contract); sort($keys);
+        $date = is_string($contract['through'] ?? null) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $contract['through']) : false;
+        if ($keys !== ['actor_selector', 'operation', 'schema_version', 'through'] || ($contract['schema_version'] ?? null) !== 1
+            || ! is_string($contract['operation'] ?? null) || ! self::hex($contract['operation'])
+            || ! is_string($contract['actor_selector'] ?? null) || ! self::hex($contract['actor_selector'])
+            || ! $date || $date->format('Y-m-d') !== $contract['through']) {
+            return $this->result(is_string($contract['operation'] ?? null) ? $contract['operation'] : '', null, 'INVALID_INPUT');
+        }
+        return $this->operate('advance', $contract['operation'], $contract['actor_selector'], 1, null, $contract);
+    }
+
+    private function operate(string $mode, string $operation, string $actorFingerprint, int $limit, ?string $digest,
+        ?array $contract = null): array
+    {
         $manifest = null;
-        if (! in_array($mode, self::MODES, true) || ! self::hex($operation) || ! self::hex($actorFingerprint)
+        if ((! in_array($mode, self::MODES, true) && ! ($mode === 'advance' && $contract !== null)) || ! self::hex($operation) || ! self::hex($actorFingerprint)
             || $limit < 1 || $limit > 6 || ($digest !== null && $digest !== '' && ! self::hex($digest))
             || ($mode === 'apply' && ! self::hex($digest ?? ''))) return $this->result($operation, null, 'INVALID_INPUT');
         $lock = null;
         try {
-            $actor = $this->actor($actorFingerprint);
+            $actor = $this->actor($actorFingerprint, $contract ? $operation : null);
             $directory = storage_path('app/private/gam-historical-operations');
             if (! is_dir($directory) && ! mkdir($directory, 0700, true) && ! is_dir($directory)) throw new \RuntimeException('OPERATION_FAILED');
             if (is_link($directory) || (fileperms($directory) & 0077) !== 0) throw new \RuntimeException('OPERATION_FAILED');
@@ -41,25 +62,42 @@ final class GamHistoricalOperation
             chmod($lockPath, 0600);
             if (is_file($path)) {
                 $manifest = json_decode(file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
-                if (($manifest['version'] ?? null) !== 1 || $manifest['operation'] !== $operation || $manifest['actor_id'] !== $actor->id
-                    || ! hash_equals($manifest['actor_fingerprint'], $actorFingerprint)) {
+                if (($manifest['version'] ?? null) !== ($contract ? 2 : 1) || $manifest['operation'] !== $operation || $manifest['actor_id'] !== $actor->id
+                    || ! hash_equals($manifest['actor_fingerprint'], $actorFingerprint)
+                    || ($contract !== null && GamRevenueCorrectionService::hash($manifest['contract'] ?? []) !== GamRevenueCorrectionService::hash($contract))) {
                     $manifest = null;
                     throw new \RuntimeException('OPERATION_CONFLICT');
                 }
-            } elseif ($mode !== 'discover') throw new \RuntimeException('OPERATION_MISSING');
+            } elseif (! in_array($mode, ['discover', 'advance'], true)) throw new \RuntimeException('OPERATION_MISSING');
             if (! $manifest) {
-                $discovery = $this->inventory->discover();
-                $manifest = ['version' => 1, 'operation' => $operation, 'actor_id' => $actor->id, 'actor_fingerprint' => $actorFingerprint,
+                $discovery = $this->inventory->discover($contract['through'] ?? null);
+                $manifest = ['version' => $contract ? 2 : 1, 'operation' => $operation, 'actor_id' => $actor->id, 'actor_fingerprint' => $actorFingerprint,
                     'initial_counts' => $discovery['counts'], 'coverage' => $discovery['coverage'], 'reasons' => $discovery['reasons'],
                     'records' => $discovery['records'], 'windows' => array_map(fn ($window) => $window + ['state' => 'NEW',
                         'candidate_id' => null, 'candidate_digest' => null, 'review' => null, 'receipt_id' => null], $discovery['windows']),
                     'batch' => [], 'digest' => null, 'created_at' => now()->toIso8601String()];
+                if ($contract !== null) $manifest['contract'] = $contract;
                 $this->save($path, $manifest);
             }
             $this->refresh($manifest, $actor);
-            $current = $this->inventory->discover();
+            $current = $this->inventory->discover($contract['through'] ?? null);
             if (! hash_equals(GamRevenueCorrectionService::hash($manifest['records']), GamRevenueCorrectionService::hash($current['records']))) {
                 throw new \RuntimeException('STALE_INVENTORY');
+            }
+            if ($mode === 'advance') {
+                $this->partitionObserved($manifest, $actor);
+                $ready = array_values(array_filter($manifest['windows'], fn ($window) => $window['state'] === 'READY'
+                    && ($window['review']['passed'] ?? false)));
+                if ($ready) {
+                    $manifest['batch'] = [$ready[0]['key']];
+                    $manifest['batch_inventory_digest'] = GamRevenueCorrectionService::hash($manifest['records']);
+                    $manifest['batch_coverage'] = $manifest['coverage'];
+                    $manifest['digest'] = $digest = $this->digest($manifest);
+                    $this->save($path, $manifest);
+                    $mode = 'apply';
+                } elseif (array_filter($manifest['windows'], fn ($window) => $window['state'] === 'PENDING')) $mode = 'poll';
+                elseif (array_filter($manifest['windows'], fn ($window) => $window['state'] === 'NEW')) $mode = 'prepare';
+                else $mode = 'status';
             }
             if ($mode === 'apply') {
                 if (! is_string($manifest['digest']) || ! hash_equals($manifest['digest'], $digest)
@@ -81,7 +119,7 @@ final class GamHistoricalOperation
                     $index = array_search($key, array_column($manifest['windows'], 'key'), true);
                     $window = &$manifest['windows'][$index];
                     if ($window['state'] !== 'APPLIED') {
-                        if (GamRevenueCorrectionService::hash($manifest['records']) !== GamRevenueCorrectionService::hash($this->inventory->discover()['records'])) {
+                        if (GamRevenueCorrectionService::hash($manifest['records']) !== GamRevenueCorrectionService::hash($this->inventory->discover($contract['through'] ?? null)['records'])) {
                             throw new \RuntimeException('STALE_INVENTORY');
                         }
                         $this->corrections->apply($this->candidate($window, $actor), $window['candidate_digest'],
@@ -95,18 +133,31 @@ final class GamHistoricalOperation
                 // Keep the reviewed batch/digest for a receipt-only idempotent retry.
             } elseif ($mode === 'prepare' || $mode === 'poll') {
                 $processed = 0;
-                foreach ($manifest['windows'] as $index => $window) {
+                $indices = array_keys($manifest['windows']);
+                if ($contract !== null && $mode === 'prepare') {
+                    // Finish observed children before opening more original
+                    // windows, preserving their fresh one-hour evidence budget.
+                    usort($indices, fn ($a, $b) => (count($manifest['windows'][$b]['ancestor_evidence'] ?? [])
+                        <=> count($manifest['windows'][$a]['ancestor_evidence'] ?? [])) ?: ($a <=> $b));
+                }
+                foreach ($indices as $index) {
+                    $window = $manifest['windows'][$index];
                     if ($processed >= $limit) break;
                     if ($mode === 'prepare' && $window['state'] === 'NEW') {
                         $active = GamRevenueCorrection::where('actor_id', $actor->id)->where('expires_at', '>', now())
                             ->whereNotIn('status', ['APPLIED', 'SUPERSEDED'])->count();
-                        if ($active >= 6) break;
+                        if ($active >= 6) {
+                            if ($contract !== null) throw new \RuntimeException('CAPACITY_REACHED');
+                            break;
+                        }
                         // Persist intent before any external report call. An uncertain intent never restarts automatically.
                         $manifest['windows'][$index]['state'] = 'STARTING';
                         $this->save($path, $manifest);
+                        $this->assertAncestors($window, $actor);
                         $overlap = GamRevenueCorrection::where('source_connection_id', $window['source_connection_id'])
                             ->whereDate('period_start', '<=', $window['to'])->whereDate('period_end', '>=', $window['from'])
-                            ->where('status', '!=', 'SUPERSEDED')->get();
+                            ->where('status', '!=', 'SUPERSEDED')
+                            ->whereNotIn('id', array_column($window['ancestor_evidence'] ?? [], 'candidate_id'))->get();
                         if ($overlap->isNotEmpty()) {
                             if ($overlap->count() !== 1 || $overlap[0]->actor_id !== $actor->id || $overlap[0]->period_start !== $window['from']
                                 || $overlap[0]->period_end !== $window['to']) throw new \RuntimeException('CANDIDATE_UNCERTAIN');
@@ -135,8 +186,10 @@ final class GamHistoricalOperation
                 $manifest['batch'] = array_values(array_column(array_filter($manifest['windows'], fn ($window) => $window['state'] === 'READY'
                     && ($window['review']['passed'] ?? false)), 'key'));
                 $manifest['batch_inventory_digest'] = GamRevenueCorrectionService::hash($manifest['records']);
+                if ($contract !== null) $manifest['batch_coverage'] = $manifest['coverage'];
                 $manifest['digest'] = $manifest['batch'] ? $this->digest($manifest) : null;
             }
+            if ($contract !== null) $this->updateCoverage($manifest);
             $this->save($path, $manifest);
             return $this->result($operation, $manifest);
         } catch (\Throwable $error) {
@@ -157,11 +210,141 @@ final class GamHistoricalOperation
         }
     }
 
-    private function actor(string $fingerprint): User
+    /** Preserve the blocked full query; every child will obtain its own fresh report. */
+    private function partitionObserved(array &$manifest, User $actor): void
+    {
+        foreach (array_keys($manifest['windows']) as $index) {
+            $window = $manifest['windows'][$index];
+            if ($window['state'] !== 'BLOCKED') continue;
+            $candidate = $this->candidate($window, $actor);
+            if (($candidate->job['status'] ?? null) !== 'COMPLETED') continue;
+            $review = $this->reviewer->review($candidate, $window);
+            foreach (['candidate_digest', 'currency', 'unit', 'hostname', 'current_facts', 'financial_state', 'pre_cutover'] as $check) {
+                if (! ($review['checks'][$check] ?? false)) continue 2;
+            }
+            if (count($candidate->snapshot['finance']['adjustments'] ?? []) > 128) continue;
+            $original = [];
+            foreach ($candidate->snapshot['facts'] as $row) {
+                $day = substr($row['fact']['report_date'], 0, 10);
+                if (isset($original[$day])) throw new \RuntimeException('OPERATION_CONFLICT');
+                $original[$day] = $row['fact']['id'];
+            }
+            ksort($original);
+            $expected = $window['fact_ids']; $actual = array_values($original); sort($expected); sort($actual);
+            if ($actual !== $expected || count($original) !== count($candidate->proposal['days'] ?? [])) throw new \RuntimeException('OPERATION_CONFLICT');
+            $observed = $unresolved = [];
+            foreach ($candidate->proposal['days'] as $day) {
+                $date = $day['date'];
+                if (! isset($original[$date]) || $day['original_fact_id'] !== $original[$date]) throw new \RuntimeException('OPERATION_CONFLICT');
+                $fresh = $candidate->job['result']['days'][$date] ?? null;
+                if ($fresh !== null && $day['flags'] === [] && $day['projected'] !== null
+                    && GamRevenueCorrectionService::hash($fresh) === GamRevenueCorrectionService::hash($day['fresh'])) {
+                    $observed[$date] = $original[$date];
+                } else $unresolved[$date] = ['fact_id' => $original[$date], 'reason' => $fresh === null ? 'NO_EXACT_SITE_ROW' : 'UNVERIFIED_OBSERVED_DAY',
+                    'flags' => $day['flags']];
+            }
+            // A pure financial/global blocker is never bypassed by making an
+            // identical child. Every partition is a strict observed subset.
+            if (! $observed || ! $unresolved) continue;
+            ksort($observed); ksort($unresolved);
+            $parent = ['candidate_id' => $candidate->id, 'digest' => $candidate->digest,
+                'evidence_hash' => $this->evidenceHash($candidate), 'from' => $window['from'], 'to' => $window['to'],
+                'fact_ids' => $window['fact_ids']];
+            $children = []; $child = null;
+            foreach ($observed as $day => $factId) {
+                if ($child && CarbonImmutable::parse($child['to'])->addDay()->toDateString() !== $day) {
+                    $children[] = $child; $child = null;
+                }
+                if (! $child) $child = array_intersect_key($window, array_flip(['site_id', 'binding_id', 'source_connection_id']))
+                    + ['from' => $day, 'to' => $day, 'fact_ids' => [],
+                        'ancestor_evidence' => [...($window['ancestor_evidence'] ?? []), $parent]];
+                $child['to'] = $day; $child['fact_ids'][] = $factId;
+            }
+            if ($child) $children[] = $child;
+            $childKeys = [];
+            foreach ($children as $child) {
+                $child['key'] = GamRevenueCorrectionService::hash($child);
+                $childKeys[] = $child['key'];
+                $manifest['windows'][] = $child + ['state' => 'NEW', 'candidate_id' => null, 'candidate_digest' => null,
+                    'review' => null, 'receipt_id' => null];
+                foreach ($child['fact_ids'] as $factId) $manifest['coverage']['daily:'.$factId] = [
+                    'state' => 'OBSERVED_CHILD', 'parent_window' => $window['key'], 'window' => $child['key']];
+            }
+            foreach ($unresolved as $day => $gap) $manifest['coverage']['daily:'.$gap['fact_id']] = [
+                'state' => 'BLOCKED', 'reason' => $gap['reason'], 'date' => $day, 'parent_window' => $window['key']];
+            $manifest['windows'][$index]['state'] = 'PARTITIONED';
+            $manifest['windows'][$index]['partition'] = ['evidence_hash' => $parent['evidence_hash'],
+                'children' => $childKeys, 'unresolved' => $unresolved];
+        }
+    }
+
+    private function evidenceHash(GamRevenueCorrection $candidate): string
+    {
+        return GamRevenueCorrectionService::hash([$candidate->context, $candidate->snapshot,
+            $candidate->query_hash, $candidate->job, $candidate->proposal, $candidate->digest]);
+    }
+
+    private function assertAncestors(array $window, User $actor): void
+    {
+        $ancestors = $window['ancestor_evidence'] ?? [];
+        if (count($ancestors) > 30 || count(array_unique(array_column($ancestors, 'candidate_id'))) !== count($ancestors)) {
+            throw new \RuntimeException('OPERATION_CONFLICT');
+        }
+        foreach ($ancestors as $evidence) {
+            $parent = GamRevenueCorrection::findOrFail($evidence['candidate_id']);
+            $actualIds = array_column(array_column($parent->snapshot['facts'], 'fact'), 'id');
+            $expectedIds = $evidence['fact_ids']; sort($actualIds); sort($expectedIds);
+            $digest = GamRevenueCorrectionService::hash(['version' => 1, 'candidate_id' => $parent->id, 'actor_id' => $parent->actor_id,
+                'context' => $parent->context, 'snapshot' => $parent->snapshot['fingerprint'], 'query_hash' => $parent->query_hash,
+                'job' => $parent->job, 'proposal' => $parent->proposal]);
+            if ($parent->status !== 'BLOCKED' || ($parent->job['status'] ?? null) !== 'COMPLETED'
+                || $parent->actor_id !== $actor->id || $parent->site_id !== $window['site_id']
+                || $parent->source_connection_id !== $window['source_connection_id']
+                || $parent->period_start !== $evidence['from'] || $parent->period_end !== $evidence['to']
+                || $window['from'] < $evidence['from'] || $window['to'] > $evidence['to']
+                || count($window['fact_ids']) >= count($expectedIds) || array_diff($window['fact_ids'], $expectedIds)
+                || $actualIds !== $expectedIds || ! is_string($parent->digest) || ! hash_equals($digest, $parent->digest)
+                || ! hash_equals($parent->digest, $evidence['digest']) || ! hash_equals($this->evidenceHash($parent), $evidence['evidence_hash'])) {
+                throw new \RuntimeException('OPERATION_CONFLICT');
+            }
+            $observedIds = [];
+            $days = array_column($parent->proposal['days'], null, 'date');
+            for ($day = CarbonImmutable::parse($window['from']); $day->toDateString() <= $window['to']; $day = $day->addDay()) {
+                $date = $day->toDateString(); $observed = $days[$date] ?? null;
+                if (! $observed || $observed['flags'] !== [] || $observed['projected'] === null
+                    || ! isset($parent->job['result']['days'][$date])) throw new \RuntimeException('OPERATION_CONFLICT');
+                $observedIds[] = $observed['original_fact_id'];
+            }
+            $childIds = $window['fact_ids']; sort($childIds); sort($observedIds);
+            if ($childIds !== $observedIds) throw new \RuntimeException('OPERATION_CONFLICT');
+        }
+    }
+
+    private function updateCoverage(array &$manifest): void
+    {
+        foreach ($manifest['windows'] as $window) {
+            if (in_array($window['state'], ['PARTITIONED', 'APPLIED'], true)) continue;
+            $blocked = ! in_array($window['state'], ['NEW', 'PENDING'], true)
+                && ! ($window['state'] === 'READY' && ($window['review']['passed'] ?? false));
+            $reason = match ($window['state']) { 'STARTING' => 'CANDIDATE_UNCERTAIN', 'EXPIRED' => 'CANDIDATE_EXPIRED',
+                'READY' => 'REVIEW_REQUIRED', default => 'CANDIDATE_BLOCKED' };
+            foreach ($window['fact_ids'] as $factId) {
+                $key = 'daily:'.$factId;
+                $manifest['coverage'][$key]['state'] = $blocked ? 'BLOCKED' : ($window['state'] === 'READY' ? 'READY' : 'PENDING');
+                $manifest['coverage'][$key]['window'] = $window['key'];
+                if ($blocked) $manifest['coverage'][$key]['reason'] = $reason;
+                else unset($manifest['coverage'][$key]['reason']);
+            }
+        }
+    }
+
+    private function actor(string $fingerprint, ?string $operation = null): User
     {
         $matches = [];
         foreach (User::query()->select(['id', 'email'])->orderBy('id')->cursor() as $user) {
-            if (hash_equals($fingerprint, hash('sha256', strtolower(trim($user->email))))) $matches[] = $user->id;
+            $candidate = hash('sha256', strtolower(trim($user->email)));
+            if ($operation !== null) $candidate = hash('sha256', $operation.':'.$candidate);
+            if (hash_equals($fingerprint, $candidate)) $matches[] = $user->id;
         }
         if (count($matches) !== 1) throw new \RuntimeException('ACTOR_UNVERIFIED');
         $actor = User::with('organization', 'roles.permissions')->findOrFail($matches[0]);
@@ -179,6 +362,7 @@ final class GamHistoricalOperation
     private function refreshWindow(array &$manifest, int $index, User $actor): void
     {
         $window = &$manifest['windows'][$index];
+        if ($window['state'] === 'PARTITIONED') return;
         if (! $window['candidate_id']) {
             if ($window['state'] !== 'STARTING') return;
             $matches = GamRevenueCorrection::where('actor_id', $actor->id)->where('site_id', $window['site_id'])
@@ -202,6 +386,11 @@ final class GamHistoricalOperation
             ksort($manifest['records']);
             $window['receipt_id'] = $receipt->id;
             $window['state'] = 'APPLIED';
+            if (($manifest['version'] ?? 1) === 2) foreach ($window['fact_ids'] as $factId) {
+                $manifest['coverage']['daily:'.$factId] = ($manifest['coverage']['daily:'.$factId] ?? [])
+                    + ['receipt_id' => $receipt->id, 'receipt_digest' => $receipt->digest];
+                $manifest['coverage']['daily:'.$factId]['state'] = 'CORRECTED';
+            }
             return;
         }
         $window['state'] = $candidate->expires_at->lte(now()) ? 'EXPIRED' : $candidate->status;
@@ -211,6 +400,7 @@ final class GamHistoricalOperation
 
     private function candidate(array $window, User $actor): GamRevenueCorrection
     {
+        $this->assertAncestors($window, $actor);
         $candidate = GamRevenueCorrection::findOrFail($window['candidate_id']);
         if ($candidate->actor_id !== $actor->id || $candidate->site_id !== $window['site_id']
             || $candidate->source_connection_id !== $window['source_connection_id']
@@ -230,9 +420,11 @@ final class GamHistoricalOperation
         $batch = array_map(fn ($key) => $this->window($manifest, $key), $manifest['batch']);
         foreach ($batch as &$window) unset($window['state'], $window['receipt_id']);
         unset($window);
-        return GamRevenueCorrectionService::hash(['version' => 1, 'operation' => $manifest['operation'], 'actor_id' => $manifest['actor_id'],
-            'coverage' => $manifest['coverage'], 'inventory_digest' => $manifest['batch_inventory_digest'] ?? GamRevenueCorrectionService::hash($manifest['records']),
-            'batch' => $batch]);
+        $payload = ['version' => 1, 'operation' => $manifest['operation'], 'actor_id' => $manifest['actor_id'],
+            'coverage' => $manifest['batch_coverage'] ?? $manifest['coverage'], 'inventory_digest' => $manifest['batch_inventory_digest'] ?? GamRevenueCorrectionService::hash($manifest['records']),
+            'batch' => $batch];
+        if (isset($manifest['contract'])) $payload['contract'] = $manifest['contract'];
+        return GamRevenueCorrectionService::hash($payload);
     }
 
     private function save(string $path, array $manifest): void
@@ -249,14 +441,26 @@ final class GamHistoricalOperation
         $counts = $manifest['initial_counts'] ?? array_fill_keys(['sources', 'daily_facts', 'hourly_facts', 'windows', 'eligible_windows',
             'blocked_facts', 'corrected_facts', 'forward_facts', 'pending', 'ready', 'applied', 'blocked'], 0);
         $reasons = $manifest['reasons'] ?? [];
+        if (($manifest['version'] ?? 1) === 2) {
+            $counts['windows'] = $counts['eligible_windows'] = count(array_filter($manifest['windows'], fn ($window) => $window['state'] !== 'PARTITIONED'));
+            $counts['blocked_facts'] = $counts['corrected_facts'] = 0; $reasons = [];
+            foreach ($manifest['coverage'] as $covered) {
+                if ($covered['state'] === 'CORRECTED') $counts['corrected_facts']++;
+                elseif ($covered['state'] === 'BLOCKED') {
+                    $counts['blocked_facts']++;
+                    $reasons[$covered['reason']] = ($reasons[$covered['reason']] ?? 0) + 1;
+                }
+            }
+        }
         foreach ($manifest['windows'] ?? [] as $window) {
-            if ($window['state'] === 'APPLIED') { $counts['applied']++; $counts['corrected_facts'] += count($window['fact_ids']); }
+            if ($window['state'] === 'PARTITIONED') continue;
+            if ($window['state'] === 'APPLIED') { $counts['applied']++; if (($manifest['version'] ?? 1) !== 2) $counts['corrected_facts'] += count($window['fact_ids']); }
             elseif ($window['state'] === 'READY' && ($window['review']['passed'] ?? false)) $counts['ready']++;
             elseif (in_array($window['state'], ['NEW', 'PENDING'], true)) $counts['pending']++;
             else {
                 $counts['blocked']++;
                 $code = match ($window['state']) { 'STARTING' => 'CANDIDATE_UNCERTAIN', 'EXPIRED' => 'CANDIDATE_EXPIRED', 'READY' => 'REVIEW_REQUIRED', default => 'CANDIDATE_BLOCKED' };
-                $reasons[$code] = ($reasons[$code] ?? 0) + 1;
+                if (($manifest['version'] ?? 1) !== 2) $reasons[$code] = ($reasons[$code] ?? 0) + 1;
             }
         }
         $blocked = $counts['blocked_facts'] > 0 || $counts['blocked'] > 0 || $reason !== 'NONE';

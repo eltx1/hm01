@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Manual private operations only. This script never schedules or uploads results.
+# Private bounded operations only. This script never schedules or uploads results.
 set +x
 set -Eeuo pipefail
 umask 077
 
 OPERATION="${OPERATION:-}"
 ACTOR_FINGERPRINT="${ACTOR_FINGERPRINT:-}"
+ACTOR_SELECTOR="${ACTOR_SELECTOR:-}"
+ACTIVATION_SHA256="${ACTIVATION_SHA256:-}"
 DIGEST="${DIGEST:-}"
 MODE="${MODE:-discover}"
 BATCH_LIMIT="${BATCH_LIMIT:-1}"
@@ -30,15 +32,30 @@ trap cleanup EXIT
 main() {
     # Every value interpolated into the remote command has a closed alphabet.
     # This includes configuration paths, not merely workflow_dispatch inputs.
-    [[ "$MODE" =~ ^(discover|prepare|poll|status|apply)$ ]] &&
+    local actor_identity
+    if [[ "${GITHUB_EVENT_NAME:-}" == workflow_run ]]; then
+        [[ "$MODE" == execute-once && "$ACTOR_SELECTOR" =~ ^[0-9a-f]{64}$ && -z "$ACTOR_FINGERPRINT" &&
+            "$ACTIVATION_SHA256" =~ ^[0-9a-f]{64}$ && -z "$DIGEST" && "$BATCH_LIMIT" == 1 &&
+            "${TRIGGER_HEAD_SHA:-}" == "${RELEASE_SHA:-}" && "${TRIGGER_CONCLUSION:-}" == success ]] || {
+            emit_failure CONFIGURATION_INVALID
+            return 1
+        }
+        actor_identity="$ACTOR_SELECTOR"
+    else
+        [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "$MODE" =~ ^(discover|prepare|poll|status|apply)$ &&
+            "$ACTOR_FINGERPRINT" =~ ^[0-9a-f]{64}$ && -z "$ACTOR_SELECTOR" && -z "$ACTIVATION_SHA256" ]] || {
+            emit_failure CONFIGURATION_INVALID
+            return 1
+        }
+        actor_identity="$ACTOR_FINGERPRINT"
+    fi
+    [[ "$MODE" =~ ^(discover|prepare|poll|status|apply|execute-once)$ ]] &&
         [[ "$OPERATION" =~ ^[0-9a-f]{64}$ ]] &&
-        [[ "$ACTOR_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] &&
         [[ -z "$DIGEST" || "$DIGEST" =~ ^[0-9a-f]{64}$ ]] &&
         [[ "$MODE" != apply || "$DIGEST" =~ ^[0-9a-f]{64}$ ]] &&
         [[ "$BATCH_LIMIT" =~ ^[1-6]$ ]] &&
         [[ "${RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
         [[ "${ARTIFACT_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] &&
-        [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]] &&
         [[ "${GITHUB_REF:-}" == refs/heads/main ]] &&
         [[ "${GITHUB_SHA:-}" == "$RELEASE_SHA" ]] &&
         [[ "${REMOTE_HOME:-}" =~ ^(/[A-Za-z0-9_-]+)+$ ]] &&
@@ -68,7 +85,7 @@ main() {
         -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o LogLevel=ERROR \
         -o ConnectTimeout=20 -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
         -i "$HOME/.ssh/id_ed25519" -p "$SSH_PORT" "$SSH_USER@$HOST" \
-        "bash -s -- '$REMOTE_HOME' '$RELEASE_SHA' '$ARTIFACT_SHA256' '$MODE' '$OPERATION' '$ACTOR_FINGERPRINT' '$DIGEST' '$BATCH_LIMIT'" \
+        "bash -s -- '$REMOTE_HOME' '$RELEASE_SHA' '$ARTIFACT_SHA256' '$MODE' '$OPERATION' '$actor_identity' '$DIGEST' '$BATCH_LIMIT' '$ACTIVATION_SHA256'" \
         >"$private_temp/transport.stdout" 2>"$private_temp/transport.stderr" <<'REMOTE' || transport_status=$?
 set +x
 set -Eeuo pipefail
@@ -77,7 +94,7 @@ umask 077
 exec 3>&1
 exec 1>/dev/null 2>/dev/null
 remote_home="$1"; release_sha="$2"; artifact_sha256="$3"; mode="$4"
-operation="$5"; actor_fingerprint="$6"; digest="$7"; batch_limit="$8"
+operation="$5"; actor_identity="$6"; digest="$7"; batch_limit="$8"; activation_sha256="$9"
 fail() {
     local digest_json='null'
     if [[ -n "$digest" ]]; then digest_json="\"$digest\""; fi
@@ -112,8 +129,17 @@ grep -Fxq "artifact_sha256=$artifact_sha256" "$marker" || fail RELEASE_MISMATCH
 cd "$release_dir"
 command_status=0
 # Redirect before PHP starts: even parse/bootstrap/auth/API errors stay on server.
+actor_option="--actor-fingerprint=$actor_identity"
+activation_options=()
+if [[ "$mode" == execute-once ]]; then
+    activation="ops/audit/historical-gam-correction-once.json"
+    [[ -f "$activation" && ! -L "$activation" ]] || fail CONFIGURATION_INVALID
+    [[ "$(sha256sum "$activation" | cut -d ' ' -f1)" == "$activation_sha256" ]] || fail CONFIGURATION_INVALID
+    actor_option="--actor-selector=$actor_identity"
+    activation_options=("--activation-sha256=$activation_sha256")
+fi
 php artisan reporting:gam-historical-operation "$mode" \
-    "--operation=$operation" "--actor-fingerprint=$actor_fingerprint" \
+    "--operation=$operation" "$actor_option" "${activation_options[@]}" \
     "--digest=$digest" "--limit=$batch_limit" "--result-file=$result_file" \
     >>"$raw_log" 2>&1 || command_status=$?
 [[ -f "$result_file" && ! -L "$result_file" && -s "$result_file" ]] || fail COMMAND_FAILED
