@@ -20,7 +20,9 @@ final class ReportMetricBasis
         if (data_get($row, 'metric_basis_incomplete') !== null) {
             return (int) data_get($row, 'metric_basis_incomplete') > 0;
         }
-        $code = data_get($row, 'connection.source.code');
+        $source = data_get($row, 'connection.source');
+        $code = $source instanceof \Illuminate\Database\Eloquent\Model
+            ? $source->getRawOriginal('code') : data_get($source, 'code');
         if ($code instanceof BackedEnum) $code = $code->value;
         if (data_get($row, 'connection.connection_type') !== 'SITE_GAM_AD_UNIT' && $code !== 'GAM_AD_UNIT') return false;
 
