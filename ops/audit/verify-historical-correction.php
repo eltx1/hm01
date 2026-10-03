@@ -619,6 +619,15 @@ final class HorusHistoricalCorrectionAudit
         try { return $reader(); } finally { if ($pdo->inTransaction()) $pdo->rollBack(); }
     }
 
+    public static function installErrorHandler(): void
+    {
+        set_error_handler(static function (int $severity): bool {
+            // Locked SDK classes emit PHP 8.4 compatibility deprecations on first load.
+            if ($severity === E_DEPRECATED || $severity === E_USER_DEPRECATED) return true;
+            throw new RuntimeException('AUDIT_FAILED');
+        });
+    }
+
     public static function configureReadOnlyRuntime(object $app): void
     {
         // SettingsServiceProvider uses Cache::remember during boot. Keep that cache process-local.
@@ -679,7 +688,7 @@ $emit = static function (array $result) use (&$emitted): void {
     echo json_encode($result, JSON_THROW_ON_ERROR).PHP_EOL;
 };
 register_shutdown_function(static function () use ($emit): void { $emit(HorusHistoricalCorrectionAudit::failure('AUDIT_FAILED')); });
-set_error_handler(static function (): never { throw new RuntimeException('AUDIT_FAILED'); });
+HorusHistoricalCorrectionAudit::installErrorHandler();
 $stage = 'BOOTSTRAP_FAILED';
 try {
     $root = getcwd();

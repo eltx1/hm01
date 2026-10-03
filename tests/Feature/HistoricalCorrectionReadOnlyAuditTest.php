@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Symfony\Component\Process\Process;
 
 /** Synthetic records only; database fixtures use the isolated test connection. */
 final class HistoricalCorrectionReadOnlyAuditTest extends TestCase
@@ -215,6 +216,83 @@ final class HistoricalCorrectionReadOnlyAuditTest extends TestCase
         $this->assertGreaterThan(0, $result['counts']['provenance_issues']);
     }
 
+    public function test_actual_error_handler_silences_only_deprecations_and_sanitizes_warnings(): void
+    {
+        $script = <<<'PHP'
+define('HORUS_HISTORICAL_AUDIT_LIBRARY_ONLY', true);
+require $argv[1].'/ops/audit/verify-historical-correction.php';
+HorusHistoricalCorrectionAudit::installErrorHandler();
+$continued = false;
+try {
+    trigger_error('synthetic-private-deprecation.example.test', E_USER_DEPRECATED);
+    $continued = true;
+    trigger_error('synthetic-private-warning.example.test', E_USER_WARNING);
+    exit(21);
+} catch (RuntimeException $error) {
+    exit($continued && $error->getMessage() === 'AUDIT_FAILED' ? 0 : 22);
+}
+PHP;
+        $process = $this->errorHandlerProcess($script);
+        $this->assertSame(0, $process->getExitCode());
+        $this->assertSame('', $process->getOutput());
+        $this->assertSame('', $process->getErrorOutput());
+
+        Audit::installErrorHandler();
+        $handler = set_error_handler(static fn () => false);
+        restore_error_handler();
+        try {
+            $this->assertTrue($handler(E_DEPRECATED));
+            $this->assertTrue($handler(E_USER_DEPRECATED));
+            foreach ([E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE, E_USER_ERROR, E_RECOVERABLE_ERROR] as $severity) {
+                try {
+                    $handler($severity);
+                    $this->fail('Every non-deprecation severity must remain a sanitized failure.');
+                } catch (\RuntimeException $error) { $this->assertSame('AUDIT_FAILED', $error->getMessage()); }
+            }
+        } finally { restore_error_handler(); }
+    }
+
+    public function test_locked_google_sdk_first_load_uses_the_real_entrypoint_handler_in_fresh_processes(): void
+    {
+        // Each class/mode gets a clean PHP process: no Laravel bootstrap, DB, network or credential access.
+        $script = <<<'PHP'
+define('HORUS_HISTORICAL_AUDIT_LIBRARY_ONLY', true);
+require $argv[1].'/ops/audit/verify-historical-correction.php';
+if ($argv[2] === 'legacy') {
+    set_error_handler(static function (): never { throw new RuntimeException('AUDIT_FAILED'); });
+} else {
+    HorusHistoricalCorrectionAudit::installErrorHandler();
+}
+$loadingSdk = false;
+try {
+    require $argv[1].'/vendor/autoload.php';
+    if (Composer\InstalledVersions::getReference('googleads/googleads-php-lib') !== 'f82e7c63cc3fd3fd60a47dd157868a60b75eff24') exit(21);
+    $loadingSdk = true;
+    exit(class_exists($argv[3]) ? 0 : 22);
+} catch (Throwable $error) {
+    exit($loadingSdk && $error instanceof RuntimeException && $error->getMessage() === 'AUDIT_FAILED' ? 19 : 20);
+}
+PHP;
+        foreach (['Google\AdsApi\Common\AdsSoapClientFactory', 'Google\AdsApi\Common\ConfigurationLoader'] as $class) {
+            foreach (['legacy', 'actual'] as $mode) {
+                $process = $this->errorHandlerProcess($script, [$mode, $class]);
+                $expected = $mode === 'legacy' && PHP_VERSION_ID >= 80400 ? 19 : 0;
+                $this->assertSame($expected, $process->getExitCode(), $mode.' first load of '.$class);
+                $this->assertSame('', $process->getOutput());
+                $this->assertSame('', $process->getErrorOutput());
+            }
+        }
+    }
+
+    private function errorHandlerProcess(string $script, array $arguments = []): Process
+    {
+        $process = new Process([PHP_BINARY, '-d', 'display_errors=1', '-d', 'log_errors=0', '-d', 'error_reporting=-1',
+            '-r', $script, dirname(__DIR__, 2), ...$arguments], dirname(__DIR__, 2));
+        $process->setTimeout(15);
+        $process->run();
+        return $process;
+    }
+
     public function test_provider_cache_is_process_local_before_settings_are_booted(): void
     {
         $directory = sys_get_temp_dir().'/horus-cache-test-'.bin2hex(random_bytes(8));
@@ -326,6 +404,18 @@ final class HistoricalCorrectionReadOnlyAuditTest extends TestCase
                 try {
                     $pdo->exec('UPDATE daily_reports SET revision = revision WHERE 1 = 0');
                     $this->fail('MySQL must reject even zero-row DML in a read-only transaction.');
+                } catch (\PDOException $error) {
+                    $this->assertSame(1792, (int) ($error->errorInfo[1] ?? 0));
+                }
+            });
+            $this->assertFalse($connection->getPdo()->inTransaction());
+            // Operational audit writes must work again after rollback; this zero-row write changes no data.
+            $this->assertSame(0, $connection->getPdo()->exec('UPDATE gam_api_operations SET attempts = attempts WHERE 1 = 0'));
+            Audit::withReadOnlySnapshot($connection, function () use ($connection): void {
+                $this->assertSame(1, (int) $connection->getPdo()->query('SELECT 1')->fetchColumn());
+                try {
+                    $connection->getPdo()->exec('UPDATE gam_api_operations SET attempts = attempts WHERE 1 = 0');
+                    $this->fail('A subsequent snapshot must enforce read-only again.');
                 } catch (\PDOException $error) {
                     $this->assertSame(1792, (int) ($error->errorInfo[1] ?? 0));
                 }

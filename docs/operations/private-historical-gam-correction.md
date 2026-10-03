@@ -144,12 +144,19 @@ known nonzero counters. An absent exact-site Google row remains unresolved even
 when its stored money is zero.
 
 The immediate main successor of verified audit release
-`d64d4b6cdb086a38ab8388764bb324898a8304a5` runs the standalone
+`86b8d6dcfdc5fb6ad6fc2b7733430743ff283acb` runs the standalone
 `verify-historical-correction.php` before any production transfer. The protected
 deploy checks current main and that first parent, streams the incoming reader over
 pinned SSH, and holds the existing deploy lock while verifying the current immutable
 release and pinned artifact SHA-256
-`f9872bdd99095ef08723288c32b4beab42988f61f9d645f20cb181385bf60e6f`.
+`f96a1f40c54f86e5ee79e383dae338749a298e496e28170ab05ca215ea13edf0`.
+
+The standalone error handler silently handles only PHP deprecation notices. The
+locked Google SDK has implicitly nullable declarations that emit deprecations on
+PHP 8.4; treating those as exceptions prevents the first network-context request.
+Warnings, notices and other errors still become sanitized failures. Fresh-process
+tests load the locked SDK with both the old and actual handlers without using
+credentials, a database or the network.
 Later releases skip this bounded diagnostic. The separate financial activation
 workflow, manifest, base, operation and digest remain unchanged.
 
