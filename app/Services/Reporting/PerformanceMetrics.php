@@ -69,16 +69,16 @@ final class PerformanceMetrics
         ];
     }
 
-    /** Keep the source-supported request metric separate from unfilled impressions. */
+    /** Unfilled impressions keep their source meaning even when unavailable. */
     public static function defaultColumns(array $totals = []): array
     {
-        if (($totals['has_site_ad_exchange'] ?? false) && ($totals['has_other_sources'] ?? false)) {
+        // Preserve existing source-aware metrics and always include true unfilled
+        // impressions. The request metric must never replace the source counter.
+        if ($totals['has_site_ad_exchange'] ?? false) {
             return array_keys(self::COLUMNS);
         }
 
-        return array_values(array_diff(array_keys(self::COLUMNS), [
-            ($totals['has_site_ad_exchange'] ?? false) ? 'unfilled_impressions' : 'ad_exchange_unmatched_requests',
-        ]));
+        return array_values(array_diff(array_keys(self::COLUMNS), ['ad_exchange_unmatched_requests']));
     }
 
     public static function display(string $metric, mixed $value): string

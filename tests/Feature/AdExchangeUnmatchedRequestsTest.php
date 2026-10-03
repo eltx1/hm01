@@ -154,9 +154,12 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
         $this->assertNull($mixed[self::METRIC]);
         $this->assertTrue($mixed['has_site_ad_exchange']);
         $this->assertTrue($mixed['has_other_sources']);
+        $this->assertNull($mixed['unfilled_impressions']);
+        $this->assertContains('unfilled_impressions', PerformanceMetrics::defaultColumns($mixed));
+        $this->assertContains(self::METRIC, PerformanceMetrics::defaultColumns($mixed));
     }
 
-    public function test_source_aware_cards_defaults_selectors_csv_and_explicit_legacy_selection_are_consistent(): void
+    public function test_true_unfilled_is_added_to_default_cards_columns_and_csv_without_replacing_current_metrics(): void
     {
         $context = [$admin, $user, , $site, $connection] = $this->context();
         $this->import($context);
@@ -168,32 +171,41 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
             ['directory', 'admin.reporting.websites.index', []]] as [$name, $route, $extra]) {
             $response = $this->get(route($route, $params + $extra))->assertOk()->assertSee('Ad Exchange unmatched requests');
             $this->assertContains(self::METRIC, $response->viewData($name === 'directory' ? 'metrics' : 'reportMetrics'));
-            $this->assertNotContains('unfilled_impressions', $response->viewData($name === 'directory' ? 'metrics' : 'reportMetrics'));
+            $this->assertContains('unfilled_impressions', $response->viewData($name === 'directory' ? 'metrics' : 'reportMetrics'));
+            if ($name !== 'directory') $this->assertDefaultCards($response, 'report-quality-metrics', '—');
             $this->fixture($name, $response);
-            if ($name !== 'directory') $this->assertCsv($route, $params + $extra);
+            if ($name !== 'directory') {
+                $this->assertDefaultCsv($route, $params + $extra);
+                $this->assertCsv($route, $params + $extra);
+            }
+            $selected = $this->get(route($route, $params + $extra + ['metrics' => [self::METRIC]]))->assertOk();
+            $this->assertSame([self::METRIC], $selected->viewData($name === 'directory' ? 'metrics' : 'reportMetrics'));
+            $this->fixture($name.'-unmatched', $selected);
         }
         $this->actingAs($user);
         foreach (['publisher.reporting.index', 'publisher.finance.overview'] as $route) {
             $response = $this->get(route($route, $params))->assertOk()->assertSee('Ad Exchange unmatched requests')
-                ->assertSee('not empty ad slots')->assertSee('Unfilled impressions are a different source metric');
+                ->assertSee('not empty ad slots')->assertSee('Unfilled impressions are a source-reported metric');
             $this->assertContains(self::METRIC, $response->viewData('reportMetrics'));
-            $this->assertNotContains('unfilled_impressions', $response->viewData('reportMetrics'));
+            $this->assertContains('unfilled_impressions', $response->viewData('reportMetrics'));
+            $this->assertDefaultCards($response, 'publisher-ad-metrics', 'Unavailable');
             if ($route === 'publisher.reporting.index') $this->fixture('publisher', $response);
+            $this->assertDefaultCsv($route, $params);
             $this->assertCsv($route, $params);
-            // An old/custom URL cannot bring back the unsupported default card.
-            // Explicit detail selection remains distinct and is not silently relabeled.
+            // Explicit selection never replaces or relabels the source-reported KPI.
             $selected = $this->get(route($route, $params + ['metrics' => ['unfilled_impressions']]))->assertOk();
             $this->assertSame(['unfilled_impressions'], $selected->viewData('reportMetrics'));
-            $html = $selected->getContent();
-            $cards = explode('</section>', explode('<section class="publisher-ad-metrics"', $html)[1])[0];
-            $this->assertStringContainsString('Ad Exchange unmatched requests', $cards);
-            $this->assertStringNotContainsString('Unfilled impressions', $cards);
+            $this->assertDefaultCards($selected, 'publisher-ad-metrics', 'Unavailable');
+            $selected = $this->get(route($route, $params + ['metrics' => [self::METRIC]]))->assertOk();
+            $this->assertSame([self::METRIC], $selected->viewData('reportMetrics'));
+            $this->assertDefaultCards($selected, 'publisher-ad-metrics', 'Unavailable');
+            if ($route === 'publisher.reporting.index') $this->fixture('publisher-unmatched', $selected);
         }
         $all = $this->get(route('publisher.reporting.index', $params + ['customize' => 1, 'metrics' => array_keys(PerformanceMetrics::COLUMNS)]))->assertOk();
         $this->assertCount(7, $all->viewData('reportMetrics'));
     }
 
-    public function test_mixed_directory_defaults_preserve_each_sources_distinct_metric(): void
+    public function test_mixed_directory_adds_true_unfilled_without_removing_distinct_source_metrics(): void
     {
         $context = [$admin, $user, $publisher, $site, $connection] = $this->context();
         $this->import($context);
@@ -212,10 +224,37 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
         $this->assertContains('unfilled_impressions', $response->viewData('metrics'));
         $totals = $response->viewData('totals');
         $this->assertSame(20, $totals[$site->id][self::METRIC]);
+        $this->assertNull($totals[$site->id]['unfilled_impressions']);
         $this->assertSame(9, $totals[$otherSite->id]['unfilled_impressions']);
         $this->assertNull($totals[$otherSite->id][self::METRIC]);
+        $this->fixture('directory-mixed', $response);
+        $selected = $this->get(route('admin.reporting.websites.index', $params + ['metrics' => [self::METRIC, 'unfilled_impressions']]))->assertOk();
+        $this->assertSame([self::METRIC, 'unfilled_impressions'], $selected->viewData('metrics'));
+        $this->fixture('directory-mixed-selected', $selected);
         $selected = $this->get(route('admin.reporting.websites.index', $params + ['metrics' => ['impressions']]))->assertOk();
         $this->assertSame(['impressions'], $selected->viewData('metrics'));
+    }
+
+    private function assertDefaultCards(TestResponse $response, string $class, string $unavailable): void
+    {
+        $cards = explode('</section>', explode('<section class="'.$class.'"', $response->getContent())[1])[0];
+        $this->assertStringContainsString('Unfilled impressions', $cards);
+        $this->assertStringContainsString('Ad Exchange unmatched requests', $cards);
+        $this->assertMatchesRegularExpression('/Unfilled impressions<\/(?:h3|p)>\s*<strong>'.preg_quote($unavailable, '/').'\s*<\/strong>/', $cards);
+    }
+
+    private function assertDefaultCsv(string $route, array $params): void
+    {
+        $csv = $this->get(route($route, $params + ['export' => 'csv']))->assertOk()->streamedContent();
+        $lines = array_map('str_getcsv', explode("\n", trim($csv)));
+        $this->assertContains('Unfilled impressions', $lines[0]);
+        $this->assertContains('Ad Exchange unmatched requests', $lines[0]);
+        $column = array_search('Unfilled impressions', $lines[0], true);
+        $this->assertSame('', $lines[1][$column]);
+        $this->assertSame('', $lines[2][$column]);
+        $unmatchedColumn = array_search('Ad Exchange unmatched requests', $lines[0], true);
+        $this->assertSame('20', $lines[1][$unmatchedColumn]);
+        $this->assertSame('0', $lines[2][$unmatchedColumn]);
     }
 
     private function assertCsv(string $route, array $params): void

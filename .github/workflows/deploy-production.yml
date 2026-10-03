@@ -40,7 +40,7 @@ jobs:
            github.event.workflow_run.head_repository.full_name == github.repository &&
            vars.HORUS_PRODUCTION_DEPLOY_DISABLED != 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: production
     env:
       RELEASE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.run_id }}
@@ -121,6 +121,28 @@ jobs:
           fi
           echo "sha256=$actual" >> "$GITHUB_OUTPUT"
 
+      - name: Require bounded true-unfilled diagnostic release
+        id: unfilled_probe
+        continue-on-error: true
+        uses: actions/github-script@v8
+        with:
+          script: |
+            // Only the immediate reviewed successor of PR241 runs this diagnostic.
+            // Later releases cannot replay it. No historical operation is activated.
+            const repo = { owner: 'eltx1', repo: 'hm01' };
+            const sha = process.env.RELEASE_SHA;
+            const base = '558cc8e069fc188f429f4746ff6bbdcddfe98c4e';
+            if (context.repo.owner !== repo.owner || context.repo.repo !== repo.repo
+                || context.payload.repository?.id !== 1315038901
+                || context.ref !== 'refs/heads/main' || !/^[0-9a-f]{40}$/.test(sha)) {
+              core.setFailed('UNFILLED_PROBE_TRUST_INVALID');
+              return;
+            }
+            const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: sha });
+            const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
+            core.setOutput('active', commit.sha === sha && main.commit.sha === sha
+              && commit.parents?.[0]?.sha === base && commit.parents.length <= 2 ? 'true' : 'false');
+
       - name: Require bounded historical receipt audit release
         id: historical_audit
         uses: actions/github-script@v8
@@ -200,6 +222,34 @@ jobs:
           fi
           jq -e '.schema_version == 1 and .compatible == true and .metric_basis == "AD_EXCHANGE_V1" and .active_bindings == .validated_bindings' "$result" >/dev/null
           jq -c '{schema_version,compatible,active_bindings,validated_bindings,scope,currency,metric_basis,viewability}' "$result"
+
+      - name: Probe true unfilled impressions separately without blocking finance
+        if: steps.unfilled_probe.outputs.active == 'true'
+        continue-on-error: true
+        shell: bash
+        timeout-minutes: 9
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          result="$RUNNER_TEMP/gam-true-unfilled-probe.json"
+          errors="$RUNNER_TEMP/gam-true-unfilled-probe.stderr"
+          trap 'rm -f "$result" "$errors"' EXIT
+          # The streamed code reads existing credentials only on the server.
+          # Raw evidence is retained privately there; never upload or echo it.
+          if ! { cat ops/audit/gam-rest-unfilled-probe.php; tail -n +4 ops/audit/gam-unfilled-probe.php; } | \
+            ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && timeout 450 php" > "$result" 2> "$errors"; then
+            echo '{"schema_version":1,"reason":"PROBE_EXECUTION_FAILED"}'
+            exit 0
+          fi
+          # Reconstruct closed fields rather than forwarding any remote strings.
+          node ops/audit/validate-unfilled-probe.mjs "$result" 2>/dev/null || \
+            echo '{"schema_version":1,"reason":"PROBE_RESULT_INVALID"}'
 
       - name: Transfer validated release and deployment tooling
         shell: bash

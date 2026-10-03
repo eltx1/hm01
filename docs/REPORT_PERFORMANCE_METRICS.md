@@ -2,9 +2,13 @@
 
 Admin Reports and Publisher Reports & earnings expose selectable daily columns
 and a CSV export for impressions, clicks, CTR, CPM (eCPM), Active View, and unfilled
-impressions. The same columns are available in website breakdowns; staff also
-have publisher, source and campaign breakdowns. Themes and permissions remain
-those of the existing dashboard.
+impressions. These remain default columns and KPI cards for every source,
+including site Ad Exchange and mixed-source reports. Site Ad Exchange reports
+keep their existing unmatched-request metric alongside true Unfilled impressions;
+missing unfilled values remain unavailable and are never replaced by that request
+metric. Non-site defaults remain unchanged. The same columns
+are available in website breakdowns; staff also have publisher, source and campaign
+breakdowns. Themes and permissions remain those of the existing dashboard.
 
 ## Definitions and revenue shares
 
@@ -16,6 +20,7 @@ those of the existing dashboard.
 | Publisher CPM (eCPM) | Sum of stored publisher earnings * 1,000 / impressions |
 | Active View | Sum of viewable impressions / sum of measurable impressions |
 | Unfilled impressions | Google's `TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS`, separate from unmatched requests |
+| Ad Exchange unmatched requests (site AdX default; optional elsewhere) | Proven website Ad Exchange requests minus responses served; not unfilled impressions or empty ad slots |
 
 Publisher earnings retain their existing date-effective revenue rule and
 deductions. No current percentage is reapplied to historical earnings. Publisher
@@ -32,11 +37,15 @@ silently presenting a partial total or approximating Active View from impression
 
 ## Import and accounting compatibility
 
-Both site-ad-unit and full-network GAM reports request viewable/measurable Active
-View counters and unfilled impressions. API versions still come from the existing
-GAM configuration. Queries keep DATE + AD_UNIT_ID, USD conversion and currency
-proof. Pending-job identities include the metric set so old jobs are not mistaken
-for the expanded report.
+Full-network GAM reports request viewable/measurable Active View counters and
+source-reported unfilled impressions. The website Ad Exchange contract requests
+Ad Exchange Active View counters with exact SITE_NAME + AD_UNIT_ID scope, and
+leaves unfilled impressions null because that report does not provide the field.
+It does not infer unfilled impressions from requests, responses or delivered
+impressions. API versions still come from the existing GAM configuration. Queries
+preserve date, inventory scope, USD conversion and currency proof. Pending-job
+identities include the metric set so old jobs are not mistaken for the expanded
+report. See [the website reporting contract](GAM_AD_UNIT_REPORTING.md).
 
 A specific Google incompatible-columns error gets one retry with the existing
 financial columns. Missing optional counters remain NULL; finance/currency/core
