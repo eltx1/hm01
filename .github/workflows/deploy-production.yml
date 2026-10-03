@@ -127,9 +127,9 @@ jobs:
         with:
           script: |
             // This one read-only audit belongs only to the immediate successor
-            // of the reviewed correction release. Later deployments skip it.
+            // of the verified receipt-audit release. Later deployments skip it.
             try {
-              const base = '708ab326a5241b3ee098dd622a5f8e2e1266d978';
+              const base = 'd64d4b6cdb086a38ab8388764bb324898a8304a5';
               const sha = process.env.RELEASE_SHA;
               if (context.repo.owner !== 'eltx1' || context.repo.repo !== 'hm01'
                   || context.payload.repository?.id !== 1315038901

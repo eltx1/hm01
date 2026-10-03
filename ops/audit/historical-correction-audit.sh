@@ -16,7 +16,7 @@ trap cleanup EXIT
 trap 'status=$?; if [[ "$emitted" != 1 ]]; then fail INTERNAL_ERROR || true; fi; exit "$status"' ERR
 
 main() {
-    local base='708ab326a5241b3ee098dd622a5f8e2e1266d978'
+    local base='d64d4b6cdb086a38ab8388764bb324898a8304a5'
     [[ "${RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HISTORICAL_AUDIT_TRUSTED_SHA:-}" == "$RELEASE_SHA" &&
        "${GITHUB_REF:-}" == refs/heads/main &&
        "${GITHUB_REPOSITORY:-}" == eltx1/hm01 && "${GITHUB_REPOSITORY_ID:-}" == 1315038901 &&
@@ -61,7 +61,7 @@ marker="$release_dir/.horus-release"
 [[ -f "$marker" && ! -L "$marker" && "$(grep -c '^release_id=' "$marker")" == 1 &&
    "$(grep -c '^artifact_sha256=' "$marker")" == 1 ]] || fail RELEASE_MISMATCH
 grep -Fxq "release_id=$base" "$marker" || fail RELEASE_MISMATCH
-grep -Fxq 'artifact_sha256=16a8869b50351e095c2b9943a50ec58c0cb7cc598149226bd9585f50bf6aa222' "$marker" || fail RELEASE_MISMATCH
+grep -Fxq 'artifact_sha256=f9872bdd99095ef08723288c32b4beab42988f61f9d645f20cb181385bf60e6f' "$marker" || fail RELEASE_MISMATCH
 cd "$release_dir"
 # Stdin is the incoming standalone reader; bootstrap only the deployed app.
 php || exit 10
