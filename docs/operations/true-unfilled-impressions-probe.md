@@ -54,3 +54,26 @@ provenance, nullable incomplete periods and financial independence.
 - [SOAP metric definitions](https://developers.google.com/ad-manager/api/reference/v202608/ReportService.Column)
 - [Interactive report definitions](https://developers.google.com/ad-manager/api/beta/reference/rest/v1/networks.reports)
 - [Create and run Interactive reports](https://developers.google.com/ad-manager/api/beta/reports)
+
+## PR242 observed outcome and saved-evidence classification
+
+Release `7be80e9dff9d53cb82fe9dea9c007ac749adf1f4` deployed successfully.
+Its isolated diagnostic completed all three SOAP queries with valid nonempty
+reports, but none contained an exact registered-host row. REST stopped at access
+rejection before selecting a report. Neither finding supplies a website count.
+The REST result does not establish metric incompatibility.
+
+The immediate successor release performs one read-only classification of the
+already saved evidence. The deployed release marker must still be PR242, the
+private evidence directory must be unique in the original execution window
+(2026-10-03 20:53:20–20:53:45 UTC), and all six regular JSONL files must fall in
+that same window. Missing, ambiguous, stale, symlinked, excessive or malformed
+evidence fails closed. It never bootstraps Laravel, requests Google, runs another
+report, changes credentials, or touches reporting facts. It prints only closed
+SOAP label categories and Google structured ErrorInfo enums through a second
+runner-side validator. Unknown error causes remain unclassified; raw messages,
+identifiers, counters, metadata and evidence paths stay private on the server.
+
+The existing SOAP/REST probe remains restricted to PR242 and will not be rerun
+by this successor. The classification itself does not enable ingestion or
+establish support for exact-host reporting.
