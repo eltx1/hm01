@@ -35,7 +35,7 @@ try {
         'STALE_INVENTORY', 'DIGEST_MISMATCH', 'REVIEW_REQUIRED', 'CANDIDATE_BLOCKED',
         'CANDIDATE_EXPIRED', 'CANDIDATE_UNCERTAIN', 'CAPACITY_REACHED', 'OPERATION_FAILED',
         'CONFIGURATION_INVALID', 'TRUST_PROOF_INVALID', 'TRANSPORT_FAILED', 'RELEASE_MISMATCH',
-        'DEPLOY_LOCK_BUSY', 'COMMAND_FAILED', 'RESULT_INVALID', 'INTERNAL_ERROR',
+        'DEPLOY_LOCK_BUSY', 'COMMAND_FAILED', 'RESULT_INVALID', 'INTERNAL_ERROR', 'INCOMPLETE',
     ];
     $countKeys = [
         'sources', 'daily_facts', 'hourly_facts', 'forward_facts', 'windows', 'eligible_windows',
@@ -45,6 +45,7 @@ try {
         'HOURLY_FACTS', 'UNBOUND_SOURCE', 'INACTIVE_BINDING', 'UNVERIFIED_SCOPE', 'OUTSIDE_BINDING',
         'FORWARD_SCOPE', 'INCOMPLETE_DAY', 'MULTIPLE_FACTS', 'MIXED_IDENTITY', 'RECEIPT_MISMATCH',
         'CANDIDATE_BLOCKED', 'CANDIDATE_EXPIRED', 'CANDIDATE_UNCERTAIN', 'REVIEW_REQUIRED',
+        'NO_EXACT_SITE_ROW', 'UNVERIFIED_OBSERVED_DAY',
     ];
     if ($result->schema_version !== 1 || ! in_array($result->outcome, ['OK', 'BLOCKED', 'FAILED'], true)
         || ! in_array($result->reason, $reasonCodes, true) || $result->operation !== $operation

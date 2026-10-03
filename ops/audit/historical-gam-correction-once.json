@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "operation": "43c093f93251f353c7ba306e44d4c1e36a03e835bbd0d6ebe2463ae3fbe8cf45",
+  "actor_selector": "4cf689eb22a69a19a1838d98a97efb33c47c8a88ddca10d1faba79b847582f07",
+  "through": "2026-10-02",
+  "activation_base_sha": "37569a88ef6180266de313d00487445e6d475079",
+  "budget_seconds": 900,
+  "batch_limit": 1
+}

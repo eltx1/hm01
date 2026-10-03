@@ -10,6 +10,8 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const workflow = readFileSync(path.join(root, '.github/workflows/private-historical-correction.yml'), 'utf8');
+const activationBytes = readFileSync(path.join(root, 'ops/audit/historical-gam-correction-once.json'));
+const activation = JSON.parse(activationBytes.toString('utf8'));
 const wrapper = path.join(root, 'ops/audit/private-historical-correction.sh');
 const validator = path.join(root, 'ops/audit/validate-private-correction-result.php');
 const require = createRequire(import.meta.url);
@@ -23,11 +25,14 @@ const safeResult = (changes = {}) => ({ schema_version: 1, outcome: 'OK', reason
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const sensitive = 'PRIVATE-PUBLISHER.example user@example.test RAW-SQL-ERROR 2030-01-02 9876.54';
 
-test('private workflow is manual main-only, read-only on GitHub, and has no result publication', () => {
+test('private workflow keeps manual main-only operations and a bounded trusted verification trigger', () => {
     const trigger = workflow.split('\non:\n')[1].split('\npermissions:')[0];
     assert.match(trigger, /^  workflow_dispatch:/m);
-    assert.doesNotMatch(trigger, /^  (push|pull_request|workflow_run|schedule):/m);
-    assert.match(workflow, /if: \$\{\{ github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' \}\}/);
+    assert.doesNotMatch(trigger, /^  (push|pull_request|schedule):/m);
+    assert.match(trigger, /workflow_run:\n    workflows: \[Verify production live\]\n    types: \[completed\]\n    branches: \[main\]/);
+    assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(workflow, /github\.event_name == 'workflow_dispatch'/);
+    assert.match(workflow, /github\.event_name == 'workflow_run' && github\.event\.workflow_run\.conclusion == 'success'/);
     assert.match(workflow, /permissions:\n  contents: read\n  actions: read\n/);
     assert.match(workflow, /environment: production/);
     assert.doesNotMatch(workflow, /actions\/upload-artifact|issues: write|createComment|core\.summary/);
@@ -36,6 +41,10 @@ test('private workflow is manual main-only, read-only on GitHub, and has no resu
     assert.ok(workflow.indexOf('Require exact trusted production proof chain') < workflow.indexOf('secrets.HORUS_PRODUCTION_'));
     assert.match(workflow, /persist-credentials: false/);
     assert.match(workflow, /run: bash ops\/audit\/private-historical-correction\.sh/);
+    assert.equal(workflow.match(/if: steps\.trust\.outputs\.active == 'true'/g).length, 3);
+    assert.match(workflow, /ref: \$\{\{ steps\.trust\.outputs\.release_sha \}\}/);
+    assert.doesNotMatch(workflow, /GITHUB_EVENT_NAME:|GITHUB_SHA:|GITHUB_REF:/);
+    assert.doesNotMatch(activationBytes.toString('utf8'), /actor_fingerprint|email|site_id|amount/);
 });
 
 const trustScript = workflow.split('          script: |\n')[1].split('\n      - name: Checkout')[0]
@@ -43,15 +52,15 @@ const trustScript = workflow.split('          script: |\n')[1].split('\n      - 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const trust = new AsyncFunction('require', 'github', 'context', 'core', 'process', trustScript);
 
-async function exerciseTrust(mutate = () => {}) {
+async function exerciseTrust(mutate = () => {}, automatic = false) {
     const directory = mkdtempSync(path.join(tmpdir(), 'hmtrust-'));
     try {
         const repo = { id: 1315038901, full_name: 'eltx1/hm01' };
         const baseRun = { status: 'completed', conclusion: 'success', head_branch: 'main', head_sha: sha, run_attempt: 2, repository: repo, head_repository: repo, run_started_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:10:00Z' };
         const runs = {
-            100: { ...baseRun, id: 100, name: 'Verify production live', path: '.github/workflows/verify-production-live.yml', event: 'workflow_dispatch' },
-            200: { ...baseRun, id: 200, name: 'Deploy production', path: '.github/workflows/deploy-production.yml', event: 'workflow_run' },
-            300: { ...baseRun, id: 300, name: 'Production release validation', path: '.github/workflows/production-release.yml', event: 'push' },
+            100: { ...baseRun, id: 100, workflow_id: 10, name: 'Verify production live', path: '.github/workflows/verify-production-live.yml', event: 'workflow_dispatch' },
+            200: { ...baseRun, id: 200, workflow_id: 20, name: 'Deploy production', path: '.github/workflows/deploy-production.yml', event: 'workflow_run' },
+            300: { ...baseRun, id: 300, workflow_id: 30, name: 'Production release validation', path: '.github/workflows/production-release.yml', event: 'push' },
         };
         const release = Buffer.from('validated production package');
         const releaseHash = hash(release);
@@ -61,6 +70,16 @@ async function exerciseTrust(mutate = () => {}) {
             checksums: `${releaseHash}  release/horus-media-platform.zip\n`,
         };
         const fixture = { runs, proofs, artifacts: {}, downloads: {}, context: { repo: { owner: 'eltx1', repo: 'hm01' }, payload: { repository: repo }, eventName: 'workflow_dispatch', ref: 'refs/heads/main', sha }, env: { MODE: 'discover', OPERATION: token, ACTOR_FINGERPRINT: actor, DIGEST: '', BATCH_LIMIT: '1', VERIFY_RUN_ID: '100' }, laterRuns: {} };
+        fixture.activationBytes = activationBytes;
+        fixture.parents = [{ sha: activation.activation_base_sha }];
+        fixture.mainSha = sha;
+        fixture.workflowIds = { 'verify-production-live.yml': 10, 'deploy-production.yml': 20, 'production-release.yml': 30 };
+        if (automatic) {
+            runs[100].event = 'workflow_run';
+            fixture.context.eventName = 'workflow_run';
+            fixture.context.payload.action = 'completed';
+            fixture.context.payload.workflow_run = { ...runs[100] };
+        }
         mutate(fixture, 'proofs');
         const createArtifact = (runId, name, entries) => {
             const staging = path.join(directory, String(runId));
@@ -81,7 +100,21 @@ async function exerciseTrust(mutate = () => {}) {
         const errors = [];
         const calls = new Map();
         let artifactDownloads = 0;
-        const github = { rest: { actions: {
+        let mainReads = 0;
+        const github = { rest: {
+            git: { getRef: async () => ({ data: { object: { sha: ++mainReads > 1 && fixture.laterMainSha ? fixture.laterMainSha : fixture.mainSha } } }) },
+            repos: {
+                getCommit: async () => ({ data: { sha, parents: fixture.parents } }),
+                getContent: async ({ ref }) => {
+                    if (ref !== sha && !fixture.baseContainsManifest) throw Object.assign(new Error('missing'), { status: fixture.baseLookupStatus ?? 404 });
+                    return { data: { type: 'file', encoding: 'base64', size: fixture.activationBytes.length, content: fixture.activationBytes.toString('base64') } };
+                },
+            },
+            actions: {
+            getWorkflow: async ({ workflow_id }) => {
+                const run = Object.values(fixture.runs).find(run => path.basename(run.path) === workflow_id);
+                return { data: { id: fixture.workflowIds[workflow_id], path: run?.path, name: run?.name } };
+            },
             getWorkflowRun: async ({ run_id }) => {
                 calls.set(run_id, (calls.get(run_id) ?? 0) + 1);
                 return { data: calls.get(run_id) > 1 && fixture.laterRuns[run_id] ? fixture.laterRuns[run_id] : fixture.runs[run_id] };
@@ -98,8 +131,70 @@ async function exerciseTrust(mutate = () => {}) {
 test('trust chain accepts only matched current attempts and checks the actual release package checksum', async () => {
     const result = await exerciseTrust();
     assert.deepEqual(result.errors, []);
-    assert.deepEqual(result.outputs, { release_sha: sha, artifact_sha256: result.releaseHash });
+    assert.deepEqual(result.outputs, { active: 'true', mode: 'discover', operation: token, actor_fingerprint: actor, actor_selector: '', digest: '', batch_limit: '1', activation_sha256: '', release_sha: sha, artifact_sha256: result.releaseHash });
 });
+
+test('automatic trust keeps native event identity and accepts the single activation release', async () => {
+    const result = await exerciseTrust(() => {}, true);
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.outputs, {
+        active: 'true', mode: 'execute-once', operation: activation.operation, actor_fingerprint: '', actor_selector: activation.actor_selector,
+        digest: '', batch_limit: '1', activation_sha256: hash(activationBytes), release_sha: sha, artifact_sha256: result.releaseHash,
+    });
+    assert.equal(result.artifactDownloads, 3);
+});
+
+test('automatic activation permits the approved main edge of an ordinary two-parent merge', async () => {
+    const result = await exerciseTrust((f, phase) => { if (phase === 'proofs') f.parents.push({ sha: 'd'.repeat(40) }); }, true);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.outputs.active, 'true');
+});
+
+for (const [label, mutate] of [
+    ['later unchanged deployment', f => { f.parents = [{ sha: 'd'.repeat(40) }]; }],
+    ['later deleted and re-added manifest', f => { f.parents = [{ sha: 'd'.repeat(40) }]; f.baseContainsManifest = true; }],
+]) {
+    test(`automatic route skips ${label} before fetching financial proof artifacts`, async () => {
+        const result = await exerciseTrust((f, phase) => { if (phase === 'proofs') mutate(f); }, true);
+        assert.deepEqual(result.errors, []);
+        assert.deepEqual(result.outputs, { active: 'false' });
+        assert.equal(result.artifactDownloads, 0);
+        assert.equal(result.queriedRuns, 0);
+    });
+}
+
+for (const [label, mutate] of [
+    ['non-completion native event', f => { f.context.payload.action = 'requested'; }],
+    ['missing verified event identity', f => { delete f.context.payload.workflow_run; }],
+    ['event has wrong repository ID', f => { f.context.payload.workflow_run.repository = { id: 12, full_name: 'eltx1/hm01' }; }],
+    ['event from manual verification', f => { f.context.payload.workflow_run.event = 'workflow_dispatch'; }],
+    ['event has wrong workflow ID', f => { f.context.payload.workflow_run.workflow_id = 11; }],
+    ['event has wrong workflow path', f => { f.context.payload.workflow_run.path = '.github/workflows/other.yml'; }],
+    ['event has wrong run ID', f => { f.context.payload.workflow_run.id = 101; }],
+    ['event has stale attempt', f => { f.context.payload.workflow_run.run_attempt = 1; }],
+    ['event has unsuccessful conclusion', f => { f.context.payload.workflow_run.conclusion = 'failure'; }],
+    ['default branch context moved', f => { f.context.sha = 'd'.repeat(40); }],
+    ['current main moved', f => { f.mainSha = 'd'.repeat(40); }],
+    ['main moved during proof downloads', f => { f.laterMainSha = 'd'.repeat(40); }],
+    ['base already includes manifest', f => { f.baseContainsManifest = true; }],
+    ['base lookup fails without proving absence', f => { f.baseLookupStatus = 403; }],
+    ['manifest bytes changed', f => { f.activationBytes = Buffer.from(JSON.stringify(activation)); }],
+    ['manifest duplicate key', f => { f.activationBytes = Buffer.from(activationBytes.toString().replace('  \"schema_version\": 1,', '  \"schema_version\": 1,\n  \"schema_version\": 1,')); }],
+    ['manifest adds unapproved key', f => { f.activationBytes = Buffer.from(JSON.stringify({ ...activation, arbitrary: true })); }],
+    ['manifest changes operation', f => { f.activationBytes = Buffer.from(JSON.stringify({ ...activation, operation: token })); }],
+    ['manifest changes actor', f => { f.activationBytes = Buffer.from(JSON.stringify({ ...activation, actor_selector: actor })); }],
+    ['manifest expands historical dates', f => { f.activationBytes = Buffer.from(JSON.stringify({ ...activation, through: '2026-10-03' })); }],
+    ['manifest expands budget', f => { f.activationBytes = Buffer.from(JSON.stringify({ ...activation, budget_seconds: 3600 })); }],
+    ['fetched verify has wrong workflow ID', f => { f.runs[100].workflow_id = 11; }],
+    ['fetched deploy has manual event', f => { f.runs[200].event = 'workflow_dispatch'; }],
+    ['authoritative workflow ID differs', f => { f.workflowIds['production-release.yml'] = 99; }],
+]) {
+    test(`automatic trust rejects ${label}`, async () => {
+        const result = await exerciseTrust((f, phase) => { if (phase === 'proofs') mutate(f); }, true);
+        assert.deepEqual(result.outputs, {});
+        assert.deepEqual(result.errors, ['TRUST_PROOF_INVALID']);
+    });
+}
 
 for (const [label, owner, name, id] of [
     ['foreign repository', 'other', 'foreign', 101],
@@ -175,6 +270,8 @@ function shellFixture() {
     const directory = mkdtempSync(path.join(tmpdir(), 'hmprivate-'));
     for (const child of ['home', 'runner', 'bin', 'remote-bin', 'server', 'server/releases', 'server/htdocs', `server/releases/${sha}`]) mkdirSync(path.join(directory, child));
     const release = path.join(directory, 'server/releases', sha);
+    mkdirSync(path.join(release, 'ops/audit'), { recursive: true });
+    writeFileSync(path.join(release, 'ops/audit/historical-gam-correction-once.json'), activationBytes);
     writeFileSync(path.join(release, '.horus-release'), `release_id=${sha}\nartifact_sha256=${artifactHash}\n`);
     symlinkSync(release, path.join(directory, 'server/htdocs/app.horusmedia.net'));
     writeFileSync(path.join(directory, 'expected.json'), JSON.stringify(safeResult()) + '\n');
@@ -243,6 +340,50 @@ test('transport holds deploy lock, uses pinned SSH, and keeps PHP stdout/stderr 
         assert.match(readFileSync(path.join(fixture.directory, 'php-args'), 'utf8'), /reporting:gam-historical-operation\ndiscover/);
     } finally { fixture.cleanup(); }
 });
+
+const automaticTransport = {
+    GITHUB_EVENT_NAME: 'workflow_run', MODE: 'execute-once', ACTOR_FINGERPRINT: '', ACTOR_SELECTOR: activation.actor_selector,
+    ACTIVATION_SHA256: hash(activationBytes), TRIGGER_HEAD_SHA: sha, TRIGGER_CONCLUSION: 'success',
+};
+
+test('automatic transport preserves event identity and verifies deployed manifest before its one-time command', () => {
+    const fixture = shellFixture();
+    try {
+        publicResult(fixture.run(automaticTransport), 'NONE', 0);
+        const args = readFileSync(path.join(fixture.directory, 'php-args'), 'utf8');
+        assert.match(args, /reporting:gam-historical-operation\nexecute-once/);
+        assert.ok(args.includes(`--actor-selector=${activation.actor_selector}`));
+        assert.ok(args.includes(`--activation-sha256=${hash(activationBytes)}`));
+        assert.doesNotMatch(args, /--actor-fingerprint/);
+    } finally { fixture.cleanup(); }
+});
+
+test('automatic transport rejects a deployed activation manifest checksum mismatch before PHP', () => {
+    const fixture = shellFixture();
+    try {
+        writeFileSync(path.join(fixture.directory, 'server/releases', sha, 'ops/audit/historical-gam-correction-once.json'), '{}');
+        publicResult(fixture.run(automaticTransport), 'CONFIGURATION_INVALID');
+        assert.equal(readdirSync(fixture.directory).includes('php-args'), false);
+    } finally { fixture.cleanup(); }
+});
+
+for (const [label, changes] of [
+    ['manual event cannot execute automatic mode', { MODE: 'execute-once' }],
+    ['automatic event cannot invoke manual apply', { ...automaticTransport, MODE: 'apply', DIGEST: digest }],
+    ['automatic event cannot carry a reusable actor fingerprint', { ...automaticTransport, ACTOR_FINGERPRINT: actor }],
+    ['automatic event requires the native verified SHA', { ...automaticTransport, TRIGGER_HEAD_SHA: 'c'.repeat(40) }],
+    ['automatic event requires success', { ...automaticTransport, TRIGGER_CONCLUSION: 'failure' }],
+    ['automatic event requires the manifest checksum', { ...automaticTransport, ACTIVATION_SHA256: '' }],
+    ['automatic event cannot expand the batch', { ...automaticTransport, BATCH_LIMIT: '2' }],
+]) {
+    test(label, () => {
+        const fixture = shellFixture();
+        try {
+            publicResult(fixture.run(changes), 'CONFIGURATION_INVALID');
+            assert.equal(readdirSync(fixture.directory).includes('ssh-args'), false);
+        } finally { fixture.cleanup(); }
+    });
+}
 
 for (const [label, changes] of [
     ['mode injection', { MODE: 'discover; printf secret' }],
@@ -351,6 +492,22 @@ test('real PHP validator reconstructs a typed allowlisted result', { skip: !hasP
     const result = validateResult(safeResult());
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), safeResult());
+});
+
+test('real PHP validator preserves automatic incomplete counts and failure status', { skip: !hasPhp && 'PHP runtime unavailable locally; required in release CI' }, () => {
+    const value = safeResult({ outcome: 'FAILED', reason: 'INCOMPLETE', counts: { ...safeResult().counts, applied: 2, pending: 1 } });
+    const result = validateResult(value, '', '10');
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), value);
+});
+
+test('real PHP validator preserves partial committed counts with exact missing-day reason codes', { skip: !hasPhp && 'PHP runtime unavailable locally; required in release CI' }, () => {
+    const value = safeResult({ outcome: 'FAILED', reason: 'INCOMPLETE',
+        counts: { ...safeResult().counts, applied: 2, corrected_facts: 12, blocked_facts: 3 },
+        reasons: { NO_EXACT_SITE_ROW: 2, UNVERIFIED_OBSERVED_DAY: 1 } });
+    const result = validateResult(value, '', '10');
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), value);
 });
 
 test('real PHP validator permits only blocked digest-mismatch reports to carry the existing digest', { skip: !hasPhp && 'PHP runtime unavailable locally; required in release CI' }, () => {

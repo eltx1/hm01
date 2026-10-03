@@ -25,7 +25,7 @@ final class GamHistoricalInventory
         return GamRevenueCorrectionService::hash($receipt->getAttributes());
     }
 
-    public function discover(): array
+    public function discover(?string $through = null): array
     {
         $records = $rows = $windows = $reasons = $corrected = [];
         $counts = array_fill_keys(['sources', 'daily_facts', 'hourly_facts', 'windows', 'eligible_windows',
@@ -50,6 +50,8 @@ final class GamHistoricalInventory
             }
         }
         foreach (GamRevenueCorrectionReceipt::orderBy('id')->cursor() as $receipt) {
+            if ($through !== null && ! array_filter($receipt->after['facts'] ?? [],
+                fn ($row) => substr($row['fact']['report_date'], 0, 10) <= $through)) continue;
             $records['receipt:'.$receipt->id] = self::receiptHash($receipt);
             foreach ($receipt->after['facts'] ?? [] as $row) {
                 $corrected[$row['fact']['id']][] = ['receipt_id' => $receipt->id, 'digest' => $receipt->digest,
@@ -58,6 +60,9 @@ final class GamHistoricalInventory
         }
         foreach (['daily' => DailyReport::class, 'hourly' => HourlyReport::class] as $kind => $model) {
             foreach ($model::withoutGlobalScopes()->with('dimension')->orderBy('id')->lazy(250) as $fact) {
+                // A finite authorization cannot absorb facts created for later
+                // days while its reviewed operation is running or being resumed.
+                if ($through !== null && $fact->report_date->toDateString() > $through) continue;
                 $dimension = $fact->dimension;
                 $external = $dimension?->external_dimensions ?? [];
                 if (! isset($gamSources[$fact->report_source_connection_id]) && ! $dimension?->gam_connection_id

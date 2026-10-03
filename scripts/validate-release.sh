@@ -15,6 +15,7 @@ required=(
   'horus-media-platform/database/migrations/2026_07_30_000000_create_production_operations_tables.php'
   'horus-media-platform/database/migrations/2026_08_01_000000_create_static_delivery_tables.php'
   'horus-media-platform/ops/audit/production-readiness.php'
+  'horus-media-platform/ops/audit/historical-gam-correction-once.json'
   'horus-media-platform/.env.example'
   'horus-media-platform/release/INSTALLATION.md'
   'horus-media-platform/release/UPGRADE.md'
@@ -53,7 +54,7 @@ for forbidden_dir in \
   fi
 done
 
-unexpected_ops_entries="$(unzip -Z1 "$ZIP" | grep '^horus-media-platform/ops/' | grep -Ev '^horus-media-platform/ops/(audit/)?$|^horus-media-platform/ops/audit/production-readiness\.php$' || true)"
+unexpected_ops_entries="$(unzip -Z1 "$ZIP" | grep '^horus-media-platform/ops/' | grep -Ev '^horus-media-platform/ops/(audit/)?$|^horus-media-platform/ops/audit/(production-readiness\.php|historical-gam-correction-once\.json)$' || true)"
 if [[ -n "$unexpected_ops_entries" ]]; then
   echo 'Release contains unexpected operational tooling:' >&2
   printf '%s\n' "$unexpected_ops_entries" >&2
