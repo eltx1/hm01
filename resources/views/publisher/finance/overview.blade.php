@@ -48,8 +48,8 @@
     @if($primary['today_available'])
         <section class="metric-grid">
             <article><p class="eyebrow">Estimated earnings</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['today_estimated_earnings_minor']) }}</strong><span class="muted">Your contractual share</span></article>
-            <article><p class="eyebrow">Impressions</p><strong class="metric">{{ number_format((int) $primary['today_impressions']) }}</strong><span class="muted">Today’s source-local reporting day</span></article>
-            <article><p class="eyebrow">Clicks</p><strong class="metric">{{ number_format((int) $primary['today_clicks']) }}</strong><span class="muted">Today’s source-local reporting day</span></article>
+            <article><p class="eyebrow">Impressions</p><strong class="metric">{{ $primary['today_impressions'] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display('impressions', $primary['today_impressions']) }}</strong><span class="muted">Today’s source-local reporting day</span></article>
+            <article><p class="eyebrow">Clicks</p><strong class="metric">{{ $primary['today_clicks'] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display('clicks', $primary['today_clicks']) }}</strong><span class="muted">Today’s source-local reporting day</span></article>
         </section>
         <p class="muted">Today can change before finalization.@if($primary['today_updated_at']) Last ledger update: {{ $primary['today_updated_at']->format('Y-m-d H:i:s') }}.@endif</p>
     @else

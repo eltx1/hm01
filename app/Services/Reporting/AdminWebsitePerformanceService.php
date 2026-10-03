@@ -51,13 +51,10 @@ final class AdminWebsitePerformanceService
         if ($daily) {
             $query->addSelect('daily_reports.report_date')->groupBy('daily_reports.report_date');
         }
-        foreach (['impressions', 'clicks', 'gross_revenue_minor', 'publisher_earnings_minor', 'horus_earnings_minor'] as $field) {
+        foreach (['gross_revenue_minor', 'publisher_earnings_minor', 'horus_earnings_minor'] as $field) {
             $query->selectRaw("SUM(daily_reports.{$field}) as {$field}");
         }
-        foreach (PerformanceMetrics::COUNTERS as $field) {
-            // A partial counter must stay unavailable, not silently sum known rows.
-            $query->selectRaw("CASE WHEN COUNT(daily_reports.{$field}) = COUNT(*) THEN SUM(daily_reports.{$field}) ELSE NULL END as {$field}");
-        }
+        app(ReportMetricBasis::class)->selectCounters($query, ['impressions', 'clicks', ...PerformanceMetrics::COUNTERS]);
 
         return $query->get();
     }

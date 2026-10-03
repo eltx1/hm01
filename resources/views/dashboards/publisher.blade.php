@@ -84,7 +84,7 @@
     <article>
         <p class="eyebrow">Today · estimated</p>
         <strong class="metric">{{ $currency }} {{ \App\Support\Money::formatMinor((int) $money['today_estimated_earnings_minor']) }}</strong>
-        <span class="muted">{{ $money['today_available'] ? number_format((int) $money['today_impressions']).' impressions so far' : 'Waiting for today’s report' }}</span>
+        <span class="muted">{{ $money['today_available'] ? ($money['today_impressions'] === null ? 'Impressions unavailable' : \App\Services\Reporting\PerformanceMetrics::display('impressions', $money['today_impressions']).' impressions so far') : 'Waiting for today’s report' }}</span>
     </article>
     <article>
         <p class="eyebrow">This month · finalized</p>
@@ -98,7 +98,7 @@
     </article>
     <article>
         <p class="eyebrow">Impressions this month</p>
-        <strong class="metric">{{ number_format($reporting['impressions']) }}</strong>
+        <strong class="metric">{{ $reporting['impressions'] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display('impressions', $reporting['impressions']) }}</strong>
         <span class="muted">Finalized USD reporting data</span>
     </article>
 </section>

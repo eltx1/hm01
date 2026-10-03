@@ -9,10 +9,10 @@
     @if($summary['available'])
     <section class="report-metrics" aria-label="Website revenue totals">
         @foreach([['Gross revenue', $summary['gross_revenue_minor'], $summary['currency']], ['Publisher earnings', $summary['publisher_earnings_minor'], $summary['currency']], ['Horus margin', $summary['horus_earnings_minor'], $summary['currency']], ['Impressions', $summary['impressions'], '']] as [$label, $value, $unit])
-            <article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><h3 class="eyebrow">{{ $label }}</h3><div class="report-kpi-value">{{ $unit ? \App\Support\Money::formatMinor($value) : number_format($value) }} @if($unit)<span>{{ $unit }}</span>@endif</div></article>
+            <article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><h3 class="eyebrow">{{ $label }}</h3><div class="report-kpi-value">{{ $unit ? \App\Support\Money::formatMinor($value) : \App\Services\Reporting\PerformanceMetrics::display('impressions', $value) }} @if($unit)<span>{{ $unit }}</span>@endif</div></article>
         @endforeach
     </section>
-    <p class="muted report-footnote">Reported amounts before statement adjustments.</p>
+    <p class="muted report-footnote">Reported amounts before statement adjustments.@if($summary['metric_basis_incomplete'] ?? false) Performance metrics are unavailable for periods containing legacy website GAM counters.@endif</p>
     <x-report-performance-totals :show-help="false" :totals="$summary" :currency="$summary['currency']" />
     <article class="report-chart-card">
         <div class="report-card-heading"><h3>Revenue over time</h3><span class="report-state">Gross · {{ $summary['currency'] }}</span></div>

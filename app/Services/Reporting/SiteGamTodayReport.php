@@ -30,7 +30,7 @@ final class SiteGamTodayReport
             ->where('finality', ReportFinality::Estimated->value)
             ->whereHas('dimension', fn ($query) => $query->where('organization_id', $site->organization_id)->where('site_id', $site->id))
             ->whereHas('import', fn ($query) => $query->where('status', ReportImportStatus::Completed->value))
-            ->with('import')->get();
+            ->with(['import', 'dimension', 'connection.source'])->get();
         $lastImport = $rows->pluck('import.completed_at')->filter()->sortDesc()->first();
 
         return [
@@ -41,9 +41,10 @@ final class SiteGamTodayReport
             'updated_at' => $lastImport?->copy()->setTimezone($connection->timezone)->format('Y-m-d H:i:s'),
             'refresh_enabled' => $connection->is_enabled && $connection->source?->is_enabled
                 && $binding->gamConnection?->is_enabled && $connection->status->value !== 'DISABLED',
-            'ad_requests' => (int) $rows->sum('ad_requests'),
-            'impressions' => (int) $rows->sum('impressions'),
-            'clicks' => (int) $rows->sum('clicks'),
+            'metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($rows),
+            'ad_requests' => app(ReportMetricBasis::class)->counter($rows, 'ad_requests'),
+            'impressions' => app(ReportMetricBasis::class)->counter($rows, 'impressions'),
+            'clicks' => app(ReportMetricBasis::class)->counter($rows, 'clicks'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
             'publisher_earnings_minor' => (int) $rows->sum('publisher_earnings_minor'),
         ];

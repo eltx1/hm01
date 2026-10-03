@@ -9,15 +9,16 @@
             @if($todayReport['available'])
                 <div class="metric-grid">
                     @foreach([
-                        ['Ad requests', number_format($todayReport['ad_requests'])],
-                        ['Impressions', number_format($todayReport['impressions'])],
-                        ['Clicks', number_format($todayReport['clicks'])],
+                        ['Ad requests', \App\Services\Reporting\PerformanceMetrics::display('ad_requests', $todayReport['ad_requests'])],
+                        ['Impressions', \App\Services\Reporting\PerformanceMetrics::display('impressions', $todayReport['impressions'])],
+                        ['Clicks', \App\Services\Reporting\PerformanceMetrics::display('clicks', $todayReport['clicks'])],
                         ['Estimated gross revenue', \App\Support\Money::formatMinor($todayReport['gross_revenue_minor']).' '.$todayReport['currency']],
                         ['Estimated publisher earnings', \App\Support\Money::formatMinor($todayReport['publisher_earnings_minor']).' '.$todayReport['currency']],
                     ] as [$label, $value])
                         <article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ $value }}</strong></article>
                     @endforeach
                 </div>
+                @if($todayReport['metric_basis_incomplete'] ?? false)<p class="muted">Performance metrics are unavailable because this report uses legacy website GAM counters.</p>@endif
                 <p>Last imported: {{ $todayReport['updated_at'] }} · {{ $todayReport['timezone'] }}</p>
             @else
                 <p role="status">Today's report has not arrived yet. Figures will appear after the next successful automatic import.</p>

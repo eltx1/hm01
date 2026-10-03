@@ -50,15 +50,18 @@ final class PerformanceMetrics
     /** Callers select gross revenue for staff or already-allocated publisher earnings. */
     public function summarize(Collection $rows, string $revenueField): array
     {
-        $impressions = (int) $rows->sum('impressions');
-        $clicks = (int) $rows->sum('clicks');
+        $basis = app(ReportMetricBasis::class);
+        $incomplete = $basis->incomplete($rows);
+        $impressions = $basis->counter($rows, 'impressions');
+        $clicks = $basis->counter($rows, 'clicks');
 
         return [
             'impressions' => $impressions,
             'clicks' => $clicks,
-            'ctr_bp' => $impressions > 0 ? (int) round($clicks * 10000 / $impressions) : null,
+            'metric_basis_incomplete' => $incomplete,
+            'ctr_bp' => $impressions > 0 && $clicks !== null ? (int) round($clicks * 10000 / $impressions) : null,
             'ecpm_minor' => $impressions > 0 ? (int) round($rows->sum($revenueField) * 1000 / $impressions) : null,
-            ...$this->counters($rows),
+            ...($incomplete ? array_fill_keys([...self::COUNTERS, 'viewability_bp'], null) : $this->counters($rows)),
         ];
     }
 
