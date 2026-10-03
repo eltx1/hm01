@@ -29,6 +29,8 @@ test('wrapper reuses bounded REST helper only with original scope and private ev
     assert.match(source, /subDays\(6\)/);
     assert.match(source, /chmod\(\$path, 0600\)/);
     assert.match(source, /allow_redirects' => false/);
+    assert.match(source, /config\('gam.rest.base_url'\)/);
+    assert.doesNotMatch(source, /https:\/\/admanager\.googleapis\.com\/v1/);
     assert.ok(source.indexOf('RELEASE_MISMATCH') < source.indexOf("vendor/autoload.php"));
 });
 test('REST public evidence preserves explicit unknown and structured access reason without raw details', () => {

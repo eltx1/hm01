@@ -7,6 +7,27 @@ use Symfony\Component\Process\Process;
 
 final class RestUnfilledDiagnosticStreamTest extends TestCase
 {
+    public static function setUpBeforeClass(): void
+    {
+        if (! defined('HORUS_REST_UNFILLED_DIAGNOSTIC_LIBRARY_ONLY')) define('HORUS_REST_UNFILLED_DIAGNOSTIC_LIBRARY_ONLY', true);
+        require_once dirname(__DIR__, 2).'/ops/audit/gam-rest-unfilled-diagnostic.php';
+    }
+
+    public function test_configured_version_is_preserved_on_fixed_official_origin(): void
+    {
+        foreach (['v1', 'v2', 'v1beta1', 'v2alpha'] as $version) {
+            $base = 'https://admanager.googleapis.com/'.$version;
+            $this->assertSame($base, \HorusRestUnfilledDiagnosticUrl::baseUrl($base.'/'));
+        }
+        foreach (['http://admanager.googleapis.com/v1', 'https://private.example/v1',
+            'https://user@admanager.googleapis.com/v1', 'https://admanager.googleapis.com:443/v1',
+            'https://admanager.googleapis.com/v1?secret=private', 'https://admanager.googleapis.com/v1#fragment',
+            'https://admanager.googleapis.com/v1/networks', 'https://admanager.googleapis.com/v1/../v2'] as $url) {
+            try { \HorusRestUnfilledDiagnosticUrl::baseUrl($url); $this->fail('Unsafe API root accepted'); }
+            catch (\RuntimeException $e) { $this->assertSame('REST_FAILED', $e->getMessage()); }
+        }
+    }
+
     private function payload(): string
     {
         $root = dirname(__DIR__, 2);

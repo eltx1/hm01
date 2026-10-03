@@ -3,6 +3,19 @@
 declare(strict_types=1);
 
 /** Manual bounded REST diagnostic. Existing access only; never changes report facts. */
+final class HorusRestUnfilledDiagnosticUrl
+{
+    public static function baseUrl(string $configured): string
+    {
+        $base = rtrim($configured, '/');
+        if (! preg_match('~^https://admanager\.googleapis\.com/v[1-9][0-9]*(?:(?:alpha|beta)[0-9]*)?$~D', $base)) {
+            throw new RuntimeException('REST_FAILED');
+        }
+        return $base;
+    }
+}
+
+if (defined('HORUS_REST_UNFILLED_DIAGNOSTIC_LIBRARY_ONLY')) return;
 ini_set('display_errors', '0');
 try {
     $expected = getenv('HORUS_EXPECTED_RELEASE');
@@ -41,8 +54,9 @@ try {
             if (fwrite($file, json_encode($value, JSON_THROW_ON_ERROR).PHP_EOL) === false) throw new RuntimeException('EVIDENCE_WRITE_FAILED');
         } finally { fclose($file); }
     };
+    $baseUrl = HorusRestUnfilledDiagnosticUrl::baseUrl((string) config('gam.rest.base_url'));
     $accessErrorReasons = [];
-    $restRequest = static function (array $case, string $verb, string $path, array $payload) use (&$accessErrorReasons): array {
+    $restRequest = static function (array $case, string $verb, string $path, array $payload) use (&$accessErrorReasons, $baseUrl): array {
         // Fixed official origin and closed endpoint families; no credential-bearing
         // URL, redirect, cross-network name, persistent grant or retry is allowed.
         $network = 'networks/'.$case['network_code'];
@@ -58,7 +72,7 @@ try {
         try {
             $request = Illuminate\Support\Facades\Http::withToken(app(App\Services\Gam\GamOAuthTokenProvider::class)->accessToken($connection))
                 ->acceptJson()->connectTimeout(5)->timeout(15)->withOptions(['allow_redirects' => false, 'stream' => true, 'read_timeout' => 15]);
-            $url = 'https://admanager.googleapis.com/v1/'.$path;
+            $url = $baseUrl.'/'.$path;
             $response = $verb === 'GET' ? $request->get($url, $payload)
                 : ($payload === [] ? $request->withBody('', 'application/json')->send('POST', $url)
                     : $request->withBody(json_encode($payload, JSON_THROW_ON_ERROR), 'application/json')->send('POST', $url));
