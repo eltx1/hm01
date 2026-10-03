@@ -93,6 +93,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: Download validated production artifact
         uses: actions/download-artifact@v8
@@ -119,6 +121,35 @@ jobs:
           fi
           echo "sha256=$actual" >> "$GITHUB_OUTPUT"
 
+      - name: Require bounded historical receipt audit release
+        id: historical_audit
+        uses: actions/github-script@v8
+        with:
+          script: |
+            // This one read-only audit belongs only to the immediate successor
+            // of the reviewed correction release. Later deployments skip it.
+            try {
+              const base = '708ab326a5241b3ee098dd622a5f8e2e1266d978';
+              const sha = process.env.RELEASE_SHA;
+              if (context.repo.owner !== 'eltx1' || context.repo.repo !== 'hm01'
+                  || context.payload.repository?.id !== 1315038901
+                  || context.payload.repository?.full_name !== 'eltx1/hm01') throw new Error();
+              const repo = { owner: 'eltx1', repo: 'hm01' };
+              if (!/^[0-9a-f]{40}$/.test(sha) || context.ref !== 'refs/heads/main') throw new Error();
+              const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: sha });
+              if (commit.sha !== sha || !Array.isArray(commit.parents) || commit.parents.length < 1) throw new Error();
+              if (commit.parents[0].sha !== base) {
+                core.setOutput('active', 'false');
+                return;
+              }
+              const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
+              if (main.commit.sha !== sha || commit.parents.length > 2) throw new Error();
+              core.setOutput('release_sha', sha);
+              core.setOutput('active', 'true');
+            } catch {
+              core.setFailed('HISTORICAL_AUDIT_TRUST_INVALID');
+            }
+
       - name: Configure pinned SSH trust
         shell: bash
         env:
@@ -137,6 +168,16 @@ jobs:
           chmod 600 "$HOME/.ssh/id_ed25519"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Audit historical correction receipts before production changes
+        if: steps.historical_audit.outputs.active == 'true'
+        shell: bash
+        timeout-minutes: 6
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          HISTORICAL_AUDIT_TRUSTED_SHA: ${{ steps.historical_audit.outputs.release_sha }}
+        run: bash ops/audit/historical-correction-audit.sh
 
       - name: Verify exact Site GAM reporting compatibility before production changes
         shell: bash
