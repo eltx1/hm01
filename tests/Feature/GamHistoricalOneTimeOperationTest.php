@@ -743,6 +743,8 @@ final class GamHistoricalOneTimeOperationTest extends TestCase
             'unfilled_impressions' => 8, 'viewability_bp' => 8750,
             'revision' => 7, 'source_row_hash' => hash('sha256', 'synthetic-row-'.$date),
         ]));
+        // Baselines include database defaults and persisted scalar types.
+        $facts->each->refresh();
         // Install the normal forward-only scope before taking any test baseline.
         // The correction window stays entirely before this cutover.
         app(SiteGamReportScope::class)->ensure($binding);
