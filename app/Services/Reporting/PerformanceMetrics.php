@@ -18,6 +18,7 @@ final class PerformanceMetrics
         'ctr_bp' => 'CTR',
         'ecpm_minor' => 'CPM (eCPM)',
         'viewability_bp' => 'Active View',
+        'ad_exchange_unmatched_requests' => 'Ad Exchange unmatched requests',
         'unfilled_impressions' => 'Unfilled impressions',
     ];
 
@@ -59,10 +60,21 @@ final class PerformanceMetrics
             'impressions' => $impressions,
             'clicks' => $clicks,
             'metric_basis_incomplete' => $incomplete,
+            'has_site_ad_exchange' => $rows->contains(fn ($row) => $basis->siteGam($row)),
+            'has_other_sources' => $rows->contains(fn ($row) => $basis->otherSource($row)),
+            'ad_exchange_unmatched_requests' => $basis->adExchangeUnmatchedRequests($rows),
             'ctr_bp' => $impressions > 0 && $clicks !== null ? (int) round($clicks * 10000 / $impressions) : null,
             'ecpm_minor' => $impressions > 0 ? (int) round($rows->sum($revenueField) * 1000 / $impressions) : null,
             ...($incomplete ? array_fill_keys([...self::COUNTERS, 'viewability_bp'], null) : $this->counters($rows)),
         ];
+    }
+
+    /** Keep the source-supported request metric separate from unfilled impressions. */
+    public static function defaultColumns(array $totals = []): array
+    {
+        return array_values(array_diff(array_keys(self::COLUMNS), [
+            ($totals['has_site_ad_exchange'] ?? false) ? 'unfilled_impressions' : 'ad_exchange_unmatched_requests',
+        ]));
     }
 
     public static function display(string $metric, mixed $value): string

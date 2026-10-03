@@ -26,12 +26,12 @@ class ReportingController extends Controller
             $publisher, $request->validated('from'), $request->validated('to'),
         );
         if ($request->validated('export') === 'csv') {
-            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics(), $performance['currency'], true);
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics($performance), $performance['currency'], true);
         }
 
         return view('publisher.reporting.index', [
             'performance' => $performance,
-            'reportMetrics' => $request->selectedMetrics(),
+            'reportMetrics' => $request->selectedMetrics($performance),
         ]);
     }
 
@@ -42,13 +42,13 @@ class ReportingController extends Controller
             $publisher, $request->validated('from'), $request->validated('to'),
         );
         if ($request->validated('export') === 'csv') {
-            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics(), $performance['currency'], true);
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics($performance), $performance['currency'], true);
         }
 
         return view('publisher.finance.overview', [
             ...$finance->overview($publisher),
             'performance' => $performance,
-            'reportMetrics' => $request->selectedMetrics(),
+            'reportMetrics' => $request->selectedMetrics($performance),
         ]);
     }
 

@@ -20,11 +20,7 @@ final class ReportMetricBasis
         if (data_get($row, 'metric_basis_incomplete') !== null) {
             return (int) data_get($row, 'metric_basis_incomplete') > 0;
         }
-        $source = data_get($row, 'connection.source');
-        $code = $source instanceof \Illuminate\Database\Eloquent\Model
-            ? $source->getRawOriginal('code') : data_get($source, 'code');
-        if ($code instanceof BackedEnum) $code = $code->value;
-        if (data_get($row, 'connection.connection_type') !== 'SITE_GAM_AD_UNIT' && $code !== 'GAM_AD_UNIT') return false;
+        if (! $this->siteGam($row)) return false;
 
         $external = data_get($row, 'dimension.external_dimensions', []);
         if (data_get($external, 'gam_report_basis') !== SiteGamReportMetrics::BASIS) return true;
@@ -35,6 +31,48 @@ final class ReportMetricBasis
 
         // Historical correction provenance is valid independently of today's binding or hostname.
         return false;
+    }
+
+    public function siteGam(mixed $row): bool
+    {
+        if (data_get($row, 'metric_site_gam_rows') !== null) {
+            return (int) data_get($row, 'metric_site_gam_rows') > 0;
+        }
+        $source = data_get($row, 'connection.source');
+        $code = $source instanceof \Illuminate\Database\Eloquent\Model
+            ? $source->getRawOriginal('code') : data_get($source, 'code');
+        if ($code instanceof BackedEnum) $code = $code->value;
+        return data_get($row, 'connection.connection_type') === 'SITE_GAM_AD_UNIT' || $code === 'GAM_AD_UNIT';
+    }
+
+    public function otherSource(mixed $row): bool
+    {
+        return data_get($row, 'metric_other_source_rows') !== null
+            ? (int) data_get($row, 'metric_other_source_rows') > 0 : ! $this->siteGam($row);
+    }
+
+    /** A separate AdX request metric, never Google's inventory-wide unfilled impressions. */
+    public function adExchangeUnmatchedRequests(Collection $rows): ?int
+    {
+        if ($rows->isEmpty()) return null;
+        $total = 0;
+        foreach ($rows as $row) {
+            if (! $this->siteGam($row) || $this->otherSource($row) || $this->rowIncomplete($row)) return null;
+            if (data_get($row, 'metric_site_gam_rows') !== null) {
+                // SQL has already validated each fact before aggregating. Never
+                // let a valid day cancel out another day's inconsistent counts.
+                $value = data_get($row, 'ad_exchange_unmatched_requests');
+                if ($value === null) return null;
+                $total += (int) $value;
+                continue;
+            }
+            $requests = data_get($row, 'ad_requests');
+            $responses = data_get($row, 'matched_requests');
+            if ($requests === null || $responses === null || $requests < 0 || $responses < 0 || $responses > $requests) return null;
+            $total += (int) $requests - (int) $responses;
+        }
+
+        return $total;
     }
 
     public function counter(Collection $rows, string $field): ?int
@@ -68,10 +106,16 @@ final class ReportMetricBasis
                 ? $exact("COALESCE({$value}, '')")." <> '".SiteGamReportMetrics::BASIS."'"
                 : "TRIM({$nonblank}) = ''";
         }
-        $invalid = '(('.$exact("COALESCE(metric_connections.connection_type, '')")." = 'SITE_GAM_AD_UNIT' OR "
-            .$exact("COALESCE(metric_sources.code, '')")." = 'GAM_AD_UNIT') AND (".implode(' OR ', $parts).'))';
+        $siteGam = '('.$exact("COALESCE(metric_connections.connection_type, '')")." = 'SITE_GAM_AD_UNIT' OR "
+            .$exact("COALESCE(metric_sources.code, '')")." = 'GAM_AD_UNIT')";
+        $invalid = '('.$siteGam.' AND ('.implode(' OR ', $parts).'))';
         $missing = "SUM(CASE WHEN {$invalid} THEN 1 ELSE 0 END)";
         $query->selectRaw("{$missing} as metric_basis_incomplete");
+        $query->selectRaw("SUM(CASE WHEN {$siteGam} THEN 1 ELSE 0 END) as metric_site_gam_rows");
+        $query->selectRaw("SUM(CASE WHEN {$siteGam} THEN 0 ELSE 1 END) as metric_other_source_rows");
+        $validRequests = "daily_reports.ad_requests IS NOT NULL AND daily_reports.matched_requests IS NOT NULL AND daily_reports.matched_requests >= 0 AND daily_reports.ad_requests >= daily_reports.matched_requests";
+        $query->selectRaw("CASE WHEN SUM(CASE WHEN {$siteGam} AND NOT {$invalid} AND {$validRequests} THEN 0 ELSE 1 END) = 0 "
+            ."THEN SUM(CASE WHEN {$validRequests} THEN daily_reports.ad_requests - daily_reports.matched_requests ELSE 0 END) ELSE NULL END as ad_exchange_unmatched_requests");
         foreach ($fields as $field) {
             if (! in_array($field, ['ad_requests', 'matched_requests', 'unfilled_requests', 'impressions', 'clicks', 'video_starts', 'completed_views', ...PerformanceMetrics::COUNTERS], true)) {
                 throw new \InvalidArgumentException('Unknown performance counter.');

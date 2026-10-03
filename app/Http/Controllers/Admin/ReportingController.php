@@ -41,12 +41,12 @@ class ReportingController extends Controller
 
         $summary = $reports->adminSummary($from, $to, $canonicalCurrency);
         if ($request->validated('export') === 'csv') {
-            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics(), $canonicalCurrency, false);
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics($summary['performance']), $canonicalCurrency, false);
         }
 
         return view('admin.reporting.index', [
             'summary' => $summary,
-            'reportMetrics' => $request->selectedMetrics(),
+            'reportMetrics' => $request->selectedMetrics($summary['performance']),
             'sources' => ReportSource::query()->withCount('connections')->orderByDesc('is_primary')->orderBy('name')->get(),
             'connections' => ReportSourceConnection::withoutGlobalScopes()->with('source')->latest()->limit(100)->get(),
             'imports' => ReportImportJob::withoutGlobalScopes()->with('connection.source')->latest()->limit(100)->get(),

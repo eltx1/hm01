@@ -82,7 +82,7 @@ class ReportMetricBasisTest extends TestCase
     private function assertUnavailable(array $summary): void
     {
         $this->assertTrue($summary['metric_basis_incomplete']);
-        foreach (['impressions', 'clicks', 'ctr_bp', 'ecpm_minor', 'viewability_bp', ...PerformanceMetrics::COUNTERS] as $metric) {
+        foreach (['impressions', 'clicks', 'ctr_bp', 'ecpm_minor', 'viewability_bp', 'ad_exchange_unmatched_requests', ...PerformanceMetrics::COUNTERS] as $metric) {
             $this->assertArrayHasKey($metric, $summary);
             $this->assertNull($summary[$metric], $metric.' must not mix incompatible report bases');
         }
@@ -91,6 +91,7 @@ class ReportMetricBasisTest extends TestCase
     private function assertKnown(array $summary, int $grossEcpm = 9750): void
     {
         $this->assertFalse($summary['metric_basis_incomplete']);
+        $this->assertSame(($summary['has_site_ad_exchange'] ?? false) ? 100 : null, $summary['ad_exchange_unmatched_requests']);
         $this->assertSame(400, $summary['impressions']);
         $this->assertSame(8, $summary['clicks']);
         $this->assertSame(200, $summary['ctr_bp']);

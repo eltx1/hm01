@@ -22,11 +22,13 @@ class WebsiteReportController extends Controller
                     ->orWhereHas('publisher', fn ($publisher) => $publisher->where('display_name', 'like', '%'.$search.'%'));
             }))->orderBy('display_name')->orderBy('id')->paginate(24)->withQueryString();
 
+        $totals = $reports->summaries($sites->getCollection(), $request->validated('from'), $request->validated('to'));
+
         return view('admin.reporting.websites', [
             'sites' => $sites, 'search' => $search,
             'from' => $request->validated('from'), 'to' => $request->validated('to'),
-            'metrics' => $request->selectedMetrics(), 'currency' => $reports->currency(),
-            'totals' => $reports->summaries($sites->getCollection(), $request->validated('from'), $request->validated('to')),
+            'metrics' => $request->selectedMetrics(['has_site_ad_exchange' => $totals->contains('has_site_ad_exchange', true)]), 'currency' => $reports->currency(),
+            'totals' => $totals,
         ]);
     }
 
@@ -34,11 +36,11 @@ class WebsiteReportController extends Controller
     {
         $summary = $reports->summary($site, $request->validated('from'), $request->validated('to'));
         if ($request->validated('export') === 'csv') {
-            return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics(), $summary['currency'], false);
+            return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics($summary), $summary['currency'], false);
         }
 
         return view('admin.reporting.website', [
-            'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $request->selectedMetrics(),
+            'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $request->selectedMetrics($summary),
         ]);
     }
 }
