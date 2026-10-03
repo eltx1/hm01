@@ -82,7 +82,7 @@ class ReportMetricBasisTest extends TestCase
     private function assertUnavailable(array $summary): void
     {
         $this->assertTrue($summary['metric_basis_incomplete']);
-        foreach (['impressions', 'clicks', 'ctr_bp', 'ecpm_minor', 'viewability_bp', ...PerformanceMetrics::COUNTERS] as $metric) {
+        foreach (['impressions', 'clicks', 'ctr_bp', 'ecpm_minor', 'viewability_bp', 'ad_exchange_unmatched_requests', ...PerformanceMetrics::COUNTERS] as $metric) {
             $this->assertArrayHasKey($metric, $summary);
             $this->assertNull($summary[$metric], $metric.' must not mix incompatible report bases');
         }
@@ -91,6 +91,7 @@ class ReportMetricBasisTest extends TestCase
     private function assertKnown(array $summary, int $grossEcpm = 9750): void
     {
         $this->assertFalse($summary['metric_basis_incomplete']);
+        $this->assertSame(($summary['has_site_ad_exchange'] ?? false) ? 100 : null, $summary['ad_exchange_unmatched_requests']);
         $this->assertSame(400, $summary['impressions']);
         $this->assertSame(8, $summary['clicks']);
         $this->assertSame(200, $summary['ctr_bp']);
@@ -351,10 +352,10 @@ class ReportMetricBasisTest extends TestCase
             $this->assertCount(3, $summary['days']);
             $csv = $this->get(route($route, [...$parameters, 'export' => 'csv']))->assertOk()->streamedContent();
             $rows = $this->csvRows($csv);
-            $this->assertSame('Publisher earnings (USD)', $rows[0][7]);
-            $this->assertSame([self::FROM, '', '', '', '', '', '', '27.30', '0.00', '27.30'], $rows[1]);
-            $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '0.00', '0.00', '0.00'], $rows[2]);
-            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '11', '27.30', '0.00', '27.30'], $rows[3]);
+            $this->assertSame('Publisher earnings (USD)', $rows[0][8]);
+            $this->assertSame([self::FROM, '', '', '', '', '', '', '', '27.30', '0.00', '27.30'], $rows[1]);
+            $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00', '0.00', '0.00'], $rows[2]);
+            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '100', '11', '27.30', '0.00', '27.30'], $rows[3]);
             $this->assertStringNotContainsString('Gross revenue', $csv);
             $this->assertStringNotContainsString('876543', $csv);
         }
@@ -363,9 +364,9 @@ class ReportMetricBasisTest extends TestCase
         $csv = $this->get(route('admin.reporting.websites.show', ['site' => $site, ...$parameters, 'export' => 'csv']))
             ->assertOk()->streamedContent();
         $rows = $this->csvRows($csv);
-        $this->assertSame([self::FROM, '', '', '', '', '', '', '39.00'], $rows[1]);
-        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '0.00'], $rows[2]);
-        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '11', '39.00'], $rows[3]);
+        $this->assertSame([self::FROM, '', '', '', '', '', '', '', '39.00'], $rows[1]);
+        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00'], $rows[2]);
+        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '11', '39.00'], $rows[3]);
         $this->assertStringNotContainsString('876543', $csv);
     }
 

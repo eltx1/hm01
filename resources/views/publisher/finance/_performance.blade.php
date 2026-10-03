@@ -18,6 +18,7 @@
     </article>
     <x-publisher-report-metrics :totals="$performance" :currency="$performance['currency']" />
     </div>
+    <x-report-unmatched-help :totals="$performance" />
     <article class="report-chart-card">
         <div class="report-card-heading"><h3>Earnings over time</h3><span class="report-state">{{ $performance['currency'] }} · Your earnings</span></div>
         <x-report-chart :rows="$performance['days']" date-key="label" value-key="earnings_minor" :currency="$performance['currency']" :from="$performance['from']" :to="$performance['to']" label="Daily publisher earnings" :responsive="true" />

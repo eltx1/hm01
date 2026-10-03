@@ -210,6 +210,8 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('AD_EXCHANGE_V1', $scope['metric_basis']);
         $this->assertSame($scope['fingerprint'], data_get($row->dimension->external_dimensions, 'gam_report_scope'));
         $this->assertSame(20, (int) $row->unfilled_requests);
+        $this->assertSame(20, app(\App\Services\Reporting\PerformanceMetrics::class)
+            ->summarize(collect([$row->fresh()]), 'gross_revenue_minor')['ad_exchange_unmatched_requests']);
         $this->assertNull($row->unfilled_impressions);
     }
 
@@ -426,6 +428,8 @@ class SiteGamReportingTest extends TestCase
         $row = DailyReport::withoutGlobalScopes()->sole();
         $this->assertSame(12345, (int) $row->gross_revenue_minor);
         $this->assertSame(20, (int) $row->unfilled_requests);
+        $this->assertSame(20, app(\App\Services\Reporting\PerformanceMetrics::class)
+            ->summarize(collect([$row->fresh()]), 'gross_revenue_minor')['ad_exchange_unmatched_requests']);
         $this->assertNull($row->unfilled_impressions);
         $this->assertNull($row->active_view_viewable_impressions);
         $this->assertNull($row->active_view_measurable_impressions);
