@@ -50,6 +50,21 @@ jobs:
           cp .env.example .env
           php artisan key:generate
           HORUS_UI_FIXTURES=1 php artisan test --filter='FormExperienceTest|ReportPerformanceMetricsTest|AdExchangeUnmatchedRequestsTest|NullableReportingMetricsViewTest|VideoReportExperienceTest|GamRevenueComparisonTest|GamRevenueCorrectionTest'
+      - name: Build and inspect Video report previews
+        run: |
+          npm run build
+          npx playwright test --config=playwright.form-experience.config.js video-reporting-experience.playwright.spec.js
+      - name: Preserve Video report visual evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: video-report-experience-${{ github.sha }}
+          path: |
+            test-results/form-experience/**/video-report-*.png
+            test-results/form-experience/**/error-context.md
+            storage/framework/testing/video-reporting/*.html
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Validate deployment foundation
         run: |
           bash -n ops/deploy/horus-atomic-deploy.sh

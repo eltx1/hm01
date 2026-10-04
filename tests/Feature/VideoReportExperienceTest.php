@@ -100,8 +100,8 @@ class VideoReportExperienceTest extends TestCase
         $this->assertStringContainsString('Video Horus margin', $csv);
         $this->assertStringNotContainsString('2026-09-21', $csv);
         $filtered = $this->get(route('publisher.reporting.index', ['from' => '2026-09-20', 'to' => '2026-09-20']));
-        // Staff cannot request publisher data by switching a route.
-        $filtered->assertForbidden();
+        // No publisher belongs to the staff organization; the scoped lookup must not expose another tenant.
+        $filtered->assertNotFound();
         $this->actingAs($user);
         $filtered = $this->get(route('publisher.reporting.index', ['from' => '2026-09-20', 'to' => '2026-09-20', 'export' => 'video_csv']))->assertOk()->streamedContent();
         $this->assertStringNotContainsString('2026-09-18', $filtered);
