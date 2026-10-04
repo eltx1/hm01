@@ -86,7 +86,7 @@ final class SiteGamUnfilledSynchronizer
                 $csv = $this->google->download($binding->gamConnection, $job['id']);
                 try { $days = self::parse($csv, $binding->ad_unit_id, $from, $to); }
                 catch (\Throwable $error) { unset($state['pending']); throw $error; }
-                DB::transaction(function () use ($binding, $identity, &$state, $days, $job, $to, $last): void {
+                $state = DB::transaction(function () use ($binding, $identity, $state, $days, $job, $to, $last): array {
                     $locked = SiteGamReportBinding::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->id);
                     $locked->load('connection', 'site', 'gamConnection');
                     $this->assertBinding($locked);
@@ -106,6 +106,7 @@ final class SiteGamUnfilledSynchronizer
                     $this->checkpoint($locked, $identity, $state);
                     $this->audit->record('reporting.site_gam.unit_unfilled_synced', $locked->organization_id, auditable: $locked,
                         metadata: ['scope' => self::SCOPE, 'from' => $job['from'], 'to' => $job['to'], 'stored_days' => count($days), 'financial_rows_changed' => false]);
+                    return $state;
                 });
                 return ['status' => 'COMPLETED', 'stored_days' => count($days)];
             } catch (\Throwable $error) {

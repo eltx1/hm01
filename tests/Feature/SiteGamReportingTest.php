@@ -1435,6 +1435,12 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(37, $totals['unfilled_impressions']);
         $this->assertSame(20, $totals['ad_exchange_unmatched_requests']);
         $this->assertSame(95, $totals['impressions']);
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:sync-unit-unfilled', ['--wait' => 0]));
+        $verification = json_decode(\Illuminate\Support\Facades\Artisan::output(), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(1, $verification['observed_days']);
+        $this->assertSame(1, $verification['projected_days']);
+        $this->assertSame(['PASS'], $verification['projection_checks']);
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
         // Another ordinary financial refresh must not erase the independently stored counter.
         $csv = $this->csv();
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
@@ -1478,6 +1484,27 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
         $this->assertSame($jobs, $this->google->jobs);
         $status = 200;
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $this->assertSame($jobs, $this->google->jobs);
+        $this->assertSame(17, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
+    }
+
+    public function test_unit_unfilled_storage_rollback_keeps_the_original_job_and_history_cursor(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,17\n")]);
+        $fail = true;
+        \App\Models\AuditLog::creating(function ($log) use (&$fail): void {
+            if ($fail && $log->event === 'reporting.site_gam.unit_unfilled_synced') throw new \RuntimeException('Storage unavailable');
+        });
+        $sync = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class);
+        $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
+        $jobs = $this->google->jobs;
+        $state = data_get($binding->connection->fresh()->configuration, 'unit_unfilled');
+        $this->assertNotNull($state['pending']['id']);
+        $this->assertArrayNotHasKey('history_next', $state);
+        $this->assertDatabaseCount('site_gam_unfilled_reports', 0);
+        $fail = false;
         $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
         $this->assertSame($jobs, $this->google->jobs);
         $this->assertSame(17, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
