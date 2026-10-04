@@ -63,7 +63,11 @@ final class SiteGamReportingService
         $networkCurrency = strtoupper((string) $network['currencyCode']);
 
         return DB::transaction(function () use ($site, $gam, $unit, $network, $networkCurrency, $reportCurrency, $actor): SiteGamReportBinding {
-            GamConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($gam->id);
+            $lockedGam = GamConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($gam->id);
+            app(SiteGamUnitClaims::class)->lockNetwork((string) $lockedGam->network_code);
+            if ((string) $lockedGam->network_code !== (string) $gam->network_code) {
+                throw ValidationException::withMessages(['gam_connection_id' => 'The network changed while verifying this connection. Retry with its current identity.']);
+            }
             Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
             $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']

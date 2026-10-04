@@ -524,4 +524,96 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertSame(ReportImportStatus::Failed, $job->status);
         $this->assertSame($before, DB::table('daily_reports')->get()->toJson());
     }
+    public function test_duplicate_credential_network_history_moves_video_forward_without_same_day_credit(): void
+    {
+        [$admin, , , , $gam] = $context = $this->context();
+        $duplicate = $this->makeGamConnection($admin->organization, $admin, ['network_code' => $gam->network_code]);
+        $network = app(ReportingBridge::class)->connectionForGam($duplicate, $admin);
+        $day = CarbonImmutable::parse('2026-09-21');
+        $this->assertCompleted(app(ReportImportService::class)->importRows($network, [[
+            'date' => '2026-09-21', 'ad_unit_id' => '67890', 'gam_connection_id' => $duplicate->id,
+            'gross_revenue_minor' => 1000, 'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Estimated, $day, $day, $admin, importType: 'API'));
+        $legacy = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertNull($legacy->dimension->site_id);
+        $before = $legacy->getAttributes();
+        $video = $this->video($context);
+        $this->assertSame('2026-09-22', $video->starts_on->toDateString());
+        $this->assertSame($before, $legacy->fresh()->getAttributes());
+        $this->finalizeClock();
+        $this->assertSame(ReportImportStatus::Duplicate, $this->import($video)->status);
+        $this->assertDatabaseCount('daily_reports', 1);
+        $this->assertSame(1000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_existing_unassigned_same_network_unit_fact_blocks_overlapping_video_import(): void
+    {
+        [$admin, , , , $gam] = $context = $this->context();
+        $duplicate = $this->makeGamConnection($admin->organization, $admin, ['network_code' => $gam->network_code]);
+        $network = app(ReportingBridge::class)->connectionForGam($duplicate, $admin);
+        $day = CarbonImmutable::parse('2026-09-20');
+        $this->assertCompleted(app(ReportImportService::class)->importRows($network, [[
+            'date' => '2026-09-20', 'ad_unit_id' => '67890', 'gam_connection_id' => $duplicate->id,
+            'gross_revenue_minor' => 1000, 'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, importType: 'API'));
+        $legacy = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertNull($legacy->dimension->site_id);
+        $video = $this->video($context);
+        $this->assertSame('2026-09-21', $video->starts_on->toDateString());
+        // Deliberately seed an out-of-band historical overlap. This is fixture
+        // setup, not an authorized historical correction or production path.
+        DB::table('daily_reports')->where('id', $legacy->id)->update(['report_date' => '2026-09-21']);
+        $before = DB::table('daily_reports')->get()->toJson();
+        $this->finalizeClock();
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $job = $this->import($video);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertSame($before, DB::table('daily_reports')->get()->toJson());
+        $this->assertSame(0, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $video->report_source_connection_id)->count());
+    }
+
+    public function test_network_mutex_query_precedes_ownership_and_history_reads_for_both_bindings_and_source_import(): void
+    {
+        [$admin, , , , $gam] = $context = $this->context();
+        // This is a deterministic ordering seam on SQLite, not a concurrent
+        // MySQL isolation test. Production uses the same lockForUpdate calls.
+        $capture = function (callable $action): array {
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $action();
+                return array_map(fn ($query) => str_replace(['"', '`'], '', strtolower($query['query'])), DB::getQueryLog());
+            } finally {
+                DB::disableQueryLog();
+            }
+        };
+        $assertOrder = function (array $queries, string $label): void {
+            $mutex = null;
+            $gamRead = null;
+            $decisions = [];
+            foreach ($queries as $index => $query) {
+                if (! str_starts_with(ltrim($query), 'select')) continue;
+                if (preg_match('/\bfrom gam_connections\b/', $query) && $mutex === null) $gamRead = $index;
+                if (preg_match('/\bfrom site_gam_reporting_network_locks\b/', $query) && $mutex === null) $mutex = $index;
+                if (preg_match('/\bfrom (sites|site_gam_report_bindings|site_gam_video_report_bindings|daily_reports|hourly_reports)\b/', $query)) $decisions[] = $index;
+            }
+            $this->assertNotNull($gamRead, $label.' must read the current GAM row.');
+            $this->assertNotNull($mutex, $label.' must acquire the stable network mutex.');
+            $this->assertLessThan($mutex, $gamRead, $label.' GAM row read precedes network mutex.');
+            $this->assertNotEmpty($decisions, $label.' must exercise ownership/history decisions.');
+            foreach ($decisions as $index) $this->assertLessThan($index, $mutex, $label.' network mutex precedes ownership/history reads: '.$queries[$index]);
+        };
+        $assertOrder($capture(fn () => $this->bind($context)), 'Primary bind');
+        $assertOrder($capture(fn () => $this->video($context)), 'Video bind');
+        $network = app(ReportingBridge::class)->connectionForGam($gam, $admin);
+        $day = CarbonImmutable::parse('2026-09-21');
+        $assertOrder($capture(function () use ($network, $gam, $day, $admin): void {
+            $job = app(ReportImportService::class)->importRows($network, [[
+                'date' => '2026-09-21', 'ad_unit_id' => '99999', 'gam_connection_id' => $gam->id,
+                'gross_revenue_minor' => 1000, 'currency' => 'USD',
+            ]], ReportGranularity::Daily, ReportFinality::Estimated, $day, $day, $admin, importType: 'API');
+            $this->assertCompleted($job);
+        }), 'Network source import');
+        $this->assertDatabaseCount('site_gam_reporting_network_locks', 1);
+    }
 }

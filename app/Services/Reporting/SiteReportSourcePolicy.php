@@ -19,7 +19,8 @@ final class SiteReportSourcePolicy
     {
         $gamId = $row['gam_connection_id'] ?? ($connection->connection_type === 'GAM_CONNECTION' ? $connection->connection_id : null);
         if ($gamId) {
-            GamConnection::withoutGlobalScopes()->whereKey($gamId)->lockForUpdate()->first();
+            $gam = GamConnection::withoutGlobalScopes()->whereKey($gamId)->lockForUpdate()->first();
+            if ($gam) app(SiteGamUnitClaims::class)->lockNetwork((string) $gam->network_code);
         }
         if (! empty($row['site_id'])) {
             Site::withoutGlobalScopes()->whereKey($row['site_id'])->lockForUpdate()->first();
@@ -30,7 +31,7 @@ final class SiteReportSourcePolicy
             $model = SiteGamReportBinding::modelForConnection($connection);
             $binding = $model::withoutGlobalScopes()->with('site')->where('report_source_connection_id', $connection->id)
                 ->whereDate('starts_on', '<=', $row['date'])
-                ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $row['date']))->find($connection->connection_id);
+                ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $row['date']))->lockForUpdate()->find($connection->connection_id);
             if ($importType !== 'API' || ! $binding || $binding->site_id !== ($row['site_id'] ?? null)
                 || $binding->organization_id !== ($row['organization_id'] ?? null)
                 || $binding->organization_id !== $connection->organization_id
@@ -67,17 +68,17 @@ final class SiteReportSourcePolicy
                 return false;
             }
         } elseif (! empty($row['site_id'])
-            && (clone $bindings)->where('site_id', $row['site_id'])->exists()) {
+            && (clone $bindings)->where('site_id', $row['site_id'])->lockForUpdate()->first()) {
             return false;
         }
         // A full-network import may identify the Google unit before it has a local site mapping.
         $unit = $row['gam_ad_unit_id'] ?? $row['ad_unit_id'] ?? $row['dimension.ad_unit_id'] ?? null;
         if ($unit && $gamId) {
-            $network = GamConnection::withoutGlobalScopes()->whereKey($gamId)->value('network_code');
+            $network = $gam?->network_code;
             $videoOwnsUnit = SiteGamVideoReportBinding::withoutGlobalScopes()->whereDate('starts_on', '<=', $row['date'])
                 ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $row['date']))
-                ->where('network_code', $network)->where('ad_unit_id', (string) $unit)->exists();
-            if ($network && ($bindings->where('network_code', $network)->where('ad_unit_id', (string) $unit)->exists() || $videoOwnsUnit)) {
+                ->where('network_code', $network)->where('ad_unit_id', (string) $unit)->lockForUpdate()->first();
+            if ($network && ($bindings->where('network_code', $network)->where('ad_unit_id', (string) $unit)->lockForUpdate()->first() || $videoOwnsUnit)) {
                 return false;
             }
         }
@@ -87,7 +88,7 @@ final class SiteReportSourcePolicy
         if (! $providerFinancialConnection && ! empty($row['site_id'])) {
             $video = SiteGamVideoReportBinding::withoutGlobalScopes()->where('site_id', $row['site_id'])
                 ->whereDate('starts_on', '<=', $row['date'])
-                ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $row['date']))->first();
+                ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $row['date']))->lockForUpdate()->first();
             if ($video && (! $unit || ! $gamId)) {
                 throw ValidationException::withMessages(['source' => 'This website has payable Video reporting. The other source must prove a distinct network/ad unit before importing overlapping dates. Review its attribution first.']);
             }
@@ -98,11 +99,14 @@ final class SiteReportSourcePolicy
 
     private function assertNoAmbiguousVideoFacts(SiteGamVideoReportBinding $binding, string $date): void
     {
+        $networkIds = GamConnection::withoutGlobalScopes()->where('network_code', $binding->network_code)->pluck('id');
         foreach ([DailyReport::class, HourlyReport::class] as $model) {
             $facts = $model::withoutGlobalScopes()->whereDate('report_date', $date)
                 ->where('report_source_connection_id', '!=', $binding->report_source_connection_id)
-                ->whereHas('dimension', fn ($q) => $q->where('site_id', $binding->site_id))
-                ->with('dimension', 'connection')->get();
+                ->where(fn ($q) => $q->whereHas('dimension', fn ($dimension) => $dimension->where('site_id', $binding->site_id)
+                    ->orWhereIn('gam_connection_id', $networkIds))
+                    ->orWhereHas('connection', fn ($source) => $source->where('connection_type', 'GAM_CONNECTION')->whereIn('connection_id', $networkIds)))
+                ->with('dimension', 'connection')->lockForUpdate()->get();
             foreach ($facts as $fact) {
                 if (in_array($fact->connection?->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true)) continue;
                 $external = $fact->dimension?->external_dimensions ?? [];

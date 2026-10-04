@@ -15,7 +15,9 @@ The main binding remains in `site_gam_report_bindings`. Video uses
 `SITE_GAM_VIDEO_AD_UNIT`. Both use one physical-unit claim registry, keyed by
 network plus unit rather than credential ID. A unit cannot be a simultaneous
 primary and Video financial source, even with different connection credentials.
-Rebinding closes only its own previous interval and starts after previous facts,
+A durable database network mutex serializes binds with financial imports even
+when they use different credential records. Current locking reads precede that
+mutex; binding/history reads follow it. Rebinding closes only its own previous interval and starts after previous facts,
 closed periods and prior ownership of that physical unit. New Video bindings
 start prospectively, never as an implicit historical financial correction.
 

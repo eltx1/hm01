@@ -10,6 +10,13 @@ use Illuminate\Validation\ValidationException;
 /** Call inside binding transaction. Unique physical key is the cross-purpose mutex. */
 final class SiteGamUnitClaims
 {
+    /** Lock after a current GAM row read and before site/history reads. Never remove mutex rows. */
+    public function lockNetwork(string $network): void
+    {
+        DB::table('site_gam_reporting_network_locks')->insertOrIgnore(['network_code' => $network]);
+        DB::table('site_gam_reporting_network_locks')->where('network_code', $network)->lockForUpdate()->firstOrFail();
+    }
+
     public function reserve(string $key, string $type, string $id): void
     {
         foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class] as $model) {

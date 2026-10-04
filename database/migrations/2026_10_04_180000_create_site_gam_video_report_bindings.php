@@ -9,6 +9,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('site_gam_reporting_network_locks', function (Blueprint $table): void {
+            $table->string('network_code', 32)->primary();
+        });
         Schema::create('site_gam_video_report_bindings', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->foreignUlid('organization_id')->constrained()->restrictOnDelete();
@@ -47,6 +50,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('site_gam_reporting_unit_claims');
+        Schema::dropIfExists('site_gam_reporting_network_locks');
         Schema::dropIfExists('site_gam_video_report_bindings');
     }
 };
