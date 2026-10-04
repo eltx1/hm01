@@ -19,7 +19,7 @@
             <header><div><h3>{{ $site->display_name }}</h3><p>{{ $site->primary_domain }}</p><p class="muted">{{ $site->publisher?->display_name }}</p></div><x-status-badge :status="$site->status" /></header>
             @if($row)
                 <div class="admin-website-revenue"><span>Gross revenue</span><strong>{{ \App\Support\Money::formatMinor($row['gross_revenue_minor']) }} <small>{{ $currency }}</small></strong></div>
-                <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::COLUMNS[$metric] }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
+                <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::label($metric, $row) }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
             @else<p class="muted">No finalized reports for these dates.</p>@endif
             <a class="hm-button-secondary" href="{{ route('admin.reporting.websites.show', ['site' => $site, 'from' => $from, 'to' => $to, 'metrics' => $metrics]) }}" aria-label="View report for {{ $site->display_name }}">View report →</a>
         </article>

@@ -3,7 +3,7 @@
     <table>
         <caption class="sr-only">{{ $caption }} · {{ $currency }}</caption>
         <thead><tr><th scope="col">{{ $label }}</th>
-            @foreach($metrics as $metric)<th scope="col">{{ \App\Services\Reporting\PerformanceMetrics::COLUMNS[$metric] }}@if($metric === 'ecpm_minor') <small>({{ $currency }})</small>@endif</th>@endforeach
+            @foreach($metrics as $metric)<th scope="col">{{ \App\Services\Reporting\PerformanceMetrics::label($metric, ['has_site_ad_exchange' => collect($rows)->contains(fn ($row) => $row['has_site_ad_exchange'] ?? false)]) }}@if($metric === 'ecpm_minor') <small>({{ $currency }})</small>@endif</th>@endforeach
             <th scope="col">{{ $revenueLabel }} <small>({{ $currency }})</small></th>
         </tr></thead>
         <tbody>@forelse($rows as $row)<tr><th scope="row">{{ $row[$labelKey] }}</th>
@@ -20,7 +20,7 @@
                 <span><strong>{{ $label === 'Date' ? \Carbon\CarbonImmutable::parse($row[$labelKey])->format('j M Y') : $row[$labelKey] }}</strong></span>
                 <span class="publisher-row-earnings"><small>{{ $revenueLabel }}</small><strong>{{ \App\Support\Money::formatMinor((int) $row[$revenueKey]) }} <small>{{ $currency }}</small></strong></span>
             </div>
-            <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::COLUMNS[$metric] }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
+            <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::label($metric, $row) }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
         </div>
     @empty<p class="muted">No reports for these dates.</p>@endforelse
 </div>

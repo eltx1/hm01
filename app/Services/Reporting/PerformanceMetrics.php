@@ -66,6 +66,10 @@ final class PerformanceMetrics
             'ctr_bp' => $impressions > 0 && $clicks !== null ? (int) round($clicks * 10000 / $impressions) : null,
             'ecpm_minor' => $impressions > 0 ? (int) round($rows->sum($revenueField) * 1000 / $impressions) : null,
             ...($incomplete ? array_fill_keys([...self::COUNTERS, 'viewability_bp'], null) : $this->counters($rows)),
+            // Original SOAP Unfilled has an independent, unit-only basis.
+            // Its availability does not depend on exact-hostname AdX counters.
+            'unfilled_impressions' => app(SiteGamUnfilledProjection::class)->total($rows),
+            'unfilled_scope' => $rows->contains(fn ($row) => $basis->siteGam($row)) ? 'AD_UNIT_ALL_SITES_V1' : null,
         ];
     }
 
@@ -92,5 +96,11 @@ final class PerformanceMetrics
             'ecpm_minor' => \App\Support\Money::formatMinor((int) $value),
             default => number_format((int) $value),
         };
+    }
+
+    public static function label(string $metric, array $context = []): string
+    {
+        return self::COLUMNS[$metric].($metric === 'unfilled_impressions' && ($context['has_site_ad_exchange'] ?? false)
+            ? ' (ad unit, all sites)' : '');
     }
 }

@@ -99,7 +99,9 @@ class ReportMetricBasisTest extends TestCase
         $this->assertSame(6250, $summary['viewability_bp']);
         $this->assertSame(100, $summary['active_view_viewable_impressions']);
         $this->assertSame(160, $summary['active_view_measurable_impressions']);
-        $this->assertSame(11, $summary['unfilled_impressions']);
+        // These fixtures prove only the AdX basis, not an independent original
+        // unit report. Other source counters retain their existing meaning.
+        $this->assertSame(($summary['has_site_ad_exchange'] ?? false) ? null : 11, $summary['unfilled_impressions']);
     }
 
     public function test_legacy_positive_and_zero_rows_are_unavailable_without_changing_revenue(): void
@@ -179,7 +181,7 @@ class ReportMetricBasisTest extends TestCase
             $this->assertSame(120, $summary['ctr_bp']);
             $this->assertSame(10000, $summary['ecpm_minor']);
             $this->assertSame(6923, $summary['viewability_bp']);
-            $this->assertSame(20, $summary['unfilled_impressions']);
+            $this->assertNull($summary['unfilled_impressions'], 'AdX provenance cannot prove original unit Unfilled.');
         }
         $publisherSummary = app(PublisherPerformanceService::class)->summary($publisher, self::FROM, self::KNOWN_DAY);
         $this->assertSame(7000, $publisherSummary['earnings_minor']);
@@ -303,9 +305,10 @@ class ReportMetricBasisTest extends TestCase
         $this->actingAs($admin);
         $zero = app(PerformanceMetrics::class)->summarize(collect([$row->fresh()]), 'gross_revenue_minor');
         $this->assertFalse($zero['metric_basis_incomplete']);
-        foreach (['impressions', 'clicks', ...PerformanceMetrics::COUNTERS] as $key) {
+        foreach (array_diff(['impressions', 'clicks', ...PerformanceMetrics::COUNTERS], ['unfilled_impressions']) as $key) {
             $this->assertSame(0, $zero[$key]);
         }
+        $this->assertNull($zero['unfilled_impressions'], 'A synthetic AdX zero is not a verified original Unfilled zero.');
         foreach (['ctr_bp', 'ecpm_minor', 'viewability_bp'] as $key) {
             $this->assertNull($zero[$key]);
         }
@@ -352,10 +355,11 @@ class ReportMetricBasisTest extends TestCase
             $this->assertCount(3, $summary['days']);
             $csv = $this->get(route($route, [...$parameters, 'export' => 'csv']))->assertOk()->streamedContent();
             $rows = $this->csvRows($csv);
+            $this->assertSame('Unfilled impressions (ad unit, all sites)', $rows[0][7]);
             $this->assertSame('Publisher earnings (USD)', $rows[0][8]);
             $this->assertSame([self::FROM, '', '', '', '', '', '', '', '27.30', '0.00', '27.30'], $rows[1]);
             $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00', '0.00', '0.00'], $rows[2]);
-            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '100', '11', '27.30', '0.00', '27.30'], $rows[3]);
+            $this->assertSame([self::TODAY, '400', '8', '2.00%', '68.25', '62.50%', '100', '', '27.30', '0.00', '27.30'], $rows[3]);
             $this->assertStringNotContainsString('Gross revenue', $csv);
             $this->assertStringNotContainsString('876543', $csv);
         }
@@ -364,9 +368,10 @@ class ReportMetricBasisTest extends TestCase
         $csv = $this->get(route('admin.reporting.websites.show', ['site' => $site, ...$parameters, 'export' => 'csv']))
             ->assertOk()->streamedContent();
         $rows = $this->csvRows($csv);
+        $this->assertSame('Unfilled impressions (ad unit, all sites)', $rows[0][7]);
         $this->assertSame([self::FROM, '', '', '', '', '', '', '', '39.00'], $rows[1]);
         $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00'], $rows[2]);
-        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '11', '39.00'], $rows[3]);
+        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '', '39.00'], $rows[3]);
         $this->assertStringNotContainsString('876543', $csv);
     }
 

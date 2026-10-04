@@ -103,3 +103,34 @@ Execution options: GitHub Actions → Diagnose exact-site Unfilled REST → Run
 workflow → main, or an already authorized GitHub CLI session:
 `gh workflow run diagnose-unfilled-rest.yml --repo eltx1/hm01 --ref main`.
 No workflow dispatch is performed as part of introducing this operational tool.
+
+## Restored original SOAP unit counter
+
+The original pre-exact-site importer requested `DATE + AD_UNIT_ID` and
+`TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS`. The exact-site AdX importer removed
+that column and stored null. Restore the original scope using
+`SiteGamUnfilledSynchronizer`, independently from AdX financial imports:
+
+- The same existing SOAP connection, publisher timezone, FLAT unit view and exact
+  selected unit are used. No `SITE_NAME` dimension or request-count substitute.
+- `site_gam_unfilled_reports` stores only unit/day observations and their Google
+  job provenance. No daily/hourly financial fact, dimension identity, settlement,
+  ledger or historical monetary correction is written.
+- The existing five-minute Site GAM synchronization invokes this independent path,
+  even when AdX synchronization fails. Pending Google jobs resume; malformed or
+  failed responses preserve verified observations. Missing CSV days stay unknown.
+- Historical catch-up starts at the binding's original start, respects its end,
+  and processes at most 31 days per invocation. Recent seven-day observations
+  refresh hourly after catch-up. A reported zero is distinct from a missing day.
+- UI and CSV label this original counter as **ad unit, all sites**. Projections
+  match historical binding/source/organization/unit/day and deduplicate identical
+  network/unit/timezone/day totals across financial dimensions or credentials.
+  Other AdX metrics remain exact-domain and exact-unit.
+
+Operational recovery and bounded initial verification:
+`php artisan reporting:sync-unit-unfilled --wait=180`.
+The command has no financial-import path and prints only closed statuses and
+aggregate evidence coverage, never identifiers or raw Google responses. The
+reviewed immediate successor of PR244 invokes it once after healthy deployment;
+subsequent ordinary deployments skip this activation. Scheduled synchronization
+continues to refresh the original counter.
