@@ -51,7 +51,10 @@ class SyncSiteGamUnfilled extends Command
                 ->orderByDesc('report_date')->limit(31)->get()->keyBy(fn ($row) => $row->report_date->toDateString());
             $facts = DailyReport::withoutGlobalScopes()->where('organization_id', $binding->organization_id)
                 ->where('report_source_connection_id', $binding->report_source_connection_id)
-                ->whereIn('report_date', $observations->keys())->with(['dimension', 'connection.source'])->get();
+                ->where(function ($query) use ($observations): void {
+                    if ($observations->isEmpty()) { $query->whereRaw('1 = 0'); return; }
+                    foreach ($observations->keys() as $day) $query->orWhereDate('report_date', $day);
+                })->with(['dimension', 'connection.source'])->get();
             $status = 'NO_FACTS';
             foreach ($facts->groupBy(fn ($row) => $row->report_date->toDateString()) as $day => $rows) {
                 $value = app(PerformanceMetrics::class)->summarize($rows, 'gross_revenue_minor')['unfilled_impressions'];
@@ -64,6 +67,6 @@ class SyncSiteGamUnfilled extends Command
             'metric' => SiteGamUnfilledSynchronizer::COLUMN, 'bindings' => $bindings->count(),
             'statuses' => array_values($results), 'observed_days' => $observed,
             'projected_days' => $projected, 'projection_checks' => $checks, 'financial_writes' => false], JSON_THROW_ON_ERROR));
-        return in_array('SOURCE_UNAVAILABLE', $results, true) ? self::FAILURE : self::SUCCESS;
+        return in_array('SOURCE_UNAVAILABLE', $results, true) || in_array('MISMATCH', $checks, true) ? self::FAILURE : self::SUCCESS;
     }
 }

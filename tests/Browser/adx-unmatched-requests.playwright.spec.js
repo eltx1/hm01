@@ -34,8 +34,9 @@ async function open(page, name) {
 }
 
 const unfilled = 'Unfilled impressions';
+const scopedUnfilled = 'Unfilled impressions (ad unit, all sites)';
 const unmatched = 'Ad Exchange unmatched requests';
-const defaultLabels = ['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', unmatched, unfilled];
+const defaultLabels = ['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', unmatched, scopedUnfilled];
 for (const name of ['publisher', 'publisher-legacy', 'admin', 'website']) {
     test(`${name}: true unfilled impressions remain visible with truthful missing values in both themes`, async ({ page }, info) => {
         const errors = [];
@@ -43,14 +44,14 @@ for (const name of ['publisher', 'publisher-legacy', 'admin', 'website']) {
         await open(page, name);
         const publisher = name.startsWith('publisher');
         const cards = page.locator(publisher ? '.publisher-ad-metrics' : '.report-quality-metrics');
-        const card = cards.locator('article').filter({ has: page.getByText(unfilled, { exact: true }) });
+        const card = cards.locator('article').filter({ has: page.getByText(scopedUnfilled, { exact: true }) });
         await expect(card).toHaveCount(1);
         await expect(card.locator('strong')).toHaveText(publisher ? 'Unavailable' : '—');
         await expect(cards.getByText(unmatched, { exact: true })).toBeVisible();
         const unmatchedCard = cards.locator('article').filter({ has: page.getByText(unmatched, { exact: true }) });
         await expect(unmatchedCard.locator('strong')).toHaveText(name === 'publisher-legacy' ? 'Unavailable' : '20');
         await expect(page.locator('.report-unmatched-help')).toContainText('Unfilled impressions are a source-reported metric');
-        await expect(page.locator('.report-unmatched-help')).toContainText('Missing values remain unavailable, never estimated from requests');
+        await expect(page.locator('.report-unmatched-help')).toContainText('Missing dates remain unavailable, never estimated from requests');
         const caption = publisher ? 'Daily publisher performance' : name === 'website' ? 'Website daily performance' : 'Daily admin performance';
         const details = page.locator(`[aria-label="${caption}"]`);
         if (name !== 'admin' && page.viewportSize().width <= 600) {
@@ -59,7 +60,7 @@ for (const name of ['publisher', 'publisher-legacy', 'admin', 'website']) {
                 await expect(row.locator('dd').last()).toHaveText('Unavailable');
             }
         } else {
-            await expect(details.getByRole('columnheader', { name: unfilled, exact: true })).toBeVisible();
+            await expect(details.getByRole('columnheader', { name: scopedUnfilled, exact: true })).toBeVisible();
             await expect(details.getByRole('columnheader', { name: unmatched, exact: true })).toBeVisible();
             for (const row of await details.locator('tbody tr').all()) {
                 await expect(row.locator('td').nth(6)).toHaveText(name === 'admin' ? '—' : 'Unavailable');
@@ -95,7 +96,7 @@ for (const name of ['publisher', 'admin', 'website']) {
         await open(page, `${name}-unmatched`);
         const publisher = name === 'publisher';
         const cards = page.locator(publisher ? '.publisher-ad-metrics' : '.report-quality-metrics');
-        await expect(cards.getByText(unfilled, { exact: true })).toBeVisible();
+        await expect(cards.getByText(scopedUnfilled, { exact: true })).toBeVisible();
         await expect(cards.getByText(unmatched, { exact: true })).toBeVisible();
         const caption = publisher ? 'Daily publisher performance' : name === 'website' ? 'Website daily performance' : 'Daily admin performance';
         const details = page.locator(`[aria-label="${caption}"]`);
@@ -104,7 +105,7 @@ for (const name of ['publisher', 'admin', 'website']) {
             await expect(details.locator('.publisher-report-mobile-row dd')).toHaveText(['0', '20']);
         } else {
             await expect(details.getByRole('columnheader', { name: unmatched, exact: true })).toBeVisible();
-            await expect(details.getByRole('columnheader', { name: unfilled, exact: true })).toHaveCount(0);
+            await expect(details.getByRole('columnheader', { name: scopedUnfilled, exact: true })).toHaveCount(0);
             const values = await details.locator('tbody tr td:first-of-type').allTextContents();
             expect(values.sort()).toEqual(['0', '20']);
         }
@@ -119,10 +120,10 @@ for (const name of ['directory', 'directory-mixed', 'directory-mixed-selected'])
         await open(page, name);
         const cards = page.locator('.admin-website-card');
         const adx = cards.filter({ has: page.getByRole('heading', { name: 'Synthetic request website', exact: true }) });
-        const unfilledValue = adx.locator('dl > div').filter({ has: page.getByText(unfilled, { exact: true }) }).locator('dd');
+        const unfilledValue = adx.locator('dl > div').filter({ has: page.getByText(scopedUnfilled, { exact: true }) }).locator('dd');
         await expect(unfilledValue).toHaveText('Unavailable');
         const selected = name.endsWith('-selected');
-        await expect(adx.locator('dt')).toHaveText(selected ? [unmatched, unfilled] : defaultLabels);
+        await expect(adx.locator('dt')).toHaveText(selected ? [unmatched, scopedUnfilled] : defaultLabels);
         if (selected) {
             await expect(adx.locator('dd')).toHaveText(['20', 'Unavailable']);
         }

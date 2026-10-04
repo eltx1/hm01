@@ -311,4 +311,28 @@ class SiteGamUnfilledProjectionTest extends TestCase
         $summary = app(PerformanceMetrics::class)->summarize(collect([$row->fresh(['dimension', 'connection.source'])]), 'gross_revenue_minor');
         $this->assertSame('AD_UNIT_ALL_SITES_V1', $summary['unfilled_scope']);
     }
+    public function test_verified_original_values_reach_admin_publisher_cards_and_csv(): void
+    {
+        $context = $this->context();
+        $this->fact($context);
+        $this->fact($context, self::NEXT);
+        $binding = $this->binding($context);
+        $this->sidecar($binding, 17);
+        $this->sidecar($binding, 0, self::NEXT);
+        $label = 'Unfilled impressions (ad unit, all sites)';
+        $params = ['from' => self::DAY, 'to' => self::NEXT];
+        foreach ([['admin.reporting.index', [], 'admin'],
+            ['admin.reporting.websites.show', ['site' => $context['site']], 'admin'],
+            ['publisher.reporting.index', [], 'user'], ['publisher.finance.overview', [], 'user']] as [$route, $extra, $actor]) {
+            $this->actingAs($context[$actor])->withSession(['two_factor_passed_at' => now()->timestamp]);
+            $response = $this->get(route($route, $params + $extra))->assertOk()->assertSee($label);
+            $this->assertMatchesRegularExpression('/'.preg_quote($label, '/').'<\/(?:h3|p)>\s*<strong>17\s*<\/strong>/', $response->getContent());
+            $csv = $this->get(route($route, $params + $extra + ['export' => 'csv']))->assertOk()->streamedContent();
+            $lines = array_map('str_getcsv', explode("\n", trim($csv)));
+            $column = array_search($label, $lines[0], true);
+            $this->assertNotFalse($column);
+            $this->assertSame(['17', '0'], [$lines[1][$column], $lines[2][$column]]);
+        }
+    }
+
 }

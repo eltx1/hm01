@@ -35,6 +35,10 @@ final class SiteGamUnfilledSynchronizer
             $state = $configuration['unit_unfilled'] ?? [];
             $identity = $this->identity($binding);
             if (($state['identity'] ?? null) !== $identity) $state = ['identity' => $identity];
+            if (isset($state['pending']) && CarbonImmutable::parse($state['pending']['requested_at'])->lt(now()->subHours(6))) {
+                unset($state['pending']);
+                $this->checkpoint($binding, $identity, $state);
+            }
             $ranges = [];
             // Resume the exact prior job even when midnight changed the current window.
             if (isset($state['pending'])) $ranges[] = [$state['pending']['from'], $state['pending']['to']];
@@ -73,12 +77,15 @@ final class SiteGamUnfilledSynchronizer
                 $job = $state['pending'];
                 $status = $this->google->call($binding->gamConnection, 'ReportService', 'getReportJobStatus', ['reportJobId' => $job['id']]);
                 if (($status['value'] ?? '') !== 'COMPLETED') {
-                    if (($status['value'] ?? '') === 'FAILED' || CarbonImmutable::parse($job['requested_at'])->lt(now()->subHours(6))) {
+                    if (($status['value'] ?? '') === 'FAILED') {
+                        unset($state['pending']);
                         throw new RuntimeException('Google unit Unfilled preparation failed or expired.');
                     }
                     return ['status' => 'PENDING', 'stored_days' => 0];
                 }
-                $days = self::parse($this->google->download($binding->gamConnection, $job['id']), $binding->ad_unit_id, $from, $to);
+                $csv = $this->google->download($binding->gamConnection, $job['id']);
+                try { $days = self::parse($csv, $binding->ad_unit_id, $from, $to); }
+                catch (\Throwable $error) { unset($state['pending']); throw $error; }
                 DB::transaction(function () use ($binding, $identity, &$state, $days, $job, $to, $last): void {
                     $locked = SiteGamReportBinding::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->id);
                     $locked->load('connection', 'site', 'gamConnection');
@@ -102,7 +109,8 @@ final class SiteGamUnfilledSynchronizer
                 });
                 return ['status' => 'COMPLETED', 'stored_days' => count($days)];
             } catch (\Throwable $error) {
-                unset($state['pending']);
+                // Transport/status/download/storage failures resume the same Google job.
+                // Only terminal, expired or malformed reports discard their checkpoint.
                 $state['error'] = 'SOURCE_UNAVAILABLE';
                 $this->checkpoint($binding, $identity, $state);
                 // Do not change source financial health or erase verified metrics.

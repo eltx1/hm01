@@ -18,6 +18,7 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private const METRIC = 'ad_exchange_unmatched_requests';
+    private const UNIT_UNFILLED_LABEL = 'Unfilled impressions (ad unit, all sites)';
     private const FROM = '2034-04-15';
     private const TO = '2034-04-16';
 
@@ -192,7 +193,7 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
             if ($route === 'publisher.reporting.index') $this->fixture('publisher', $response);
             $this->assertDefaultCsv($route, $params);
             $this->assertCsv($route, $params);
-            // Explicit selection never replaces or relabels the source-reported KPI.
+            // Explicit selection never substitutes request counts for original Unfilled.
             $selected = $this->get(route($route, $params + ['metrics' => ['unfilled_impressions']]))->assertOk();
             $this->assertSame(['unfilled_impressions'], $selected->viewData('reportMetrics'));
             $this->assertDefaultCards($selected, 'publisher-ad-metrics', 'Unavailable');
@@ -238,18 +239,18 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
     private function assertDefaultCards(TestResponse $response, string $class, string $unavailable): void
     {
         $cards = explode('</section>', explode('<section class="'.$class.'"', $response->getContent())[1])[0];
-        $this->assertStringContainsString('Unfilled impressions', $cards);
+        $this->assertStringContainsString(self::UNIT_UNFILLED_LABEL, $cards);
         $this->assertStringContainsString('Ad Exchange unmatched requests', $cards);
-        $this->assertMatchesRegularExpression('/Unfilled impressions<\/(?:h3|p)>\s*<strong>'.preg_quote($unavailable, '/').'\s*<\/strong>/', $cards);
+        $this->assertMatchesRegularExpression('/'.preg_quote(self::UNIT_UNFILLED_LABEL, '/').'<\/(?:h3|p)>\s*<strong>'.preg_quote($unavailable, '/').'\s*<\/strong>/', $cards);
     }
 
     private function assertDefaultCsv(string $route, array $params): void
     {
         $csv = $this->get(route($route, $params + ['export' => 'csv']))->assertOk()->streamedContent();
         $lines = array_map('str_getcsv', explode("\n", trim($csv)));
-        $this->assertContains('Unfilled impressions', $lines[0]);
+        $this->assertContains(self::UNIT_UNFILLED_LABEL, $lines[0]);
         $this->assertContains('Ad Exchange unmatched requests', $lines[0]);
-        $column = array_search('Unfilled impressions', $lines[0], true);
+        $column = array_search(self::UNIT_UNFILLED_LABEL, $lines[0], true);
         $this->assertSame('', $lines[1][$column]);
         $this->assertSame('', $lines[2][$column]);
         $unmatchedColumn = array_search('Ad Exchange unmatched requests', $lines[0], true);
@@ -261,7 +262,7 @@ class AdExchangeUnmatchedRequestsTest extends TestCase
     {
         $csv = $this->get(route($route, $params + ['export' => 'csv', 'metrics' => [self::METRIC, 'unfilled_impressions']]))->assertOk()->streamedContent();
         $lines = array_map('str_getcsv', explode("\n", trim($csv)));
-        $this->assertSame(['Date', 'Ad Exchange unmatched requests', 'Unfilled impressions'], array_slice($lines[0], 0, 3));
+        $this->assertSame(['Date', 'Ad Exchange unmatched requests', self::UNIT_UNFILLED_LABEL], array_slice($lines[0], 0, 3));
         $this->assertSame([self::FROM, '20', ''], array_slice($lines[1], 0, 3));
         $this->assertSame([self::TO, '0', ''], array_slice($lines[2], 0, 3));
     }

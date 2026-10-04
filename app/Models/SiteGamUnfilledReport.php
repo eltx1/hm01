@@ -12,6 +12,13 @@ class SiteGamUnfilledReport extends Model
 
     protected $guarded = [];
 
+    // Store SQL DATE identically on SQLite and MySQL. Eloquent's generic
+    // date cast otherwise serializes midnight as a datetime in SQLite.
+    public function setReportDateAttribute(mixed $value): void
+    {
+        $this->attributes['report_date'] = \Carbon\CarbonImmutable::parse($value)->toDateString();
+    }
+
     protected function casts(): array
     {
         return ['report_date' => 'immutable_date', 'reported_at' => 'immutable_datetime', 'unfilled_impressions' => 'integer'];

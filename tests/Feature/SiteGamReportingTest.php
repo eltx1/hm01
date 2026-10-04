@@ -86,6 +86,7 @@ class SiteGamReportingTest extends TestCase
             public array $units = [['id' => '12345', 'name' => 'Publisher unit', 'adUnitCode' => 'publisher_unit']];
 
             public string $status = 'COMPLETED';
+            public bool $failStatus = false;
 
             public string $url = 'https://storage.googleapis.com/report.csv?signature=private-download';
 
@@ -120,6 +121,8 @@ class SiteGamReportingTest extends TestCase
                     && array_intersect(array_keys(SiteGamReportMetrics::OPTIONAL_COLUMNS), $payload['reportJob']['reportQuery']['columns'])) {
                     throw new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
                 }
+
+                if ($method === 'getReportJobStatus' && $this->failStatus) throw new \RuntimeException('Transient transport unavailable');
 
                 return match ($method) {
                     'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
@@ -1405,12 +1408,13 @@ class SiteGamReportingTest extends TestCase
     public function test_original_unit_unfilled_sync_is_independent_and_preserves_financial_rows(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $csv = $this->csv();
+        Http::fake(['storage.googleapis.com/*' => function () use (&$csv) { return Http::response($csv); }]);
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
         $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
         $dimensions = \App\Models\ReportDimension::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
         $csv = "Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,37\n";
-        Http::fake(['storage.googleapis.com/*' => Http::response($csv)]);
+
         $sync = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class);
         $result = $sync->sync($binding);
         $this->assertSame('COMPLETED', $result['status']);
@@ -1432,7 +1436,7 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame(20, $totals['ad_exchange_unmatched_requests']);
         $this->assertSame(95, $totals['impressions']);
         // Another ordinary financial refresh must not erase the independently stored counter.
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $csv = $this->csv();
         $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
         $this->assertSame(37, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
     }
@@ -1445,16 +1449,38 @@ class SiteGamReportingTest extends TestCase
         $this->assertSame('PENDING', $sync->sync($binding)['status']);
         $jobs = $this->google->jobs;
         $this->google->status = 'COMPLETED';
-        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,0\n")]);
+        $csv = "Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,0\n";
+        Http::fake(['storage.googleapis.com/*' => function () use (&$csv) { return Http::response($csv); }]);
         $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
         $this->assertSame($jobs, $this->google->jobs);
         $this->assertSame(0, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
-        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,99999,555\n")]);
+        $csv = "Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,99999,555\n";
         $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
         $this->assertSame(0, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
         $this->assertNull($binding->connection->fresh()->last_error);
         $this->assertDatabaseCount('daily_reports', 0);
         $this->assertDatabaseCount('hourly_reports', 0);
+    }
+
+    public function test_unit_unfilled_transient_status_and_download_errors_resume_same_job(): void
+    {
+        $binding = $this->bind($this->context());
+        $sync = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class);
+        $this->google->failStatus = true;
+        $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
+        $jobs = $this->google->jobs;
+        $this->assertNotNull(data_get($binding->connection->fresh()->configuration, 'unit_unfilled.pending.id'));
+        $this->google->failStatus = false;
+        $status = 503;
+        Http::fake(['storage.googleapis.com/*' => function () use (&$status) {
+            return Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,17\n", $status);
+        }]);
+        $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
+        $this->assertSame($jobs, $this->google->jobs);
+        $status = 200;
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $this->assertSame($jobs, $this->google->jobs);
+        $this->assertSame(17, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
     }
 
 }
