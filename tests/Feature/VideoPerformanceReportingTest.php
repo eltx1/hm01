@@ -118,6 +118,7 @@ class VideoPerformanceReportingTest extends TestCase
     }
     public function test_unconfigured_reports_hide_video_and_pending_configuration_explains_source_clocks(): void
     {
+        $this->withoutExceptionHandling();
         [$admin, $user, $publisher, $site] = $this->context();
         $this->actingAs($user);
         $this->get(route('publisher.reporting.index'))->assertOk()->assertDontSee('Video performance')->assertDontSee('Export Video CSV');

@@ -251,7 +251,8 @@ class SiteGamVideoReportingTest extends TestCase
         $video = $this->video($context);
         foreach ([['2026-09-01', 8000], ['2026-09-22', 7000]] as [$date, $share]) {
             app(RevenueRuleService::class)->createRule(['name' => 'Website dated split '.$date, 'scope_type' => 'WEBSITE', 'scope_id' => $site->id,
-                'effective_from' => $date, 'publisher_share_bp' => $share, 'horus_share_bp' => 10000 - $share, 'mcm_partner_share_bp' => 0], $admin);
+                'effective_from' => $date, 'effective_to' => $date === '2026-09-01' ? '2026-09-21' : null,
+                'publisher_share_bp' => $share, 'horus_share_bp' => 10000 - $share, 'mcm_partner_share_bp' => 0], $admin);
         }
         $this->finalizeClock();
         $rows = [['2026-09-21', '67890', 120, 100, 95, 3, 'US$ 1000000'], ['2026-09-22', '67890', 120, 100, 95, 3, 'US$ 1000000']];
@@ -265,6 +266,7 @@ class SiteGamVideoReportingTest extends TestCase
         $facts = DailyReport::withoutGlobalScopes()->orderBy('report_date')->get();
         $this->assertSame([100, 100], $facts->pluck('gross_revenue_minor')->map(fn ($value) => (int) $value)->all());
         $this->assertSame([80, 70], $facts->pluck('publisher_earnings_minor')->map(fn ($value) => (int) $value)->all());
+        $this->assertCount(2, $facts->pluck('revenue_rule_version_id')->unique());
         $this->assertSame([20, 30], $facts->pluck('horus_earnings_minor')->map(fn ($value) => (int) $value)->all());
         $this->assertSame(['USD'], $facts->pluck('currency')->unique()->values()->all());
         foreach ($facts as $fact) {

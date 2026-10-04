@@ -39,3 +39,10 @@ test('independent main and Video forms search their own accounts and datalists',
     assert.equal(main.input.value, '123');
     assert.equal(main.list.children[0].value, 'main-account');
 });
+
+test('Video Blade control directives remain recognizable by the Blade compiler', () => {
+    const template = fs.readFileSync(new URL('../../resources/views/components/video-performance.blade.php', import.meta.url), 'utf8');
+    // Laravel BladeCompiler::compileStatements starts directives with \B@.
+    // A closing directive glued to a word is literal HTML, leaving invalid PHP.
+    assert.doesNotMatch(template, /\w@(if|elseif|else|endif|foreach|endforeach|unless|endunless)\b/);
+});
