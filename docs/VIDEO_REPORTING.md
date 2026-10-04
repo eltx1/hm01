@@ -83,3 +83,28 @@ independence, duplicate physical-unit ownership, source identity, exact-hostname
 attribution, shares, retries, close/statement totals, cancelled future intervals,
 role-safe projections and original unit Unfilled. No live account/unit is selected
 until an administrator explicitly configures a website.
+
+## Report presentation and review
+
+Main and Video reports use the same selected dates but remain separate reporting sections.
+The Video section includes revenue/earnings, impressions, weighted eCPM, original unit-wide
+Unfilled, a gap-aware daily chart, daily details and website details. Mobile rows carry
+the same metrics as the desktop tables. Publisher amounts and eCPM are net of the
+publisher revenue share; gross revenue and Horus allocations are staff-only.
+
+The publisher reconciliation sums imported Main and Video earnings before statement
+adjustments. It is not a payable balance. The staff reconciliation preserves the
+existing combined financial totals, including approved adjustments, without adding
+Video a second time.
+
+Availability is explicit: dates before activation, first import pending, failed refresh,
+disabled historical sources, genuine zero rows and unavailable counters are distinct.
+A source's latest successful import is not proof that all selected days are complete.
+Only imported dates are drawn; missing days remain gaps. Admin reports are finalized-only
+while publisher performance can include current estimates.
+
+`VideoReportExperienceTest` creates actual route-rendered synthetic previews when
+`HORUS_UI_FIXTURES=1`. The release workflow exercises them in Chromium and WebKit on
+desktop/mobile, in dark/light themes, and preserves screenshots in the form-experience
+artifact. The original deployed component is retained only as a test fixture for
+before/after visual comparison. Fixture screenshots are not live production-account proof.

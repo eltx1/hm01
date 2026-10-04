@@ -118,7 +118,7 @@ final class VideoPerformanceService
         // A later success supersedes an older error even if a legacy source did
         // not clear its error text. Never expose the raw source error to publishers.
         if ($connection->last_successful_import_at && $connection->last_attempted_at
-            && $connection->last_successful_import_at->gte($connection->last_attempted_at)) {
+            && $connection->last_successful_import_at->gt($connection->last_attempted_at)) {
             return false;
         }
 

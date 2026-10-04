@@ -41,7 +41,7 @@ test('independent main and Video forms search their own accounts and datalists',
 });
 
 test('Video Blade control directives remain recognizable by the Blade compiler', () => {
-    const template = fs.readFileSync(new URL('../../resources/views/components/video-performance.blade.php', import.meta.url), 'utf8');
+    const template = ['video-performance', 'video-performance-table'].map(name => fs.readFileSync(new URL(`../../resources/views/components/${name}.blade.php`, import.meta.url), 'utf8')).join('\n');
     // Laravel BladeCompiler::compileStatements starts directives with \B@.
     // A closing directive glued to a word is literal HTML, leaving invalid PHP.
     assert.doesNotMatch(template, /\w@(if|elseif|else|endif|foreach|endforeach|unless|endunless)\b/);

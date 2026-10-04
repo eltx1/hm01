@@ -8,7 +8,7 @@
 <p><a class="text-link" href="{{ route('admin.reporting.gam-comparison') }}">Private historical GAM preview</a></p>
 <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
 @if($summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))
-<nav class="report-channel-nav" aria-label="Report sections"><a href="#main-performance">Main performance</a><a href="#video-performance">Video performance</a><a href="#combined-financial-totals">Combined financial totals</a></nav>
+<nav class="report-channel-nav" aria-label="Report sections"><a href="#main-performance">Main performance</a><a href="#video-performance">Video performance</a>@if($summary['video']['available'])<a href="#combined-financial-totals">Combined financial totals</a>@endif</nav>
 <header id="main-performance" class="report-main-heading"><h2>Main performance</h2><p>Primary reporting sources, excluding independent Video results.</p></header>
 @endif
 @if(!$summary['available'])<x-empty-state :title="($summary['video']['available'] || ($summary['video']['configured'] ?? false)) ? 'No finalized main reports for these dates' : 'No finalized reports for these dates'" description="Try another period or check source imports below. Missing reports do not mean zero revenue." />@endif

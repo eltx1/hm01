@@ -90,6 +90,10 @@ class VideoReportStatesTest extends TestCase
         $this->assertSame(0, $failed['pending_source_count']);
         $this->assertStringNotContainsString('Private error', json_encode($failed));
 
+        $binding->connection->update(['last_successful_import_at' => '2026-10-04 11:00:00']);
+        $this->assertSame('failed', $service->configuration($publisher)['source_health'],
+            'A current ERROR must survive second-precision timestamps shared with an earlier success.');
+
         $binding->connection->update(['last_successful_import_at' => '2026-10-04 11:30:00']);
         $ready = $service->configuration($publisher);
         $this->assertSame('ready', $ready['source_health']);

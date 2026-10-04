@@ -51,7 +51,7 @@
     @endif
     <x-video-performance :video="$performance['video']" :publisher="true" :from="$performance['from']" :to="$performance['to']" />
     @if($performance['updated_at'])
-        <p class="publisher-report-updated">Last updated: {{ $performance['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>
+        <p class="publisher-report-updated">{{ $hasVideo ? 'Main last updated:' : 'Last updated:' }} {{ $performance['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>
     @endif
     @if(auth()->user()->hasPermission('finance.publisher.view_own'))
         <aside class="report-finance-strip"><h3>Monthly statements</h3><a class="hm-button-secondary" href="{{ route('publisher.finance.statements.index') }}">View statements →</a></aside>

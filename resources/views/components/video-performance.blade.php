@@ -63,7 +63,7 @@
         @endif
         <p class="muted">Missing data does not mean zero earnings.@unless($publisher) This admin report includes finalized data only; today's estimates may not appear yet.@endunless</p></div>
     @endif
-    @if($video['starts_on'] ?? null)<p class="report-footnote muted">Reporting began {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
+    @if($video['starts_on'] ?? null)<p class="report-footnote muted">{{ $video['starts_on'] > now()->toDateString() ? 'Reporting starts' : 'Reporting began' }} {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
     <details class="report-data-details video-report-basis">
         <summary>How to read Video metrics</summary>
         <p>Impressions and revenue use the matched website. Unfilled is Google's original selected-unit total across all sites, not exact-hostname requests. These scopes differ; Unfilled is not a website fill rate.</p>
