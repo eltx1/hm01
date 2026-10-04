@@ -1402,4 +1402,59 @@ class SiteGamReportingTest extends TestCase
         $this->assertCount(1, $readiness->blockersForPeriod($usd));
         $this->assertCount(0, $readiness->blockersForPeriod($egp));
     }
+    public function test_original_unit_unfilled_sync_is_independent_and_preserves_financial_rows(): void
+    {
+        $binding = $this->bind($this->context());
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
+        $dimensions = \App\Models\ReportDimension::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
+        $csv = "Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,37\n";
+        Http::fake(['storage.googleapis.com/*' => Http::response($csv)]);
+        $sync = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class);
+        $result = $sync->sync($binding);
+        $this->assertSame('COMPLETED', $result['status']);
+        $this->assertSame(1, $result['stored_days']);
+        $counter = \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole();
+        $this->assertSame(37, $counter->unfilled_impressions);
+        $this->assertSame($binding->id, $counter->site_gam_report_binding_id);
+        $this->assertSame('Africa/Cairo', $counter->timezone);
+        $query = collect($this->google->calls)->where('method', 'runReportJob')->last()['payload']['reportJob']['reportQuery'];
+        $this->assertSame(['DATE', 'AD_UNIT_ID'], $query['dimensions']);
+        $this->assertSame(['TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS'], $query['columns']);
+        $this->assertArrayNotHasKey('reportCurrency', $query);
+        $this->assertSame('PUBLISHER', $query['timeZoneType']);
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
+        $this->assertSame($dimensions, \App\Models\ReportDimension::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $totals = app(\App\Services\Reporting\PerformanceMetrics::class)->summarize(collect([$row]), 'gross_revenue_minor');
+        $this->assertSame(37, $totals['unfilled_impressions']);
+        $this->assertSame(20, $totals['ad_exchange_unmatched_requests']);
+        $this->assertSame(95, $totals['impressions']);
+        // Another ordinary financial refresh must not erase the independently stored counter.
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertSame(ReportImportStatus::Completed, $this->import($binding)->status);
+        $this->assertSame(37, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
+    }
+
+    public function test_unit_unfilled_pending_resumes_and_failed_csv_preserves_last_verified_value(): void
+    {
+        $binding = $this->bind($this->context());
+        $sync = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class);
+        $this->google->status = 'IN_PROGRESS';
+        $this->assertSame('PENDING', $sync->sync($binding)['status']);
+        $jobs = $this->google->jobs;
+        $this->google->status = 'COMPLETED';
+        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,0\n")]);
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $this->assertSame($jobs, $this->google->jobs);
+        $this->assertSame(0, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
+        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,99999,555\n")]);
+        $this->assertSame('SOURCE_UNAVAILABLE', $sync->sync($binding)['status']);
+        $this->assertSame(0, \App\Models\SiteGamUnfilledReport::withoutGlobalScopes()->sole()->unfilled_impressions);
+        $this->assertNull($binding->connection->fresh()->last_error);
+        $this->assertDatabaseCount('daily_reports', 0);
+        $this->assertDatabaseCount('hourly_reports', 0);
+    }
+
 }

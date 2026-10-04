@@ -121,6 +121,23 @@ jobs:
           fi
           echo "sha256=$actual" >> "$GITHUB_OUTPUT"
 
+      - name: Require original SOAP Unfilled restoration release
+        id: unit_unfilled_restore
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo = { owner: 'eltx1', repo: 'hm01' };
+            const sha = process.env.RELEASE_SHA;
+            if (context.repo.owner !== repo.owner || context.repo.repo !== repo.repo
+                || context.payload.repository?.id !== 1315038901 || context.ref !== 'refs/heads/main') {
+              core.setFailed('UNIT_UNFILLED_TRUST_INVALID'); return;
+            }
+            const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: sha });
+            const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
+            core.setOutput('active', commit.sha === sha && main.commit.sha === sha
+              && commit.parents?.[0]?.sha === '7f2683155c79442792e9bdf5f7b995942930bc4f'
+              && commit.parents.length <= 2 ? 'true' : 'false');
+
       - name: Require bounded true-unfilled diagnostic release
         id: unfilled_probe
         continue-on-error: true
@@ -330,6 +347,28 @@ jobs:
              HORUS_DEPLOY_MYSQL_CONFIG_HELPER='$remote_dir/write-mysql-client-config.php' \
              '$remote_dir/horus-atomic-deploy.sh' \
              '$remote_dir/horus-media-platform.zip' '$ARTIFACT_SHA256'"
+
+      - name: Restore and verify original SOAP unit Unfilled counters
+        if: steps.unit_unfilled_restore.outputs.active == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/unit-unfilled-result.json"
+          errors="$RUNNER_TEMP/unit-unfilled-errors.log"
+          # The application command writes only the independent unit counter store.
+          # Never print application errors, identifiers or raw Google responses.
+          ssh -p "$SSH_PORT" -o StrictHostKeyChecking=yes "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && \
+             test \"\$(readlink -f .)\" = '$REMOTE_HOME/releases/$RELEASE_SHA' && \
+             grep -Fxq 'release_id=$RELEASE_SHA' .horus-release && \
+             timeout 240 /usr/bin/php8.4 artisan reporting:sync-unit-unfilled --wait=180" \
+            >"$result" 2>"$errors" || true
+          node ops/audit/validate-unit-unfilled-sync.mjs "$result" 2>/dev/null || \
+            echo '{"schema_version":1,"status":"VERIFICATION_UNAVAILABLE"}'
 
       - name: Configure automatic CDN delivery using existing SSH and Cloudflare credentials
         env:

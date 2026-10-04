@@ -18,7 +18,7 @@ final class AdminWebsitePerformanceService
 
     public function summary(Site $site, string $from, string $to): array
     {
-        $rows = $this->rows([$site->id], $from, $to, daily: true);
+        $rows = $this->rows([$site->id], $from, $to);
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $this->currency(),
@@ -34,10 +34,10 @@ final class AdminWebsitePerformanceService
         return strtoupper((string) config('reporting.canonical_currency', 'USD'));
     }
 
-    private function rows(array $siteIds, string $from, string $to, bool $daily = false): Collection
+    private function rows(array $siteIds, string $from, string $to): Collection
     {
-        // Aggregate before hydration: one row per site (directory) or day (detail).
-        // Keep the DailyReport organization scope and canonical/finalized basis.
+        // Keep source/day/unit identity until the independent unit totals have
+        // been deduplicated. Financial amounts still aggregate each fact once.
         $query = DailyReport::query()
             ->join('report_dimensions', 'report_dimensions.id', '=', 'daily_reports.report_dimension_id')
             ->where('daily_reports.finality', ReportFinality::Finalized->value)
@@ -45,18 +45,32 @@ final class AdminWebsitePerformanceService
             ->whereDate('daily_reports.report_date', '>=', $from)
             ->whereDate('daily_reports.report_date', '<=', $to)
             ->whereIn('report_dimensions.site_id', $siteIds)
-            ->select('report_dimensions.site_id')
+            ->select('report_dimensions.site_id', 'daily_reports.organization_id',
+                'daily_reports.report_source_connection_id', 'daily_reports.report_date')
+            ->addSelect('report_dimensions.site_id as metric_unit_site_id',
+                'report_dimensions.organization_id as metric_unit_organization_id',
+                'report_dimensions.gam_connection_id as metric_unit_gam_connection_id')
             ->selectRaw('MAX(daily_reports.updated_at) as updated_at')
-            ->groupBy('report_dimensions.site_id');
-        if ($daily) {
-            $query->addSelect('daily_reports.report_date')->groupBy('daily_reports.report_date');
-        }
+            ->groupBy('report_dimensions.site_id', 'daily_reports.organization_id',
+                'daily_reports.report_source_connection_id', 'daily_reports.report_date',
+                'report_dimensions.gam_connection_id', 'report_dimensions.organization_id');
+        $grammar = $query->getQuery()->getGrammar();
+        $unit = $grammar->wrap('report_dimensions.external_dimensions->gam_ad_unit_id');
+        $legacy = implode(' AND ', array_map(fn ($field) => $grammar->wrap('report_dimensions.external_dimensions->'.$field).' IS NULL',
+            ['gam_report_basis', 'gam_report_scope', 'gam_report_site']));
+        $query->selectRaw("{$unit} as metric_unit_ad_unit_id")
+            ->groupByRaw($unit)
+            ->selectRaw("CASE WHEN SUM(CASE WHEN {$legacy} THEN 0 ELSE 1 END) = 0 THEN 1 ELSE 0 END as metric_unit_legacy")
+            ->selectRaw('CASE WHEN COUNT(daily_reports.unfilled_impressions) = COUNT(*) AND MIN(daily_reports.unfilled_impressions) = MAX(daily_reports.unfilled_impressions) THEN MAX(daily_reports.unfilled_impressions) ELSE NULL END as metric_legacy_unfilled_impressions');
         foreach (['gross_revenue_minor', 'publisher_earnings_minor', 'horus_earnings_minor'] as $field) {
             $query->selectRaw("SUM(daily_reports.{$field}) as {$field}");
         }
         app(ReportMetricBasis::class)->selectCounters($query, ['impressions', 'clicks', ...PerformanceMetrics::COUNTERS]);
 
-        return $query->get();
+        $rows = $query->get();
+        app(SiteGamUnfilledProjection::class)->preload($rows);
+
+        return $rows;
     }
 
     private function totals(Collection $rows): array

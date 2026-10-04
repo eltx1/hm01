@@ -11,7 +11,7 @@ final class PerformanceReportCsv
     {
         return response()->streamDownload(function () use ($days, $metrics, $currency, $publisher): void {
             $stream = fopen('php://output', 'w');
-            fputcsv($stream, ['Date', ...array_map(fn ($key) => PerformanceMetrics::COLUMNS[$key].($key === 'ecpm_minor' ? " ({$currency})" : ''), $metrics),
+            fputcsv($stream, ['Date', ...array_map(fn ($key) => PerformanceMetrics::label($key, ['has_site_ad_exchange' => $days->contains(fn ($day) => $day['has_site_ad_exchange'] ?? false)]).($key === 'ecpm_minor' ? " ({$currency})" : ''), $metrics),
                 ($publisher ? 'Publisher earnings' : 'Gross revenue')." ({$currency})",
                 ...($publisher ? ['Estimated earnings', 'Finalized earnings'] : []),
             ], escape: '');

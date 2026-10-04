@@ -1,7 +1,7 @@
 @props(['totals', 'currency', 'publisher' => false, 'showHelp' => true])
 <section class="report-quality-metrics" aria-label="Ad performance metrics">
     @foreach(array_diff(\App\Services\Reporting\PerformanceMetrics::defaultColumns($totals), ['impressions']) as $metric)
-    <article class="report-quality-metric"><p>{{ \App\Services\Reporting\PerformanceMetrics::COLUMNS[$metric] }}</p><strong>{{ \App\Services\Reporting\PerformanceMetrics::display($metric, $totals[$metric]) }}@if($metric === 'ecpm_minor' && $totals[$metric] !== null) <small>{{ $currency }}</small>@endif</strong></article>
+    <article class="report-quality-metric"><p>{{ \App\Services\Reporting\PerformanceMetrics::label($metric, $totals) }}</p><strong>{{ \App\Services\Reporting\PerformanceMetrics::display($metric, $totals[$metric]) }}@if($metric === 'ecpm_minor' && $totals[$metric] !== null) <small>{{ $currency }}</small>@endif</strong></article>
     @endforeach
 </section>
 <x-report-unmatched-help :totals="$totals" />

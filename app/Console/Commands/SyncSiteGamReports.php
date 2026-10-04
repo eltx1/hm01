@@ -26,6 +26,14 @@ class SyncSiteGamReports extends Command
                     report($exception);
                     $this->error($binding->site_id.': reporting synchronization will retry.');
                     $failed = true;
+                } finally {
+                    // Independent SOAP counter still runs if the AdX finance request is pending or failed.
+                    try {
+                        $result = app(\App\Services\Reporting\SiteGamUnfilledSynchronizer::class)->sync($binding);
+                        $this->line('Unit Unfilled: '.$result['status']);
+                    } catch (\Throwable) {
+                        $this->line('Unit Unfilled: SOURCE_UNAVAILABLE');
+                    }
                 }
             });
 
