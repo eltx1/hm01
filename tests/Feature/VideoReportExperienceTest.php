@@ -121,12 +121,12 @@ class VideoReportExperienceTest extends TestCase
         $this->assertNull($video['ecpm_minor']);
         $this->fixture('publisher-zero', $response->getContent());
         $empty = app(VideoPerformanceService::class)->summary(collect(), true, 'USD', ['configured' => true, 'timezones' => ['Africa/Cairo']]);
-        $this->fixture('publisher-pending', $this->component($empty));
-        $this->fixture('publisher-failed', $this->component([...$empty, 'source_health' => 'failed', 'has_configuration' => true]));
-        $this->fixture('publisher-disabled', $this->component([...$video, 'configured' => false, 'has_configuration' => true, 'configuration_state' => 'disabled']));
+        $this->fixture('publisher-pending', $this->renderVideoFixture($empty));
+        $this->fixture('publisher-failed', $this->renderVideoFixture([...$empty, 'source_health' => 'failed', 'has_configuration' => true]));
+        $this->fixture('publisher-disabled', $this->renderVideoFixture([...$video, 'configured' => false, 'has_configuration' => true, 'configuration_state' => 'disabled']));
     }
 
-    private function component(array $video): string
+    private function renderVideoFixture(array $video): string
     {
         return Blade::render('@extends("layouts.admin") @section("content")<div class="reports-page"><x-video-performance :video="$video" :publisher="true" from="2026-09-18" to="2026-09-21" /></div>@endsection', ['video' => $video]);
     }
