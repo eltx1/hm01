@@ -48,6 +48,8 @@ class Site extends Model
     public function gamConnection(): BelongsTo { return $this->belongsTo(GamConnection::class, 'gam_connection_id'); }
     public function gamReportBindings(): HasMany { return $this->hasMany(SiteGamReportBinding::class); }
     public function currentGamReportBinding(): HasOne { return $this->hasOne(SiteGamReportBinding::class)->whereNotNull('active_site_id'); }
+    public function gamVideoReportBindings(): HasMany { return $this->hasMany(SiteGamVideoReportBinding::class); }
+    public function currentGamVideoReportBinding(): HasOne { return $this->hasOne(SiteGamVideoReportBinding::class)->whereNotNull('active_site_id'); }
     public function domains(): HasMany { return $this->hasMany(SiteDomain::class); }
     public function verifications(): HasMany { return $this->hasMany(SiteVerification::class); }
     public function reviews(): HasMany { return $this->hasMany(SiteReview::class); }

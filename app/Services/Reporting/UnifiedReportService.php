@@ -32,6 +32,9 @@ final class UnifiedReportService
         $query = $this->daily($from, $to, $currency);
         $rows = $query->with(['dimension.publisher', 'dimension.site', 'dimension.campaign', 'connection.source'])->get();
 
+        $financialRows = $rows;
+        $video = app(VideoPerformanceService::class)->summary($rows, false, $currency, app(VideoPerformanceService::class)->configuration());
+        $rows = $rows->reject(fn ($row) => VideoPerformanceService::isVideo($row));
         $horusGam = $rows->filter(fn ($row) => ($row->connection?->source?->code?->value ?? null) === ReportSourceCode::HorusGam->value
         );
         $adjustments = RevenueAdjustment::withoutGlobalScopes()
@@ -48,6 +51,13 @@ final class UnifiedReportService
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
+            'video' => $video,
+            'financial_totals_including_video' => [
+                'gross_revenue_minor' => (int) $financialRows->sum('gross_revenue_minor'),
+                'net_revenue_minor' => max(0, (int) $financialRows->sum('net_revenue_minor') - $adjustmentTotal),
+                'publisher_earnings_minor' => max(0, (int) $financialRows->sum('publisher_earnings_minor') - $publisherAdjustment),
+                'horus_earnings_minor' => max(0, (int) $financialRows->sum('horus_earnings_minor') - $horusAdjustment),
+            ],
             'performance' => $performance,
             'metric_basis_incomplete' => $performance['metric_basis_incomplete'],
             'available' => $rows->isNotEmpty(),
@@ -90,11 +100,14 @@ final class UnifiedReportService
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
             ->with(['dimension.site', 'dimension.placement', 'connection.source'])
             ->get();
+        $video = app(VideoPerformanceService::class)->summary($rows, true, $currency, app(VideoPerformanceService::class)->configuration($publisher));
+        $rows = $rows->reject(fn ($row) => VideoPerformanceService::isVideo($row));
         $impressions = app(ReportMetricBasis::class)->counter($rows, 'impressions');
         $revenue = (int) $rows->sum('publisher_earnings_minor');
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
+            'video' => $video,
             'impressions' => $impressions,
             'metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($rows),
             'revenue_minor' => $revenue,

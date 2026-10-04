@@ -25,6 +25,9 @@ class ReportingController extends Controller
         $performance = app(PublisherPerformanceService::class)->summary(
             $publisher, $request->validated('from'), $request->validated('to'),
         );
+        if ($request->validated('export') === 'video_csv') {
+            return app(\App\Services\Reporting\VideoReportCsv::class)->download($performance['video'], true);
+        }
         if ($request->validated('export') === 'csv') {
             return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics($performance), $performance['currency'], true);
         }
@@ -41,6 +44,9 @@ class ReportingController extends Controller
         $performance = app(PublisherPerformanceService::class)->summary(
             $publisher, $request->validated('from'), $request->validated('to'),
         );
+        if ($request->validated('export') === 'video_csv') {
+            return app(\App\Services\Reporting\VideoReportCsv::class)->download($performance['video'], true);
+        }
         if ($request->validated('export') === 'csv') {
             return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($performance['days'], $request->selectedMetrics($performance), $performance['currency'], true);
         }

@@ -5,6 +5,8 @@ namespace App\Services\Reporting;
 use App\Models\ReportSourceConnection;
 use App\Models\SiteGamReportBinding;
 use App\Models\SiteGamUnfilledReport;
+use App\Models\SiteGamVideoReportBinding;
+use App\Models\SiteGamVideoUnfilledReport;
 use App\Services\Audit\AuditRecorder;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
@@ -87,14 +89,17 @@ final class SiteGamUnfilledSynchronizer
                 try { $days = self::parse($csv, $binding->ad_unit_id, $from, $to); }
                 catch (\Throwable $error) { unset($state['pending']); throw $error; }
                 $state = DB::transaction(function () use ($binding, $identity, $state, $days, $job, $to, $last): array {
-                    $locked = SiteGamReportBinding::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->id);
+                    $locked = $binding::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->id);
                     $locked->load('connection', 'site', 'gamConnection');
                     $this->assertBinding($locked);
                     if ($this->identity($locked) !== $identity) throw new RuntimeException('Unit Unfilled binding changed during collection.');
+                    $video = $locked instanceof SiteGamVideoReportBinding;
+                    $reports = $video ? SiteGamVideoUnfilledReport::withoutGlobalScopes() : SiteGamUnfilledReport::withoutGlobalScopes();
+                    $bindingKey = $video ? 'site_gam_video_report_binding_id' : 'site_gam_report_binding_id';
                     foreach ($days as $day => $value) {
-                        SiteGamUnfilledReport::withoutGlobalScopes()->updateOrCreate([
+                        (clone $reports)->updateOrCreate([
                             'report_source_connection_id' => $locked->report_source_connection_id, 'report_date' => $day,
-                        ], ['organization_id' => $locked->organization_id, 'site_gam_report_binding_id' => $locked->id,
+                        ], ['organization_id' => $locked->organization_id, $bindingKey => $locked->id,
                             'gam_connection_id' => $locked->gam_connection_id, 'network_code' => $locked->network_code,
                             'ad_unit_id' => $locked->ad_unit_id, 'timezone' => $locked->connection->timezone,
                             'unfilled_impressions' => $value, 'google_report_job_id' => $job['id'], 'reported_at' => now()]);
@@ -104,7 +109,7 @@ final class SiteGamUnfilledSynchronizer
                     $state['next_refresh_at'] = ($to === $last->toDateString() ? now()->addHour() : now())->toIso8601String();
                     unset($state['pending'], $state['error']);
                     $this->checkpoint($locked, $identity, $state);
-                    $this->audit->record('reporting.site_gam.unit_unfilled_synced', $locked->organization_id, auditable: $locked,
+                    $this->audit->record($video ? 'reporting.site_gam_video.unit_unfilled_synced' : 'reporting.site_gam.unit_unfilled_synced', $locked->organization_id, auditable: $locked,
                         metadata: ['scope' => self::SCOPE, 'from' => $job['from'], 'to' => $job['to'], 'stored_days' => count($days), 'financial_rows_changed' => false]);
                     return $state;
                 });
@@ -148,16 +153,23 @@ final class SiteGamUnfilledSynchronizer
     private function assertBinding(SiteGamReportBinding $binding): void
     {
         if (! $binding->connection || ! $binding->site || ! $binding->gamConnection
-            || $binding->connection->connection_type !== 'SITE_GAM_AD_UNIT' || $binding->connection->connection_id !== $binding->id
+            || $binding->connection->connection_type !== $binding->connectionType() || $binding->connection->connection_id !== $binding->id
             || $binding->organization_id !== $binding->connection->organization_id || $binding->site->organization_id !== $binding->organization_id
             || (string) $binding->gamConnection->network_code !== $binding->network_code) throw new RuntimeException('Invalid unit Unfilled binding.');
     }
 
     private function identity(SiteGamReportBinding $binding): string
     {
-        return hash('sha256', implode('|', [self::SCOPE, $binding->id, $binding->organization_id, $binding->site_id,
+        // Preserve deployed primary checkpoints exactly; only the new source
+        // adds its own namespace, so existing Google jobs resume unchanged.
+        $parts = [self::SCOPE, $binding->id, $binding->organization_id, $binding->site_id,
             $binding->gam_connection_id, $binding->network_code, $binding->ad_unit_id, $binding->connection->timezone,
-            $binding->starts_on->toDateString(), $binding->ends_on?->toDateString()]));
+            $binding->starts_on->toDateString(), $binding->ends_on?->toDateString()];
+        if ($binding instanceof SiteGamVideoReportBinding) {
+            array_push($parts, $binding->connectionType(), $binding->report_source_connection_id);
+        }
+
+        return hash('sha256', implode('|', $parts));
     }
 
     private function checkpoint(SiteGamReportBinding $binding, string $identity, array $state): void

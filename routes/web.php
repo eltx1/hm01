@@ -164,6 +164,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             Route::post('/admin/sites/{site}/reporting/accounts/networks', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'connect'])->name('admin.sites.reporting.accounts.connect');
             Route::get('/admin/gam/reporting/oauth/callback', [\App\Http\Controllers\Admin\GamReportingAccountController::class, 'callback'])->name('admin.gam.reporting.oauth.callback');
         });
+        Route::post('/admin/sites/{site}/reporting/gam-video', [\App\Http\Controllers\Admin\SiteGamVideoReportingController::class, 'store'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:10,1'])->name('admin.sites.reporting.video.store');
+        Route::delete('/admin/sites/{site}/reporting/gam-video', [\App\Http\Controllers\Admin\SiteGamVideoReportingController::class, 'destroy'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:10,1'])->name('admin.sites.reporting.video.destroy');
         Route::post('/admin/sites/{site}/reporting/gam-ad-unit', [SiteGamReportingController::class, 'store'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:10,1'])->name('admin.sites.reporting.gam.store');
         Route::get('/admin/sites/{site}/reporting/gam-ad-units', [SiteGamReportingController::class, 'units'])->middleware(['horus', 'permission:reporting.sources.manage', 'throttle:60,1'])->name('admin.sites.reporting.gam.units');
         Route::get('/admin/sites/{site}/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view')->name('admin.sites.inventory.index');

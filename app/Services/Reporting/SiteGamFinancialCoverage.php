@@ -6,6 +6,7 @@ use App\Models\DailyReport;
 use App\Models\FinancialPeriod;
 use App\Models\Site;
 use App\Models\SiteGamReportBinding;
+use App\Models\SiteGamVideoReportBinding;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
@@ -58,7 +59,10 @@ final class SiteGamFinancialCoverage
 
     public function blockers(FinancialPeriod $period): Collection
     {
-        return $this->bindings($period)->with('connection', 'site')->get()->map(function ($binding) use ($period): ?array {
+        $video = SiteGamVideoReportBinding::withoutGlobalScopes()->whereNull('cancelled_at')->whereDate('starts_on', '<=', $period->ends_on)
+            ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $period->starts_on))
+            ->with('connection', 'site')->get();
+        return $this->bindings($period)->with('connection', 'site')->get()->concat($video)->map(function ($binding) use ($period): ?array {
             if ($binding->connection->currency !== $period->currency) {
                 return null;
             }
@@ -67,6 +71,7 @@ final class SiteGamFinancialCoverage
             if ($binding->ends_on) {
                 $to = $to->min($binding->ends_on);
             }
+            if ($from->gt($to)) return null;
             $days = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $binding->report_source_connection_id)
                 ->where('currency', $period->currency)->where('finality', 'FINALIZED')->where('settlement_eligible', true)
                 ->whereDate('report_date', '>=', $from->toDateString())->whereDate('report_date', '<=', $to->toDateString())->distinct()->count('report_date');
@@ -74,9 +79,9 @@ final class SiteGamFinancialCoverage
                 return null;
             }
 
-            return ['subject_type' => 'SITE_GAM_AD_UNIT', 'subject_id' => $binding->site_id,
+            return ['subject_type' => $binding->connectionType(), 'subject_id' => $binding->site_id,
                 'subject_name' => $binding->site?->display_name ?? $binding->site_id, 'status' => 'STALE',
-                'reasons' => [['code' => 'SITE_GAM_REPORT_COVERAGE_MISSING', 'message' => 'The website ad-unit source has not imported every finalized day in this period.']]];
+                'reasons' => [['code' => $binding instanceof SiteGamVideoReportBinding ? 'SITE_GAM_VIDEO_REPORT_COVERAGE_MISSING' : 'SITE_GAM_REPORT_COVERAGE_MISSING', 'message' => 'The website ad-unit source has not imported every finalized day in this period.']]];
         })->filter()->values();
     }
 

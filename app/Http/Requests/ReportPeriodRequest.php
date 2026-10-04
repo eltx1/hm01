@@ -28,7 +28,7 @@ class ReportPeriodRequest extends FormRequest
             'customize' => ['sometimes', 'boolean'],
             'metrics' => [Rule::requiredIf($this->boolean('customize')), 'array', 'min:1', 'max:'.count(PerformanceMetrics::COLUMNS)],
             'metrics.*' => ['required', 'string', 'distinct', Rule::in(array_keys(PerformanceMetrics::COLUMNS))],
-            'export' => ['sometimes', Rule::in(['csv'])],
+            'export' => ['sometimes', Rule::in(['csv', 'video_csv'])],
             'from' => ['required', 'date_format:Y-m-d'],
             'to' => ['required', 'date_format:Y-m-d', 'after_or_equal:from', function ($attribute, $value, $fail): void {
                 if (is_string($this->input('from')) && is_string($value)

@@ -21,12 +21,25 @@ final class AdminWebsitePerformanceService
         $rows = $this->rows([$site->id], $from, $to);
 
         return [
+            'video' => $this->video($site, $from, $to),
             'from' => $from, 'to' => $to, 'currency' => $this->currency(),
             'available' => $rows->isNotEmpty(), 'updated_at' => $rows->max('updated_at'),
             ...$this->totals($rows),
             'days' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
                 ->map(fn ($group, $date) => ['date' => $date, ...$this->totals($group)])->values(),
         ];
+    }
+
+    private function video(Site $site, string $from, string $to): array
+    {
+        $rows = VideoPerformanceService::constrain(DailyReport::query(), true)
+            ->where('organization_id', $site->organization_id)
+            ->whereHas('dimension', fn ($query) => $query->where('site_id', $site->id)->where('organization_id', $site->organization_id))
+            ->where('currency', $this->currency())->where('finality', ReportFinality::Finalized->value)
+            ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
+            ->with(['dimension.site', 'connection.source'])->get();
+
+        return app(VideoPerformanceService::class)->summary($rows, false, $this->currency(), app(VideoPerformanceService::class)->configuration($site));
     }
 
     public function currency(): string
@@ -54,6 +67,7 @@ final class AdminWebsitePerformanceService
             ->groupBy('report_dimensions.site_id', 'daily_reports.organization_id',
                 'daily_reports.report_source_connection_id', 'daily_reports.report_date',
                 'report_dimensions.gam_connection_id', 'report_dimensions.organization_id');
+        VideoPerformanceService::constrain($query, false);
         $grammar = $query->getQuery()->getGrammar();
         $unit = $grammar->wrap('report_dimensions.external_dimensions->gam_ad_unit_id');
         $legacy = implode(' AND ', array_map(fn ($field) => $grammar->wrap('report_dimensions.external_dimensions->'.$field).' IS NULL',

@@ -42,7 +42,7 @@ final class ReportMetricBasis
         $code = $source instanceof \Illuminate\Database\Eloquent\Model
             ? $source->getRawOriginal('code') : data_get($source, 'code');
         if ($code instanceof BackedEnum) $code = $code->value;
-        return data_get($row, 'connection.connection_type') === 'SITE_GAM_AD_UNIT' || $code === 'GAM_AD_UNIT';
+        return in_array(data_get($row, 'connection.connection_type'), ['SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT'], true) || in_array($code, ['GAM_AD_UNIT', 'GAM_VIDEO_AD_UNIT'], true);
     }
 
     public function otherSource(mixed $row): bool
@@ -106,8 +106,8 @@ final class ReportMetricBasis
                 ? $exact("COALESCE({$value}, '')")." <> '".SiteGamReportMetrics::BASIS."'"
                 : "TRIM({$nonblank}) = ''";
         }
-        $siteGam = '('.$exact("COALESCE(metric_connections.connection_type, '')")." = 'SITE_GAM_AD_UNIT' OR "
-            .$exact("COALESCE(metric_sources.code, '')")." = 'GAM_AD_UNIT')";
+        $siteGam = '('.$exact("COALESCE(metric_connections.connection_type, '')")." IN ('SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT') OR "
+            .$exact("COALESCE(metric_sources.code, '')")." IN ('GAM_AD_UNIT', 'GAM_VIDEO_AD_UNIT'))";
         $invalid = '('.$siteGam.' AND ('.implode(' OR ', $parts).'))';
         $missing = "SUM(CASE WHEN {$invalid} THEN 1 ELSE 0 END)";
         $query->selectRaw("{$missing} as metric_basis_incomplete");

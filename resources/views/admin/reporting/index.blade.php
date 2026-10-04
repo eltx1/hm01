@@ -17,6 +17,15 @@
 ] as [$label,$value,$unit,$hint])<article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><p class="eyebrow">{{ $label }}</p><div class="report-kpi-value">{{ $value }} @if($unit)<span>{{ $unit }}</span>@endif</div><p class="report-kpi-hint">{{ $hint }}</p></article>@endforeach
 </section>
 @if($summary['metric_basis_incomplete'] ?? false)<p class="muted report-footnote">Performance metrics are unavailable for periods containing legacy website GAM counters.</p>@endif
+@if($summary['video']['available'] || ($summary['video']['configured'] ?? false))<p class="muted">Main performance excludes Video. Financial balances and statements include both.</p>@endif
+@if($summary['video']['available'])
+<section class="report-metrics" aria-label="Total including Video">
+@foreach(['gross_revenue_minor' => 'Total gross including Video', 'net_revenue_minor' => 'Total net including Video', 'publisher_earnings_minor' => 'Total publisher earnings including Video', 'horus_earnings_minor' => 'Total Horus margin including Video'] as $key => $label)
+<article class="report-kpi"><h3 class="eyebrow">{{ $label }}</h3><strong>{{ \App\Support\Money::formatMinor($summary['financial_totals_including_video'][$key]) }} {{ $summary['currency'] }}</strong></article>
+@endforeach
+</section>
+@endif
+<x-video-performance :video="$summary['video']" />
 <x-report-performance-totals :totals="$summary['performance']" :currency="$summary['currency']" />
 <article class="report-chart-card">
     <div class="report-card-heading"><div><p class="eyebrow">REVENUE TREND</p><h3>Daily performance</h3></div><div class="report-chart-total"><strong>{{ \App\Support\Money::formatMinor((int) $summary['gross_revenue_minor']) }} <small>{{ $summary['currency'] }}</small></strong><span>Gross revenue · before adjustments</span></div></div>

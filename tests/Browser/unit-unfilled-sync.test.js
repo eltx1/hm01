@@ -15,5 +15,5 @@ test('unit Unfilled deployment evidence is closed and counter-only', () => {
     const sync=read('app/Services/Reporting/SiteGamUnfilledSynchronizer.php');
     assert.doesNotMatch(sync,/DailyReport::|HourlyReport::|RevenueCorrection|ReportImportService|runPerformanceReport/);
     assert.match(sync,/\['DATE', 'AD_UNIT_ID'\]/);
-    assert.match(sync,/SiteGamUnfilledReport::withoutGlobalScopes\(\)->updateOrCreate/);
+    assert.match(sync,/SiteGamUnfilledReport::withoutGlobalScopes\(\)/);
 });

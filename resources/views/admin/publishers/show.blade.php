@@ -98,6 +98,10 @@
 @if($reporting)
 <article id="reporting" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Aggregated reporting</p><h2>Publisher performance</h2></div><a class="section-anchor" href="{{ route('admin.reporting.index') }}">Reporting control</a></div>
+    @if(($reporting['video']['available'] ?? false) || ($reporting['video']['configured'] ?? false))<p class="muted">Main performance is shown separately from Video. Statement balances include both.</p>@endif
+    @if($reporting['video']['available'] ?? false)
+    <div class="health-grid"><div><span class="muted">Video impressions</span><strong class="metric-small">{{ \App\Services\Reporting\PerformanceMetrics::display('impressions', $reporting['video']['impressions']) }}</strong></div><div><span class="muted">Video publisher earnings</span><strong class="metric-small">{{ \App\Support\Money::formatMinor($reporting['video']['revenue_minor']) }} {{ $reporting['currency'] }}</strong></div><div><span class="muted">Video publisher eCPM</span><strong class="metric-small">{{ \App\Services\Reporting\PerformanceMetrics::display('ecpm_minor', $reporting['video']['ecpm_minor']) }} {{ $reporting['currency'] }}</strong></div></div>
+    @endif
     <div class="health-grid"><div><span class="muted">Impressions</span><strong class="metric-small">{{ \App\Services\Reporting\PerformanceMetrics::display('impressions', $reporting['impressions']) }}</strong></div><div><span class="muted">Publisher earnings</span><strong class="metric-small">{{ \App\Support\Money::formatMinor((int) $reporting['revenue_minor']) }} {{ $reporting['currency'] }}</strong></div><div><span class="muted">Balance due</span><strong class="metric-small">{{ \App\Support\Money::formatMinor((int) $reporting['payment_balance_minor']) }} {{ $reporting['currency'] }}</strong></div></div>
 </article>
 <article id="finance" class="workspace-section">
