@@ -348,6 +348,24 @@ class SiteGamVideoReportingTest extends TestCase
         $csv = $this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000']]);
         Http::fake(['storage.googleapis.com/*' => function () use (&$csv) { return Http::response($csv); }]);
         $this->assertCompleted($this->import($primary, '2026-09-01', '2026-09-30'));
+        // Main canonical coverage for an attested provider must not suppress
+        // the independent Video purpose's missing-day blocker.
+        $this->seed(DemandNetworkSeeder::class);
+        $account = DemandAccount::withoutGlobalScopes()->create([
+            'organization_id' => $admin->organization_id, 'demand_network_id' => DemandNetwork::firstOrFail()->id,
+            'name' => 'Attested primary coverage', 'scope' => 'HORUS_MEDIA', 'integration_mode' => 'DIRECT_JS',
+            'approval_status' => 'APPROVED', 'is_enabled' => true,
+        ]);
+        $account->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
+        $mapping = DemandSite::withoutGlobalScopes()->create(['organization_id' => $context[3]->organization_id,
+            'demand_account_id' => $account->id, 'site_id' => $context[3]->id, 'approval_status' => 'APPROVED',
+            'is_enabled' => true, 'integration_mode' => 'DIRECT_JS']);
+        $mapping->forceFill(['created_at' => '2026-09-21 00:00:00'])->save();
+        app(MonetizationFinancialBindingService::class)->bind($account,
+            ReportSource::where('code', ReportSourceCode::CustomCsv->value)->firstOrFail(), FinancialReportingMethod::Csv,
+            'USD', 'UTC', $admin, ['site_gam_included' => true,
+                'site_gam_inclusion_reason' => 'Provider contract includes revenue in the primary Site GAM unit.']);
+        $this->assertCount(1, app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period)->where('subject_type', 'SITE_GAM_VIDEO_AD_UNIT'));
         $blockers = app(SiteGamFinancialCoverage::class)->blockers($period);
         $this->assertCount(1, $blockers);
         $this->assertSame('SITE_GAM_VIDEO_AD_UNIT', $blockers->sole()['subject_type']);
