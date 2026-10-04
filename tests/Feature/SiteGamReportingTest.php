@@ -1492,7 +1492,7 @@ class SiteGamReportingTest extends TestCase
     public function test_unit_unfilled_storage_rollback_keeps_the_original_job_and_history_cursor(): void
     {
         $binding = $this->bind($this->context());
-        Http::fake(['storage.googleapis.com/*' => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,17\n")]);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response("Dimension.DATE,Dimension.AD_UNIT_ID,Column.TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS\n2026-09-20,12345,17\n")]);
         $fail = true;
         \App\Models\AuditLog::creating(function ($log) use (&$fail): void {
             if ($fail && $log->event === 'reporting.site_gam.unit_unfilled_synced') throw new \RuntimeException('Storage unavailable');
