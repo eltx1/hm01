@@ -38,6 +38,9 @@ class WebsiteReportController extends Controller
     public function show(ReportPeriodRequest $request, Site $site, AdminWebsitePerformanceService $reports): View|StreamedResponse
     {
         $summary = $reports->summary($site, $request->validated('from'), $request->validated('to'));
+        if ($request->validated('export') === 'video_csv') {
+            return app(\App\Services\Reporting\VideoReportCsv::class)->download($summary['video'], false);
+        }
         if ($request->validated('export') === 'csv') {
             return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics($summary), $summary['currency'], false);
         }

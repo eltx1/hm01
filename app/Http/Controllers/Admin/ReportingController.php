@@ -40,6 +40,9 @@ class ReportingController extends Controller
         $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 
         $summary = $reports->adminSummary($from, $to, $canonicalCurrency);
+        if ($request->validated('export') === 'video_csv') {
+            return app(\App\Services\Reporting\VideoReportCsv::class)->download($summary['video'], false);
+        }
         if ($request->validated('export') === 'csv') {
             return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics($summary['performance']), $canonicalCurrency, false);
         }
@@ -70,8 +73,8 @@ class ReportingController extends Controller
         ]);
 
         $source = ReportSource::query()->findOrFail($data['report_source_id']);
-        if ($data['connection_type'] === 'SITE_GAM_AD_UNIT'
-            || $source->code === ReportSourceCode::GamAdUnit) {
+        if (in_array($data['connection_type'], ['SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT'], true)
+            || in_array($source->code, [ReportSourceCode::GamAdUnit, ReportSourceCode::GamVideoAdUnit], true)) {
             throw \Illuminate\Validation\ValidationException::withMessages(['report_source_id' => 'Connect ad-unit reporting from the website Reports section so the Google unit and publisher are verified.']);
         }
 

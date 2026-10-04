@@ -24,7 +24,11 @@ final class PublisherPerformanceService
             ->with(['dimension.site', 'connection.source'])
             ->get();
 
+        $video = app(VideoPerformanceService::class)->summary($rows, true, $currency, app(VideoPerformanceService::class)->configuration($publisher));
+        $rows = $rows->reject(fn ($row) => VideoPerformanceService::isVideo($row));
+
         return [
+            'video' => $video,
             'from' => $from, 'to' => $to, 'currency' => $currency,
             'available' => $rows->isNotEmpty(),
             'updated_at' => $rows->max('updated_at'),

@@ -53,6 +53,8 @@ class SiteController extends Controller
             'gamConnection',
             'currentGamReportBinding.connection.source',
             'currentGamReportBinding.gamConnection',
+            'currentGamVideoReportBinding.connection.source',
+            'currentGamVideoReportBinding.gamConnection',
             'adUnits',
             'placements',
             'siteConfig.versions.deliveryItem.batch',

@@ -24,6 +24,7 @@ final class SiteGamReportSynchronizer
         }
         $now = CarbonImmutable::now($connection->timezone);
         $scope = $this->scopes->ensure($binding);
+        if ($binding instanceof \App\Models\SiteGamVideoReportBinding) app(SiteGamVideoJobWindow::class)->retire($binding);
         $connection->refresh();
         $results = [];
         // Finish yesterday's in-flight request even when the calendar range has moved on.

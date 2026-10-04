@@ -37,6 +37,7 @@
         <x-empty-state title="No reports for these dates yet" description="Try another period." />
         <x-publisher-report-columns :metrics="$reportMetrics" />
     @endif
+    <x-video-performance :video="$performance['video']" :publisher="true" />
     @if($performance['updated_at'])
         <p class="publisher-report-updated">Last updated: {{ $performance['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>
     @endif

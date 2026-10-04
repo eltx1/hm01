@@ -14,7 +14,7 @@ use App\Models\ReportImportJob;
 use App\Models\ReportSource;
 use App\Models\ReportSourceConnection;
 use App\Models\Site;
-use App\Models\SiteGamReportBinding;
+use App\Models\SiteGamVideoReportBinding;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
 use Carbon\CarbonImmutable;
@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
-final class SiteGamReportingService
+final class SiteGamVideoReportingService
 {
     public function __construct(private readonly GamAdUnitReportClient $google, private readonly AuditRecorder $audit,
         private readonly SiteGamReportScope $scopes) {}
@@ -37,7 +37,7 @@ final class SiteGamReportingService
                     ->whereHas('organization', fn (Builder $org) => $org->where('type', OrganizationType::Partner->value))));
     }
 
-    public function bind(Site $site, string $gamId, string $unitInput, User $actor): SiteGamReportBinding
+    public function bind(Site $site, string $gamId, string $unitInput, User $actor): SiteGamVideoReportBinding
     {
         abort_unless($actor->isHorusAdministrator() && $actor->hasPermission('reporting.sources.manage'), 403);
         $gam = $this->availableConnections($site)->find($gamId);
@@ -62,14 +62,14 @@ final class SiteGamReportingService
         $reportCurrency = $this->canonicalCurrency();
         $networkCurrency = strtoupper((string) $network['currencyCode']);
 
-        return DB::transaction(function () use ($site, $gam, $unit, $network, $networkCurrency, $reportCurrency, $actor): SiteGamReportBinding {
+        return DB::transaction(function () use ($site, $gam, $unit, $network, $networkCurrency, $reportCurrency, $actor): SiteGamVideoReportBinding {
             $lockedGam = GamConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($gam->id);
             app(SiteGamUnitClaims::class)->lockNetwork((string) $lockedGam->network_code);
             if ((string) $lockedGam->network_code !== (string) $gam->network_code) {
                 throw ValidationException::withMessages(['gam_connection_id' => 'The network changed while verifying this connection. Retry with its current identity.']);
             }
             Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
-            $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
+            $current = SiteGamVideoReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']
                 && $current->connection->timezone === $network['timeZone']) {
                 app(SiteGamUnitClaims::class)->reserve($gam->network_code.':'.$unit['id'], $current->connectionType(), $current->id);
@@ -77,18 +77,18 @@ final class SiteGamReportingService
                 $this->normalizeConnectionCurrency($current, $networkCurrency, $reportCurrency, $actor);
                 if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
-                    $this->audit->record('reporting.site_gam.reenabled', $site->organization_id, $actor, $current);
+                    $this->audit->record('reporting.site_gam_video.reenabled', $site->organization_id, $actor, $current);
                 }
                 $this->scopes->ensure($current);
 
                 return $current->fresh(['connection']);
             }
             $key = $gam->network_code.':'.$unit['id'];
-            if (SiteGamReportBinding::withoutGlobalScopes()->where('active_unit_key', $key)->where('site_id', '!=', $site->id)->exists()) {
+            if (SiteGamVideoReportBinding::withoutGlobalScopes()->where('active_unit_key', $key)->where('site_id', '!=', $site->id)->exists()) {
                 throw ValidationException::withMessages(['ad_unit' => 'This ad unit already supplies reports for another website.']);
             }
             $today = CarbonImmutable::now($network['timeZone'])->startOfDay();
-            $starts = $today->startOfMonth();
+            $starts = $today; // Forward-only opt-in: never add historical Video credits implicitly.
             // Serialize the cutover with financial closing as well as report imports.
             $period = app(FinancialPeriodService::class)->periodFor($today, $reportCurrency);
             FinancialPeriod::query()->whereKey($period->id)->lockForUpdate()->firstOrFail();
@@ -115,17 +115,18 @@ final class SiteGamReportingService
                 app(SiteGamUnitClaims::class)->release($current);
                 $starts = $starts->max($today)->max($current->starts_on->addDay());
                 $current->update(['active_site_id' => null, 'active_unit_key' => null, 'ends_on' => $starts->subDay()->toDateString()]);
+                app(SiteGamVideoJobWindow::class)->retire($current);
                 // Historical bindings remain importable until their final day has been reconciled.
             }
-            $source = ReportSource::query()->firstOrCreate(['code' => ReportSourceCode::GamAdUnit->value], [
-                'name' => config('reporting.sources.GAM_AD_UNIT.name'), 'is_primary' => false, 'is_enabled' => true,
+            $source = ReportSource::query()->firstOrCreate(['code' => ReportSourceCode::GamVideoAdUnit->value], [
+                'name' => config('reporting.sources.GAM_VIDEO_AD_UNIT.name'), 'is_primary' => false, 'is_enabled' => true,
                 'capabilities' => ['API', 'DAILY', 'FINALIZED_API'],
             ]);
             $id = (string) Str::ulid();
-            app(SiteGamUnitClaims::class)->reserve($key, 'SITE_GAM_AD_UNIT', $id);
+            app(SiteGamUnitClaims::class)->reserve($key, 'SITE_GAM_VIDEO_AD_UNIT', $id);
             $connection = ReportSourceConnection::withoutGlobalScopes()->create([
                 'organization_id' => $site->organization_id, 'report_source_id' => $source->id,
-                'name' => Str::limit($site->display_name, 220, '').' — GAM ad unit', 'connection_type' => 'SITE_GAM_AD_UNIT',
+                'name' => Str::limit($site->display_name, 220, '').' — Video GAM ad unit', 'connection_type' => 'SITE_GAM_VIDEO_AD_UNIT',
                 'connection_id' => $id, 'account_identifier' => $key,
                 'currency' => $reportCurrency, 'timezone' => $network['timeZone'],
                 'configuration' => [
@@ -135,7 +136,7 @@ final class SiteGamReportingService
                 ],
                 'status' => 'ACTIVE', 'is_enabled' => true, 'created_by' => $actor->id, 'updated_by' => $actor->id,
             ]);
-            $binding = SiteGamReportBinding::withoutGlobalScopes()->create([
+            $binding = SiteGamVideoReportBinding::withoutGlobalScopes()->create([
                 'id' => $id, 'organization_id' => $site->organization_id, 'site_id' => $site->id,
                 'gam_connection_id' => $gam->id, 'report_source_connection_id' => $connection->id,
                 'active_site_id' => $site->id, 'active_unit_key' => $key,
@@ -144,13 +145,36 @@ final class SiteGamReportingService
                 'starts_on' => $starts->toDateString(), 'created_by' => $actor->id,
             ]);
             $this->scopes->ensure($binding);
-            $this->audit->record('reporting.site_gam.connected', $site->organization_id, $actor, $binding,
+            $this->audit->record('reporting.site_gam_video.connected', $site->organization_id, $actor, $binding,
                 newValues: $binding->only(['site_id', 'gam_connection_id', 'network_code', 'ad_unit_id', 'starts_on']) + [
                     'report_currency' => $reportCurrency,
                     'source_network_currency' => $networkCurrency,
                 ]);
 
             return $binding->fresh(['connection']);
+        });
+    }
+
+
+    public function disable(Site $site, User $actor): void
+    {
+        abort_unless($actor->isHorusAdministrator() && $actor->hasPermission('reporting.sources.manage'), 403);
+        DB::transaction(function () use ($site, $actor): void {
+            Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
+            $binding = SiteGamVideoReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->lockForUpdate()->first();
+            if (! $binding) return;
+            $today = CarbonImmutable::now($binding->connection->timezone)->startOfDay();
+            $cancelled = $binding->starts_on->toDateString() > $today->toDateString();
+            $end = $cancelled ? $binding->starts_on->subDay() : $today;
+            $binding->update(['active_site_id' => null, 'active_unit_key' => null, 'ends_on' => $end->toDateString(),
+                'cancelled_at' => $cancelled ? now() : null]);
+            if ($cancelled) $binding->connection->update(['is_enabled' => false, 'status' => 'DISABLED', 'updated_by' => $actor->id]);
+            app(SiteGamUnitClaims::class)->release($binding);
+            app(SiteGamVideoJobWindow::class)->retire($binding);
+            // End only future ownership. Retain source refresh so the final owned
+            // day can finalize and reach the normal statement/settlement gate.
+            $this->audit->record('reporting.site_gam_video.disconnected', $site->organization_id, $actor, $binding,
+                newValues: ['ends_on' => $end->toDateString(), 'historical_money_changed' => false]);
         });
     }
 
@@ -162,7 +186,7 @@ final class SiteGamReportingService
     }
 
     private function normalizeConnectionCurrency(
-        SiteGamReportBinding $binding,
+        SiteGamVideoReportBinding $binding,
         string $networkCurrency,
         string $reportCurrency,
         User $actor,
@@ -225,7 +249,7 @@ final class SiteGamReportingService
                 ]);
 
             $this->audit->record(
-                'reporting.site_gam.currency_normalized',
+                'reporting.site_gam_video.currency_normalized',
                 $binding->organization_id,
                 $actor,
                 $binding,

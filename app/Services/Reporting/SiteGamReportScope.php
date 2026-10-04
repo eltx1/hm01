@@ -38,7 +38,7 @@ final class SiteGamReportScope
     {
         $binding->loadMissing('site', 'connection');
         if (! $binding->site || ! $binding->connection
-            || $binding->connection->connection_type !== 'SITE_GAM_AD_UNIT'
+            || $binding->connection->connection_type !== $binding->connectionType()
             || $binding->connection->connection_id !== $binding->id
             || $binding->connection->organization_id !== $binding->organization_id
             || $binding->site->organization_id !== $binding->organization_id) {
@@ -103,7 +103,7 @@ final class SiteGamReportScope
             || $scope['binding_id'] !== $binding->id || $scope['ad_unit_id'] !== $binding->ad_unit_id
             || $scope['network_code'] !== $binding->network_code
             || $scope['currency'] !== $binding->connection?->currency || $scope['timezone'] !== $binding->connection?->timezone
-            || $binding->connection?->connection_type !== 'SITE_GAM_AD_UNIT'
+            || $binding->connection?->connection_type !== $binding->connectionType()
             || $binding->connection?->connection_id !== $binding->id
             || $binding->connection?->organization_id !== $binding->organization_id
             || $binding->site?->organization_id !== $binding->organization_id) {

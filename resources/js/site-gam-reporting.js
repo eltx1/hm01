@@ -1,6 +1,6 @@
 document.querySelectorAll('[data-gam-report-binding]').forEach((form) => {
-    const account = form.querySelector('[name="gam_connection_id"]');
-    const input = form.querySelector('[name="ad_unit"]');
+    const account = form.querySelector('[name="gam_connection_id"], [name="video_gam_connection_id"]');
+    const input = form.querySelector('[name="ad_unit"], [name="video_ad_unit"]');
     const list = form.querySelector('datalist');
     const feedback = form.querySelector('[data-unit-feedback]');
     let timer;

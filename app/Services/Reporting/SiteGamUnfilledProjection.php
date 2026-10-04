@@ -4,6 +4,8 @@ namespace App\Services\Reporting;
 
 use App\Models\SiteGamReportBinding;
 use App\Models\SiteGamUnfilledReport;
+use App\Models\SiteGamVideoReportBinding;
+use App\Models\SiteGamVideoUnfilledReport;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
@@ -66,30 +68,39 @@ final class SiteGamUnfilledProjection
         $connections = $valid->pluck('connection')->unique()->all();
         $organizations = $valid->pluck('organization')->unique()->all();
         $days = $valid->pluck('day')->unique()->all();
-        $bindings = $connections === [] ? collect() : SiteGamReportBinding::withoutGlobalScopes()
-            ->whereIn('organization_id', $organizations)->whereIn('report_source_connection_id', $connections)
-            ->with('connection')->get()->keyBy('report_source_connection_id');
-        $reports = $connections === [] ? collect() : SiteGamUnfilledReport::withoutGlobalScopes()
-            ->whereIn('organization_id', $organizations)->whereIn('report_source_connection_id', $connections)
-            ->whereIn('report_date', $days)->get()
-            ->keyBy(fn ($report) => $report->report_source_connection_id.'|'.$report->report_date->toDateString());
+        $bindings = collect();
+        $reports = collect();
+        foreach ([SiteGamReportBinding::class => SiteGamUnfilledReport::class,
+            SiteGamVideoReportBinding::class => SiteGamVideoUnfilledReport::class] as $bindingClass => $reportClass) {
+            if ($connections === []) break;
+            $bindings = $bindings->concat($bindingClass::withoutGlobalScopes()
+                ->whereIn('organization_id', $organizations)->whereIn('report_source_connection_id', $connections)
+                ->with('connection')->get());
+            $reports = $reports->concat($reportClass::withoutGlobalScopes()
+                ->whereIn('organization_id', $organizations)->whereIn('report_source_connection_id', $connections)
+                ->whereIn('report_date', $days)->get());
+        }
+        $bindings = $bindings->filter(fn ($binding) => $binding->connection?->connection_type === $binding->connectionType())
+            ->keyBy('report_source_connection_id');
+        $reports = $reports->keyBy(fn ($report) => ($report instanceof SiteGamVideoUnfilledReport ? 'SITE_GAM_VIDEO_AD_UNIT' : 'SITE_GAM_AD_UNIT')
+            .'|'.$report->report_source_connection_id.'|'.$report->report_date->toDateString());
 
         foreach ($pending as $key => $fact) {
             $result = ['identity' => null, 'value' => null];
             $binding = $fact ? $bindings->get($fact['connection']) : null;
             if ($binding && $this->matchesBinding($fact, $binding)) {
                 $result['identity'] = implode('|', [$binding->network_code, $binding->ad_unit_id, $binding->connection->timezone, $fact['day']]);
-                $report = $reports->get($fact['connection'].'|'.$fact['day']);
+                $report = $reports->get($binding->connectionType().'|'.$fact['connection'].'|'.$fact['day']);
                 if ($report) {
                     if ($report->organization_id === $fact['organization']
-                        && $report->site_gam_report_binding_id === $binding->id
+                        && $report->getAttribute($binding instanceof SiteGamVideoReportBinding ? 'site_gam_video_report_binding_id' : 'site_gam_report_binding_id') === $binding->id
                         && $report->gam_connection_id === $binding->gam_connection_id
                         && $report->network_code === $binding->network_code
                         && $report->ad_unit_id === $binding->ad_unit_id
                         && $report->timezone === $binding->connection->timezone) {
                         $result['value'] = $this->counter($report->unfilled_impressions);
                     }
-                } elseif ($fact['legacy']) {
+                } elseif ($fact['legacy'] && ! ($binding instanceof SiteGamVideoReportBinding)) {
                     // The old verified SOAP unit report already stored this
                     // original metric. Absence of AdX attribution alone is not
                     // sufficient: binding, unit, owner and date must all match.
@@ -140,7 +151,7 @@ final class SiteGamUnfilledProjection
             && $binding->starts_on->toDateString() <= $fact['day']
             && (! $binding->ends_on || $binding->ends_on->toDateString() >= $fact['day'])
             && $binding->connection?->organization_id === $fact['organization']
-            && $binding->connection?->connection_type === 'SITE_GAM_AD_UNIT'
+            && $binding->connection?->connection_type === $binding->connectionType()
             && $binding->connection?->connection_id === $binding->id
             && is_string($binding->connection?->timezone) && $binding->connection->timezone !== '';
     }

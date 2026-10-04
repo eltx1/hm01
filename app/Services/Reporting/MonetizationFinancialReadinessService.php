@@ -204,7 +204,8 @@ final class MonetizationFinancialReadinessService
         )->filter()->unique()->values();
 
         $siteBlockers = $this->siteReports->blockers($period)
-            ->reject(fn (array $blocker): bool => $attestedSiteIds->contains((string) ($blocker['subject_id'] ?? '')))
+            ->reject(fn (array $blocker): bool => ($blocker['subject_type'] ?? '') === 'SITE_GAM_AD_UNIT'
+                && $attestedSiteIds->contains((string) ($blocker['subject_id'] ?? '')))
             ->values();
 
         return $subjectBlockers->concat($siteBlockers)->values();

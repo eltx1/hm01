@@ -26,7 +26,7 @@ final class ReportSourceManager
         $code = $connection->source->code;
 
         return match ($code) {
-            ReportSourceCode::GamAdUnit => $this->gamAdUnit,
+            ReportSourceCode::GamAdUnit, ReportSourceCode::GamVideoAdUnit => $this->gamAdUnit,
             ReportSourceCode::HorusGam,
             ReportSourceCode::McmPartnerGam,
             ReportSourceCode::PublisherGam => $this->gam,

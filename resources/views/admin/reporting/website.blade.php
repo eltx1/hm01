@@ -24,5 +24,6 @@
     </section>
     @if($summary['updated_at'])<p class="publisher-report-updated">Last updated: {{ $summary['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>@endif
     @else<x-empty-state title="No finalized reports for these dates" description="Try another reporting period." />@endif
+    <x-video-performance :video="$summary['video']" />
 </div>
 @endsection

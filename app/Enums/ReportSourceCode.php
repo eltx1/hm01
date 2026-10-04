@@ -8,6 +8,7 @@ enum ReportSourceCode: string
     case McmPartnerGam = 'MCM_PARTNER_GAM';
     case PublisherGam = 'PUBLISHER_GAM';
     case GamAdUnit = 'GAM_AD_UNIT';
+    case GamVideoAdUnit = 'GAM_VIDEO_AD_UNIT';
     case PrebidEstimates = 'PREBID_ESTIMATES';
     case Mgid = 'MGID';
     case Taboola = 'TABOOLA';

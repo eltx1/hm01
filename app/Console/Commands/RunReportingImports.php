@@ -66,7 +66,7 @@ class RunReportingImports extends Command
                 ->whereHas('connection', fn ($q) => $q
                     ->where('is_enabled', true)
                     ->where('status', '!=', 'DISABLED')
-                    ->where('connection_type', '!=', 'SITE_GAM_AD_UNIT')
+                    ->whereNotIn('connection_type', ['SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT'])
                     ->where(function ($connectionQuery): void {
                         $connectionQuery->whereNotIn('connection_type', ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'])
                             ->orWhereHas('financialBindings', fn ($binding) => $binding->where('is_enabled', true));
@@ -96,7 +96,7 @@ class RunReportingImports extends Command
 
         $connections = ReportSourceConnection::withoutGlobalScopes()
             ->where('is_enabled', true)
-            ->where('connection_type', '!=', 'SITE_GAM_AD_UNIT')
+            ->whereNotIn('connection_type', ['SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT'])
             ->where(function ($query): void {
                 $query->whereNotIn('connection_type', ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'])
                     ->orWhereHas('financialBindings', fn ($binding) => $binding->where('is_enabled', true));

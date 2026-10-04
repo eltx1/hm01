@@ -32,7 +32,8 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
         if ($granularity !== ReportGranularity::Daily) {
             throw new RuntimeException('GAM ad-unit reports use daily totals. Refresh daily estimates for intraday updates.');
         }
-        $binding = SiteGamReportBinding::withoutGlobalScopes()->with(['gamConnection', 'site'])
+        $model = SiteGamReportBinding::modelForConnection($connection);
+        $binding = $model::withoutGlobalScopes()->with(['gamConnection', 'site'])
             ->where('report_source_connection_id', $connection->id)->findOrFail($connection->connection_id);
         if (! $connection->is_enabled || ! $binding->gamConnection?->is_enabled || ! $binding->site
             || $binding->organization_id !== $connection->organization_id

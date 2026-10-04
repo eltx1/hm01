@@ -50,6 +50,7 @@
 @include('admin.sites.serving-control-center')
 @if(auth()->user()->hasPermission('reporting.sources.manage'))
     @include('admin.sites.gam-reporting')
+    @include('admin.sites.gam-video-reporting')
 @endif
 
 <section id="serving" class="detail-grid workspace-section">

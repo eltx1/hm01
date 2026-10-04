@@ -55,7 +55,7 @@ final class ReportImportService
         // (including CPD). Google rejects that combination with HOUR. Refresh
         // a daily estimated snapshot on the hourly cadence instead; never
         // invent an hourly distribution.
-        if (in_array($connection->connection_type, ['SITE_GAM_AD_UNIT', 'GAM_CONNECTION'], true)
+        if (in_array($connection->connection_type, ['SITE_GAM_AD_UNIT', 'SITE_GAM_VIDEO_AD_UNIT', 'GAM_CONNECTION'], true)
             && $granularity === ReportGranularity::Hourly && $finality === ReportFinality::Estimated) {
             $granularity = ReportGranularity::Daily;
             $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));
@@ -67,7 +67,7 @@ final class ReportImportService
             $from = $reportingDay;
             $to = $reportingDay->endOfDay();
         }
-        if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && ! ($options['_site_lock'] ?? false)) {
+        if (\App\Models\SiteGamReportBinding::isSiteConnection($connection) && ! ($options['_site_lock'] ?? false)) {
             return Cache::lock('site-gam-report:'.$connection->id, 300)->block(3,
                 fn () => $this->runConnection($connection->refresh(), $from, $to, $granularity, $finality, $actor, array_replace($options, ['_site_lock' => true])));
         }
@@ -95,7 +95,7 @@ final class ReportImportService
                 'API',
                 (array) ($payload['totals'] ?? []),
             );
-            if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $job->status === ReportImportStatus::Completed) {
+            if (\App\Models\SiteGamReportBinding::isSiteConnection($connection) && $job->status === ReportImportStatus::Completed) {
                 $obsolete = ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
                     ->where('id', '!=', $job->id)
                     ->whereDate('period_start', '>=', $from->toDateString())->whereDate('period_end', '<=', $to->toDateString())
@@ -145,7 +145,7 @@ final class ReportImportService
                     'created_by' => $actor?->id,
                 ],
             );
-            if ($connection->connection_type === 'SITE_GAM_AD_UNIT') {
+            if (\App\Models\SiteGamReportBinding::isSiteConnection($connection)) {
                 $job->update(['status' => ReportImportStatus::Failed, 'error_message' => $exception->getMessage(),
                     'next_retry_at' => now()->addMinutes((int) config('reporting.retry_delay_minutes', 30))]);
                 ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
@@ -155,6 +155,16 @@ final class ReportImportService
             }
             $connection->update(['status' => ReportConnectionStatus::Error, 'last_error' => $exception->getMessage()]);
             $this->recordError($connection, $job, 'SOURCE_IMPORT', 'FETCH_FAILED', $exception->getMessage(), true);
+            if ($connection->connection_type === 'SITE_GAM_VIDEO_AD_UNIT') {
+                $binding = \App\Models\SiteGamVideoReportBinding::withoutGlobalScopes()
+                    ->where('report_source_connection_id', $connection->id)->find($connection->connection_id);
+                if ($binding) {
+                    app(SiteGamVideoJobWindow::class)->retire($binding);
+                    if ($job->fresh()->status === ReportImportStatus::Duplicate) {
+                        $connection->update(['status' => $connection->is_enabled ? ReportConnectionStatus::Active : ReportConnectionStatus::Disabled, 'last_error' => null]);
+                    }
+                }
+            }
 
             return $job->refresh();
         }
@@ -176,7 +186,7 @@ final class ReportImportService
     ): ReportImportJob {
         $connection->loadMissing('source');
         $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection);
-        if ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $importType !== 'API') {
+        if (\App\Models\SiteGamReportBinding::isSiteConnection($connection) && $importType !== 'API') {
             throw ValidationException::withMessages(['source' => 'This website connection imports directly from Google. CSV and manual imports must use their own sources.']);
         }
         if ($importType === 'MANUAL') {
@@ -202,7 +212,7 @@ final class ReportImportService
         ]));
 
         $existing = ReportImportJob::withoutGlobalScopes()->where('idempotency_key', $idempotencyKey)->first();
-        if ($existing && ! ($connection->connection_type === 'SITE_GAM_AD_UNIT' && $existing->status === ReportImportStatus::Failed)) {
+        if ($existing && ! (\App\Models\SiteGamReportBinding::isSiteConnection($connection) && $existing->status === ReportImportStatus::Failed)) {
             return $existing;
         }
 
