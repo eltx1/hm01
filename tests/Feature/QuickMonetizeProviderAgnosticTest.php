@@ -126,13 +126,13 @@ final class QuickMonetizeProviderAgnosticTest extends TestCase
             $mappingJson .= $attributes[$key];
         }
         $mappings = json_decode($mappingJson, true, flags: JSON_THROW_ON_ERROR);
-        $this->assertCount(32, $mappings);
+        $this->assertCount(38, $mappings);
         $mobile = collect($mappings)->where('minWidth', 0);
         $tablet = collect($mappings)->where('minWidth', 768);
         $desktop = collect($mappings)->where('minWidth', 1024);
         $mappingSizes = fn ($group): array => $group->map(fn ($mapping): array => [$mapping['width'], $mapping['height']])->values()->all();
-        $this->assertEqualsCanonicalizing([[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]], $mappingSizes($mobile));
-        $this->assertCount(11, $tablet);
+        $this->assertEqualsCanonicalizing([[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]], $mappingSizes($mobile));
+        $this->assertCount(13, $tablet);
         $this->assertContains([300, 600], $mappingSizes($tablet));
         $this->assertNotContains([970, 250], $mappingSizes($tablet));
         $this->assertEqualsCanonicalizing($sizes, $mappingSizes($desktop));

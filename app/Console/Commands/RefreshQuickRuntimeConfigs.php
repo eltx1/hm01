@@ -12,7 +12,7 @@ use Illuminate\Console\Command;
 
 final class RefreshQuickRuntimeConfigs extends Command
 {
-    protected $signature = 'demand:refresh-quick-runtimes {--apply : Queue changed runtime URLs; otherwise preview only}';
+    protected $signature = 'demand:refresh-quick-runtimes {--apply : Queue changed runtime URLs or Responsive Display sizes; otherwise preview only}';
     protected $description = 'Refresh immutable Direct Demand runtime references after a release for all active publishers';
 
     public function handle(SiteConfigPublisher $publisher): int
@@ -37,7 +37,11 @@ final class RefreshQuickRuntimeConfigs extends Command
                     }
                 }
             }
-            if (! $stale) continue;
+            $responsiveCodes = $site->placements()->withoutGlobalScopes()->whereNull('deleted_at')->get(['code', 'type', 'metadata'])
+                ->filter(fn ($placement) => $placement->type->value === 'DISPLAY'
+                    && data_get($placement->metadata, 'placement_preset') === 'responsive_display')
+                ->pluck('code')->all();
+            if (! $stale && $responsiveCodes === []) continue;
             $preview = $publisher->preview($site, ConfigEnvironment::Production);
             $newUrls = [];
             foreach ((array) data_get($preview, 'directDemand.placements', []) as $placement) {
@@ -49,7 +53,9 @@ final class RefreshQuickRuntimeConfigs extends Command
                 }
             }
             sort($oldUrls); sort($newUrls);
-            if ($oldUrls === $newUrls) continue;
+            $sizesChanged = $this->responsiveSizes($latest->payload, $responsiveCodes)
+                != $this->responsiveSizes($preview, $responsiveCodes);
+            if ($oldUrls === $newUrls && ! $sizesChanged) continue;
             $this->line(($this->option('apply') ? 'Queue: ' : 'Would queue: ').$site->public_key);
             if (! $this->option('apply')) continue;
             $actor = User::withoutGlobalScopes()->find($latest->created_by);
@@ -57,5 +63,18 @@ final class RefreshQuickRuntimeConfigs extends Command
             $publisher->publishActiveProduction($site, $actor, StaticDeliveryPriority::Urgent);
         }
         return self::SUCCESS;
+    }
+
+    private function responsiveSizes(array $payload, array $codes): array
+    {
+        $sizes = [];
+        foreach ((array) ($payload['placements'] ?? []) as $placement) {
+            $code = $placement['code'] ?? '';
+            if (! in_array($code, $codes, true)) continue;
+            $sizes[$code] = [$placement['sizes'] ?? [], $placement['responsiveMappings'] ?? []];
+        }
+        ksort($sizes);
+
+        return $sizes;
     }
 }

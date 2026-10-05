@@ -341,7 +341,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             $this->assertSame('1', data_get($recipe, 'container.attributes.data-hm-gpt-responsive-fluid'));
             $this->assertSame(['DISPLAY', 'NATIVE'], data_get($recipe, 'render.allowedFormats'));
             $this->assertEqualsCanonicalizing([...$public['sizes'], 'fluid'], json_decode(data_get($recipe, 'container.attributes.data-hm-gpt-sizes'), true, flags: JSON_THROW_ON_ERROR));
-            foreach ([[200, 200], [250, 250], [300, 50], [300, 100], [468, 60], [970, 90], [300, 600]] as $expandedSize) {
+            foreach ([[240, 400], [250, 360], [200, 200], [250, 250], [300, 50], [300, 100], [468, 60], [970, 90], [300, 600]] as $expandedSize) {
                 $this->assertContains($expandedSize, data_get($recipe, 'render.allowedSizes'));
             }
             $mobile = collect($public['responsiveMappings'])->firstWhere('device', 'MOBILE');
@@ -568,6 +568,10 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $count = $this->site->configVersions()->count();
         $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
         $this->assertSame($count, $this->site->configVersions()->count());
+        $this->site->update(['status' => SiteStatus::Suspended]);
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->site->update(['status' => SiteStatus::Active]);
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
@@ -612,7 +616,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         foreach ($units as $unit) {
             $recipe = data_get($config, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
             $this->assertContains('fluid', $recipe['render']['allowedSizes']);
-            $this->assertCount(14, $recipe['render']['allowedSizes']);
+            $this->assertCount(16, $recipe['render']['allowedSizes']);
             $this->assertSame('1', $recipe['container']['attributes']['data-hm-gpt-responsive-fluid']);
             $runtimePath = ltrim(parse_url($recipe['scripts'][0]['url'], PHP_URL_PATH), '/');
             $this->assertSame(file_get_contents(public_path('assets/hm-gpt-direct.js')), $snapshot->files[$runtimePath]);
@@ -622,6 +626,70 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame($tags, DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all());
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
+    public function test_existing_responsive_portrait_sizes_migrate_and_publish_without_a_runtime_change(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/portrait',
+        ]))->assertSessionHasNoErrors();
+        $units = $this->responsiveUnits();
+        foreach ($units as $unit) $unit->sizes()->whereIn('width', [240, 250])->whereIn('height', [400, 360])->delete();
+        app(\App\Services\Inventory\SiteConfigPublisher::class)->publishActiveProduction($this->site, $this->admin);
+        $before = $this->publishedConfiguration();
+        $attributes = $units->map(fn ($unit) => $unit->getAttributes())->all();
+        $rows = \Illuminate\Support\Facades\DB::table('placement_sizes')->orderBy('id')->get()->keyBy('id');
+        $tags = DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all();
+        $migration = require database_path('migrations/2026_10_06_010000_add_responsive_display_portrait_sizes.php');
+        $migration->up();
+        $migration->up();
+        $this->assertSame($rows->count() + 48, \Illuminate\Support\Facades\DB::table('placement_sizes')->count());
+        foreach ($rows as $id => $row) $this->assertEquals($row, \Illuminate\Support\Facades\DB::table('placement_sizes')->find($id));
+        $count = $this->site->configVersions()->count();
+        $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $after = $this->publishedConfiguration();
+        foreach ($units as $unit) {
+            $key = 'directDemand.placements.'.$unit->code.'.candidates.0.tag';
+            $this->assertSame(data_get($before, $key.'.scriptUrl'), data_get($after, $key.'.scriptUrl'));
+            $sizes = data_get($after, $key.'.render.allowedSizes');
+            $this->assertContains([240, 400], $sizes);
+            $this->assertContains([250, 360], $sizes);
+            $this->assertContains('fluid', $sizes);
+            $this->assertCount(16, $sizes);
+            $public = collect($after['placements'])->firstWhere('code', $unit->code);
+            foreach ($public['responsiveMappings'] as $mapping) {
+                $this->assertContains([240, 400], $mapping['sizes']);
+                $this->assertContains([250, 360], $mapping['sizes']);
+            }
+        }
+        $this->assertSame($attributes, $this->responsiveUnits()->map(fn ($unit) => $unit->getAttributes())->all());
+        $this->assertSame($tags, DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
+    public function test_portrait_migration_preserves_disabled_sizes_and_custom_viewport_boundaries(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/portrait',
+        ]))->assertSessionHasNoErrors();
+        $unit = $this->responsiveUnits()->first();
+        $unit->sizes()->where('width', 240)->where('height', 400)->update(['is_active' => false]);
+        $unit->sizes()->where('width', 250)->where('height', 360)->delete();
+        $unit->sizes()->where('device', 'MOBILE')->update(['max_viewport_width' => 700]);
+        $disabled = $unit->sizes()->where('width', 240)->where('height', 400)->get()->toArray();
+        $migration = require database_path('migrations/2026_10_06_010000_add_responsive_display_portrait_sizes.php');
+        $migration->up();
+        $migration->up();
+        $this->assertSame($disabled, $unit->sizes()->where('width', 240)->where('height', 400)->get()->toArray());
+        $added = $unit->sizes()->where('width', 250)->where('height', 360)->get();
+        $this->assertCount(4, $added);
+        $this->assertSame(700, $added->first(fn ($size) => $size->device->value === 'MOBILE')->max_viewport_width);
     }
 
     public function test_vast_url_above_the_byte_limit_is_rejected_without_partial_publication(): void

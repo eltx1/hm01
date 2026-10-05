@@ -177,7 +177,7 @@ test('trusted GPT runtime preserves fluid alongside fixed in-article sizes', () 
     assert.equal(attributes['data-hm-gpt-rendered-height'], '180');
 });
 
-const mobileResponsive = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+const mobileResponsive = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]];
 const desktopResponsive = [[970, 250], [970, 90], [728, 90], [468, 60], ...mobileResponsive, [300, 600]];
 const responsiveAttributes = {
     'data-hm-gpt-ad-unit-path': '/1234567,7654321/article/responsive',
@@ -262,12 +262,12 @@ test('expanded responsive display intersects desktop mapping with the publisher 
 test('mobile responsive requests exclude tall desktop demand and subtract placement padding', () => {
     const { definitions } = runAtWidth(390, responsiveAttributes, { contentWidth: 350, padding: 16 });
     assert.equal(definitions.length, 1);
-    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[300, 250], [300, 100], [300, 50], [250, 250], [200, 200]]);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[300, 250], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]]);
 });
 
 test('a narrow responsive sidebar can request its 200-square fallback without overflowing', () => {
     const { definitions } = runAtWidth(1440, responsiveAttributes, { contentWidth: 240 });
-    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200], [240, 400]]);
 });
 
 test('hidden or too narrow responsive placements do not make an ad request', () => {
@@ -281,7 +281,7 @@ test('hidden or too narrow responsive placements do not make an ad request', () 
 
 test('responsive width enforcement still applies when a provider supplies no size mapping', () => {
     const { definitions } = runAtWidth(1440, { ...responsiveAttributes, 'data-hm-gpt-size-map': '' }, { contentWidth: 240 });
-    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200], [240, 400]]);
 });
 
 test('responsive layout is rechecked after GPT loads but does not refresh after a request', () => {
@@ -289,7 +289,7 @@ test('responsive layout is rechecked after GPT loads but does not refresh after 
     assert.equal(definitions.length, 0);
     root.clientWidth = 240;
     commands.shift()();
-    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200]]);
+    assert.deepEqual(JSON.parse(JSON.stringify(definitions[0].sizes)), [[200, 200], [240, 400]]);
     root.clientWidth = 1000;
     vm.runInNewContext(source, sandbox);
     assert.equal(definitions.length, 1);
@@ -320,6 +320,19 @@ const fluidResponsiveAttributes = {
     'data-hm-gpt-responsive-fluid': '1',
     'data-hm-gpt-sizes': JSON.stringify([...desktopResponsive, 'fluid']),
 };
+
+for (const viewport of [390, 800, 1440]) {
+    for (const contentWidth of [239, 240, 249, 250]) {
+        test(`portrait sizes respect exact container width ${contentWidth} at viewport ${viewport}`, () => {
+            const runtime = runAtWidth(viewport, fluidResponsiveAttributes, { contentWidth });
+            const sizes = JSON.parse(JSON.stringify(runtime.definitions[0].sizes));
+            assert.equal(sizes.some(size => size[0] === 240 && size[1] === 400), contentWidth >= 240);
+            assert.equal(sizes.some(size => size[0] === 250 && size[1] === 360), contentWidth >= 250);
+            assert.equal(sizes.filter(size => size === 'fluid').length, 1);
+            assert.equal(runtime.displayCalls.length, 1);
+        });
+    }
+}
 
 for (const [viewport, contentWidth] of [[390, 350], [800, 760], [1440, 1000], [1440, 190]]) {
     test(`Responsive GAM path retains fixed sizing and fluid at viewport ${viewport} in ${contentWidth}px`, () => {

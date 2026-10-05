@@ -8,10 +8,10 @@ use Tests\TestCase;
 
 final class PlacementPresetResponsiveSizesTest extends TestCase
 {
-    public function test_responsive_has_thirteen_fixed_sizes_and_device_specific_tall_demand(): void
+    public function test_responsive_has_fifteen_fixed_sizes_and_device_specific_tall_demand(): void
     {
         $preset = $this->preset('responsiveDisplay');
-        $mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+        $mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]];
         $all = array_merge($mobile, [[728, 90], [970, 250], [970, 90], [468, 60], [300, 600]]);
 
         $this->assertSame($all, $this->sizes($preset, 'ALL'));
@@ -20,7 +20,7 @@ final class PlacementPresetResponsiveSizesTest extends TestCase
         $this->assertContains([300, 600], $this->sizes($preset, 'DESKTOP'));
         $this->assertNotContains([970, 90], $this->sizes($preset, 'TABLET'));
         $this->assertNotContains([970, 250], $this->sizes($preset, 'TABLET'));
-        $this->assertCount(13, $this->sizes($preset, 'ALL'));
+        $this->assertCount(15, $this->sizes($preset, 'ALL'));
         $this->assertSame(['FIXED'], array_values(array_unique(array_column($preset['sizes'], 'size_type'))));
         $this->assertFalse($preset['format_settings']['autoMount']);
         $this->assertFalse($preset['refresh_enabled']);
