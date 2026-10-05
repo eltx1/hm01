@@ -18,8 +18,8 @@ const sizeMappings = [
     { viewport: [1024, 0], maxViewport: [null, null], device: 'DESKTOP', sizes: desktopSizes },
 ];
 
-function config(gated, expanded = false) {
-    const sizes = expanded ? desktopSizes : [[300, 250]];
+function config(gated, expanded = false, fluid = false) {
+    const sizes = [...(expanded ? desktopSizes : [[300, 250]]), ...(fluid ? ['fluid'] : [])];
     return {
         schemaVersion: 4, siteKey: SITE, configVersion: 1, status: 'active', servingMode: 'HORUS_DIRECT',
         allowedHostnames: ['publisher.example'], immediatePause: false,
@@ -40,7 +40,7 @@ function config(gated, expanded = false) {
             return [code, { enabled: true, candidates: [{ network: 'CUSTOM_THIRD_PARTY_TAG', mode: 'MANUAL_TAG', tag: {
                 recipeVersion: 1, executionMode: 'STRUCTURED', format: 'DISPLAY',
                 scripts: [{ url: `${CDN}/runtime/gpt/test.js`, async: true, dedupeKey: 'gpt-runtime' }],
-                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': JSON.stringify(sizes), 'data-hm-gpt-inner-id': 'same-provider-id', ...(expanded ? { 'data-hm-gpt-fit-container': '1' } : {}) } },
+                container: { element: 'div', id, attributes: { 'data-hm-gpt-direct': '1', 'data-hm-gpt-ad-unit-path': '/123/shared', 'data-hm-gpt-sizes': JSON.stringify(sizes), 'data-hm-gpt-inner-id': 'same-provider-id', ...(expanded ? { 'data-hm-gpt-fit-container': '1' } : {}), ...(fluid ? { 'data-hm-gpt-responsive-fluid': '1' } : {}) } },
                 initialization: { type: 'NONE' },
                 render: { timeoutMs: 15000, successSelector: `#${id}[data-hm-gpt-status="rendered"]`, assumeLoadedIsSuccess: false, allowedFormats: ['DISPLAY'], allowedSizes: sizes },
             } }] }];
@@ -63,7 +63,7 @@ const gpt = `(() => {
             const slot = slots.find(s => s.id === id);
             const size = window.testCreativeSizes?.[slots.indexOf(slot)] || slot.sizes[0];
             const frame = document.createElement('iframe');
-            frame.style.cssText = 'width:' + size[0] + 'px;height:' + size[1] + 'px;border:0';
+            frame.style.cssText = size === 'fluid' ? 'display:block;width:100%;height:420px;border:0' : 'width:' + size[0] + 'px;height:' + size[1] + 'px;border:0';
             frame.title = 'Advertisement'; document.getElementById(id).appendChild(frame);
             queueMicrotask(() => { for (const fn of [...listeners]) fn({ slot, isEmpty: false, size }); });
         },
@@ -71,7 +71,7 @@ const gpt = `(() => {
     queue.forEach(fn => fn());
 })();`;
 
-async function open(page, { count = 6, gated = false, blocked = false, expanded = false, creativeSizes = null, gateDocumentReady = null } = {}) {
+async function open(page, { count = 6, gated = false, blocked = false, expanded = false, fluid = false, creativeSizes = null, gateDocumentReady = null } = {}) {
     const requests = [];
     page.on('request', request => requests.push(request.url()));
     if (creativeSizes) await page.addInitScript(sizes => { window.testCreativeSizes = sizes; }, creativeSizes);
@@ -84,8 +84,8 @@ async function open(page, { count = 6, gated = false, blocked = false, expanded 
         if (url.origin === CDN) {
             if (url.pathname === '/hm-loader.js') return route.fulfill({ contentType: 'application/javascript', body: loader });
             if (url.pathname === '/runtime/gpt/test.js') return route.fulfill({ contentType: 'application/javascript', body: runtime });
-            if (url.pathname === `/configs/${SITE}/production.json`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(config(gated, expanded)) });
-            if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated, expanded).controls }) });
+            if (url.pathname === `/configs/${SITE}/production.json`) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(config(gated, expanded, fluid)) });
+            if (url.pathname === '/configs/_global/control.json') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 2, controls: config(gated, expanded, fluid).controls }) });
             return route.fulfill({ status: 404, body: '' });
         }
         if (url.origin === GATE && gateDocumentReady) await gateDocumentReady;
@@ -233,3 +233,34 @@ for (const outcome of ['PASS', 'DENIED']) for (const holdDocument of [false, tru
         }
     });
 }
+
+
+test('Responsive GAM paths render fluid at full column width and fixed banners at their own size', async ({ page }) => {
+    await open(page, { expanded: true, fluid: true, creativeSizes: ['fluid', [320, 50], 'fluid', 'fluid', [300, 250], 'fluid'] });
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
+    const slots = await page.evaluate(() => window.testSlots);
+    expect(slots).toHaveLength(6);
+    for (const slot of slots) expect(slot.sizes.filter(size => size === 'fluid')).toHaveLength(1);
+    for (const index of [0, 2, 3, 5]) {
+        const root = page.locator(`[data-placement="${codes[index]}"]`);
+        const container = root.locator('[data-hm-gpt-direct="1"]');
+        const frame = root.locator('iframe');
+        const contentWidth = await root.evaluate(node => node.clientWidth - parseFloat(getComputedStyle(node).paddingLeft) - parseFloat(getComputedStyle(node).paddingRight));
+        const bounds = await container.boundingBox();
+        const creative = await frame.boundingBox();
+        expect(Math.abs(creative.width - contentWidth)).toBeLessThan(2);
+        expect(bounds.height).toBeGreaterThanOrEqual(420);
+        expect(creative.x).toBeGreaterThanOrEqual(0);
+        expect(creative.x + creative.width).toBeLessThanOrEqual(page.viewportSize().width);
+        // GPT may finish loading/resizing native content after slotRenderEnded.
+        await frame.evaluate(node => { node.style.height = '650px'; });
+        await expect.poll(async () => (await container.boundingBox()).height).toBeGreaterThanOrEqual(650);
+    }
+    const fixed = await page.locator(`[data-placement="${codes[1]}"] [data-hm-gpt-direct="1"]`).boundingBox();
+    expect(fixed.width).toBe(320);
+    expect(fixed.height).toBe(50);
+    await page.evaluate(() => { window.dispatchEvent(new Event('resize')); document.querySelector('article').appendChild(document.createElement('p')); });
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
+    expect(await page.evaluate(() => window.testDisplays.length)).toBe(6);
+    expect(await page.evaluate(() => window.testDestroyedSlots)).toEqual([]);
+});
