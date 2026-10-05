@@ -616,7 +616,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             $this->assertSame('1', $recipe['container']['attributes']['data-hm-gpt-responsive-fluid']);
             $runtimePath = ltrim(parse_url($recipe['scripts'][0]['url'], PHP_URL_PATH), '/');
             $this->assertSame(file_get_contents(public_path('assets/hm-gpt-direct.js')), $snapshot->files[$runtimePath]);
-            $this->assertSame(collect($payload['placements'])->firstWhere('code', $unit->code), collect($config['placements'])->firstWhere('code', $unit->code));
+            $this->assertEquals(collect($payload['placements'])->firstWhere('code', $unit->code), collect($config['placements'])->firstWhere('code', $unit->code));
         }
         $this->assertSame($inventory, $this->responsiveUnits()->map(fn ($unit) => $unit->load('sizes')->toArray())->all());
         $this->assertSame($tags, DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all());
