@@ -268,3 +268,7 @@
     .report-reconciliation dl > div { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
     .report-reconciliation dd { margin: 0; text-align: end; }
 }
+/* The theme-aware gold stays readable against both white and navy chart cards. */
+.video-report .report-chart-line { stroke: var(--hm-gold-highlight); }
+.video-report .report-chart-point { fill: var(--hm-gold-highlight); }
+.video-report .report-chart-foot i { background: var(--hm-gold-highlight); }
