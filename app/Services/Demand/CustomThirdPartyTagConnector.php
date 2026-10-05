@@ -141,7 +141,8 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             'adUnitPath' => $path,
             'containerId' => 'hm-gpt-'.$placement->id,
             'sizes' => $this->placementSizes($placement),
-        ], $configuration, $placement);
+        ], $configuration, $placement, $type === 'DISPLAY'
+            && data_get($placement->placement->metadata, 'placement_preset') === 'responsive_display');
     }
 
     private function googleRewardedRecipe(string $path, DemandPlacement $placement): array
@@ -165,7 +166,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         ];
     }
 
-    private function googleGptRecipe(array $gpt, array $configuration, DemandPlacement $placement): array
+    private function googleGptRecipe(array $gpt, array $configuration, DemandPlacement $placement, bool $responsivePathFluid = false): array
     {
         $runtimeUrl = $this->trustedRuntimeUrl('hm-gpt-direct.js');
         $providerContainerId = $gpt['containerId'];
@@ -181,6 +182,10 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
                 throw new RuntimeException('The Google GPT slot size '.$label.' is not enabled on the selected Horus placement.');
             }
         }
+        // Path input is Horus-managed demand. Add fluid at recipe generation so
+        // existing inventory benefits on republish without rewriting fixed sizes.
+        // Full provider tags and other presets retain their explicit contracts.
+        if ($responsivePathFluid && ! in_array('fluid', $sizes, true)) $sizes[] = 'fluid';
         $allowedFormats = in_array('fluid', $sizes, true) ? ['DISPLAY', 'NATIVE'] : ['DISPLAY'];
         // GPT can be delayed by publisher-page work, consent/gating and an
         // already-loaded page GPT instance. Terminal GPT events now end the wait
@@ -192,6 +197,7 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
         if (data_get($placement->placement->metadata, 'placement_preset') === 'responsive_display') {
             $attributes['data-hm-gpt-fit-container'] = '1';
         }
+        if ($responsivePathFluid) $attributes['data-hm-gpt-responsive-fluid'] = '1';
         return ['recipeVersion' => 1, 'executionMode' => 'STRUCTURED', 'format' => 'DISPLAY', 'scripts' => [['url' => $runtimeUrl, 'async' => true, 'defer' => false, 'dedupeKey' => 'horus-google-gpt-direct-runtime-v1', 'attributes' => []]], 'container' => ['element' => 'div', 'id' => $containerId, 'class' => 'hm-direct-google-gpt', 'attributes' => $attributes], 'publicPlacementId' => $gpt['adUnitPath'], 'initialization' => ['type' => 'NONE', 'parameters' => []], 'render' => ['timeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false, 'allowedFormats' => $allowedFormats, 'allowedSizes' => $sizes], 'isolation' => null, 'scriptUrl' => $runtimeUrl, 'containerId' => $containerId, 'containerClass' => 'hm-direct-google-gpt', 'attributes' => $attributes, 'renderTimeoutMs' => $timeout, 'successSelector' => $successSelector, 'assumeLoadedIsSuccess' => false];
     }
 

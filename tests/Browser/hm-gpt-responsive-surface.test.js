@@ -314,3 +314,60 @@ test('GPT paths reject malformed hierarchy or arbitrary URL input', () => {
         assert.equal(attributes['data-hm-gpt-runtime-state'], 'invalid');
     }
 });
+
+const fluidResponsiveAttributes = {
+    ...responsiveAttributes,
+    'data-hm-gpt-responsive-fluid': '1',
+    'data-hm-gpt-sizes': JSON.stringify([...desktopResponsive, 'fluid']),
+};
+
+for (const [viewport, contentWidth] of [[390, 350], [800, 760], [1440, 1000], [1440, 190]]) {
+    test(`Responsive GAM path retains fixed sizing and fluid at viewport ${viewport} in ${contentWidth}px`, () => {
+        const runtime = runAtWidth(viewport, fluidResponsiveAttributes, { contentWidth });
+        const fixed = runAtWidth(viewport, responsiveAttributes, { contentWidth });
+        const fixedSizes = fixed.definitions[0]?.sizes || [];
+        assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), [...JSON.parse(JSON.stringify(fixedSizes)), 'fluid']);
+        assert.equal(runtime.target.style.width, '100%');
+        assert.equal(runtime.target.style.height, '');
+        runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: 'fluid' });
+        assert.equal(runtime.attributes['data-hm-gpt-status'], 'rendered');
+        assert.equal(runtime.target.style.width, '100%');
+        assert.equal(runtime.target.style.height, '');
+        assert.equal(runtime.target.style.minHeight, '');
+        assert.deepEqual(runtime.destroyedSlots, []);
+        vm.runInNewContext(source, runtime.sandbox);
+        assert.equal(runtime.displayCalls.length, 1);
+    });
+}
+
+test('fluid default requires both server opt-in and declared fluid, and never bypasses a hidden container', () => {
+    const noDeclaredFluid = runAtWidth(390, { ...responsiveAttributes, 'data-hm-gpt-responsive-fluid': '1' }, { contentWidth: 350 });
+    assert.equal(noDeclaredFluid.definitions[0].sizes.includes('fluid'), false);
+    const providerTag = runAtWidth(390, { ...fluidResponsiveAttributes, 'data-hm-gpt-responsive-fluid': '0' }, { contentWidth: 350 });
+    assert.equal(providerTag.definitions[0].sizes.includes('fluid'), false);
+    const hidden = runAtWidth(390, fluidResponsiveAttributes, { contentWidth: 0 });
+    assert.equal(hidden.definitions.length, 0);
+    const unmatched = runAtWidth(1440, { ...fluidResponsiveAttributes, 'data-hm-gpt-size-map': JSON.stringify([{ viewport: [0, 0], maxViewport: [767, 0], sizes: mobileResponsive }]) }, { contentWidth: 350 });
+    assert.equal(unmatched.definitions.length, 0);
+});
+
+test('mixed Responsive slots release reserved height for a smaller fixed creative and keep no-fill terminal', () => {
+    const fixed = runAtWidth(390, fluidResponsiveAttributes, { contentWidth: 350 });
+    fixed.listeners[0]({ slot: fixed.definitions[0], isEmpty: false, size: [320, 50] });
+    assert.equal(fixed.target.style.width, '320px');
+    assert.equal(fixed.target.style.height, '50px');
+    assert.equal(fixed.target.style.minHeight, '');
+    const empty = runAtWidth(390, fluidResponsiveAttributes, { contentWidth: 350 });
+    empty.listeners[0]({ slot: empty.definitions[0], isEmpty: true, size: null });
+    assert.equal(empty.attributes['data-hm-gpt-status'], 'empty');
+    assert.deepEqual(empty.destroyedSlots, [empty.definitions[0]]);
+});
+
+test('delayed GPT rechecks fixed widths while retaining exactly one fluid size', () => {
+    const runtime = runAtWidth(1440, fluidResponsiveAttributes, { contentWidth: 1000, queued: true });
+    runtime.root.clientWidth = 190;
+    runtime.commands.shift()();
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), ['fluid']);
+    runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: null });
+    assert.equal(runtime.attributes['data-hm-gpt-status'], 'rendered');
+});

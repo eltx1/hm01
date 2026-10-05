@@ -337,8 +337,10 @@ final class DirectDemandQuickMonetizeTest extends TestCase
             $this->assertSame('DIRECT_JS', $public['renderer']);
             $this->assertSame('DISPLAY', data_get($recipe, 'format'));
             $this->assertSame($path, data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
-            $this->assertEqualsCanonicalizing($public['sizes'], data_get($recipe, 'render.allowedSizes'));
-            $this->assertEqualsCanonicalizing($public['sizes'], json_decode(data_get($recipe, 'container.attributes.data-hm-gpt-sizes'), true, flags: JSON_THROW_ON_ERROR));
+            $this->assertEqualsCanonicalizing([...$public['sizes'], 'fluid'], data_get($recipe, 'render.allowedSizes'));
+            $this->assertSame('1', data_get($recipe, 'container.attributes.data-hm-gpt-responsive-fluid'));
+            $this->assertSame(['DISPLAY', 'NATIVE'], data_get($recipe, 'render.allowedFormats'));
+            $this->assertEqualsCanonicalizing([...$public['sizes'], 'fluid'], json_decode(data_get($recipe, 'container.attributes.data-hm-gpt-sizes'), true, flags: JSON_THROW_ON_ERROR));
             foreach ([[200, 200], [250, 250], [300, 50], [300, 100], [468, 60], [970, 90], [300, 600]] as $expandedSize) {
                 $this->assertContains($expandedSize, data_get($recipe, 'render.allowedSizes'));
             }
@@ -481,7 +483,7 @@ final class DirectDemandQuickMonetizeTest extends TestCase
                 $recipe = data_get($after, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
                 $public = collect($after['placements'])->firstWhere('code', $unit->code);
                 $expectedPath = $mode === 'GAM_AD_UNIT_PATH' ? $tag : '/1234567/lordai_header';
-                $expectedSizes = $mode === 'GAM_AD_UNIT_PATH' ? $public['sizes'] : [[300, 250]];
+                $expectedSizes = $mode === 'GAM_AD_UNIT_PATH' ? [...$public['sizes'], 'fluid'] : [[300, 250]];
                 $this->assertSame($expectedPath, data_get($recipe, 'container.attributes.data-hm-gpt-ad-unit-path'));
                 $this->assertEqualsCanonicalizing($expectedSizes, data_get($recipe, 'render.allowedSizes'));
             }
@@ -568,6 +570,56 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         $this->assertSame($count, $this->site->configVersions()->count());
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+    }
+
+    public function test_runtime_refresh_adds_fluid_to_all_existing_responsive_path_members_without_inventory_changes(): void
+    {
+        $this->seed(AdFormatSeeder::class);
+        $this->adminSession()->post(route('admin.demand.quick.store'), $this->responsivePayload([
+            'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/1234567/legacy-responsive',
+        ]))->assertSessionHasNoErrors();
+        $units = $this->responsiveUnits();
+        $inventory = $units->map(fn ($unit) => $unit->load('sizes')->toArray())->all();
+        $tags = DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all();
+        $version = $this->site->configVersions()->orderByDesc('version')->firstOrFail();
+        $payload = $version->payload;
+        foreach ($units as $unit) {
+            $key = 'directDemand.placements.'.$unit->code.'.candidates.0.tag';
+            $recipe = data_get($payload, $key);
+            $fixed = array_values(array_filter($recipe['render']['allowedSizes'], fn ($size) => $size !== 'fluid'));
+            foreach (['attributes', 'container.attributes'] as $attributeKey) {
+                $attributes = data_get($recipe, $attributeKey);
+                unset($attributes['data-hm-gpt-responsive-fluid']);
+                $attributes['data-hm-gpt-sizes'] = json_encode($fixed, JSON_THROW_ON_ERROR);
+                data_set($recipe, $attributeKey, $attributes);
+            }
+            $recipe['render']['allowedSizes'] = $fixed;
+            $recipe['render']['allowedFormats'] = ['DISPLAY'];
+            $recipe['scripts'][0]['url'] = $recipe['scriptUrl'] = 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.0000000000000000.js';
+            data_set($payload, $key, $recipe);
+        }
+        $version->update(['payload' => $payload, 'checksum' => hash('sha256', app(\App\Services\StaticDelivery\CanonicalJson::class)->encode($payload))]);
+        $count = $this->site->configVersions()->count();
+        $this->artisan('demand:refresh-quick-runtimes')->assertSuccessful();
+        $this->assertSame($count, $this->site->configVersions()->count());
+        $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $this->site->configVersions()->count());
+        $current = $this->site->configVersions()->orderByDesc('version')->firstOrFail();
+        $snapshot = app(\App\Services\StaticDelivery\StaticDeliverySnapshotBuilder::class)->build();
+        $config = json_decode($snapshot->files['configs/'.$this->site->public_key.'/production.json'], true, flags: JSON_THROW_ON_ERROR);
+        foreach ($units as $unit) {
+            $recipe = data_get($config, 'directDemand.placements.'.$unit->code.'.candidates.0.tag');
+            $this->assertContains('fluid', $recipe['render']['allowedSizes']);
+            $this->assertCount(14, $recipe['render']['allowedSizes']);
+            $this->assertSame('1', $recipe['container']['attributes']['data-hm-gpt-responsive-fluid']);
+            $runtimePath = ltrim(parse_url($recipe['scripts'][0]['url'], PHP_URL_PATH), '/');
+            $this->assertSame(file_get_contents(public_path('assets/hm-gpt-direct.js')), $snapshot->files[$runtimePath]);
+            $this->assertEquals(collect($payload['placements'])->firstWhere('code', $unit->code), collect($config['placements'])->firstWhere('code', $unit->code));
+        }
+        $this->assertSame($inventory, $this->responsiveUnits()->map(fn ($unit) => $unit->load('sizes')->toArray())->all());
+        $this->assertSame($tags, DemandWidget::withoutGlobalScopes()->pluck('direct_tag_template', 'id')->all());
         $this->artisan('demand:refresh-quick-runtimes', ['--apply' => true])->assertSuccessful();
         $this->assertSame($count + 1, $this->site->configVersions()->count());
     }

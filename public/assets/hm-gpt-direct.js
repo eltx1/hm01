@@ -205,6 +205,10 @@
 
         for (var index = 0; index < matches.length; index += 1) {
             var selected = matches[index].sizes.filter(function (size) { return allowed[sizeKey(size)]; });
+            // Only the server-generated Responsive GAM-path recipe opts in.
+            // Preserve legacy fixed mappings and provider-tag size subsets.
+            if (container.getAttribute('data-hm-gpt-responsive-fluid') === '1'
+                && allowed.fluid && selected.indexOf('fluid') === -1) selected.push('fluid');
             if (selected.length) return fitContainerSizes(container, selected);
         }
 
@@ -278,6 +282,7 @@
             if (container.style) {
                 container.style.width = width + 'px';
                 container.style.height = height + 'px';
+                if (container.getAttribute('data-hm-gpt-responsive-fluid') === '1') container.style.minHeight = '';
                 container.style.maxWidth = '100%';
             }
         }
@@ -371,6 +376,13 @@
             }
             // A non-empty trusted GPT response is sufficient for a fluid slot:
             // fluid/native creatives intentionally determine their own height.
+            if (!renderedSize && fluidRendered && container.style
+                && container.getAttribute('data-hm-gpt-responsive-fluid') === '1') {
+                container.style.width = '100%';
+                container.style.height = '';
+                container.style.minHeight = '';
+                container.style.maxWidth = '100%';
+            }
             report(container, 'rendered', renderedSize || null);
         };
 
@@ -478,7 +490,15 @@
 
         var initialSize = allowedSizes.filter(function (size) { return size !== 'fluid'; })[0] || null;
         if (container.style) {
-            if (initialSize) {
+            if (container.getAttribute('data-hm-gpt-responsive-fluid') === '1' && allowedSizes.indexOf('fluid') !== -1) {
+                // Mixed slots must offer native demand the full column width,
+                // not the first fixed banner's width/height. Keep a reservation
+                // while loading, then let GPT own the fluid creative height.
+                container.style.width = '100%';
+                container.style.height = '';
+                container.style.minHeight = initialSize ? String(initialSize[1]) + 'px' : '';
+                container.style.maxWidth = '100%';
+            } else if (initialSize) {
                 container.style.width = String(initialSize[0]) + 'px';
                 container.style.height = String(initialSize[1]) + 'px';
                 container.style.maxWidth = '100%';

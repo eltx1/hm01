@@ -84,6 +84,39 @@ final class GoogleAdUnitPathRecipeTest extends TestCase
         $this->recipe($mapping);
     }
 
+    public function test_responsive_path_adds_fluid_to_existing_fixed_inventory_without_mutating_it(): void
+    {
+        $mapping = $this->mapping('DISPLAY');
+        $mapping->placement->metadata = ['placement_preset' => 'responsive_display'];
+        $mapping->placement->setRelation('sizes', $mapping->placement->sizes->filter(fn ($size) => $size->size_type !== 'FLUID'));
+        $before = $mapping->placement->sizes->toArray();
+        $recipe = $this->recipe($mapping);
+        $this->assertSame([[300, 250], [728, 90], 'fluid'], $recipe['render']['allowedSizes']);
+        $this->assertSame(['DISPLAY', 'NATIVE'], $recipe['render']['allowedFormats']);
+        $this->assertSame('1', $recipe['container']['attributes']['data-hm-gpt-responsive-fluid']);
+        $this->assertSame($recipe['attributes'], $recipe['container']['attributes']);
+        $this->assertSame($before, $mapping->placement->sizes->toArray());
+        $this->assertSame($recipe, $this->recipe($mapping));
+    }
+
+    public function test_full_provider_tags_and_other_path_surfaces_do_not_gain_fluid(): void
+    {
+        foreach (['DISPLAY', 'STICKY'] as $type) {
+            $mapping = $this->mapping($type);
+            $mapping->placement->setRelation('sizes', $mapping->placement->sizes->filter(fn ($size) => $size->size_type !== 'FLUID'));
+            $this->assertSame([[300, 250], [728, 90]], $this->recipe($mapping)['render']['allowedSizes']);
+            $this->assertArrayNotHasKey('data-hm-gpt-responsive-fluid', $this->recipe($mapping)['attributes']);
+        }
+        $mapping->placement->type = 'DISPLAY';
+        $mapping->placement->metadata = ['placement_preset' => 'responsive_display'];
+        $connector = (new ReflectionClass(CustomThirdPartyTagConnector::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod(CustomThirdPartyTagConnector::class, 'googleGptRecipe');
+        $recipe = $method->invoke($connector, ['adUnitPath' => '/123/tag', 'containerId' => 'provider-slot', 'sizes' => [[300, 250]]], [], $mapping);
+        $this->assertSame([[300, 250]], $recipe['render']['allowedSizes']);
+        $this->assertSame(['DISPLAY'], $recipe['render']['allowedFormats']);
+        $this->assertArrayNotHasKey('data-hm-gpt-responsive-fluid', $recipe['attributes']);
+    }
+
     private function mapping(string $type): DemandPlacement
     {
         $placement = new Placement(['type' => $type, 'metadata' => []]);
