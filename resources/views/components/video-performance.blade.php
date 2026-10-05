@@ -9,24 +9,24 @@
     <header class="video-report-heading">
         <div><p class="eyebrow">VIDEO REPORTING</p><h2 id="video-performance-heading">Video performance</h2><p class="muted">{{ \Carbon\CarbonImmutable::parse($start)->format('j M Y') }} – {{ \Carbon\CarbonImmutable::parse($end)->format('j M Y') }}</p></div>
         <div class="video-report-actions">
-            <span class="report-state">{{ $video['has_estimates'] ? 'Includes estimates' : ($video['available'] ? 'Finalized reports' : 'No imported data') }}</span>
+            <span class="report-state">{{ $video['has_estimates'] ? 'Includes estimates' : ($video['available'] ? 'Finalized reports' : ($publisher ? 'Awaiting data' : 'No imported data')) }}</span>
             @if($video['available'])<a class="hm-button-secondary" href="{{ request()->fullUrlWithQuery(['export' => 'video_csv']) }}">Export Video CSV</a>@endif
         </div>
     </header>
-    <p class="video-report-intro">Independent Video results for this period. Video earnings are included once in financial balances and statements.</p>
+    @unless($publisher)<p class="video-report-intro">Independent Video results for this period. Video earnings are included once in financial balances and statements.</p>@endunless
     @if(($video['configuration_state'] ?? '') === 'disabled')
-    <aside class="video-source-notice"><p>Video reporting is disabled. Historical results remain available for their original dates.</p></aside>
+    <aside class="video-source-notice"><p>{{ $publisher ? 'Video reporting is disabled.' : 'Video reporting is disabled. Historical results remain available for their original dates.' }}</p></aside>
     @elseif(($video['source_health'] ?? '') === 'failed')
-    <aside class="video-source-notice"><p>The latest Video refresh did not complete. Previously imported results are preserved; recent dates may be missing.</p></aside>
+    <aside class="video-source-notice"><p>{{ $publisher ? 'Recent Video data is temporarily delayed.' : 'The latest Video refresh did not complete. Previously imported results are preserved; recent dates may be missing.' }}</p></aside>
     @elseif($video['available'] && ($video['source_health'] ?? '') === 'pending')
-    <aside class="video-source-notice"><p>Some Video sources are still awaiting their first import. These totals reflect the data received so far.</p></aside>
+    <aside class="video-source-notice"><p>{{ $publisher ? 'Recent Video data is still updating.' : 'Some Video sources are still awaiting their first import. These totals reflect the data received so far.' }}</p></aside>
     @endif
     @if($video['available'])
     <div class="report-metrics video-report-metrics" aria-label="Video performance totals">
         @foreach([
-            ['revenue_minor', $earningsLabel, $publisher ? 'After your revenue share' : 'Before revenue share'],
+            ['revenue_minor', $earningsLabel, $publisher ? 'Selected period' : 'Before revenue share'],
             ['impressions', 'Video impressions', 'For the matched website'],
-            ['ecpm_minor', 'Video eCPM', $publisher ? 'Your earnings per 1,000 impressions' : 'Gross revenue per 1,000 impressions'],
+            ['ecpm_minor', 'Video eCPM', $publisher ? 'Per 1,000 impressions' : 'Gross revenue per 1,000 impressions'],
             ['unfilled_impressions', 'Video Unfilled', 'Selected ad unit · all sites'],
         ] as [$key, $label, $hint])
         <article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><h3 class="eyebrow">{{ $label }}</h3><strong class="report-kpi-value">{{ $key === 'revenue_minor' ? \App\Support\Money::formatMinor($video[$key]) : ($video[$key] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($key, $video[$key])) }} @if(in_array($key, ['revenue_minor', 'ecpm_minor']) && $video[$key] !== null)<span>{{ $video['currency'] }}</span>@endif</strong><p class="report-kpi-hint">{{ $hint }}</p></article>
@@ -38,7 +38,7 @@
     <article class="report-chart-card video-report-chart">
         <div class="report-card-heading"><h3>{{ $publisher ? 'Video earnings over time' : 'Video revenue over time' }}</h3><span class="report-state">{{ $publisher ? 'Your earnings' : 'Gross revenue' }} · {{ $video['currency'] }}</span></div>
         <x-report-chart :rows="$video['days']" value-key="revenue_minor" :currency="$video['currency']" :from="$start" :to="$end" :label="$publisher ? 'Daily Video publisher earnings' : 'Daily Video gross revenue'" :responsive="true" />
-        <div class="report-chart-foot"><span><i aria-hidden="true"></i> {{ $earningsLabel }}</span><span>{{ $video['days']->count() }} imported {{ $video['days']->count() === 1 ? 'day' : 'days' }} · Missing days remain gaps, not zero.</span></div>
+        <div class="report-chart-foot"><span><i aria-hidden="true"></i> {{ $earningsLabel }}</span><span>{{ $video['days']->count() }} {{ $publisher ? 'reporting' : 'imported' }} {{ $video['days']->count() === 1 ? 'day' : 'days' }}@unless($publisher) · Missing days remain gaps, not zero.@endunless</span></div>
     </article>
     <section class="publisher-report-details" aria-labelledby="video-daily-heading">
         <div class="report-card-heading"><h3 id="video-daily-heading">Video daily breakdown</h3><span class="report-state">{{ $video['currency'] }} · Newest first</span></div>
@@ -55,13 +55,13 @@
         @elseif(($video['configuration_state'] ?? '') === 'disabled')
             <p>No historical Video results were imported for these dates.</p>
         @elseif(($video['source_health'] ?? '') === 'failed')
-            <p>Results will appear after a successful Video refresh.</p>
+            <p>{{ $publisher ? 'Please check again later.' : 'Results will appear after a successful Video refresh.' }}</p>
         @elseif(($video['source_health'] ?? '') === 'pending' || ($video['configured'] ?? false) && !($video['last_successful_import_at'] ?? null))
-            <p>Video reporting is enabled. Awaiting imported statistics for these dates.</p>
+            <p>{{ $publisher ? 'Awaiting Video data for these dates.' : 'Video reporting is enabled. Awaiting imported statistics for these dates.' }}</p>
         @else
-            <p>No imported Video results match the selected period.</p>
+            <p>{{ $publisher ? 'No Video results for these dates.' : 'No imported Video results match the selected period.' }}</p>
         @endif
-        <p class="muted">Missing data does not mean zero earnings.@unless($publisher) This admin report includes finalized data only; today's estimates may not appear yet.@endunless</p></div>
+        @unless($publisher)<p class="muted">Missing data does not mean zero earnings. This admin report includes finalized data only; today's estimates may not appear yet.</p>@endunless</div>
     @endif
     @if($video['starts_on'] ?? null)<p class="report-footnote muted">{{ $video['starts_on'] > now()->toDateString() ? 'Reporting starts' : 'Reporting began' }} {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
     <details class="report-data-details video-report-basis">

@@ -8,12 +8,12 @@
     <nav class="report-channel-nav" aria-label="Report sections"><a href="#main-performance">Main performance</a><a href="#video-performance">Video performance</a></nav>
     @if($performance['available'] || $performance['video']['available'])
     <aside class="report-reconciliation" aria-label="Combined reported earnings"><h3>Reported earnings for this period</h3><dl>
-        <div><dt>Main earnings</dt><dd>{{ $performance['available'] ? \App\Support\Money::formatMinor($performance['earnings_minor']) : 'No imported data' }} @if($performance['available']){{ $performance['currency'] }}@endif</dd></div>
-        <div><dt>Video earnings</dt><dd>{{ $performance['video']['available'] ? \App\Support\Money::formatMinor($performance['video']['revenue_minor']) : 'No imported data' }} @if($performance['video']['available']){{ $performance['currency'] }}@endif</dd></div>
+        <div><dt>Main earnings</dt><dd>{{ $performance['available'] ? \App\Support\Money::formatMinor($performance['earnings_minor']) : 'Unavailable' }} @if($performance['available']){{ $performance['currency'] }}@endif</dd></div>
+        <div><dt>Video earnings</dt><dd>{{ $performance['video']['available'] ? \App\Support\Money::formatMinor($performance['video']['revenue_minor']) : 'Unavailable' }} @if($performance['video']['available']){{ $performance['currency'] }}@endif</dd></div>
         <div><dt>Total reported earnings</dt><dd>{{ \App\Support\Money::formatMinor($performance['earnings_minor'] + $performance['video']['revenue_minor']) }} {{ $performance['currency'] }}</dd></div>
-    </dl><p>Main and Video earnings are counted once. These are imported reports, before statement adjustments; this is not your payable balance.</p></aside>
+    </dl></aside>
     @endif
-    <header id="main-performance" class="report-main-heading"><h2>Main performance</h2><p>Your primary reports, excluding independent Video results.</p></header>
+    <header id="main-performance" class="report-main-heading"><h2>Main performance</h2></header>
     @endif
     @if($performance['available'])
     <div class="publisher-report-overview">

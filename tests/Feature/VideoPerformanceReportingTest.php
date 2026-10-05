@@ -130,7 +130,7 @@ class VideoPerformanceReportingTest extends TestCase
             'configured' => true, 'timezones' => ['Africa/Cairo', 'America/New_York'],
         ]);
         $html = \Illuminate\Support\Facades\Blade::render('<x-video-performance :video="$video" :publisher="true" />', ['video' => $video]);
-        $this->assertStringContainsString('Awaiting imported statistics', $html);
+        $this->assertStringContainsString('Awaiting Video data', $html);
         $this->assertStringContainsString('Multiple source clocks', $html);
         $this->assertStringContainsString('Africa/Cairo', $html);
         $this->assertStringContainsString('America/New_York', $html);

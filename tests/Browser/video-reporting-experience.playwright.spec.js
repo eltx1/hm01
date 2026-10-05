@@ -37,7 +37,7 @@ for (const name of ['publisher-reports', 'publisher-finance', 'admin-reports', '
         await expect(video.locator('.report-metrics > article')).toHaveCount(4);
         await expect(video).toContainText('Selected ad unit · all sites');
         await expect(video).toContainText('Video last updated:');
-        await expect(video).toContainText('Missing days remain gaps, not zero.');
+        if (!name.startsWith('publisher')) await expect(video).toContainText('Missing days remain gaps, not zero.');
         await expect(video).toContainText('18 Sep 2026 – 21 Sep 2026');
         const mobile = page.viewportSize().width <= 600;
         await expect(video.locator(mobile ? '.report-chart-mobile' : '.report-chart-desktop')).toBeVisible();
@@ -62,7 +62,11 @@ for (const name of ['publisher-reports', 'publisher-finance', 'admin-reports', '
             expect(dimensions.x).toBeGreaterThanOrEqual(-1);
             expect(dimensions.right).toBeLessThanOrEqual(dimensions.width + 1);
             for (const card of await video.locator('.report-kpi').all()) expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-            await video.screenshot({ path: info.outputPath(`video-report-${name}-${theme}.png`) });
+            await video.screenshot({ path: info.outputPath(`video-report-${name}-${theme}.png`), scale: 'css' });
+            if (theme === 'dark' && info.project.name.startsWith('chromium') && ['publisher-reports', 'admin-website'].includes(name)) {
+                await page.evaluate(() => window.scrollTo(0, 0));
+                await page.screenshot({ path: info.outputPath(`video-report-${name}-full-page.png`), fullPage: true, scale: 'css' });
+            }
             if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
         }
         await video.locator('summary').click();
@@ -83,17 +87,48 @@ for (const name of ['publisher-zero', 'publisher-pending', 'publisher-failed', '
             await expect(video.locator('.report-kpi-primary')).toContainText('0.00');
             await expect(video).toContainText('Unavailable');
         } else if (name === 'publisher-pending') {
-            await expect(video).toContainText('Awaiting imported statistics');
+            await expect(video).toContainText('Awaiting Video data');
             await expect(video.getByRole('link', { name: 'Export Video CSV' })).toHaveCount(0);
-        } else if (name === 'publisher-failed') await expect(video).toContainText('refresh');
+        } else if (name === 'publisher-failed') await expect(video).toContainText('temporarily delayed');
         else await expect(video).toContainText('disabled');
-        await video.screenshot({ path: info.outputPath(`video-report-${name}.png`) });
+        await video.screenshot({ path: info.outputPath(`video-report-${name}.png`), scale: 'css' });
         expect(await video.evaluate(el => el.getBoundingClientRect().right <= document.documentElement.clientWidth + 1)).toBe(true);
     });
 }
 for (const name of ['publisher-before', 'admin-before']) {
     test(`${name}: preserve original deployed presentation for visual comparison`, async ({ page }, info) => {
         await open(page, name);
-        await page.locator('.publisher-report-details').screenshot({ path: info.outputPath(`video-report-${name}.png`) });
+        await page.locator('.publisher-report-details').screenshot({ path: info.outputPath(`video-report-${name}.png`), scale: 'css' });
     });
 }
+
+
+test('Video Unfilled distinguishes genuine zero, positive totals and absent denominator', async ({ page }, info) => {
+    await open(page, 'publisher-counts');
+    const video = page.locator('#video-performance');
+    await expect(video.locator('.report-kpi').filter({ hasText: 'Video Unfilled' }).locator('.report-kpi-value')).toHaveText('57');
+    const mobile = page.viewportSize().width <= 600;
+    const daily = mobile ? video.locator('.video-mobile-rows').first() : video.locator('.video-performance-table').first();
+    await expect(daily).toContainText('57');
+    await expect(daily).toContainText('0.00');
+    await expect(daily).toContainText('Unavailable');
+    const zeroRow = mobile ? daily.locator('.publisher-report-mobile-row').filter({ hasText: '19 Sep 2026' }) : daily.locator('tbody tr').filter({ hasText: '2026-09-19' });
+    const zeroUnfilled = mobile ? zeroRow.locator('dl > div').filter({ hasText: 'Unfilled' }).locator('dd') : zeroRow.locator('td').nth(1);
+    await expect(zeroUnfilled).toHaveText('0');
+    await video.screenshot({ path: info.outputPath('video-report-publisher-counts.png'), scale: 'css' });
+});
+
+test('Skip link stays hidden during report reading and remains keyboard accessible', async ({ page }, info) => {
+    await open(page, 'publisher-reports');
+    const skip = page.locator('.skip-link');
+    expect(await skip.evaluate(el => getComputedStyle(el).clipPath)).toBe('inset(50%)');
+    await skip.focus();
+    await expect(skip).toBeFocused();
+    expect(await skip.evaluate(el => getComputedStyle(el).clipPath)).toBe('none');
+    expect((await skip.boundingBox()).y).toBeGreaterThanOrEqual(0);
+    await page.screenshot({ path: info.outputPath('video-report-skip-link-focused.png'), scale: 'css' });
+    await skip.press('Enter');
+    await expect(page).toHaveURL(/#main-content$/);
+    await page.getByRole('heading', { name: 'Video performance', exact: true }).click();
+    expect(await skip.evaluate(el => getComputedStyle(el).clipPath)).toBe('inset(50%)');
+});

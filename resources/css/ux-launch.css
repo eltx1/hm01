@@ -8,6 +8,8 @@ body { line-height: 1.5; }
     left: .75rem;
     z-index: 1000;
     transform: translateY(-180%);
+    /* Keep the unfocused control visually hidden even in tall-page captures. */
+    clip-path: inset(50%);
     border: 2px solid var(--hm-gold-highlight);
     border-radius: var(--hm-radius-sm);
     padding: .7rem 1rem;
@@ -15,7 +17,7 @@ body { line-height: 1.5; }
     color: var(--hm-white);
     font-weight: 800;
 }
-.skip-link:focus { transform: translateY(0); }
+.skip-link:focus { transform: translateY(0); clip-path: none; }
 
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
     outline: 3px solid var(--hm-gold-highlight);

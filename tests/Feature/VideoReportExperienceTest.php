@@ -3,18 +3,18 @@
 namespace Tests\Feature;
 
 use App\Enums\{OrganizationType, ReportFinality, ReportGranularity, ReportImportStatus, ReportSourceCode, RoleName};
-use App\Models\{DailyReport, ReportSource, ReportSourceConnection};
+use App\Models\{DailyReport, ReportSource, ReportSourceConnection, SiteGamVideoReportBinding, SiteGamVideoUnfilledReport};
 use App\Services\Reporting\{PublisherPerformanceService, ReportImportService, SiteGamReportMetrics, VideoPerformanceService};
 use Carbon\CarbonImmutable;
 use Database\Seeders\{InventoryDeliverySeeder, ReportingSeeder};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Blade;
-use Tests\Concerns\{InteractsWithIdentity, InteractsWithPublisherSites};
+use Tests\Concerns\{InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites};
 use Tests\TestCase;
 
 class VideoReportExperienceTest extends TestCase
 {
-    use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
+    use InteractsWithGam, InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
     private function context(): array
     {
@@ -69,7 +69,7 @@ class VideoReportExperienceTest extends TestCase
         $response = $this->get(route('publisher.reporting.index', $period))->assertOk()
             ->assertSee('Main performance')->assertSee('Total reported earnings')->assertSee('Video earnings over time')
             ->assertSee('Video daily breakdown')->assertSee('Video website breakdown')->assertSee('Video last updated:')
-            ->assertSee('Missing days remain gaps, not zero.')->assertSee('natega.example.test')
+            ->assertDontSee('Independent Video results')->assertDontSee('After your revenue share')->assertSee('natega.example.test')
             ->assertDontSee('Video gross revenue')->assertDontSee('Horus margin')->assertDontSee('Publisher earnings (USD)');
         $this->fixture('publisher-reports', $response->getContent());
         $performance = app(PublisherPerformanceService::class)->summary($publisher, ...array_values($period));
@@ -124,6 +124,49 @@ class VideoReportExperienceTest extends TestCase
         $this->fixture('publisher-pending', $this->renderVideoFixture($empty));
         $this->fixture('publisher-failed', $this->renderVideoFixture([...$empty, 'source_health' => 'failed', 'has_configuration' => true]));
         $this->fixture('publisher-disabled', $this->renderVideoFixture([...$video, 'configured' => false, 'has_configuration' => true, 'configuration_state' => 'disabled']));
+    }
+
+    public function test_real_video_sidecar_zero_and_positive_counters_reach_the_report_and_csv(): void
+    {
+        $context = [$admin, $user, $publisher, $site] = $this->context();
+        // Financial imports precede the synthetic binding setup; projection is real.
+        $this->fact($context, '2026-09-19', 0, 0);
+        $this->fact($context, '2026-09-20', 5000, 1000);
+        $gam = $this->makeGamConnection($admin->organization, $admin);
+        foreach (DailyReport::withoutGlobalScopes()->with(['connection', 'dimension'])->get() as $row) {
+            $date = $row->report_date->toDateString();
+            $binding = SiteGamVideoReportBinding::withoutGlobalScopes()->create([
+                'organization_id' => $publisher->organization_id, 'site_id' => $site->id,
+                'gam_connection_id' => $gam->id, 'report_source_connection_id' => $row->connection->id,
+                'network_code' => $gam->network_code, 'ad_unit_id' => '80412',
+                'ad_unit_name' => 'Synthetic Video unit', 'ad_unit_code' => 'synthetic-video',
+                'starts_on' => $date, 'ends_on' => $date === '2026-09-19' ? $date : null,
+                'active_site_id' => $date === '2026-09-20' ? $site->id : null, 'created_by' => $admin->id,
+            ]);
+            $row->connection->update(['connection_id' => $binding->id, 'last_successful_import_at' => now()]);
+            $row->dimension->update(['gam_connection_id' => $gam->id, 'external_dimensions' => array_replace($row->dimension->external_dimensions, ['gam_ad_unit_id' => '80412'])]);
+            SiteGamVideoUnfilledReport::withoutGlobalScopes()->create([
+                'organization_id' => $publisher->organization_id, 'report_source_connection_id' => $row->connection->id,
+                'site_gam_video_report_binding_id' => $binding->id, 'gam_connection_id' => $gam->id,
+                'network_code' => $gam->network_code, 'ad_unit_id' => '80412', 'report_date' => $date,
+                'timezone' => 'Africa/Cairo', 'unfilled_impressions' => $date === '2026-09-19' ? 0 : 57,
+                'google_report_job_id' => 'synthetic-job', 'reported_at' => now(),
+            ]);
+        }
+        $this->actingAs($user);
+        $period = ['from' => '2026-09-19', 'to' => '2026-09-20'];
+        $video = app(PublisherPerformanceService::class)->summary($publisher, ...array_values($period))['video'];
+        $this->assertSame(57, $video['unfilled_impressions']);
+        $this->assertSame([0, 57], $video['days']->pluck('unfilled_impressions')->all());
+        $this->assertSame(57, $video['websites']->sole()['unfilled_impressions']);
+        $response = $this->get(route('publisher.reporting.index', $period))->assertOk()->assertSee('Video daily breakdown');
+        $this->fixture('publisher-counts', $response->getContent());
+        $csv = $this->get(route('publisher.reporting.index', [...$period, 'export' => 'video_csv']))->assertOk()->streamedContent();
+        $csvRows = array_map(fn ($line) => str_getcsv($line, escape: ''), array_filter(explode("\n", trim($csv))));
+        $this->assertSame('0', $csvRows[1][3]);
+        $this->assertSame('57', $csvRows[2][3]);
+        $this->assertSame('0.00', $csvRows[1][4]);
+        $this->assertSame('', $csvRows[1][5]);
     }
 
     private function renderVideoFixture(array $video): string
