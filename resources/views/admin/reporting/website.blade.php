@@ -6,6 +6,10 @@
     <nav class="report-finance-links" aria-label="Website report navigation"><a class="text-link" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from'], 'to' => $summary['to'], 'metrics' => $reportMetrics]) }}">← Website reports</a>@if(auth()->user()->hasPermission('sites.view'))<a class="text-link" href="{{ route('admin.sites.show', $site) }}">Website settings</a>@endif</nav>
     <header class="report-page-heading"><div><p class="eyebrow">WEBSITE PERFORMANCE</p><h2>{{ $site->display_name }}</h2><p class="muted">{{ $site->primary_domain }} · {{ $site->publisher?->display_name }}</p></div><span class="report-state">Finalized reports · {{ $summary['currency'] }}</span></header>
     <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
+    @if($summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))
+    <nav class="report-channel-nav" aria-label="Report sections"><a href="#main-performance">Main performance</a><a href="#video-performance">Video performance</a></nav>
+    <header id="main-performance" class="report-main-heading"><h2>Main performance</h2><p>Primary website reports, excluding independent Video results below.</p></header>
+    @endif
     @if($summary['available'])
     <section class="report-metrics" aria-label="Website revenue totals">
         @foreach([['Gross revenue', $summary['gross_revenue_minor'], $summary['currency']], ['Publisher earnings', $summary['publisher_earnings_minor'], $summary['currency']], ['Horus margin', $summary['horus_earnings_minor'], $summary['currency']], ['Impressions', $summary['impressions'], '']] as [$label, $value, $unit])
@@ -23,7 +27,7 @@
         <x-report-performance-table :rows="$summary['days']->reverse()->values()" :metrics="$reportMetrics" :currency="$summary['currency']" label-key="date" revenue-key="gross_revenue_minor" revenue-label="Gross revenue" :mobile-cards="true" caption="Website daily performance" />
     </section>
     @if($summary['updated_at'])<p class="publisher-report-updated">Last updated: {{ $summary['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>@endif
-    @else<x-empty-state title="No finalized reports for these dates" description="Try another reporting period." />@endif
-    <x-video-performance :video="$summary['video']" />
+    @else<x-empty-state :title="($summary['video']['available'] || ($summary['video']['configured'] ?? false)) ? 'No finalized main reports for these dates' : 'No finalized reports for these dates'" description="Try another reporting period." />@endif
+    <x-video-performance :video="$summary['video']" :from="$summary['from']" :to="$summary['to']" />
 </div>
 @endsection
