@@ -9,7 +9,7 @@ const CDN = 'https://cdn.horusmedia.net';
 const SITE = 'RESPONSIVE_SIX';
 const GATE = 'https://verify.horusmedia.net';
 const codes = ['quick_responsive_display', 'quick_responsive_display_2', 'quick_responsive_display_3', 'quick_responsive_display_4', 'quick_responsive_display_5', 'quick_responsive_display_6'];
-const mobileSizes = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+const mobileSizes = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]];
 const tabletSizes = [[728, 90], [468, 60], ...mobileSizes, [300, 600]];
 const desktopSizes = [[970, 250], [970, 90], ...tabletSizes];
 const sizeMappings = [
@@ -131,7 +131,7 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
     const slots = await page.evaluate(() => window.testSlots.map(({ id, path, sizes }) => ({ id, path, sizes })));
     expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     expect(new Set(slots.map(slot => slot.path)).size).toBe(1);
-    expect(slots.find(slot => slot.id === 'hm-gpt-member-3').sizes).toEqual([[200, 200]]);
+    expect(slots.find(slot => slot.id === 'hm-gpt-member-3').sizes).toEqual([[200, 200], [240, 400]]);
     const paddedSizes = slots.find(slot => slot.id === 'hm-gpt-member-2').sizes;
     expect(paddedSizes).toContainEqual([300, 250]);
     expect(paddedSizes).not.toContainEqual([336, 280]);
@@ -146,7 +146,7 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
         });
         for (const size of slot.sizes) {
             expect(size[0]).toBeLessThanOrEqual(available);
-            if (page.viewportSize().width < 768) expect(size[1]).toBeLessThanOrEqual(280);
+            if (page.viewportSize().width < 768) expect(size[1]).toBeLessThanOrEqual(400);
         }
         const bounds = await creative.locator('iframe').boundingBox();
         const parent = await creative.evaluate(node => {
@@ -162,6 +162,22 @@ test('expanded responsive units request only device-appropriate sizes fitting ea
     }
 });
 
+test('portrait creatives render at exact dimensions alongside fluid without duplicate requests', async ({ page }) => {
+    const creativeSizes = [[240, 400], [250, 360], [240, 400], [240, 400], [250, 360], 'fluid'];
+    await open(page, { expanded: true, fluid: true, creativeSizes });
+    await expect(page.locator('[data-hm-status="rendered"]')).toHaveCount(6);
+    const slots = await page.evaluate(() => window.testSlots.map(({ sizes }) => sizes));
+    for (let index = 0; index < 5; index++) {
+        expect(slots[index]).toContainEqual(creativeSizes[index]);
+        expect(slots[index]).toContain('fluid');
+        const frame = await page.locator('#hm-gpt-member-' + index + ' iframe').boundingBox();
+        expect([frame.width, frame.height]).toEqual(creativeSizes[index]);
+    }
+    expect(slots[3]).not.toContainEqual([250, 360]);
+    expect(await page.evaluate(() => window.testDisplays.length)).toBe(6);
+    expect(await page.evaluate(() => window.testDestroyedSlots.length)).toBe(0);
+});
+
 test('six filled creatives with different returned sizes remain rendered, centered and requested only once', async ({ page }) => {
     const creativeSizes = page.viewportSize().width >= 1024
         ? [[728, 600], [640, 600], [300, 600], [200, 600], [468, 600], [300, 600]]
@@ -171,7 +187,7 @@ test('six filled creatives with different returned sizes remain rendered, center
     const slots = await page.evaluate(() => window.testSlots.map(({ id, sizes }) => ({ id, sizes })));
     expect(new Set(slots.map(slot => slot.id)).size).toBe(6);
     // Requested inventory remains constrained even when GPT renders a taller ad.
-    expect(slots[3].sizes).toEqual([[200, 200]]);
+    expect(slots[3].sizes).toEqual([[200, 200], [240, 400]]);
     for (const [index, code] of codes.entries()) {
         const root = page.locator(`[data-placement="${code}"]`);
         const bounds = await root.boundingBox();

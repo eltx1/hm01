@@ -96,7 +96,7 @@ final class PlacementPresetCatalog
         // A fixed-size inventory allowlist, not a promise to stretch creatives.
         // GPT intersects these device mappings with the actual publisher DIV
         // width. Tall half-page demand remains tablet/desktop-only.
-        $mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200]];
+        $mobile = [[300, 250], [336, 280], [320, 100], [320, 50], [300, 100], [300, 50], [250, 250], [200, 200], [240, 400], [250, 360]];
         $tablet = array_merge([[728, 90], [468, 60]], $mobile, [[300, 600]]);
         $desktop = array_merge([[970, 250], [970, 90]], $tablet);
 
