@@ -1,0 +1,98 @@
+name: Diagnose generic scheduler health
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/diagnose-scheduler-incident.yml'
+      - 'ops/audit/scheduler-incident.php'
+      - 'ops/audit/validate-scheduler-incident.mjs'
+      - 'tests/Deployment/scheduler-incident-audit.test.mjs'
+
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-scheduler-incident.yml'
+      - 'ops/audit/scheduler-incident.php'
+      - 'ops/audit/validate-scheduler-incident.mjs'
+      - 'tests/Deployment/scheduler-incident-audit.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: horus-readonly-reporting-incident
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Validate read-only audit
+        run: |
+          php -l ops/audit/scheduler-incident.php
+          node --test tests/Deployment/scheduler-incident-audit.test.mjs
+          set +e
+          php < ops/audit/scheduler-incident.php > "$RUNNER_TEMP/invalid-marker.json" 2> "$RUNNER_TEMP/invalid-marker.err"
+          result=$?
+          set -e
+          test "$result" -eq 1
+          test ! -s "$RUNNER_TEMP/invalid-marker.json"
+          grep -Fxq 'Read-only scheduler audit failed.' "$RUNNER_TEMP/invalid-marker.err"
+          test "$(wc -l < "$RUNNER_TEMP/invalid-marker.err")" -eq 1
+
+  diagnose:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: production
+    env:
+      EXPECTED_SHA: ${{ github.sha }}
+      ALLOWED_PREVIOUS_SHA: 554be0bf91ecbf5136999db636704093e9c58f8c
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Read generic scheduler classes without tenant or financial data
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          if ! timeout 120 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_ALLOWED_PREVIOUS_SHA='$ALLOWED_PREVIOUS_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < ops/audit/scheduler-incident.php > "$RUNNER_TEMP/scheduler.json" 2> "$RUNNER_TEMP/scheduler-error.txt"; then
+            echo 'Generic scheduler diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          node ops/audit/validate-scheduler-incident.mjs "$RUNNER_TEMP/scheduler.json"
