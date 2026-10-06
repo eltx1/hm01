@@ -46,7 +46,11 @@ final class SiteGamReportSynchronizer
                 CarbonImmutable::parse($job->period_start), CarbonImmutable::parse($job->period_end), ReportGranularity::Daily, $finality);
             $key = $intraday ? 'intraday_'.$job->period_start->toDateString()
                 : 'daily_'.$job->period_start->toDateString().'_'.$job->period_end->toDateString();
-            $this->next($connection, $key, $result, $intraday ? 60 : 360);
+            // A completed pre-midnight estimate is not the finalized refresh.
+            // Release its daily window immediately, after the importer clears
+            // the old Google job. Pending and failed retries keep their backoff.
+            $minutes = $intraday ? 60 : ($finality === ReportFinality::Estimated ? 0 : 360);
+            $this->next($connection, $key, $result, $minutes);
             $results[] = $result;
         }
         $first = CarbonImmutable::parse($scope['effective_from'], $connection->timezone);
