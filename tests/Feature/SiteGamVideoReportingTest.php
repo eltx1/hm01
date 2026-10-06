@@ -808,7 +808,7 @@ class SiteGamVideoReportingTest extends TestCase
     {
         [$admin, , $publisherUser, $site] = $context = $this->context();
         $this->video($context);
-        $this->get(route('admin.sites.show', $site))->assertRedirect(route('login'));
+        $this->get(route('admin.sites.show', $site))->assertRedirect(route('admin.login'));
         $this->actingAs($publisherUser)->get(route('admin.sites.show', $site))->assertForbidden();
         $support = $this->makeUser($admin->organization, RoleName::SupportAgent);
         $this->actingAs($support)->withSession(['two_factor_passed_at' => now()->timestamp])
@@ -872,7 +872,7 @@ class SiteGamVideoReportingTest extends TestCase
         [$admin, , , $site] = $context = $this->context();
         $video = $this->video($context);
         $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
-        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
         $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
             $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
         $before = DailyReport::withoutGlobalScopes()->sole()->getAttributes();
