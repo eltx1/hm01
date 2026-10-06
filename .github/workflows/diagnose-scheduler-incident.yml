@@ -7,6 +7,9 @@ on:
       - 'ops/audit/scheduler-incident.php'
       - 'ops/audit/validate-scheduler-incident.mjs'
       - 'tests/Deployment/scheduler-incident-audit.test.mjs'
+      - 'routes/console.php'
+      - 'app/Console/Commands/RecordCronHeartbeat.php'
+      - 'tests/Feature/SchedulerHeartbeatRecoveryTest.php'
 
   push:
     branches: [main]
@@ -15,6 +18,9 @@ on:
       - 'ops/audit/scheduler-incident.php'
       - 'ops/audit/validate-scheduler-incident.mjs'
       - 'tests/Deployment/scheduler-incident-audit.test.mjs'
+      - 'routes/console.php'
+      - 'app/Console/Commands/RecordCronHeartbeat.php'
+      - 'tests/Feature/SchedulerHeartbeatRecoveryTest.php'
 
 permissions:
   contents: read
@@ -60,7 +66,7 @@ jobs:
     environment: production
     env:
       EXPECTED_SHA: ${{ github.sha }}
-      ALLOWED_PREVIOUS_SHA: 554be0bf91ecbf5136999db636704093e9c58f8c
+      ALLOWED_PREVIOUS_SHA: ${{ github.event.before }}
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
     steps:
@@ -83,6 +89,7 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
           [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ALLOWED_PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]]
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"

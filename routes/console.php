@@ -72,7 +72,8 @@ Artisan::command('monetization:health-check {--site=}', function (MonetizationHe
     return Command::SUCCESS;
 })->purpose('Observe multi-engine monetization health and emit deduplicated state-transition notifications.');
 
-Schedule::command('operations:heartbeat scheduler')->everyMinute()->withoutOverlapping();
+// This atomic single-row heartbeat must not be silenced by an abandoned job mutex.
+Schedule::command('operations:heartbeat scheduler')->everyMinute();
 Schedule::command('static-delivery:process')->everyMinute()->withoutOverlapping(10);
 Schedule::command('adtech:probe')->everyFifteenMinutes()->withoutOverlapping(10);
 Schedule::command('monetization:health-check')->everyFifteenMinutes()->withoutOverlapping(10);

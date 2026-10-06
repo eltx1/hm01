@@ -1,5 +1,15 @@
 <?php
 /** Read-only generic scheduler classification. No tenant, reporting, financial or source data is read. */
+function hmSchedulerHeartbeatProgress(?int $before, ?int $after, int $firstObservedAt, int $secondObservedAt): string
+{
+    if ($after === null || $after > $secondObservedAt || ($before !== null && $before > $firstObservedAt)) return 'UNAVAILABLE';
+    if ($secondObservedAt - $after > 300 || ($before !== null && $after <= $before)) return 'NO_ADVANCE';
+    if ($before === null || $firstObservedAt - $before > 300) return 'FIRST_OBSERVED_TICK';
+    return 'ADVANCING';
+}
+// Pure fixture entry only; a process environment variable cannot enable this constant.
+if (defined('HORUS_SCHEDULER_PROGRESS_TEST_ONLY') && HORUS_SCHEDULER_PROGRESS_TEST_ONLY === true) return;
+
 ini_set('display_errors', '0');
 ini_set('log_errors', '0');
 try {
@@ -8,8 +18,8 @@ try {
     preg_match('/^release_id=([a-f0-9]{40})$/m', $marker, $match);
     $previous = (string) getenv('HM_ALLOWED_PREVIOUS_SHA');
     $release = $match[1] ?? '';
-    if (!preg_match('/^[a-f0-9]{40}$/D', $expected) || !in_array($release, [$expected, '554be0bf91ecbf5136999db636704093e9c58f8c'], true)
-        || ($release !== $expected && $previous !== '554be0bf91ecbf5136999db636704093e9c58f8c')) {
+    if (!preg_match('/^[a-f0-9]{40}$/D', $expected) || !preg_match('/^[a-f0-9]{40}$/D', $previous)
+        || !in_array($release, [$expected, $previous, '554be0bf91ecbf5136999db636704093e9c58f8c', '3cd93b842b79d21ffefd61de103d55ee5b8f104c'], true)) {
         throw new RuntimeException('Release mismatch');
     }
     require 'vendor/autoload.php';
@@ -54,7 +64,8 @@ try {
     if (!$db) throw new RuntimeException('Read-only bootstrap guard was not applied');
     $now = time();
     $heartbeat = $db->table('system_heartbeats')->where('key', 'scheduler')->first(['last_seen_at']);
-    $age = $heartbeat?->last_seen_at ? max(0, $now - strtotime($heartbeat->last_seen_at.' UTC')) : null;
+    $firstHeartbeat = $heartbeat?->last_seen_at ? strtotime($heartbeat->last_seen_at.' UTC') : null;
+    $age = $firstHeartbeat !== null ? max(0, $now - $firstHeartbeat) : null;
     $report = [
         'schema_version' => 1, 'diagnostic' => 'SCHEDULER_HEALTH',
         'scheduler_status' => $age === null ? 'MISSING' : ($age <= 300 ? 'FRESH' : 'STALE'),
@@ -94,6 +105,17 @@ try {
             $report['mutex_statuses'][$label] = $status;
         }
     }
+    $db->rollBack();
+    // A fresh transaction prevents a repeatable-read snapshot hiding genuine cron ticks.
+    sleep(65);
+    $db->statement('SET TRANSACTION READ ONLY');
+    $db->beginTransaction();
+    $second = $db->table('system_heartbeats')->where('key', 'scheduler')->first(['last_seen_at']);
+    $secondObservedAt = time();
+    $secondHeartbeat = $second?->last_seen_at ? strtotime($second->last_seen_at.' UTC') : null;
+    $secondAge = $secondHeartbeat !== null ? max(0, $secondObservedAt - $secondHeartbeat) : null;
+    $report['scheduler_status'] = $secondAge === null ? 'MISSING' : ($secondAge <= 300 ? 'FRESH' : 'STALE');
+    $report['heartbeat_progress'] = hmSchedulerHeartbeatProgress($firstHeartbeat, $secondHeartbeat, $now, $secondObservedAt);
     $db->rollBack();
     echo json_encode($report, JSON_THROW_ON_ERROR).PHP_EOL;
 } catch (Throwable $exception) {
