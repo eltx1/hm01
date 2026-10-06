@@ -125,7 +125,10 @@ class SchedulerHeartbeatRecoveryTest extends TestCase
         $createdAt = $first->created_at->copy();
         $this->assertSame('HEALTHY', $first->status);
         $this->assertTrue($first->last_seen_at->equalTo(now()));
-        $this->assertSame(['hostname' => gethostname() ?: null, 'php' => PHP_VERSION], $first->metadata);
+        // MySQL JSON objects may return keys in a different order; values/types must remain exact.
+        $metadata = $first->metadata;
+        ksort($metadata);
+        $this->assertSame(['hostname' => gethostname() ?: null, 'php' => PHP_VERSION], $metadata);
 
         $this->travel(1)->minutes();
         $this->artisan('operations:heartbeat')->assertSuccessful();
