@@ -1,0 +1,36 @@
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+const audit = readFileSync('ops/audit/video-reporting-incident.php', 'utf8');
+const workflow = readFileSync('.github/workflows/diagnose-video-reporting-incident.yml', 'utf8');
+test('audit is read-only, hostname/date bounded and does not return raw financial data', () => {
+  assert.match(audit, /SET TRANSACTION READ ONLY/);
+  assert.match(audit, /beforeBootstrapping.*BootProviders::class/);
+  assert.match(audit, /afterBootstrapping.*LoadConfiguration::class/);
+  assert.match(audit, /getCachedPackagesPath/);
+  assert.match(audit, /getCachedServicesPath/);
+  assert.match(audit, /Stale service manifest/);
+  assert.match(audit, /logging.default' => 'null'/);
+  assert.match(audit, /SCHEDULE_CACHE_DRIVER/);
+  assert.match(audit, /SCHEDULE_CACHE_STORE/);
+  assert.match(audit, /config\(\['cache.default' => 'array'\]\)/);
+  assert.ok(audit.indexOf('SET TRANSACTION READ ONLY') < audit.indexOf('->bootstrap()'));
+  assert.match(audit, /\$db->rollBack\(\)/);
+  assert.match(audit, /where\('primary_domain', 'natega\.bluekl\.com'\)/);
+  assert.match(audit, /whereBetween\('r.report_date', \['2026-10-05', '2026-10-06'\]\)/);
+  assert.doesNotMatch(audit, /->(?:insert|update|delete|save|sync|ensure|lockForUpdate)\s*\(/);
+  assert.doesNotMatch(audit, /Artisan::call|Cache::|getMessage\(\)|json_encode\(\$(?:row|connection|binding|configuration|cron)/);
+  assert.match(audit, /'gross_state' => \$state\(\$row->gross_revenue_minor\)/);
+  assert.match(audit, /'publisher_state' => \$state\(\$row->publisher_earnings_minor\)/);
+});
+test('workflow stays on its own same-repository diagnostic PR and never deploys', () => {
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /head.repo.full_name == github.repository/);
+  assert.match(workflow, /diagnose\/natega-video-scheduler-20261006/);
+  assert.match(workflow, /StrictHostKeyChecking=yes/);
+  assert.doesNotMatch(workflow, /\n  (?:push|schedule|workflow_run|pull_request_target):|schedule:run|schedule:clear-cache|artisan reporting:|--apply|actions\/upload-artifact/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /display_errors=0 -d log_errors=0/);
+  assert.match(workflow, /Raw output withheld/);
+  assert.doesNotMatch(audit, /fwrite\(STDERR/);
+});
