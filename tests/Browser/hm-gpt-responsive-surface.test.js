@@ -323,11 +323,11 @@ const fluidResponsiveAttributes = {
 
 for (const viewport of [390, 800, 1440]) {
     for (const contentWidth of [239, 240, 249, 250]) {
-        test(`portrait sizes respect exact container width ${contentWidth} at viewport ${viewport}`, () => {
+        test(`Responsive GAM paths retain portrait request sizes in ${contentWidth}px host at viewport ${viewport}`, () => {
             const runtime = runAtWidth(viewport, fluidResponsiveAttributes, { contentWidth });
             const sizes = JSON.parse(JSON.stringify(runtime.definitions[0].sizes));
-            assert.equal(sizes.some(size => size[0] === 240 && size[1] === 400), contentWidth >= 240);
-            assert.equal(sizes.some(size => size[0] === 250 && size[1] === 360), contentWidth >= 250);
+            assert.equal(sizes.some(size => size[0] === 240 && size[1] === 400), true);
+            assert.equal(sizes.some(size => size[0] === 250 && size[1] === 360), true);
             assert.equal(sizes.filter(size => size === 'fluid').length, 1);
             assert.equal(runtime.displayCalls.length, 1);
         });
@@ -337,7 +337,7 @@ for (const viewport of [390, 800, 1440]) {
 for (const [viewport, contentWidth] of [[390, 350], [800, 760], [1440, 1000], [1440, 190]]) {
     test(`Responsive GAM path retains fixed sizing and fluid at viewport ${viewport} in ${contentWidth}px`, () => {
         const runtime = runAtWidth(viewport, fluidResponsiveAttributes, { contentWidth });
-        const fixed = runAtWidth(viewport, responsiveAttributes, { contentWidth });
+        const fixed = runAtWidth(viewport, responsiveAttributes, { contentWidth: viewport });
         const fixedSizes = fixed.definitions[0]?.sizes || [];
         assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), [...JSON.parse(JSON.stringify(fixedSizes)), 'fluid']);
         assert.equal(runtime.target.style.width, '100%');
@@ -376,11 +376,69 @@ test('mixed Responsive slots release reserved height for a smaller fixed creativ
     assert.deepEqual(empty.destroyedSlots, [empty.definitions[0]]);
 });
 
-test('delayed GPT rechecks fixed widths while retaining exactly one fluid size', () => {
+test('delayed GPT keeps the viewport size set when a publisher column narrows', () => {
     const runtime = runAtWidth(1440, fluidResponsiveAttributes, { contentWidth: 1000, queued: true });
     runtime.root.clientWidth = 190;
     runtime.commands.shift()();
-    assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), ['fluid']);
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime.definitions[0].sizes)), [...desktopResponsive, 'fluid']);
     runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: null });
     assert.equal(runtime.attributes['data-hm-gpt-status'], 'rendered');
+});
+
+test('delayed GPT rechecks viewport selection and hidden hosts before requesting', () => {
+    const resized = runAtWidth(1440, fluidResponsiveAttributes, { contentWidth: 240, queued: true });
+    resized.sandbox.innerWidth = 390;
+    resized.commands.shift()();
+    assert.deepEqual(JSON.parse(JSON.stringify(resized.definitions[0].sizes)), [...mobileResponsive, 'fluid']);
+    const hidden = runAtWidth(1440, fluidResponsiveAttributes, { contentWidth: 600, queued: true });
+    hidden.root.clientWidth = 0;
+    hidden.commands.shift()();
+    assert.equal(hidden.definitions.length, 0);
+});
+
+test('GAM path requests remain viewport-bounded and accept wider-than-host fixed winners', () => {
+    const runtime = runAtWidth(320, fluidResponsiveAttributes, { contentWidth: 190, padding: 16 });
+    const sizes = JSON.parse(JSON.stringify(runtime.definitions[0].sizes));
+    assert.deepEqual(sizes, [...mobileResponsive.filter(size => size[0] <= 320), 'fluid']);
+    runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: [300, 250] });
+    assert.equal(runtime.attributes['data-hm-gpt-status'], 'rendered');
+    assert.equal(runtime.target.style.width, '300px');
+    assert.equal(runtime.target.style.height, '250px');
+    assert.equal(runtime.target.style.maxWidth, 'none');
+    assert.deepEqual(runtime.destroyedSlots, []);
+});
+
+test('viewport request bounds account for the scrollbar content width', () => {
+    const runtime = runAtWidth(340, fluidResponsiveAttributes, { contentWidth: 190, queued: true });
+    runtime.sandbox.document.documentElement.clientWidth = 325;
+    runtime.commands.shift()();
+    assert.equal(runtime.definitions[0].sizes.some(size => size[0] === 336), false);
+    assert.equal(runtime.definitions[0].sizes.some(size => size[0] === 320), true);
+});
+
+test('outer layout preserves actual creative dimensions, repositions without refresh and cleans up on detach', () => {
+    const runtime = runAtWidth(1280, fluidResponsiveAttributes, { contentWidth: 600 });
+    const handlers = new Set();
+    runtime.sandbox.addEventListener = (name, handler) => { if (name === 'resize') handlers.add(handler); };
+    runtime.sandbox.removeEventListener = (name, handler) => { if (name === 'resize') handlers.delete(handler); };
+    runtime.root.getBoundingClientRect = () => ({ left: 100, width: runtime.root.clientWidth });
+    runtime.target.getBoundingClientRect = () => ({ left: 100 + (parseFloat(runtime.target.style.left) || 0) });
+    runtime.listeners[0]({ slot: runtime.definitions[0], isEmpty: false, size: [970, 250] });
+    assert.equal(runtime.target.style.width, '970px');
+    assert.equal(runtime.target.style.height, '250px');
+    assert.equal(runtime.target.style.left, '-100px');
+    assert.equal(runtime.attributes['data-hm-gpt-layout'], 'publisher-container-too-narrow');
+    assert.equal(handlers.size, 1);
+    runtime.sandbox.document.documentElement.clientWidth = 390;
+    handlers.forEach(handler => handler());
+    assert.equal(runtime.attributes['data-hm-gpt-layout'], 'viewport-too-narrow');
+    assert.equal(runtime.target.style.width, '970px');
+    assert.equal(runtime.displayCalls.length, 1);
+    runtime.target.isConnected = false;
+    runtime.sandbox.__HORUS_GPT_DIRECT_RUNTIME_V5__.observer.callback([{ addedNodes: [], removedNodes: [runtime.target] }]);
+    assert.equal(handlers.size, 0);
+    runtime.target.isConnected = true;
+    vm.runInNewContext(source, runtime.sandbox);
+    assert.equal(handlers.size, 1);
+    assert.equal(runtime.displayCalls.length, 1);
 });
