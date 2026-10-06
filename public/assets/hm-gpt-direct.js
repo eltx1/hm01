@@ -222,6 +222,7 @@
         var root = container.closest ? container.closest('.hm-ad[data-placement], .hm-native[data-placement]') : null;
         root = root || container.parentElement;
         var available = viewportSize()[0];
+        if (viewportResponsive(container)) available = Number(document.documentElement && document.documentElement.clientWidth || available);
         if (root && typeof root.clientWidth === 'number') {
             var contentWidth = root.clientWidth;
             if (typeof window.getComputedStyle === 'function') {
@@ -229,10 +230,65 @@
                 contentWidth -= (parseFloat(css.paddingLeft) || 0) + (parseFloat(css.paddingRight) || 0);
             }
             // A zero-width/hidden placement must not request a paid creative.
-            available = available > 0 ? Math.min(available, contentWidth) : contentWidth;
+            if (!(contentWidth > 0)) return [];
+            // Bare GAM-path Responsive recipes request the full viewport set.
+            // Provider-authored tags keep their explicit container-fit contract.
+            if (!viewportResponsive(container)) available = available > 0 ? Math.min(available, contentWidth) : contentWidth;
         }
         if (!(available > 0)) return [];
         return selected.filter(function (size) { return size === 'fluid' || size[0] <= available; });
+    }
+
+    function viewportResponsive(container) {
+        return container.getAttribute('data-hm-gpt-fit-container') === '1'
+            && container.getAttribute('data-hm-gpt-responsive-fluid') === '1';
+    }
+
+    function viewportCreativeLayout(container, size) {
+        if (!viewportResponsive(container) || !container.style || !container.getBoundingClientRect) return;
+        var root = container.closest ? container.closest('.hm-ad[data-placement], .hm-native[data-placement]') : null;
+        if (!root || !root.getBoundingClientRect) return;
+        var width = size[0];
+        var viewport = Number(document.documentElement && document.documentElement.clientWidth || viewportSize()[0]);
+        var parent = root.getBoundingClientRect();
+        var current = container.getBoundingClientRect();
+        var offset = parseFloat(container.style.left) || 0;
+        var contentWidth = root.clientWidth;
+        if (typeof window.getComputedStyle === 'function') {
+            var css = window.getComputedStyle(root);
+            contentWidth -= (parseFloat(css.paddingLeft) || 0) + (parseFloat(css.paddingRight) || 0);
+        }
+        // Change only our outer container. Never scale/crop or resize a Google
+        // iframe, relocate a publisher placement, or modify ancestor layouts.
+        var desired = Math.max(0, Math.min(viewport - width, parent.left + (parent.width - width) / 2));
+        container.style.position = 'relative';
+        container.style.left = (desired - current.left + offset) + 'px';
+        container.setAttribute('data-hm-gpt-layout', width > viewport ? 'viewport-too-narrow'
+            : (width > contentWidth ? 'publisher-container-too-narrow' : 'within-host-width'));
+        // Narrow/clipping publisher hosts still need enough in-flow space for
+        // the widest requested size. A local diagnostic makes this explicit.
+    }
+
+    function releaseViewportLayout(root) {
+        if (!root || root.isConnected === true) return;
+        if (root.__hmViewportLayout && window.removeEventListener) {
+            window.removeEventListener('resize', root.__hmViewportLayout);
+            root.__hmViewportLayout = null;
+        }
+        if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll(SELECTOR), releaseViewportLayout);
+    }
+
+    function trackViewportLayout(container, size) {
+        if (!viewportResponsive(container)) return;
+        container.__hmViewportSize = size;
+        viewportCreativeLayout(container, size);
+        if (window.addEventListener && !container.__hmViewportLayout) {
+            container.__hmViewportLayout = function () {
+                if (container.isConnected === false) { releaseViewportLayout(container); return; }
+                viewportCreativeLayout(container, container.__hmViewportSize);
+            };
+            window.addEventListener('resize', container.__hmViewportLayout);
+        }
     }
 
     function validId(value) {
@@ -283,8 +339,12 @@
                 container.style.width = width + 'px';
                 container.style.height = height + 'px';
                 if (container.getAttribute('data-hm-gpt-responsive-fluid') === '1') container.style.minHeight = '';
-                container.style.maxWidth = '100%';
+                if (viewportResponsive(container)) {
+                    if (container.style.setProperty) container.style.setProperty('max-width', 'none', 'important');
+                    else container.style.maxWidth = 'none';
+                } else container.style.maxWidth = '100%';
             }
+            trackViewportLayout(container, size);
         }
         container.setAttribute('data-hm-gpt-runtime-state', status);
         container.setAttribute('data-hm-gpt-status', status);
@@ -462,7 +522,13 @@
     }
 
     function render(container) {
-        if (!container || container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION) return;
+        if (!container) return;
+        if (container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION) {
+            if (container.getAttribute('data-hm-gpt-runtime-state') === 'rendered' && container.__hmViewportSize) {
+                trackViewportLayout(container, container.__hmViewportSize);
+            }
+            return;
+        }
 
         if (container.getAttribute('data-hm-gpt-rewarded') === '1') {
             renderRewarded(container);
@@ -654,6 +720,7 @@
         state.observer = new window.MutationObserver(function (records) {
             records.forEach(function (record) {
                 Array.prototype.forEach.call(record.addedNodes || [], function (node) { scan(node); });
+                Array.prototype.forEach.call(record.removedNodes || [], releaseViewportLayout);
             });
         });
         state.observer.observe(document.documentElement, { childList: true, subtree: true });

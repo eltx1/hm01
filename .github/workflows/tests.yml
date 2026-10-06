@@ -120,6 +120,16 @@ jobs:
         run: npm run build:loader
       - name: Execute deterministic Traffic Gate real-browser matrix
         run: npx playwright test --config=playwright.traffic-gate.config.js
+      - name: Verify Responsive viewport requests and actual creative geometry
+        run: npx playwright test --config=playwright.responsive-viewport.config.js
+      - name: Preserve Responsive viewport visual evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: responsive-viewport-previews
+          path: test-results/responsive-viewport/
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve dashboard theme previews
         if: always()
         uses: actions/upload-artifact@v7

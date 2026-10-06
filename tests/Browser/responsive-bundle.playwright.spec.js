@@ -173,7 +173,7 @@ test('portrait creatives render at exact dimensions alongside fluid without dupl
         const frame = await page.locator('#hm-gpt-member-' + index + ' iframe').boundingBox();
         expect([frame.width, frame.height]).toEqual(creativeSizes[index]);
     }
-    expect(slots[3]).not.toContainEqual([250, 360]);
+    expect(slots[3]).toContainEqual([250, 360]);
     expect(await page.evaluate(() => window.testDisplays.length)).toBe(6);
     expect(await page.evaluate(() => window.testDestroyedSlots.length)).toBe(0);
 });
