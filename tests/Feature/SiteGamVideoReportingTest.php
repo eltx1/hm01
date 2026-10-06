@@ -47,6 +47,9 @@ use App\Services\Reporting\SiteGamReportingService;
 use App\Services\Reporting\SiteGamReportSynchronizer;
 use App\Services\Reporting\SiteGamReportMetrics;
 use App\Services\Reporting\SiteGamTodayReport;
+use App\Services\Reporting\SiteGamVideoTodayReport;
+use App\Services\Reporting\AdminWebsitePerformanceService;
+use App\Services\Reporting\PublisherPerformanceService;
 use App\Services\Reporting\UnifiedReportService;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DemandNetworkSeeder;
@@ -618,4 +621,272 @@ class SiteGamVideoReportingTest extends TestCase
         }), 'Network source import');
         $this->assertDatabaseCount('site_gam_reporting_network_locks', 1);
     }
+
+    public function test_video_today_preview_reads_latest_estimates_separately_from_main_and_finalized_finances(): void
+    {
+        [$admin, $publisher, , $site] = $context = $this->context();
+        $primary = $this->bind($context);
+        $video = $this->video($context);
+        app(RevenueRuleService::class)->createRule(['name' => 'Video preview split', 'scope_type' => 'WEBSITE', 'scope_id' => $site->id,
+            'effective_from' => '2026-09-21', 'publisher_share_bp' => 8000, 'horus_share_bp' => 2000, 'mcm_partner_share_bp' => 0], $admin);
+        $this->travelTo(CarbonImmutable::parse('2026-09-22 10:00:00', 'UTC'));
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '67890', 300, 250, 200, 5, 'US$ 3000000']]))
+            ->push($this->csv([['2026-09-22', '12345', 900, 850, 800, 7, 'US$ 900000000']]))
+            ->push($this->csv([['2026-09-22', '67890', 120, 100, 95, 3, 'US$ 1000000']]))
+            ->push($this->csv([['2026-09-22', '67890', 200, 160, 125, 4, 'US$ 2000000']]))]);
+        $this->assertCompleted($this->import($video));
+        $day = CarbonImmutable::parse('2026-09-22', 'Africa/Cairo');
+        foreach ([$primary, $video] as $binding) {
+            $this->assertCompleted(app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day,
+                $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        }
+        $this->travelTo(CarbonImmutable::parse('2026-09-22 10:30:00', 'UTC'));
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection->fresh(), $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $this->assertDatabaseCount('daily_reports', 3);
+        $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->toArray();
+        $importsBefore = ReportImportJob::withoutGlobalScopes()->orderBy('id')->get()->toArray();
+        $calls = count($this->google->calls);
+
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertTrue($report['available']);
+        $this->assertTrue($report['has_estimates']);
+        $this->assertSame('2026-09-22', $report['date']);
+        $this->assertSame('Africa/Cairo', $report['timezone']);
+        $this->assertSame('USD', $report['currency']);
+        $this->assertSame('2026-09-22 13:30:00', $report['updated_at']);
+        $this->assertSame(125, $report['impressions']);
+        $this->assertSame(1600, $report['ecpm_minor']);
+        $this->assertSame(200, $report['gross_revenue_minor']);
+        $this->assertSame(160, $report['publisher_earnings_minor']);
+        $this->assertSame(40, $report['horus_earnings_minor']);
+        $this->assertNull($report['unfilled_impressions']);
+        $publisherVideo = app(PublisherPerformanceService::class)->summary($publisher, '2026-09-22', '2026-09-22')['video'];
+        $this->assertSame($report['publisher_earnings_minor'], $publisherVideo['revenue_minor']);
+        $this->assertSame(1280, $publisherVideo['ecpm_minor']);
+        $this->assertArrayNotHasKey('gross_revenue_minor', $publisherVideo);
+        $this->assertArrayNotHasKey('horus_earnings_minor', $publisherVideo);
+        $this->assertSame(300, app(AdminWebsitePerformanceService::class)->summary($site, '2026-09-21', '2026-09-22')['video']['gross_revenue_minor']);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertSee('Video Today so far')
+            ->assertSee('Estimated Video gross revenue')->assertSee('Estimated Video publisher earnings')->assertSee('Estimated Video Horus margin')
+            ->assertSee('2.00 USD')->assertSee('1.60 USD')->assertSee('0.40 USD')->assertSee('16.00 USD')
+            ->assertSee('Snapshot imported: 2026-09-22 13:30:00')
+            ->assertViewHas('videoTodayReport', fn ($preview) => $preview['gross_revenue_minor'] === 200)
+            ->assertViewHas('todayReport', fn ($preview) => $preview['gross_revenue_minor'] === 90000);
+        $this->assertSame($calls, count($this->google->calls));
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->toArray());
+        $this->assertSame($importsBefore, ReportImportJob::withoutGlobalScopes()->orderBy('id')->get()->toArray());
+        $this->assertDatabaseCount('publisher_statements', 0);
+        $finalized = app(UnifiedReportService::class)->adminSummary('2026-09-21', '2026-09-22', 'USD');
+        $this->assertSame(300, $finalized['financial_totals_including_video']['gross_revenue_minor']);
+        $this->assertSame(240, $finalized['financial_totals_including_video']['publisher_earnings_minor']);
+    }
+
+    public function test_video_today_preview_uses_network_midnight_and_distinguishes_missing_from_real_zero(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $video = $this->video($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()->push($this->csv())
+            ->push($this->csv([['2026-09-22', '67890', 0, 0, 0, 0, 'US$ 0', 0, 0]]))]);
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        // Still September 21 in UTC, but the Video network is already on September 22.
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 22:30:00', 'UTC'));
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertSame('2026-09-22', $report['date']);
+        $this->assertFalse($report['available']);
+        $this->assertNull($report['updated_at']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertSee("Today's Video report has not arrived yet.", false)
+            ->assertDontSee('Estimated Video gross revenue');
+
+        $nextDay = $day->addDay();
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection->fresh(), $nextDay,
+            $nextDay->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertTrue($report['available']);
+        $this->assertSame(0, $report['impressions']);
+        $this->assertSame(0, $report['gross_revenue_minor']);
+        $this->assertSame(0, $report['publisher_earnings_minor']);
+        $this->assertSame(0, $report['horus_earnings_minor']);
+        $this->assertNull($report['ecpm_minor']);
+        $this->assertNull($report['unfilled_impressions']);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('0.00 USD')
+            ->assertDontSee("Today's Video report has not arrived yet.", false);
+        \App\Models\SiteGamVideoUnfilledReport::withoutGlobalScopes()->create([
+            'organization_id' => $site->organization_id, 'report_source_connection_id' => $video->report_source_connection_id,
+            'site_gam_video_report_binding_id' => $video->id, 'gam_connection_id' => $video->gam_connection_id,
+            'network_code' => $video->network_code, 'ad_unit_id' => $video->ad_unit_id,
+            'report_date' => '2026-09-22', 'timezone' => 'Africa/Cairo', 'unfilled_impressions' => 0,
+            'google_report_job_id' => '123', 'reported_at' => now(),
+        ]);
+        $this->assertSame(0, app(SiteGamVideoTodayReport::class)->forSite($site->fresh())['unfilled_impressions']);
+    }
+
+    public function test_video_today_preview_rejects_foreign_facts_imports_currencies_and_primary_sources(): void
+    {
+        [$admin, $publisher, $publisherUser, $site] = $context = $this->context();
+        $primary = $this->bind($context);
+        $video = $this->video($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $otherSite = $this->makeSiteFor($publisher, $publisherUser);
+        $this->assertNull(app(SiteGamVideoTodayReport::class)->forSite($otherSite));
+        $fact = DailyReport::withoutGlobalScopes()->sole();
+        $dimension = $fact->dimension;
+        $job = $fact->import;
+        foreach ([
+            [$fact, 'organization_id', $admin->organization_id],
+            [$fact, 'currency', 'AED'],
+            [$fact, 'report_source_connection_id', $primary->report_source_connection_id],
+            [$fact, 'finality', ReportFinality::Finalized],
+            [$dimension, 'organization_id', $admin->organization_id],
+            [$dimension, 'site_id', $otherSite->id],
+            [$dimension, 'gam_connection_id', null],
+            [$dimension, 'external_dimensions', array_replace($dimension->external_dimensions, ['gam_ad_unit_id' => '12345'])],
+            [$job, 'organization_id', $admin->organization_id],
+            [$job, 'report_source_connection_id', $primary->report_source_connection_id],
+            [$job, 'status', ReportImportStatus::Pending],
+            [$job, 'finality', ReportFinality::Finalized],
+            [$job, 'granularity', ReportGranularity::Hourly],
+        ] as [$model, $field, $value]) {
+            $original = $model->getAttribute($field);
+            $model->update([$field => $value]);
+            $this->assertFalse(app(SiteGamVideoTodayReport::class)->forSite($site->fresh())['available'], $model::class.' '.$field);
+            $model->update([$field => $original]);
+        }
+        $this->assertTrue(app(SiteGamVideoTodayReport::class)->forSite($site->fresh())['available']);
+        foreach ([
+            [$video, 'organization_id', $admin->organization_id],
+            [$video, 'starts_on', '2026-09-22'],
+            [$video, 'ends_on', '2026-09-20'],
+            [$video, 'cancelled_at', now()],
+            [$video->connection, 'organization_id', $admin->organization_id],
+            [$video->connection, 'connection_type', 'SITE_GAM_AD_UNIT'],
+            [$video->connection, 'connection_id', $primary->id],
+            [$video->connection, 'report_source_id', $primary->connection->report_source_id],
+            [$video->connection, 'currency', 'AED'],
+            [$video->connection, 'timezone', 'Invalid/VideoNetwork'],
+            [$video->gamConnection, 'network_code', '99999999'],
+        ] as [$model, $field, $value]) {
+            $original = $model->getAttribute($field);
+            $model->update([$field => $value]);
+            $this->assertNull(app(SiteGamVideoTodayReport::class)->forSite($site->fresh()), $model::class.' '.$field);
+            $model->update([$field => $original]);
+        }
+    }
+
+    public function test_video_today_preview_preserves_unavailable_metrics_and_reports_paused_refresh(): void
+    {
+        [, , , $site] = $context = $this->context();
+        $video = $this->video($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $dimension = DailyReport::withoutGlobalScopes()->sole()->dimension;
+        $external = $dimension->external_dimensions;
+        unset($external['gam_report_basis']);
+        $dimension->update(['external_dimensions' => $external]);
+        $video->connection->update(['is_enabled' => false]);
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertTrue($report['available']);
+        $this->assertFalse($report['refresh_enabled']);
+        $this->assertTrue($report['metric_basis_incomplete']);
+        $this->assertNull($report['impressions']);
+        $this->assertNull($report['ecpm_minor']);
+        $this->assertSame(100, $report['gross_revenue_minor']);
+    }
+
+    public function test_video_today_preview_requires_staff_reporting_permissions(): void
+    {
+        [$admin, , $publisherUser, $site] = $context = $this->context();
+        $this->video($context);
+        $this->get(route('admin.sites.show', $site))->assertRedirect(route('login'));
+        $this->actingAs($publisherUser)->get(route('admin.sites.show', $site))->assertForbidden();
+        $support = $this->makeUser($admin->organization, RoleName::SupportAgent);
+        $this->actingAs($support)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertViewHas('videoTodayReport', null)
+            ->assertDontSee('Video Today so far');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()
+            ->assertViewHas('videoTodayReport', fn ($preview) => ! $preview['available'])
+            ->assertSee('Video Today so far');
+    }
+
+    public function test_video_today_preview_requires_current_hostname_and_attested_scope_without_writing_a_cutover(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $video = $this->video($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $this->assertTrue(app(SiteGamVideoTodayReport::class)->forSite($site->fresh())['available']);
+        $factsBefore = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->toArray();
+        $importsBefore = ReportImportJob::withoutGlobalScopes()->orderBy('id')->get()->toArray();
+        $configurationBefore = $video->connection->fresh()->configuration;
+        $hostname = $site->primary_domain;
+        $site->update(['primary_domain' => 'renamed-video.example']);
+
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertFalse($report['scope_current']);
+        $this->assertFalse($report['available']);
+        $this->assertNull($report['updated_at']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()
+            ->assertSee("Today's Video report is waiting for the current website reporting scope.", false)
+            ->assertDontSee('Estimated Video gross revenue')->assertDontSee('1.00 USD');
+        $this->assertSame($factsBefore, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->toArray());
+        $this->assertSame($importsBefore, ReportImportJob::withoutGlobalScopes()->orderBy('id')->get()->toArray());
+        $this->assertSame($configurationBefore, $video->connection->fresh()->configuration);
+
+        $site->update(['primary_domain' => $hostname]);
+        $dimension = DailyReport::withoutGlobalScopes()->sole()->dimension;
+        $external = $dimension->external_dimensions;
+        foreach (['gam_report_site' => 'previous-video.example', 'gam_report_scope' => 'previous-scope'] as $field => $value) {
+            $dimension->update(['external_dimensions' => array_replace($external, [$field => $value])]);
+            $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+            $this->assertTrue($report['scope_current']);
+            $this->assertFalse($report['available'], $field);
+            $dimension->update(['external_dimensions' => $external]);
+        }
+        $this->assertTrue(app(SiteGamVideoTodayReport::class)->forSite($site->fresh())['available']);
+        $configuration = $configurationBefore;
+        $configuration['site_report_scope']['fingerprint'] = 'unattested-scope';
+        $video->connection->update(['configuration' => $configuration]);
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertFalse($report['scope_current']);
+        $this->assertFalse($report['available']);
+        $this->assertSame($configuration, $video->connection->fresh()->configuration);
+    }
+
+    public function test_video_today_preview_labels_the_snapshot_time_when_later_imports_have_identical_metrics(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $video = $this->video($context);
+        $day = CarbonImmutable::parse('2026-09-21', 'Africa/Cairo');
+        Http::fake(['storage.googleapis.com/*' => Http::response($this->csv())]);
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($video->connection, $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated));
+        $before = DailyReport::withoutGlobalScopes()->sole()->getAttributes();
+        $this->travelTo(CarbonImmutable::parse('2026-09-21 11:00:00', 'UTC'));
+        $latest = app(ReportImportService::class)->runConnection($video->connection->fresh(), $day,
+            $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertCompleted($latest);
+        $this->assertSame('2026-09-21 11:00:00', $latest->completed_at->format('Y-m-d H:i:s'));
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->sole()->getAttributes());
+        $report = app(SiteGamVideoTodayReport::class)->forSite($site->fresh());
+        $this->assertTrue($report['available']);
+        $this->assertSame('2026-09-21 13:00:00', $report['updated_at']);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.sites.show', $site))->assertOk()->assertSee('Snapshot imported: 2026-09-21 13:00:00');
+    }
+
 }

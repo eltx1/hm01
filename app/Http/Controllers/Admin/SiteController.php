@@ -18,6 +18,7 @@ use App\Services\Gam\GamReportingGoogleApp;
 use App\Services\Inventory\SiteConfigPublisher;
 use App\Services\Reporting\SiteGamReportingService;
 use App\Services\Reporting\SiteGamTodayReport;
+use App\Services\Reporting\SiteGamVideoTodayReport;
 use App\Services\Sites\DomainVerificationService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
@@ -69,6 +70,9 @@ class SiteController extends Controller
             'todayReport' => $request->user()->hasPermission('reporting.admin.view')
                 && $request->user()->hasPermission('reporting.sources.manage')
                 ? app(SiteGamTodayReport::class)->forSite($site) : null,
+            'videoTodayReport' => $request->user()->hasPermission('reporting.admin.view')
+                && $request->user()->hasPermission('reporting.sources.manage')
+                ? app(SiteGamVideoTodayReport::class)->forSite($site) : null,
             'reportingGoogleReady' => $request->user()->hasPermission('gam.connections.manage')
                 && app(GamReportingGoogleApp::class)->ready(),
             'reportingGamConnections' => $request->user()->hasPermission('reporting.sources.manage')
