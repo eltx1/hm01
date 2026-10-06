@@ -1,6 +1,32 @@
 @php($videoBinding = $site->currentGamVideoReportBinding)
 <article id="video-reporting" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Independent reporting</p><h2>Video reporting</h2><p class="muted">Optional, off by default. Connect a separate account and Video ad unit independently of the main website report. This does not change ad delivery.</p></div><span class="pill">{{ $videoBinding && $videoBinding->connection?->is_enabled ? 'Enabled' : 'Disabled' }}</span></div>
+    @if($videoTodayReport ?? null)
+        <section id="video-today-report" aria-labelledby="video-today-report-heading">
+            <div class="workspace-heading"><div><p class="eyebrow">{{ $site->primary_domain }} · Estimated Video performance</p><h3 id="video-today-report-heading">Video Today so far</h3><p class="muted">{{ $videoTodayReport['date'] }} · {{ $videoTodayReport['timezone'] }} · {{ $videoTodayReport['currency'] }}</p></div><span class="pill">Estimated</span></div>
+            @if($videoTodayReport['available'])
+                <div class="metric-grid">
+                    @foreach([
+                        ['Video impressions', \App\Services\Reporting\PerformanceMetrics::display('impressions', $videoTodayReport['impressions'])],
+                        ['Video eCPM (gross)', \App\Services\Reporting\PerformanceMetrics::display('ecpm_minor', $videoTodayReport['ecpm_minor']).' '.$videoTodayReport['currency']],
+                        ['Video Unfilled (ad unit, all sites)', \App\Services\Reporting\PerformanceMetrics::display('unfilled_impressions', $videoTodayReport['unfilled_impressions'])],
+                        ['Estimated Video gross revenue', \App\Support\Money::formatMinor($videoTodayReport['gross_revenue_minor']).' '.$videoTodayReport['currency']],
+                        ['Estimated Video publisher earnings', \App\Support\Money::formatMinor($videoTodayReport['publisher_earnings_minor']).' '.$videoTodayReport['currency']],
+                        ['Estimated Video Horus margin', \App\Support\Money::formatMinor($videoTodayReport['horus_earnings_minor']).' '.$videoTodayReport['currency']],
+                    ] as [$label, $value])
+                        <article><p class="eyebrow">{{ $label }}</p><strong class="metric">{{ $value }}</strong></article>
+                    @endforeach
+                </div>
+                @if($videoTodayReport['metric_basis_incomplete'])<p class="muted">Video performance metrics are unavailable because this report uses legacy website GAM counters.</p>@endif
+                <p>Snapshot imported: {{ $videoTodayReport['updated_at'] }} · {{ $videoTodayReport['timezone'] }}</p>
+            @elseif(! $videoTodayReport['scope_current'])
+                <p role="status">Today's Video report is waiting for the current website reporting scope. Estimates for a previous hostname or scope are not shown.</p>
+            @else
+                <p role="status">Today's Video report has not arrived yet. Missing reports do not mean zero revenue.</p>
+            @endif
+            <p class="muted">{{ $videoTodayReport['refresh_enabled'] ? 'Updated automatically every hour. Google data may be delayed.' : 'Automatic refresh is paused for this Video reporting connection.' }} These are the latest imported Video estimates, separate from main performance and finalized payout amounts.</p>
+        </section>
+    @endif
     @if($videoBinding)
         <p><strong>{{ $videoBinding->gamConnection?->name }} · {{ $videoBinding->ad_unit_name }}</strong></p>
         <p>Network {{ $videoBinding->network_code }} · Unit {{ $videoBinding->ad_unit_id }} · From {{ $videoBinding->starts_on->toDateString() }}</p>

@@ -132,3 +132,51 @@ test('Skip link stays hidden during report reading and remains keyboard accessib
     await page.getByRole('heading', { name: 'Video performance', exact: true }).click();
     expect(await skip.evaluate(el => getComputedStyle(el).clipPath)).toBe('inset(50%)');
 });
+
+for (const name of ['publisher-reports', 'publisher-finance']) {
+    test(`${name}: Video money and eCPM remain visible in every publisher surface`, async ({ page }) => {
+        await open(page, name);
+        if (name === 'publisher-finance') await page.locator('.publisher-finance-performance > summary').click();
+        const video = page.locator('#video-performance');
+        const mobile = page.viewportSize().width <= 600;
+        const daily = video.locator(mobile ? '.video-mobile-rows' : '.video-performance-table').first();
+        const websites = video.locator(mobile ? '.video-mobile-rows' : '.video-performance-table').last();
+        const verifyRow = async (region, label, impressions, earnings, ecpm, estimated = false) => {
+            const row = region.locator(mobile ? '.publisher-report-mobile-row' : 'tbody tr').filter({ hasText: label });
+            await expect(row).toBeVisible();
+            const money = mobile ? row.locator('.publisher-row-earnings > strong') : row.locator('td').nth(2);
+            const rate = mobile ? row.locator('dl > div').filter({ has: page.locator('dt', { hasText: /^eCPM$/ }) }).locator('dd') : row.locator('td').nth(3);
+            const count = mobile ? row.locator('dl > div').filter({ has: page.locator('dt', { hasText: /^Impressions$/ }) }).locator('dd') : row.locator('td').nth(0);
+            await expect(money).toBeVisible();
+            await expect(rate).toBeVisible();
+            await expect(count).toBeVisible();
+            await expect(money).toHaveText(earnings + (mobile ? ' USD' : ''));
+            await expect(rate).toHaveText(ecpm + (mobile ? ' USD' : ''));
+            await expect(count).toHaveText(impressions);
+            if (estimated) await expect(row).toContainText('Estimated');
+            else await expect(row).not.toContainText('Estimated');
+        };
+        for (const theme of ['dark', 'light']) {
+            await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
+            for (const [label, value] of [
+                ['Video earnings', '252.00 USD'], ['Video impressions', '3,600'],
+                ['Video eCPM', '70.00 USD'], ['Video Unfilled', 'Unavailable'],
+            ]) {
+                const card = video.locator('.report-kpi').filter({ has: page.getByRole('heading', { name: label, exact: true }) });
+                await expect(card).toBeVisible();
+                await expect(card.locator('.report-kpi-value')).toBeVisible();
+                await expect(card.locator('.report-kpi-value')).toHaveText(value);
+            }
+            await expect(daily).toBeVisible();
+            await expect(websites).toBeVisible();
+            await verifyRow(daily, mobile ? '21 Sep 2026' : '2026-09-21', '100', '7.00', '70.00', true);
+            await verifyRow(daily, mobile ? '20 Sep 2026' : '2026-09-20', '3,000', '105.00', '35.00');
+            await verifyRow(daily, mobile ? '18 Sep 2026' : '2026-09-18', '500', '140.00', '280.00');
+            await verifyRow(websites, 'natega.example.test', '1,600', '182.00', '113.75', true);
+            await verifyRow(websites, 'second.example.test', '2,000', '70.00', '35.00');
+            await expect(video).not.toContainText('gross');
+            await expect(video).not.toContainText('Horus margin');
+            if (theme === 'dark') await page.getByRole('button', { name: 'Switch to White Mode' }).click();
+        }
+    });
+}
