@@ -12,6 +12,7 @@
     <a class="skip-link" href="#main-content">Skip to main content</a>
     <main class="error-shell hm-panel" id="main-content" tabindex="-1">
         <x-brand.full-logo />
+        <x-impersonation-banner />
         <p class="error-code" aria-hidden="true">@yield('code')</p>
         <p class="sr-only">Error @yield('code')</p>
         <h1>@yield('heading')</h1>

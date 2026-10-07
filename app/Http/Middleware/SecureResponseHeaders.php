@@ -11,6 +11,10 @@ final class SecureResponseHeaders
     public function handle(Request $request, Closure $next): Response
     {
         $response = $next($request);
+        if ($request->hasSession() && ($request->session()->has('impersonator_id') || $request->routeIs('admin.impersonate.*', 'admin.publishers.show'))) {
+            $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
+            $response->headers->set('Pragma', 'no-cache');
+        }
         if ($request->is('admin/reporting/gam-comparison', 'admin/reporting/gam-comparison/*',
             'admin/reporting/gam-corrections', 'admin/reporting/gam-corrections/*')) {
             $response->headers->set('Cache-Control', 'private, no-store, max-age=0');

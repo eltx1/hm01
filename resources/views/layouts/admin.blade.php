@@ -69,9 +69,7 @@
                 @endif
                 <span class="status">{{ $workspaceLabel }}</span>
             </header>
-            @if(session()->has('impersonator_id'))
-                <form method="POST" action="{{ route('admin.impersonate.stop') }}" class="impersonation-banner">@csrf @method('DELETE') <span>Impersonating {{ auth()->user()->email }}</span> <button type="submit">Stop impersonation</button></form>
-            @endif
+            <x-impersonation-banner />
             @if(session('status'))<div class="notice" role="status">{{ session('status') }}</div>@endif
             @if(session('error'))<div class="notice error" role="alert">{{ session('error') }}</div>@endif
             @if($errors->any())<div class="notice error validation-summary" role="alert" tabindex="-1"><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif

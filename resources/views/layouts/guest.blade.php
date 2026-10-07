@@ -31,6 +31,7 @@
                 <p class="eyebrow">Advertising Control Plane</p>
                 @if (session('status')) <div class="notice" role="status">{{ session('status') }}</div> @endif
                 @if ($errors->any())<div class="notice error validation-summary" role="alert" tabindex="-1"><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+                <x-impersonation-banner />
                 @yield('content')
             </main>
             <p class="auth-product-note">Horus Media · Advertising, monetization, and intelligent programmatic growth.@if(config('publisher-applications.support_url')) <a class="text-link" href="{{ config('publisher-applications.support_url') }}">Need help?</a>@endif</p>
