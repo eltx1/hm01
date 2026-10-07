@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: video-player-tests-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
@@ -73,16 +74,54 @@ jobs:
           npm ci
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           npx playwright install --with-deps chromium webkit
+      - name: Download trusted production verification proof
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/video-production-proof
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and load the exact published video runtime
         if: github.event_name == 'workflow_run'
         shell: bash
+        env:
+          VERIFIED_RELEASE: ${{ github.event.workflow_run.head_sha }}
+          VERIFIED_RUN_ID: ${{ github.event.workflow_run.id }}
+          VERIFIED_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
+          proof="$RUNNER_TEMP/video-production-proof/live-proof.env"
+          test -s "$proof"
+          # Read data, never source an artifact as executable shell code.
+          value() {
+            awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$proof"
+          }
+          [[ "$(value schema_version)" == '1' ]]
+          [[ "$(value release_sha)" == "$VERIFIED_RELEASE" ]]
+          [[ "$(value verify_run_id)" == "$VERIFIED_RUN_ID" ]]
+          [[ "$(value verify_run_attempt)" == "$VERIFIED_RUN_ATTEMPT" ]]
+          deployment="$(value pages_deployment_url)"
+          [[ "$deployment" =~ ^https://[A-Za-z0-9-]+\.[A-Za-z0-9-]+\.pages\.dev/?$ ]]
+
           expected="$(sha256sum public/assets/hm-video-direct.js | cut -d' ' -f1)"
           published="$RUNNER_TEMP/hm-video-published.js"
-          curl --fail --silent --show-error --location --retry 3 --max-time 30 \
-            "https://cdn.horusmedia.net/runtime/video/hm-video-direct.${expected:0:16}.js" \
-            --output "$published"
+          runtime_path="runtime/video/hm-video-direct.${expected:0:16}.js"
+          probe="video_verify=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          status="$(curl --silent --show-error --location --retry 3 --max-time 30 \
+            --user-agent 'Mozilla/5.0 Horus-Production-Live-Verification/1.0' \
+            "https://cdn.horusmedia.net/$runtime_path?$probe" \
+            --output "$published" --write-out '%{http_code}')"
+          if [[ "$status" == '403' ]]; then
+            # Production verification already authenticated this exact deployment.
+            # Cloudflare can block GitHub runner IPs on the public custom domain.
+            curl --fail --silent --show-error --location --retry 3 --max-time 30 \
+              "${deployment%/}/$runtime_path?$probe" --output "$published"
+            echo '::warning::CDN probe returned HTTP 403; testing the immutable runtime from the exact verified production Pages deployment.'
+          elif [[ "$status" != '200' ]]; then
+            echo "Unexpected published runtime HTTP $status" >&2
+            exit 1
+          fi
           cmp public/assets/hm-video-direct.js "$published"
           echo "HORUS_VIDEO_RUNTIME_PATH=$published" >> "$GITHUB_ENV"
           echo "Published video SHA256: $expected"
