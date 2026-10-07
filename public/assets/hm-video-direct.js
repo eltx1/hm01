@@ -569,6 +569,11 @@
 
     function startAdManagerWhenViewable(player, start) {
         if (!player || player.destroyed || typeof start !== 'function') return;
+        // The SDK response can beat the next scroll/observer frame (notably
+        // on mobile WebKit). Measure the current position before authorizing
+        // playback rather than using the previously visible inline geometry.
+        if (player.viewport && player.viewport.update) player.viewport.update();
+        if (player.destroyed) return;
         var unmeasurableAdapter = typeof window.IntersectionObserver !== 'function' && !player.container.getBoundingClientRect;
         if (player.rewarded || document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
             start();
