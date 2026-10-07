@@ -2149,3 +2149,16 @@ test('VMAP preloading is not a current ad and returning content clears presentat
     assert.equal(runtime.requested.length, 1);
     target.__hmDestroy('dismissed');
 });
+
+test('a break-level pause without an ad does not float an empty response', async () => {
+    const { target, runtime } = mixedContentFixture({}, { cuePoints: [0, 50] });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0];
+    manager.emit('content-resume-requested');
+    manager.emit('content-pause-requested', { getAd: () => null });
+    assert.equal(player.adMediaActive, true, 'IMA retains ownership of the shared video');
+    assert.equal(player.adPresentationActive, false, 'no ad has become available yet');
+    manager.emit('started');
+    assert.equal(player.adPresentationActive, true);
+    target.__hmDestroy('dismissed');
+});

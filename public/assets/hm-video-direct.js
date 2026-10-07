@@ -1345,7 +1345,7 @@
                         // cue. They must not pause content or replace an active ad.
                         if (player.adRules || player.currentAd && (player.adMediaActive || player.nonLinearAdActive)) return;
                         setStatus(player.container, 'loaded-' + position);
-                        if (applyAdMode(adEvent, false) !== false && currentRequest()) setAdPresentation(player, true);
+                        if (currentAdFromEvent(adEvent) && applyAdMode(adEvent, false) !== false && currentRequest()) setAdPresentation(player, true);
                     });
                     if (adTypes.LINEAR_CHANGED) player.adsManager.addEventListener(adTypes.LINEAR_CHANGED, function (adEvent) {
                         if (player.adRules && !player.adBreakPending && !player.adMediaActive && !player.nonLinearAdActive) return;
@@ -1378,7 +1378,10 @@
                         // IMA may temporarily own this exact video element. Its
                         // media errors and ended events are not content failures.
                         setContentMediaOwnership(player, true);
-                        setAdPresentation(player, true);
+                        // Break-level pause events may have no ad yet. Ownership
+                        // alone must not pin an empty request; STARTED/LOADED will
+                        // make the actual ad visible when it becomes available.
+                        if (currentAdFromEvent(adEvent)) setAdPresentation(player, true);
                         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
                     });
                     if (adTypes.CONTENT_RESUME_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_RESUME_REQUESTED, function () {
