@@ -1315,6 +1315,29 @@ for (const secondFilled of [true, false]) {
     });
 }
 
+for (const content of [true, false]) {
+    test(`confirmed VAST after scroll starts without media preloading; content=${content}`, async ({ page }) => {
+        await openPlayer(page, { content, deferResponse: true, noPreload: true });
+        const surface = page.locator('[data-placement="video"]');
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        await scrollPage(page, 1800);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        expect(await page.evaluate(() => window.adStarts)).toBe(0);
+        await page.evaluate(() => {
+            window.originalMedia = document.querySelector('[data-hm-video-direct] video');
+            window.videoLoaders[0].resolve();
+        });
+        await assertFloating(page);
+        await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+        await expect(surface).not.toHaveAttribute('data-hm-video-motion', /.+/);
+        expect(await page.evaluate(() => ({
+            requests: window.adRequests,
+            sameMedia: window.originalMedia === document.querySelector('[data-hm-video-direct] video'),
+            inert: document.querySelector('[data-hm-video-ad-layer]').hasAttribute('inert'),
+        }))).toEqual({ requests: 1, sameMedia: true, inert: false });
+    });
+}
+
 test('a late VMAP preroll floats after confirmed zero-offset LOADED while future pods stay inline', async ({ page }) => {
     await openPlayer(page, { content: true, cuePoints: [0, 50, -1], deferResponse: true });
     const surface = page.locator('[data-placement="video"]');

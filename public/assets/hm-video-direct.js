@@ -661,6 +661,19 @@
         setStatus(player.container, 'waiting-ad-viewability');
     }
 
+    function presentUnscheduledAdResponse(player, vastUrl) {
+        // ADS_MANAGER_LOADED confirms an ad response, not media preloading.
+        // iOS cannot preload media: waiting for LOADED before floating and for
+        // floating before start() would deadlock a response arriving after scroll.
+        // A VMAP/playlist manager alone does not confirm a current ad break.
+        if (!player || player.destroyed || player.closing || !player.adsManager || player.adRules || player.currentAd) return;
+        try {
+            if (adRulesTag(new URL(vastUrl))) return;
+            if (typeof player.adsManager.getCuePoints !== 'function' || player.adsManager.getCuePoints().length) return;
+        } catch (error) { return; }
+        setAdPresentation(player, true);
+    }
+
     // Chrome is a sibling of the measured media surface. Never put controls
     // over an IMA creative, alter its dimensions, or rebuild its playing DOM.
     function installPlayerPresentation(player) {
@@ -1527,6 +1540,7 @@
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (!currentRequest() || !player.adsManager) return;
                     if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
+                    presentUnscheduledAdResponse(player, vastUrl);
                     startAdManagerWhenViewable(player, function () {
                         if (currentRequest() && player.adsManager) {
                             if (!player.nonLinearAdActive) armStartupPhase('media-start');
@@ -1770,6 +1784,7 @@
                 var dimensions = managerDimensions(player);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                 if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
+                presentUnscheduledAdResponse(player, vastUrl);
                 startAdManagerWhenViewable(player, function () {
                     if (!player.destroyed && player.adsManager) {
                         armStartupPhase('media-start');
