@@ -287,6 +287,7 @@ function runVideo(selectedContainer, options = {}) {
                 getHeight: () => this.ad.height,
                 getMinSuggestedDuration: () => this.ad.minSuggestedDuration,
                 getDuration: () => this.ad.duration ?? 10,
+                getAdPodInfo: () => ({ getTimeOffset: () => this.ad.timeOffset }),
             };
         }
         emit(name, event = {}) { (this.listeners[name] || []).slice().forEach((callback) => callback({ getAd: () => this.getAd(), ...event })); }
@@ -2035,5 +2036,152 @@ test('nonlinear LOADED during init is already ready and start cannot rearm the m
     assert.equal(runtime.managers[0].destroyed, false);
     assert.equal(target.__hmVideoPlayer.destroyed, false);
     assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+function emptyVastEvent(code = 1009) {
+    return { getError: () => ({ getErrorCode: () => code, getVastErrorCode: () => 303, message: 'Empty VAST' }) };
+}
+function emitLoaderError(loader, event) {
+    (loader.listeners['ad-error'] || []).slice().forEach(callback => callback(event));
+}
+
+for (const code of [303, 1009]) {
+    test(`confirmed preroll no-fill ${code} makes one fresh request before content, preserving the tag and ignoring retired callbacks`, async () => {
+        const { attributes, target, runtime, video } = mixedContentFixture({}, { deferManagerLoad: true });
+        await tick();
+        const first = runtime.loaders[0];
+        emitLoaderError(first, emptyVastEvent(code));
+        assert.equal(runtime.requested.length, 2);
+        assert.equal(runtime.requested[1].adTagUrl, runtime.requested[0].adTagUrl);
+        assert.equal(attributes['data-hm-video-preroll-attempts'], '2');
+        assert.equal(target.__hmVideoPlayer.contentStarted, false);
+        assert.equal(first.destroyed, true);
+        first.emitManagerLoaded();
+        emitLoaderError(first, emptyVastEvent(code));
+        assert.equal(runtime.requested.length, 2);
+        runtime.loaders[1].emitManagerLoaded();
+        assert.equal(attributes['data-hm-video-status'], 'started');
+        runtime.managers[1].emit('all-ads-completed');
+        await tick();
+        assert.equal(attributes['data-hm-video-status'], 'content-playing');
+        assert.equal(video.paused, false);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('two empty prerolls fall through to content, while midroll/postroll no-fill never retries', async () => {
+    const { attributes, target, runtime, video } = mixedContentFixture({}, { deferManagerLoad: true });
+    await tick();
+    emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    emitLoaderError(runtime.loaders[1], emptyVastEvent());
+    await tick();
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(target.__hmVideoPlayer.adPresentationActive, false);
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 3);
+    emitLoaderError(runtime.loaders[2], emptyVastEvent());
+    await tick();
+    assert.equal(runtime.requested.length, 3);
+    video.emit('ended');
+    assert.equal(runtime.requested.length, 4);
+    emitLoaderError(runtime.loaders[3], emptyVastEvent());
+    assert.equal(runtime.requested.length, 4);
+    assert.equal(target.__hmVideoPlayer.destroyed, true);
+});
+
+for (const code of [100, 301, 402, 403, 1005, 1007, 1012, 1205, 900]) {
+    test(`preroll error ${code} is not confirmed no-fill, even with a contradictory VAST wrapper code`, async () => {
+        const { target, runtime, attributes } = mixedContentFixture({}, { deferManagerLoad: true });
+        await tick();
+        emitLoaderError(runtime.loaders[0], emptyVastEvent(code));
+        await tick();
+        assert.equal(runtime.requested.length, 1);
+        assert.equal(attributes['data-hm-video-status'], 'content-playing');
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('no retry after an ad was loaded/started or after dismissal, and generic completion is not proof of no-fill', async () => {
+    for (const event of ['ad-error', 'all-ads-completed', 'dismiss']) {
+        const { target, runtime } = mixedContentFixture();
+        await tick();
+        if (event === 'dismiss') target.__hmDestroy('dismissed');
+        runtime.managers[0].emit(event === 'dismiss' ? 'ad-error' : event, emptyVastEvent());
+        emitLoaderError(runtime.loaders[0], emptyVastEvent());
+        await tick();
+        assert.equal(runtime.requested.length, 1);
+        target.__hmDestroy('dismissed');
+    }
+});
+
+test('one retry retains a bounded deadline and never resurrects after close', async () => {
+    const clock = videoClock();
+    const { target, runtime, attributes } = mixedContentFixture({}, { clock, deferManagerLoad: true });
+    await tick();
+    emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    clock.advance(15000);
+    await tick();
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    target.__hmDestroy('dismissed');
+    runtime.loaders[1].emitManagerLoaded();
+    emitLoaderError(runtime.loaders[1], emptyVastEvent());
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(attributes['data-hm-video-status'], 'dismissed');
+});
+
+test('VMAP preloading is not a current ad and returning content clears presentation without losing later cues', async () => {
+    const { target, runtime } = mixedContentFixture({}, { cuePoints: [0, 50, -1] });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0];
+    assert.equal(player.adPresentationActive, true);
+    manager.emit('content-resume-requested');
+    assert.equal(player.adPresentationActive, false);
+    manager.emit('loaded');
+    assert.equal(player.adPresentationActive, false, 'a future preloaded cue must not float content');
+    manager.emit('content-pause-requested');
+    assert.equal(player.adPresentationActive, true);
+    manager.emit('started');
+    manager.emit('complete');
+    assert.equal(player.adPresentationActive, false);
+    assert.equal(manager.destroyed, false);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+for (const timeOffset of [0, 50, -1, undefined]) {
+    test(`VMAP startup presents only a confirmed current preroll pod: ${timeOffset}`, async () => {
+        const { target } = mixedContentFixture({}, { cuePoints: [0, 50, -1], ad: { timeOffset }, loadedDuringInit: true, deferMediaStart: true });
+        await tick();
+        assert.equal(target.__hmVideoPlayer.adPresentationActive, timeOffset === 0);
+        assert.equal(target.__hmVideoPlayer.adMediaActive, false, 'preloading does not take content ownership');
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('a break-level pause without an ad does not float an empty response', async () => {
+    const { target, runtime } = mixedContentFixture({}, { cuePoints: [0, 50] });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0];
+    manager.emit('content-resume-requested');
+    manager.emit('content-pause-requested', { getAd: () => null });
+    assert.equal(player.adMediaActive, true, 'IMA retains ownership of the shared video');
+    assert.equal(player.adPresentationActive, false, 'no ad has become available yet');
+    manager.emit('started');
+    assert.equal(player.adPresentationActive, true);
+    target.__hmDestroy('dismissed');
+});
+
+test('ad-only presentation keeps IMA pointer ownership while the ad is available', async () => {
+    const attributes = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64') };
+    const target = container(attributes);
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(target.__hmVideoPlayer.adPresentationActive, true);
+    assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'auto');
+    runtime.managers[0].emit('complete');
+    assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none');
     target.__hmDestroy('dismissed');
 });

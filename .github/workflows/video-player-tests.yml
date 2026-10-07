@@ -12,17 +12,25 @@ on:
       - 'app/Services/Settings/**'
       - 'tests/Browser/*video*'
       - 'tests/Browser/hm-direct-trusted-runtimes.test.js'
+      - 'tests/Browser/startup-recovery.playwright.spec.js'
+      - 'tests/Browser/gpt-dependencies.playwright.spec.js'
+      - 'tests/Browser/helpers/startup-preparation-fixture.js'
       - '.github/workflows/video-player-tests.yml'
+  workflow_run:
+    workflows: [Verify production live]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: video-player-tests-${{ github.event.pull_request.number }}
+  group: video-player-tests-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 jobs:
   runtime:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -43,3 +51,46 @@ jobs:
           name: horus-video-source-${{ github.run_id }}
           path: ${{ runner.temp }}/horus-video-source.tar
           retention-days: 3
+
+  browser:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test tools
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Verify and load the exact published video runtime
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(sha256sum public/assets/hm-video-direct.js | cut -d' ' -f1)"
+          published="$RUNNER_TEMP/hm-video-published.js"
+          curl --fail --silent --show-error --location --retry 3 --max-time 30 \
+            "https://cdn.horusmedia.net/runtime/video/hm-video-direct.${expected:0:16}.js" \
+            --output "$published"
+          cmp public/assets/hm-video-direct.js "$published"
+          echo "HORUS_VIDEO_RUNTIME_PATH=$published" >> "$GITHUB_ENV"
+          echo "Published video SHA256: $expected"
+      - name: Exercise video ads and content on desktop and mobile
+        run: npx playwright test --config=playwright.traffic-gate.config.js video-inline-floating.playwright.spec.js startup-recovery.playwright.spec.js gpt-dependencies.playwright.spec.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-player-browser-${{ github.sha }}
+          path: test-results
+          retention-days: 7
