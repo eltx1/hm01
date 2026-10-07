@@ -634,7 +634,7 @@
     }
 
     function releasePendingAdStart(player) {
-        if (!player || player.destroyed || player.closing || player.motion && player.motion.phase === 'enter' || typeof player.pendingAdStart !== 'function') return false;
+        if (!player || player.destroyed || player.closing || player.motion || typeof player.pendingAdStart !== 'function') return false;
         if (!player.rewarded && (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5)) return false;
         var start = player.pendingAdStart;
         player.pendingAdStart = null;
@@ -649,7 +649,7 @@
         if (player.viewport && player.viewport.update) player.viewport.update();
         if (player.destroyed) return;
         var unmeasurableAdapter = typeof window.IntersectionObserver !== 'function' && !player.container.getBoundingClientRect;
-        if (player.rewarded || !(player.motion && player.motion.phase === 'enter') && document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
+        if (player.rewarded || !player.motion && document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
             start();
             return;
         }

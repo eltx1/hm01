@@ -1508,3 +1508,22 @@ test('external animation cancellation finishes the transition and releases a pen
     await expectInline(page);
     expect(await page.evaluate(() => ({ starts: window.adStarts, requests: window.adRequests }))).toEqual({ starts: 1, requests: 1 });
 });
+
+test('a pending ad returned inline during entry waits for the visible portal return', async ({ page }) => {
+    await openPlayer(page, { content: true, deferResponse: true, transformed: 'scaled' });
+    await scrollPage(page, 1800);
+    const initial = await page.evaluate(() => {
+        window.videoLoaders[0].resolve();
+        const el = document.querySelector('[data-placement="video"]');
+        const start = window.videoManager.start.bind(window.videoManager);
+        window.adStartMotion = [];
+        window.videoManager.start = () => { window.adStartMotion.push(el.getAttribute('data-hm-video-motion')); start(); };
+        window.scrollTo(0, 0);
+        el.querySelector('[data-hm-video-direct]').__hmVideoPlayer.viewport.update();
+        return { phase: el.getAttribute('data-hm-video-motion'), starts: window.adStarts };
+    });
+    expect(initial).toEqual({ phase: 'exit', starts: 0 });
+    await expectInline(page);
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    expect(await page.evaluate(() => window.adStartMotion)).toEqual([null]);
+});
