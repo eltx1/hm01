@@ -115,7 +115,7 @@ jobs:
       - name: Install pinned CI-only Playwright runner
         run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
       - name: Install Chromium and WebKit
-        run: npx playwright install --with-deps chromium webkit
+        run: bash scripts/install-playwright-ci.sh
       - name: Build current minified Loader for distribution-level startup checks
         run: npm run build:loader
       - name: Execute deterministic Traffic Gate real-browser matrix

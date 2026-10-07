@@ -2042,6 +2042,27 @@ test('nonlinear LOADED during init is already ready and start cannot rearm the m
 function emptyVastEvent(code = 1009) {
     return { getError: () => ({ getErrorCode: () => code, getVastErrorCode: () => 303, message: 'Empty VAST' }) };
 }
+
+test('a confirmed VAST response can float and start after scroll without media preloading', async () => {
+    const clock = videoClock();
+    const { attributes, target, runtime } = mixedContentFixture({}, { clock, deferManagerLoad: true });
+    let top = 0;
+    target.getBoundingClientRect = () => {
+        const y = target.style.position === 'fixed' ? 100 : top;
+        return { top: y, bottom: y + 180, left: 0, right: 320, width: 320, height: 180 };
+    };
+    await tick();
+    top = -1000; runtime.sandbox.scrollY = 1000;
+    target.__hmVideoPlayer.viewport.update();
+    assert.equal(target.__hmVideoPlayer.floating, false);
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(runtime.managers[0].started, true);
+    assert.equal(target.__hmVideoPlayer.floating, true);
+    assert.equal(attributes['data-hm-video-status'], 'started');
+    clock.advance(15000);
+    assert.equal(runtime.managers[0].destroyed, false);
+    target.__hmDestroy('dismissed');
+});
 function emitLoaderError(loader, event) {
     (loader.listeners['ad-error'] || []).slice().forEach(callback => callback(event));
 }
