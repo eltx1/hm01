@@ -17,7 +17,10 @@ async function setup(page, initial) {
         if (request.method() === 'POST' && url.pathname.startsWith('/admin/impersonate')) {
             requests.push({ path: url.pathname, body: request.postData() });
             await new Promise(resolve => setTimeout(resolve, 150));
-            return route.fulfill({ status: 303, headers: { location: url.pathname === '/admin/impersonate' ? '/admin-return' : '/publisher-preview' } });
+            const destination = url.pathname === '/admin/impersonate' ? 'admin-single' : 'publisher';
+            // Serve the real destination response directly: Playwright route
+            // fulfillment does not support synthetic redirect statuses.
+            return route.fulfill({ contentType: 'text/html', body: readFileSync(path.join(root, `storage/framework/testing/impersonation/${destination}.html`), 'utf8') });
         }
         const name = url.pathname === '/publisher-preview' ? 'publisher' : url.pathname === '/admin-return' ? 'admin-single' : initial;
         if (['/preview', '/publisher-preview', '/admin-return'].includes(url.pathname)) {
