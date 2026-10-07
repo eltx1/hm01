@@ -1331,8 +1331,14 @@ test('VMAP future preload stays inline, actual ad start floats without another s
 test('ad-only completion after scroll removes the returned shell instead of leaving an empty player', async ({ page }) => {
     await openPlayer(page);
     await rememberPlayingAd(page);
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'auto');
     await scrollPage(page, 1800);
     await assertFloating(page);
+    await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'auto');
+    const creative = page.frameLocator('[data-test-ima]').locator('strong');
+    await creative.evaluate(el => el.addEventListener('click', () => parent.adClicks++));
+    await creative.click();
+    expect(await page.evaluate(() => window.adClicks)).toBe(1);
     await page.evaluate(() => { window.videoManager.emit('complete'); window.videoManager.emit('all-completed'); });
     await expect(page.locator('[data-placement="video"]')).toBeHidden();
     await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);

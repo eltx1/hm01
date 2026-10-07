@@ -1003,7 +1003,7 @@
     }
 
     function updateContentAdUi(player) {
-        var active = player.adMediaActive || player.nonLinearAdActive;
+        var active = player.adMediaActive || player.nonLinearAdActive || !player.contentMode && player.adPresentationActive;
         var contentControls = player.contentMode && !player.adMediaActive;
         if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = active ? 'auto' : 'none';
         if (player.chromeLabel) {

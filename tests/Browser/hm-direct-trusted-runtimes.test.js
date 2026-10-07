@@ -2162,3 +2162,15 @@ test('a break-level pause without an ad does not float an empty response', async
     assert.equal(player.adPresentationActive, true);
     target.__hmDestroy('dismissed');
 });
+
+test('ad-only presentation keeps IMA pointer ownership while the ad is available', async () => {
+    const attributes = { 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from('https://ads.example/vast').toString('base64') };
+    const target = container(attributes);
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(target.__hmVideoPlayer.adPresentationActive, true);
+    assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'auto');
+    runtime.managers[0].emit('complete');
+    assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none');
+    target.__hmDestroy('dismissed');
+});
