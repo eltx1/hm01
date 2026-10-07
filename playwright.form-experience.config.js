@@ -3,6 +3,6 @@ import base from './playwright.traffic-gate.config.js';
 
 export default defineConfig({
     ...base,
-    testMatch: ['form-experience.playwright.spec.js', 'nullable-reporting-metrics.playwright.spec.js', 'adx-unmatched-requests.playwright.spec.js', 'video-reporting-experience.playwright.spec.js'],
+    testMatch: ['publisher-impersonation.playwright.spec.js', 'form-experience.playwright.spec.js', 'nullable-reporting-metrics.playwright.spec.js', 'adx-unmatched-requests.playwright.spec.js', 'video-reporting-experience.playwright.spec.js'],
     outputDir: 'test-results/form-experience',
 });

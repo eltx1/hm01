@@ -51,6 +51,8 @@ Route::middleware('guest')->group(function (): void {
 });
 
 Route::middleware('auth')->group(function (): void {
+    // Returning must remain available when a target loses active/verified status.
+    Route::delete('/admin/impersonate', [ImpersonationController::class, 'stop'])->name('admin.impersonate.stop');
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
     Route::get('/verify-email', [EmailVerificationController::class, 'notice'])->name('verification.notice');
     Route::get('/verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])->middleware('signed')->name('verification.verify');
@@ -208,7 +210,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/users/{user}/roles', [RolePermissionController::class, 'assignRole'])->middleware('permission:roles.manage')->name('admin.users.roles.assign');
         Route::put('/admin/roles/{role}/permissions', [RolePermissionController::class, 'syncPermissions'])->middleware('permission:roles.manage')->name('admin.roles.permissions.sync');
         Route::post('/admin/impersonate/{user}', [ImpersonationController::class, 'start'])->middleware('permission:users.impersonate')->name('admin.impersonate.start');
-        Route::delete('/admin/impersonate', [ImpersonationController::class, 'stop'])->name('admin.impersonate.stop');
         Route::get('/account/branding', [BrandingController::class, 'edit'])->middleware('permission:branding.manage')->name('account.branding.edit');
         Route::put('/account/branding', [BrandingController::class, 'update'])->middleware('permission:branding.manage')->name('account.branding.update');
         Route::get('/admin/organizations/{organization}/branding', [BrandingController::class, 'edit'])->middleware('permission:organizations.manage')->name('admin.organizations.branding.edit');

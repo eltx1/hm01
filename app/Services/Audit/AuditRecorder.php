@@ -20,6 +20,9 @@ final class AuditRecorder
         ?Request $request = null,
     ): AuditLog {
         $request ??= request();
+        if ($request->hasSession() && $request->session()->has('impersonator_id')) {
+            $metadata['impersonator_id'] = $request->session()->get('impersonator_id');
+        }
         $metadata = array_merge([
             'method' => $request->method(),
             'route' => $request->route()?->getName(),

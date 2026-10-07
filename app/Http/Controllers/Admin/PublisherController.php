@@ -46,7 +46,7 @@ class PublisherController extends Controller
     public function show(Request $request, Publisher $publisher, UnifiedReportService $reports): View
     {
         $publisher->load([
-            'organization.users.roles',
+            'organization.users.roles.permissions',
             'contacts',
             'sites' => fn ($query) => $query->with(['domains', 'gamConnection', 'servingSettings', 'siteConfig'])->latest(),
             'contracts' => fn ($query) => $query->latest(),
@@ -61,6 +61,9 @@ class PublisherController extends Controller
 
         return view('admin.publishers.show', [
             'publisher' => $publisher,
+            'impersonationTargets' => ! $request->session()->has('impersonator_id') && app(\App\Services\Identity\PublisherImpersonation::class)->canStart($request->user())
+                ? $publisher->organization->users->filter(fn ($member) => app(\App\Services\Identity\PublisherImpersonation::class)->canBeTarget($member))
+                : collect(),
             'reporting' => $canViewFinance
                 ? $reports->publisherSummary(
                     $publisher,

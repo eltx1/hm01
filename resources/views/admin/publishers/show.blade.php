@@ -3,6 +3,7 @@
 @section('heading', 'Publisher 360')
 @section('content')
 @php
+    $canImpersonate = ! session()->has('impersonator_id') && app(\App\Services\Identity\PublisherImpersonation::class)->canStart(auth()->user());
     $tabs = [
         ['label' => 'Overview', 'href' => '#overview'],
         ['label' => 'Websites', 'href' => '#websites'],
@@ -10,7 +11,7 @@
         ['label' => 'Monetization', 'href' => '#monetization'],
         ['label' => 'Compliance & quality', 'href' => '#compliance'],
         ['label' => 'Reports & finance', 'href' => '#reporting', 'visible' => $reporting !== null],
-        ['label' => 'Users & audit', 'href' => auth()->user()->hasPermission('users.view') ? '#users' : '#audit', 'visible' => auth()->user()->hasPermission('users.view') || auth()->user()->hasPermission('audit.view')],
+        ['label' => 'Users & audit', 'href' => (auth()->user()->hasPermission('users.view') || $canImpersonate) ? '#users' : '#audit', 'visible' => auth()->user()->hasPermission('users.view') || $canImpersonate || auth()->user()->hasPermission('audit.view')],
     ];
     $activeSites = $publisher->sites->where('status', \App\Enums\SiteStatus::Active)->count();
     $verifiedDomains = $publisher->sites->flatMap->domains->where('verification_status', 'VERIFIED')->count();
@@ -24,7 +25,18 @@
         <p>{{ $publisher->legal_name }} · {{ $publisher->organization->name }}</p>
         <p class="muted">Horus Publisher ID: <code>{{ $publisher->id }}</code></p>
         <div class="status-row"><x-status-badge :status="$publisher->status" /><span class="status">Websites reviewed separately</span></div>
-        @if(auth()->user()->hasPermission('publishers.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.edit', $publisher) }}">Edit publisher</a>@endif
+        <div class="publisher-login-actions">
+            @if(auth()->user()->hasPermission('publishers.manage'))<a class="hm-button-secondary button-link" href="{{ route('admin.publishers.edit', $publisher) }}">Edit publisher</a>@endif
+            @if($impersonationTargets->count() === 1)
+                @php($loginTarget = $impersonationTargets->first())
+                <form method="POST" action="{{ route('admin.impersonate.start', $loginTarget) }}">@csrf<button class="hm-button-primary" type="submit" data-submitting-label="Opening publisher…">Log in as publisher</button></form>
+            @elseif($impersonationTargets->count() > 1)
+                <a class="hm-button-primary button-link" href="#users">Choose publisher user</a>
+            @endif
+        </div>
+        @if($canImpersonate)
+            <p class="muted">@if($impersonationTargets->count() === 1)Temporary login as {{ $loginTarget->name }} ({{ $loginTarget->email }}). Return to admin at any time. This changes the account in all tabs in this browser.@elseif($impersonationTargets->isNotEmpty())Choose the exact user below for a temporary, audited login. This changes the account in all tabs in this browser.@else No eligible active publisher user is available for temporary login.@endif</p>
+        @endif
     </div>
 </section>
 
@@ -112,10 +124,16 @@
 </article>
 @endif
 
-@if(auth()->user()->hasPermission('users.view'))
+@if(auth()->user()->hasPermission('users.view') || $canImpersonate)
 <article id="users" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Organization access</p><h2>Users</h2></div>@if(auth()->user()->hasPermission('users.invite'))<a class="section-anchor" href="{{ route('admin.invitations.create') }}">Invite user</a>@endif</div>
-    @forelse($publisher->organization->users as $member)<div class="compact-row"><div><strong>{{ $member->name }}</strong><p>{{ $member->email }} · {{ $member->roles->pluck('display_name')->join(', ') }}</p></div><x-status-badge :status="$member->status" /></div>@empty<p class="muted">No organization users.</p>@endforelse
+    @forelse($publisher->organization->users as $member)
+        <div class="compact-row publisher-login-member"><div><strong>{{ $member->name }}</strong><p>{{ $member->email }} · {{ $member->roles->pluck('display_name')->join(', ') }}</p></div><div class="publisher-login-actions"><x-status-badge :status="$member->status" />
+            @if($impersonationTargets->contains('id', $member->id))
+                <form method="POST" action="{{ route('admin.impersonate.start', $member) }}">@csrf<button class="hm-button-secondary" type="submit" aria-label="Log in as {{ $member->name }}" data-submitting-label="Opening publisher…">Log in as this user</button></form>
+            @endif
+        </div></div>
+    @empty<p class="muted">No organization users.</p>@endforelse
 </article>
 @endif
 

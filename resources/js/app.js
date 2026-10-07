@@ -61,7 +61,11 @@ mobileNavigation.addEventListener('change', () => setNavigation(false));
 window.visualViewport?.addEventListener('resize', fitNavigation);
 window.visualViewport?.addEventListener('scroll', fitNavigation);
 window.addEventListener('resize', fitNavigation);
-window.addEventListener('pageshow', () => setNavigation(false));
+window.addEventListener('pageshow', (event) => {
+    // Never show a restored workspace for an identity the session has left.
+    if (event.persisted) { window.location.reload(); return; }
+    setNavigation(false);
+});
 setNavigation(false);
 
 const navigationFilter = document.querySelector('[data-nav-filter]');
