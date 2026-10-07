@@ -12,6 +12,9 @@ on:
       - 'app/Services/Settings/**'
       - 'tests/Browser/*video*'
       - 'tests/Browser/hm-direct-trusted-runtimes.test.js'
+      - 'tests/Browser/startup-recovery.playwright.spec.js'
+      - 'tests/Browser/gpt-dependencies.playwright.spec.js'
+      - 'tests/Browser/helpers/startup-preparation-fixture.js'
       - '.github/workflows/video-player-tests.yml'
   workflow_run:
     workflows: [Verify production live]
@@ -84,7 +87,7 @@ jobs:
           echo "HORUS_VIDEO_RUNTIME_PATH=$published" >> "$GITHUB_ENV"
           echo "Published video SHA256: $expected"
       - name: Exercise video ads and content on desktop and mobile
-        run: npx playwright test --config=playwright.traffic-gate.config.js video-inline-floating.playwright.spec.js
+        run: npx playwright test --config=playwright.traffic-gate.config.js video-inline-floating.playwright.spec.js startup-recovery.playwright.spec.js gpt-dependencies.playwright.spec.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:

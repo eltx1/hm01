@@ -12,7 +12,7 @@ const composed = [applyTrafficGateTransform, applyShadowClickGuardTransform, app
     applyDirectPreparationTransform, applyVideoPreparationTransform].reduce((s, f) => f(s), source);
 const minified = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 const gptRuntime = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
-const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
+const runtime = await readFile(process.env.HORUS_VIDEO_RUNTIME_PATH || new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const gateHtml = await readFile(new URL('../../public/traffic-gate/index.html', import.meta.url), 'utf8');
 const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-traffic-gate.js', import.meta.url), 'utf8');
 
@@ -161,13 +161,18 @@ for (const options of [{ belowFold: true }, { inlineOnly: true }]) {
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
     });
 }
-test('a delayed manager starts in the existing floated player, not a second player', async ({ page }) => {
-    await open(page, { deferManager: true });
+test('a delayed ad floats the existing player only after LOADED, without another scroll', async ({ page }) => {
+    await open(page, { deferManager: true, deferLoaded: true });
     await expect.poll(() => page.evaluate(() => window.videoMetrics.requests)).toBe(1);
     await page.evaluate(() => { window.originalFrame = document.querySelector('[data-test-ima]'); window.scrollTo(0, 1800); });
-    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
+    await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
     await page.evaluate(() => window.videoLoaders[0].deliver());
+    await expect.poll(() => page.evaluate(() => window.videoManagers.length)).toBe(1);
+    await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+    expect(await page.evaluate(() => window.videoMetrics.starts)).toBe(0);
+    await page.evaluate(() => window.videoManagers[0].deliverAd());
     await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
     expect(await page.evaluate(() => document.querySelector('[data-test-ima]') === window.originalFrame)).toBe(true);
 });
 

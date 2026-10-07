@@ -68,6 +68,11 @@ function installImaFixture(options) {
         emit(name, event = {}) { (this.events[name] || []).forEach(fn => fn(event)); }
         getCuePoints() { return options.vmap ? [0, 60, -1] : []; }
         init() {
+            // IMA preloading reports the selected ad during init, before start.
+            // A manager alone is not proof of an ad: keep these separate so
+            // offscreen startup tests exercise the actual-ad floating gate.
+            this.deliverAd = () => this.emit('loaded', { getAd: () => ({ isLinear: () => true }) });
+            if (!options.vmap && !options.deferLoaded) queueMicrotask(() => this.deliverAd());
             if (options.vmap) {
                 this.onProgress = () => {
                     if (this.video.currentTime >= 60 && !this.midRequested) {

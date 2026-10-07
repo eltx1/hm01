@@ -12,7 +12,7 @@ const composed = [applyTrafficGateTransform, applyShadowClickGuardTransform, app
     applyDirectPreparationTransform, applyVideoPreparationTransform].reduce((s, f) => f(s), source);
 const minified = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
 const gptRuntime = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
-const videoRuntime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
+const videoRuntime = await readFile(process.env.HORUS_VIDEO_RUNTIME_PATH || new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const gateHtml = await readFile(new URL('../../public/traffic-gate/index.html', import.meta.url), 'utf8');
 const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-traffic-gate.js', import.meta.url), 'utf8');
 const sdk = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
@@ -157,11 +157,17 @@ for (const mode of ['composed', 'minified']) {
         await page.evaluate(() => window.videoLoaders[0].events.error({ getError: () => ({ message: 'No ads after VAST wrappers',
             getErrorCode: () => 303, getVastErrorCode: () => 303 }) }));
         const video = page.locator('[data-hm-video-direct]');
+        await expect.poll(() => page.evaluate(() => window.videoMetrics.requests)).toBe(2);
+        expect(await page.evaluate(() => window.videoMetrics.contentPlays)).toBe(0);
+        expect(await page.evaluate(() => window.dependencyMetrics.requests)).toBe(1);
+        await expect(video).toHaveAttribute('data-hm-video-status', 'requesting-preroll');
+        await page.evaluate(() => window.videoLoaders[1].events.error({ getError: () => ({ message: 'No ads after retry',
+            getErrorCode: () => 303, getVastErrorCode: () => 303 }) }));
         await expect(video).toHaveAttribute('data-hm-video-status', 'content-playing');
         await expect(video).toHaveAttribute('data-hm-video-error-code', '303');
         await expect(video).toHaveAttribute('data-hm-video-error-stage', 'request-preroll');
         expect(await page.evaluate(() => window.dependencyMetrics.requests)).toBe(1);
-        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
+        expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(2);
     });
 
     test(`${mode}: preload does not execute GPT or internal SDK before PASS`, async ({ page }) => {
