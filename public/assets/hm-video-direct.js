@@ -612,11 +612,19 @@
         var brand = document.createElement('span');
         brand.textContent = 'HORUS';
         brand.style.cssText = 'display:block !important;color:#ffd66b !important;font:700 10px/1.4 system-ui,sans-serif !important;letter-spacing:.12em !important;';
+        var emblem = document.createElement('img');
+        emblem.src = 'https://horusmedia.net/assets/images/horusmedia-emblem-header.png';
+        emblem.alt = '';
+        emblem.setAttribute('aria-hidden', 'true');
+        emblem.setAttribute('loading', 'lazy');
+        emblem.setAttribute('decoding', 'async');
+        emblem.style.cssText = 'display:block !important;width:24px !important;height:24px !important;object-fit:contain !important;flex:none !important;';
+        emblem.onerror = function () { importantStyle(emblem.style, 'display', 'none'); };
         var status = document.createElement('span');
         status.textContent = 'Video';
         status.setAttribute('data-hm-video-badge', '1');
         status.style.cssText = 'display:block !important;padding:3px 7px !important;border:1px solid rgba(157,169,194,.24) !important;border-radius:999px !important;color:#c6d1e6 !important;font:500 10px/1.4 system-ui,sans-serif !important;white-space:nowrap !important;';
-        label.appendChild(brand); label.appendChild(status); rail.appendChild(label);
+        label.appendChild(emblem); label.appendChild(brand); label.appendChild(status); rail.appendChild(label);
         player.chromeLabel = label;
         player.chromeStatus = status;
         surface.insertBefore(rail, surface.firstChild || null);
@@ -1000,7 +1008,7 @@
         if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = active ? 'auto' : 'none';
         if (player.chromeLabel) {
             var width = playerDimensions(player.container, player.size)[0];
-            importantStyle(player.chromeLabel.style, 'display', contentControls && width < 280 ? 'none' : 'flex');
+            importantStyle(player.chromeLabel.style, 'display', contentControls && width < 300 ? 'none' : 'flex');
         }
         if (player.chromeStatus) {
             player.chromeStatus.textContent = player.adPresentationActive ? 'Ad' : 'Video';
@@ -1638,7 +1646,7 @@
                         grantReward(player);
                         destroyPlayer(player, player.granted ? 'completed' : 'closed');
                     } else {
-                        destroyPlayer(player, 'completed');
+                        finishContentPlayer(player, 'completed');
                     }
                 });
                 var dimensions = managerDimensions(player);
@@ -1683,7 +1691,8 @@
     function failVideo(player, error, stage) {
         if (!player || player.destroyed) return;
         recordVideoError(player, error, stage);
-        destroyPlayer(player, 'error');
+        if (player.rewarded) destroyPlayer(player, 'error');
+        else finishContentPlayer(player, 'error');
     }
 
     function resolvedVastUrl(value, player, dimensions, breakPosition) {

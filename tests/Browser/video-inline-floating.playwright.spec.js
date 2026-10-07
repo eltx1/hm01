@@ -4,13 +4,15 @@ import { applyPlacementPresetTransform } from '../../scripts/transform-loader-pl
 
 // Generated 12-second, silent H.264 baseline fixture; no third-party media or ads.
 const contentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback.mp4.base64', import.meta.url), 'utf8'), 'base64');
-const runtime = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
+const runtime = await readFile(process.env.HORUS_VIDEO_RUNTIME_PATH || new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
+const emblemBytes = await readFile(new URL('../../public/assets/brand/horusmedia-emblem-header.png', import.meta.url));
 const loader = applyPlacementPresetTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'));
 
 // Exercise the real loader + video DOM with a deterministic IMA boundary.
 // No live auctions, impression pixels, credentials, or paid inventory are used.
 async function openPlayer(page, options = {}) {
     const resourceRequests = { runtime: 0, content: 0 };
+    await page.route('https://horusmedia.net/assets/images/horusmedia-emblem-header.png', route => route.fulfill({ contentType: 'image/png', body: emblemBytes }));
     await page.route('https://reader.example/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/player.js') { resourceRequests.runtime++; return route.fulfill({ contentType: 'application/javascript', body: runtime }); }
@@ -558,11 +560,14 @@ test('real decoded content stays inline without ads and keeps its source and pla
         let previousTime = await page.locator('video').evaluate(video => video.currentTime);
         await scrollPage(page, 1400);
         await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'inline');
-        await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(previousTime + 0.15);
+        // WebKit may suspend offscreen media. The new inline-only content
+        // contract preserves its time/source, without forcing hidden playback.
+        expect(await page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThanOrEqual(previousTime - 0.05);
         if (cycle === 0) await attachLayout(page, testInfo, 'decoded-content-scrolled-inline');
         previousTime = await page.locator('video').evaluate(video => video.currentTime);
         await scrollPage(page, 0);
         await expectInline(page, original);
+        if (await page.locator('video').evaluate(video => video.paused)) await page.locator('[data-hm-video-content-control="play"]').click();
         await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(previousTime + 0.15);
         await expectDecodedContent(page);
         expect(await page.evaluate(() => {
@@ -1094,8 +1099,8 @@ test('mixed nonlinear creative stays clickable over decoded content and external
     await expectDecodedContent(page);
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
     await expect(page.locator('[data-hm-video-ad-layer]')).toHaveCSS('pointer-events', 'none');
-    await expect(toggle).toBeHidden();
-    await expect(mute).toBeHidden();
+    await expect(toggle).toBeVisible();
+    await expect(mute).toBeVisible();
 });
 
 test('mixed nonlinear five-second content EOS retires the overlay and exactly one postroll, including stale duplicate callbacks', async ({ page }) => {
@@ -1138,7 +1143,10 @@ test('nonlinear creative that no longer fits after resize is stopped rather than
     await page.setViewportSize({ width: 280, height: 720 });
     await expect.poll(() => page.evaluate(() => window.managerStops)).toBe(1);
     await expect(page.locator('[data-test-ima]')).toHaveCount(0);
-    await expectCompactFloatingGeometry(page, [336, 280]);
+    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'inline');
+    await scrollPage(page, 0);
+    await expectEnlargedInlineGeometry(page, [336, 280]);
+    if (await page.locator('video').evaluate(video => video.paused)) await page.locator('[data-hm-video-content-control="play"]').click();
     await expectDecodedContent(page);
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
@@ -1318,4 +1326,16 @@ test('VMAP future preload stays inline, actual ad start floats without another s
     await page.evaluate(() => window.videoManager.emit('content-resume'));
     await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+test('ad-only completion after scroll removes the returned shell instead of leaving an empty player', async ({ page }) => {
+    await openPlayer(page);
+    await rememberPlayingAd(page);
+    await scrollPage(page, 1800);
+    await assertFloating(page);
+    await page.evaluate(() => { window.videoManager.emit('complete'); window.videoManager.emit('all-completed'); });
+    await expect(page.locator('[data-placement="video"]')).toBeHidden();
+    await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
+    await scrollPage(page, 0);
+    await expect(page.locator('[data-placement="video"]')).toBeHidden();
 });
