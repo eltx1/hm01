@@ -1629,7 +1629,11 @@
                     failVideo(player, error, 'playback');
                 });
                 player.adsManager.addEventListener(adTypes.LOADED, function () {
-                    if (!player.destroyed) { setAdPresentation(player, true); setStatus(player.container, 'loaded'); }
+                    if (player.destroyed) return;
+                    // Presentation can synchronously make a deferred manager
+                    // viewable and STARTED. Never overwrite that newer state.
+                    setStatus(player.container, 'loaded');
+                    setAdPresentation(player, true);
                 });
                 player.adsManager.addEventListener(adTypes.STARTED, function () {
                     if (player.destroyed) return;

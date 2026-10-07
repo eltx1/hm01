@@ -109,6 +109,7 @@ for (const mode of ['composed', 'minified']) for (const delay of ['config', 'ver
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
         run.release();
         await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+        await expect(page.locator('[data-hm-video-direct]')).toHaveAttribute('data-hm-video-status', 'started');
         await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
         expect(run.counts.verifies).toBe(1);
