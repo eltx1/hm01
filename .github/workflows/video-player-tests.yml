@@ -60,7 +60,9 @@ jobs:
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Dependency mirrors can take 8+ minutes; the four-browser suite itself
+    # takes about 9 minutes. Keep a bounded budget for both phases.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
