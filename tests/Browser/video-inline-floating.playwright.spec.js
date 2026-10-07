@@ -1478,13 +1478,14 @@ test('new late ad waits for visible entry and a live reduced-motion change settl
     const initial = await page.evaluate(() => {
         window.videoLoaders[0].resolve();
         const el = document.querySelector('[data-placement="video"]');
-        return { phase: el.getAttribute('data-hm-video-motion'), starts: window.adStarts };
+        return { phase: el.getAttribute('data-hm-video-motion'), starts: window.adStarts, adInert: el.querySelector('[data-hm-video-ad-layer]').hasAttribute('inert') };
     });
-    expect(initial).toEqual({ phase: 'enter', starts: 0 });
+    expect(initial).toEqual({ phase: 'enter', starts: 0, adInert: true });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const surface = await assertFloating(page);
     await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
     expect(await surface.evaluate(el => el.getAnimations().length)).toBe(0);
+    await expect(surface.locator('[data-hm-video-ad-layer]')).not.toHaveAttribute('inert', '');
     await page.evaluate(() => window.videoManager.emit('all-completed'));
     await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
     await expect(surface).not.toHaveAttribute('data-hm-video-motion', /.+/);

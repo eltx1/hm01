@@ -551,6 +551,7 @@
         if (motion.media && motion.media.removeEventListener) motion.media.removeEventListener('change', motion.finish);
         if (document.removeEventListener) document.removeEventListener('visibilitychange', motion.visibility);
         motion.surface.removeAttribute('data-hm-video-motion');
+        if (motion.layer && !motion.layerWasInert) motion.layer.removeAttribute('inert');
         try {
             motion.animation.onfinish = null;
             motion.animation.oncancel = null;
@@ -579,7 +580,10 @@
                 { opacity: leaving ? '0' : '1', translate: leaving ? '0 8px' : '0 0' },
             ], { duration: duration, easing: leaving ? 'cubic-bezier(.4,0,1,1)' : 'cubic-bezier(.16,1,.3,1)', fill: 'both' });
         } catch (error) { return false; }
-        var motion = player.motion = { animation: animation, surface: surface, media: media, phase: phase };
+        var motion = player.motion = { animation: animation, surface: surface, media: media, phase: phase,
+            layer: player.adLayer, layerWasInert: player.adLayer && player.adLayer.hasAttribute('inert') };
+        // A fading creative is not a click target; external close controls stay usable.
+        if (motion.layer) motion.layer.setAttribute('inert', '');
         surface.setAttribute('data-hm-video-motion', phase);
         motion.finish = function () {
             if (player.motion !== motion) return;
