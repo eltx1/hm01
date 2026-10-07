@@ -162,18 +162,21 @@ for (const options of [{ belowFold: true }, { inlineOnly: true }]) {
         expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(0);
     });
 }
-test('a delayed ad floats the existing player only after LOADED, without another scroll', async ({ page }) => {
+test('a delayed confirmed VAST response floats the existing player without requiring media preload', async ({ page }) => {
     await open(page, { deferManager: true, deferLoaded: true });
     await expect.poll(() => page.evaluate(() => window.videoMetrics.requests)).toBe(1);
     await page.evaluate(() => { window.originalFrame = document.querySelector('[data-test-ima]'); window.scrollTo(0, 1800); });
     await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
+    expect(await page.evaluate(() => window.videoMetrics.starts)).toBe(0);
     await page.evaluate(() => window.videoLoaders[0].deliver());
     await expect.poll(() => page.evaluate(() => window.videoManagers.length)).toBe(1);
-    await expect(page.locator('[data-placement="video"]')).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
-    expect(await page.evaluate(() => window.videoMetrics.starts)).toBe(0);
-    await page.evaluate(() => window.videoManagers[0].deliverAd());
     await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
     await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'floating');
+    // LOADED can follow start() on non-preloading browsers; it cannot create
+    // a second start or a replacement iframe after the successful response.
+    await page.evaluate(() => window.videoManagers[0].deliverAd());
+    expect(await page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+    expect(await page.evaluate(() => window.videoMetrics.requests)).toBe(1);
     expect(await page.evaluate(() => document.querySelector('[data-test-ima]') === window.originalFrame)).toBe(true);
 });
 
