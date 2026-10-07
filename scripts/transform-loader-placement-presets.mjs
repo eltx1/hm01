@@ -469,9 +469,18 @@ const HELPERS = `    function placementFormatSettings(placement) {
             if (event && event.preventDefault) event.preventDefault();
             if (event && event.stopPropagation) event.stopPropagation();
             if (button.__hmPlacementObserver && button.__hmPlacementObserver.disconnect) button.__hmPlacementObserver.disconnect();
-            if (element.setAttribute) element.setAttribute('data-hm-placement-dismissed', '1');
-            destroyPlacementMedia(element);
-            if (element.style) setImportantStyle(element.style, 'display', 'none');
+            var closed = false;
+            function finishClose() {
+                if (closed) return;
+                closed = true;
+                if (element.setAttribute) element.setAttribute('data-hm-placement-dismissed', '1');
+                destroyPlacementMedia(element);
+                if (element.style) setImportantStyle(element.style, 'display', 'none');
+            }
+            try {
+                if (typeof element.__hmAnimateDismiss === 'function' && element.__hmAnimateDismiss(finishClose)) return;
+            } catch (error) { /* Optional motion must never prevent dismissal. */ }
+            finishClose();
         });
         element.appendChild(button);
         syncPlacementCloseControl(element, button);
