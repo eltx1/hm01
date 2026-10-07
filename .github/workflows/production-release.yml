@@ -44,7 +44,7 @@ jobs:
           npm audit --package-lock-only --audit-level=moderate || \
             npm audit --package-lock-only --audit-level=moderate --registry=https://registry.yarnpkg.com
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
-          npx playwright install --with-deps chromium webkit
+          bash scripts/install-playwright-ci.sh
       - name: Render changed forms through real application routes
         run: |
           cp .env.example .env

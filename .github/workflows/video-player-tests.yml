@@ -75,7 +75,7 @@ jobs:
         run: |
           npm ci
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
-          npx playwright install --with-deps chromium webkit
+          bash scripts/install-playwright-ci.sh
       - name: Download trusted production verification proof
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v8
