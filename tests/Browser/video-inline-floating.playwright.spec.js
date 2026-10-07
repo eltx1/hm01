@@ -1402,7 +1402,7 @@ for (const transformed of [false, 'scaled']) {
         const entry = await page.evaluate(() => window.playerMotionEvidence.find(m => m.duration === 220));
         expect(entry.frames).toEqual([{ opacity: '0', translate: '0 14px' }, { opacity: '1', translate: '0 0' }]);
         expect(entry.samples.some(s => s.opacity > 0 && s.opacity < 1)).toBe(true);
-        expect(entry.samples.some(s => s.translate !== 'none' && s.translate !== '0px')).toBe(true);
+        expect(entry.samples.some(s => s.translate.split(/\s+/).some(value => Math.abs(parseFloat(value)) > 0.01))).toBe(true);
         expect(Math.abs(await page.locator('#tail').evaluate(el => el.getBoundingClientRect().top + scrollY) - original.tailY)).toBeLessThan(1);
         await scrollPage(page, 0);
         await expectInline(page, original);
