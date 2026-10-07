@@ -1343,7 +1343,17 @@
                         if (!currentRequest()) return;
                         // Preloaded VMAP/pod ads can LOADED well before their
                         // cue. They must not pause content or replace an active ad.
-                        if (player.adRules || player.currentAd && (player.adMediaActive || player.nonLinearAdActive)) return;
+                        if (player.currentAd && (player.adMediaActive || player.nonLinearAdActive)) return;
+                        if (player.adRules) {
+                            // A confirmed preroll may arrive after the reader
+                            // has scrolled away, before manager.start(). Only
+                            // its zero-offset pod can make startup viewable;
+                            // preloaded future cues must remain inline.
+                            if (player.contentStarted || player.currentBreak !== 'preroll') return;
+                            var loadedAd = currentAdFromEvent(adEvent), loadedPod;
+                            try { loadedPod = loadedAd && loadedAd.getAdPodInfo && loadedAd.getAdPodInfo(); } catch (error) { return; }
+                            try { if (!loadedPod || !loadedPod.getTimeOffset || loadedPod.getTimeOffset() !== 0) return; } catch (error) { return; }
+                        }
                         setStatus(player.container, 'loaded-' + position);
                         if (currentAdFromEvent(adEvent) && applyAdMode(adEvent, false) !== false && currentRequest()) setAdPresentation(player, true);
                     });

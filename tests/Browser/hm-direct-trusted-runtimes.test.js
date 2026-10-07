@@ -287,6 +287,7 @@ function runVideo(selectedContainer, options = {}) {
                 getHeight: () => this.ad.height,
                 getMinSuggestedDuration: () => this.ad.minSuggestedDuration,
                 getDuration: () => this.ad.duration ?? 10,
+                getAdPodInfo: () => ({ getTimeOffset: () => this.ad.timeOffset }),
             };
         }
         emit(name, event = {}) { (this.listeners[name] || []).slice().forEach((callback) => callback({ getAd: () => this.getAd(), ...event })); }
@@ -2149,6 +2150,16 @@ test('VMAP preloading is not a current ad and returning content clears presentat
     assert.equal(runtime.requested.length, 1);
     target.__hmDestroy('dismissed');
 });
+
+for (const timeOffset of [0, 50, -1, undefined]) {
+    test(`VMAP startup presents only a confirmed current preroll pod: ${timeOffset}`, async () => {
+        const { target } = mixedContentFixture({}, { cuePoints: [0, 50, -1], ad: { timeOffset }, loadedDuringInit: true, deferMediaStart: true });
+        await tick();
+        assert.equal(target.__hmVideoPlayer.adPresentationActive, timeOffset === 0);
+        assert.equal(target.__hmVideoPlayer.adMediaActive, false, 'preloading does not take content ownership');
+        target.__hmDestroy('dismissed');
+    });
+}
 
 test('a break-level pause without an ad does not float an empty response', async () => {
     const { target, runtime } = mixedContentFixture({}, { cuePoints: [0, 50] });

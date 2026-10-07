@@ -1313,6 +1313,27 @@ for (const secondFilled of [true, false]) {
     });
 }
 
+test('a late VMAP preroll floats after confirmed zero-offset LOADED while future pods stay inline', async ({ page }) => {
+    await openPlayer(page, { content: true, cuePoints: [0, 50, -1], deferResponse: true });
+    const surface = page.locator('[data-placement="video"]');
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    await scrollPage(page, 1800);
+    await page.evaluate(() => window.videoLoaders[0].resolve());
+    for (const timeOffset of [50, -1]) {
+        await page.evaluate(timeOffset => window.videoManager.emit('loaded', { getAd: () => ({
+            isLinear: () => true, getAdPodInfo: () => ({ getTimeOffset: () => timeOffset }),
+        }) }), timeOffset);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        expect(await page.evaluate(() => window.adStarts)).toBe(0);
+    }
+    await page.evaluate(() => window.videoManager.emit('loaded', { getAd: () => ({
+        isLinear: () => true, getAdPodInfo: () => ({ getTimeOffset: () => 0 }),
+    }) }));
+    await assertFloating(page);
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
 test('VMAP future preload stays inline, actual ad start floats without another scroll, content resume returns inline', async ({ page }) => {
     await openPlayer(page, { content: true, cuePoints: [0, 50, -1] });
     const surface = page.locator('[data-placement="video"]');
