@@ -468,6 +468,9 @@
     function destroyPlayer(player, reason) {
         if (!player || player.destroyed) return;
         player.destroyed = true;
+        cancelPlayerMotion(player);
+        var shell = placementSurface(player);
+        if (shell) shell.__hmAnimateDismiss = null;
         player.contentPlayGeneration += 1;
         player.adRuntimeGeneration += 1;
         window.clearTimeout(player.startupTimer);
@@ -540,6 +543,81 @@
         else style[name.replace(/-([a-z])/g, function (_, letter) { return letter.toUpperCase(); })] = value;
     }
 
+    function cancelPlayerMotion(player) {
+        var motion = player && player.motion;
+        if (!motion) return;
+        player.motion = null;
+        window.clearTimeout(motion.timer);
+        if (motion.media && motion.media.removeEventListener) motion.media.removeEventListener('change', motion.finish);
+        if (document.removeEventListener) document.removeEventListener('visibilitychange', motion.visibility);
+        motion.surface.removeAttribute('data-hm-video-motion');
+        if (motion.layer && !motion.layerWasInert) motion.layer.removeAttribute('inert');
+        try {
+            motion.animation.onfinish = null;
+            motion.animation.oncancel = null;
+            motion.animation.cancel();
+        } catch (error) {}
+    }
+
+    // Individual translate leaves portal scaling and publisher transforms intact.
+    // Only the real shell moves: never clone, detach, or recreate a playing ad.
+    function animatePlayer(player, phase, duration, done) {
+        var surface = placementSurface(player), media;
+        try { media = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)'); } catch (error) {}
+        if (!surface || typeof surface.animate !== 'function' || player.rewarded || document.visibilityState === 'hidden' || media && media.matches) {
+            cancelPlayerMotion(player);
+            return false;
+        }
+        var previous = player.motion && window.getComputedStyle ? window.getComputedStyle(surface) : null;
+        var opacity = previous ? previous.opacity : phase === 'enter' || phase === 'return' ? '0' : '1';
+        var translate = previous ? previous.translate : phase === 'enter' ? '0 14px' : '0 0';
+        cancelPlayerMotion(player);
+        var leaving = phase === 'exit' || phase === 'dismiss';
+        var animation;
+        try {
+            animation = surface.animate([
+                { opacity: opacity, translate: translate || '0 0' },
+                { opacity: leaving ? '0' : '1', translate: leaving ? '0 8px' : '0 0' },
+            ], { duration: duration, easing: leaving ? 'cubic-bezier(.4,0,1,1)' : 'cubic-bezier(.16,1,.3,1)', fill: 'both' });
+        } catch (error) { return false; }
+        var motion = player.motion = { animation: animation, surface: surface, media: media, phase: phase,
+            layer: player.adLayer, layerWasInert: player.adLayer && player.adLayer.hasAttribute('inert') };
+        // A fading creative is not a click target; external close controls stay usable.
+        if (motion.layer) motion.layer.setAttribute('inert', '');
+        surface.setAttribute('data-hm-video-motion', phase);
+        motion.finish = function () {
+            if (player.motion !== motion) return;
+            cancelPlayerMotion(player);
+            if (!player.destroyed && done) done();
+        };
+        motion.visibility = function () { if (document.visibilityState === 'hidden') motion.finish(); };
+        animation.onfinish = motion.finish;
+        animation.oncancel = motion.finish;
+        if (media && media.addEventListener) media.addEventListener('change', motion.finish);
+        if (document.addEventListener) document.addEventListener('visibilitychange', motion.visibility);
+        // A publisher may cancel animations or a background tab may stall them.
+        motion.timer = window.setTimeout(motion.finish, duration + 100);
+        return true;
+    }
+
+    function dismissPlayerWithMotion(player, done) {
+        if (!player || player.destroyed || !player.floating) return false;
+        if (player.closing) return true;
+        if (!animatePlayer(player, 'dismiss', 140, done)) return false;
+        player.closing = true;
+        player.pendingAdStart = null;
+        player.adRuntimeGeneration += 1;
+        player.contentPlayGeneration += 1;
+        var surface = placementSurface(player);
+        surface.setAttribute('inert', '');
+        importantStyle(surface.style, 'pointer-events', 'none');
+        // Silence immediately; the short visual exit must not extend playback.
+        try { if (player.adsManager && player.adsManager.setVolume) player.adsManager.setVolume(0); } catch (error) {}
+        try { if (player.adsManager && player.adsManager.pause) player.adsManager.pause(); } catch (error) {}
+        try { player.video.pause(); } catch (error) {}
+        return true;
+    }
+
     function validContentUrl(value) {
         try {
             var url = new URL(String(value || ''));
@@ -550,7 +628,7 @@
     }
 
     function setAdPresentation(player, active) {
-        if (!player || player.destroyed) return;
+        if (!player || player.destroyed || player.closing) return;
         player.adPresentationActive = active === true;
         player.container.setAttribute('data-hm-video-ad-present', active ? '1' : '0');
         updateContentAdUi(player);
@@ -560,7 +638,7 @@
     }
 
     function releasePendingAdStart(player) {
-        if (!player || player.destroyed || typeof player.pendingAdStart !== 'function') return false;
+        if (!player || player.destroyed || player.closing || player.motion || typeof player.pendingAdStart !== 'function') return false;
         if (!player.rewarded && (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5)) return false;
         var start = player.pendingAdStart;
         player.pendingAdStart = null;
@@ -568,14 +646,14 @@
     }
 
     function startAdManagerWhenViewable(player, start) {
-        if (!player || player.destroyed || typeof start !== 'function') return;
+        if (!player || player.destroyed || player.closing || typeof start !== 'function') return;
         // The SDK response can beat the next scroll/observer frame (notably
         // on mobile WebKit). Measure the current position before authorizing
         // playback rather than using the previously visible inline geometry.
         if (player.viewport && player.viewport.update) player.viewport.update();
         if (player.destroyed) return;
         var unmeasurableAdapter = typeof window.IntersectionObserver !== 'function' && !player.container.getBoundingClientRect;
-        if (player.rewarded || document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
+        if (player.rewarded || !player.motion && document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5 || unmeasurableAdapter)) {
             start();
             return;
         }
@@ -589,6 +667,7 @@
         if (player.rewarded) return;
         var surface = placementSurface(player);
         if (!surface || surface === player.container || !surface.insertBefore) return;
+        surface.__hmAnimateDismiss = function (done) { return dismissPlayerWithMotion(player, done); };
         var initiallyFloating = surface.getAttribute('data-hm-floating-video-active') === '1';
         surface.setAttribute('data-hm-video-shell', '1');
         surface.setAttribute('data-hm-video-chrome-height', '44');
@@ -776,7 +855,7 @@
         }
         layout.update = function () {
             layout.frame = null;
-            if (layout.stopped || player.destroyed) return;
+            if (layout.stopped || player.destroyed || player.closing) return;
             if (surface && (surface.isConnected === false || surface.getAttribute('data-hm-placement-dismissed') === '1') || layout.anchor && layout.anchor.isConnected === false) {
                 destroyPlayer(player, 'dismissed'); return;
             }
@@ -786,6 +865,11 @@
             if (player.floating && layout.anchor) {
                 var original = geometry(layout.anchor);
                 if (!player.adPresentationActive || original && !original.hidden && original.ratio > 0 && original.rect.bottom > original.view.top + 8) {
+                    if (!layout.returnReady) {
+                        if (player.motion && player.motion.phase === 'exit') return;
+                        if (animatePlayer(player, 'exit', 140, function () { layout.returnReady = true; layout.update(); })) return;
+                    }
+                    layout.returnReady = false;
                     player.floating = false;
                     surface.setAttribute('data-hm-floating-video-active', '0');
                     surface.setAttribute('data-hm-video-floating-state', 'inline');
@@ -794,6 +878,14 @@
                         if (layout.resize && layout.resize.unobserve) layout.resize.unobserve(layout.anchor);
                         if (layout.anchor.parentNode) layout.anchor.parentNode.removeChild(layout.anchor);
                         layout.anchor = null;
+                    }
+                    if (original && !original.hidden && original.ratio > 0) {
+                        animatePlayer(player, 'return', 160, function () { layout.update(); });
+                    }
+                } else {
+                    layout.returnReady = false;
+                    if (player.motion && player.motion.phase === 'exit') {
+                        animatePlayer(player, 'enter', 180, function () { layout.update(); });
                     }
                 }
             }
@@ -922,6 +1014,7 @@
         importantStyle(surface.style, 'background', '#050b1e');
         importantStyle(surface.style, 'box-shadow', '0 20px 56px rgba(5,8,22,.32),0 0 0 1px rgba(241,183,51,.22)');
         importantStyle(surface.style, 'bottom', 'calc(16px + env(safe-area-inset-bottom, 0px))');
+        animatePlayer(player, 'enter', 220, function () { if (player.viewport) player.viewport.update(); });
         releasePendingAdStart(player);
         try {
             if (player.adsManager && player.adsManager.resize) {
@@ -1143,13 +1236,16 @@
 
     function finishContentPlayer(player, reason) {
         if (!player || player.destroyed) return;
-        var surface = placementSurface(player);
-        if (surface && surface.style) surface.style.display = 'none';
-        destroyPlayer(player, reason || 'completed');
+        function finish() {
+            var surface = placementSurface(player);
+            if (surface && surface.style) surface.style.display = 'none';
+            destroyPlayer(player, reason || 'completed');
+        }
+        if (!dismissPlayerWithMotion(player, finish)) finish();
     }
 
     function markContentPlaying(player) {
-        if (!player || player.destroyed || player.contentFailed || player.adMediaActive || player.contentPausedByUser) return;
+        if (!player || player.destroyed || player.closing || player.contentFailed || player.adMediaActive || player.contentPausedByUser) return;
         tracePhase('Video content', player.container);
         player.contentStarted = true;
         player.container.setAttribute('data-hm-video-detail', '');
@@ -1157,7 +1253,7 @@
     }
 
     function resumeContent(player) {
-        if (!player || player.destroyed || player.contentEnded || player.adMediaActive) return;
+        if (!player || player.destroyed || player.closing || player.contentEnded || player.adMediaActive) return;
         if (player.contentFailed) {
             finishContentPlayer(player, 'content-error');
             return;
@@ -1240,7 +1336,7 @@
     }
 
     function requestContentAdBreak(player, ima, vastUrl, position) {
-        if (!player || player.destroyed || player.adBreakPending) return;
+        if (!player || player.destroyed || player.closing || player.adBreakPending) return;
         if (player.adRules && position !== 'preroll') return;
         player.adBreakPending = true;
         player.currentBreak = position;

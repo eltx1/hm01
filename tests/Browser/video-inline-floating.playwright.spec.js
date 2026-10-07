@@ -194,6 +194,7 @@ async function openPlayer(page, options = {}) {
 async function assertFloating(page) {
     const surface = page.locator('[data-placement="video"]');
     await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'floating');
+    await expect(surface).not.toHaveAttribute('data-hm-video-motion', /.+/);
     await expect.poll(async () => surface.evaluate(el => {
         const r = el.getBoundingClientRect();
         return getComputedStyle(el).position === 'fixed' && r.top >= 0 && r.bottom <= innerHeight && r.width > 0 && r.height > 0;
@@ -280,6 +281,7 @@ async function expectInline(page, original = null) {
     const surface = page.locator('[data-placement="video"]');
     await expect(surface).not.toHaveAttribute('data-hm-video-floating-state', 'floating');
     await expect(surface).not.toHaveAttribute('data-hm-floating-video-active', '1');
+    await expect(surface).not.toHaveAttribute('data-hm-video-motion', /.+/);
     await expect(surface).toBeVisible();
     if (original) {
         // Comparing the article below the player catches an orphan placeholder,
@@ -1365,4 +1367,164 @@ test('ad-only completion after scroll removes the returned shell instead of leav
     await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
     await scrollPage(page, 0);
     await expect(page.locator('[data-placement="video"]')).toBeHidden();
+});
+
+async function recordPlayerMotion(page) {
+    await page.addInitScript(() => {
+        window.playerMotionEvidence = [];
+        const animate = Element.prototype.animate;
+        Element.prototype.animate = function (frames, options) {
+            const animation = animate.call(this, frames, options);
+            if (this.hasAttribute('data-hm-video-shell')) {
+                const evidence = { frames, duration: options.duration, samples: [] };
+                window.playerMotionEvidence.push(evidence);
+                const sample = () => {
+                    const css = getComputedStyle(this);
+                    evidence.samples.push({ opacity: Number(css.opacity), translate: css.translate });
+                    if (animation.playState === 'running' || animation.playState === 'pending') requestAnimationFrame(sample);
+                };
+                requestAnimationFrame(sample);
+            }
+            return animation;
+        };
+    });
+}
+
+for (const transformed of [false, 'scaled']) {
+    test(`real enter/exit/return motion preserves media and article geometry (portal=${transformed})`, async ({ page }) => {
+        await recordPlayerMotion(page);
+        await openPlayer(page, { transformed });
+        await rememberPlayingAd(page);
+        const original = await inlineGeometry(page);
+        await scrollPage(page, 1800);
+        const surface = await assertFloating(page);
+        await expectSamePlayingAd(page);
+        const entry = await page.evaluate(() => window.playerMotionEvidence.find(m => m.duration === 220));
+        expect(entry.frames).toEqual([{ opacity: '0', translate: '0 14px' }, { opacity: '1', translate: '0 0' }]);
+        expect(entry.samples.some(s => s.opacity > 0 && s.opacity < 1)).toBe(true);
+        expect(entry.samples.some(s => s.translate.split(/\s+/).some(value => Math.abs(parseFloat(value)) > 0.01))).toBe(true);
+        expect(Math.abs(await page.locator('#tail').evaluate(el => el.getBoundingClientRect().top + scrollY) - original.tailY)).toBeLessThan(1);
+        await scrollPage(page, 0);
+        await expectInline(page, original);
+        await expectSamePlayingAd(page);
+        expect(await page.evaluate(() => window.playerMotionEvidence.map(m => m.duration))).toEqual([220, 140, 160]);
+        expect(await surface.evaluate(el => el.getAnimations().length)).toBe(0);
+        await scrollPage(page, 1800);
+        await assertFloating(page);
+        const closing = await surface.evaluate(el => {
+            const player = el.querySelector('[data-hm-video-direct]').__hmVideoPlayer;
+            el.querySelector('[data-hm-placement-close]').click();
+            return { phase: el.getAttribute('data-hm-video-motion'), closing: player.closing, volume: window.videoManager.volume, inert: el.hasAttribute('inert') };
+        });
+        expect(closing).toEqual({ phase: 'dismiss', closing: true, volume: 0, inert: true });
+        await expect(surface).toBeHidden();
+        await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
+        expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    });
+
+    test(`rapid reversal and closing during entry cannot resurrect or reload the player (portal=${transformed})`, async ({ page }) => {
+        await openPlayer(page, { transformed });
+        await rememberPlayingAd(page);
+        await scrollPage(page, 1800);
+        const surface = await assertFloating(page);
+        const phases = await surface.evaluate(el => {
+            const player = el.querySelector('[data-hm-video-direct]').__hmVideoPlayer;
+            window.scrollTo(0, 0); player.viewport.update();
+            const leaving = el.getAttribute('data-hm-video-motion');
+            window.scrollTo(0, 1800); player.viewport.update();
+            return [leaving, el.getAttribute('data-hm-video-motion')];
+        });
+        expect(phases).toEqual(['exit', 'enter']);
+        await assertFloating(page);
+        await expectSamePlayingAd(page);
+        await surface.evaluate(el => {
+            const player = el.querySelector('[data-hm-video-direct]').__hmVideoPlayer;
+            window.scrollTo(0, 0); player.viewport.update();
+            window.scrollTo(0, 1800); player.viewport.update();
+            el.querySelector('[data-hm-placement-close]').click();
+            window.scrollTo(0, 0); player.viewport.update();
+        });
+        await expect(surface).toBeHidden();
+        await scrollPage(page, 1800);
+        await expect(surface).toBeHidden();
+        expect(await page.evaluate(() => window.adRequests)).toBe(1);
+        await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
+    });
+}
+
+for (const fallback of ['reduced-motion', 'no-animation-api']) {
+    test(`${fallback} keeps immediate transitions and functional dismissal`, async ({ page }) => {
+        if (fallback === 'reduced-motion') await page.emulateMedia({ reducedMotion: 'reduce' });
+        else await page.addInitScript(() => { Element.prototype.animate = undefined; });
+        await openPlayer(page);
+        await rememberPlayingAd(page);
+        const original = await inlineGeometry(page);
+        await scrollPage(page, 1800);
+        const surface = await assertFloating(page);
+        expect(await surface.evaluate(el => el.getAnimations().length)).toBe(0);
+        await scrollPage(page, 0);
+        await expectInline(page, original);
+        await expectSamePlayingAd(page);
+        await scrollPage(page, 1800);
+        await assertFloating(page);
+        await surface.locator('[data-hm-placement-close]').click();
+        await expect(surface).toBeHidden();
+    });
+}
+
+test('new late ad waits for visible entry and a live reduced-motion change settles animation', async ({ page }) => {
+    await openPlayer(page, { content: true, deferResponse: true });
+    await scrollPage(page, 1800);
+    const initial = await page.evaluate(() => {
+        window.videoLoaders[0].resolve();
+        const el = document.querySelector('[data-placement="video"]');
+        return { phase: el.getAttribute('data-hm-video-motion'), starts: window.adStarts, adInert: el.querySelector('[data-hm-video-ad-layer]').hasAttribute('inert') };
+    });
+    expect(initial).toEqual({ phase: 'enter', starts: 0, adInert: true });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const surface = await assertFloating(page);
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    expect(await surface.evaluate(el => el.getAnimations().length)).toBe(0);
+    await expect(surface.locator('[data-hm-video-ad-layer]')).not.toHaveAttribute('inert', '');
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+    await expect(surface).not.toHaveAttribute('data-hm-video-motion', /.+/);
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+test('external animation cancellation finishes the transition and releases a pending ad exactly once', async ({ page }) => {
+    await openPlayer(page, { deferResponse: true });
+    await scrollPage(page, 1800);
+    await page.evaluate(() => {
+        window.videoLoaders[0].resolve();
+        document.querySelector('[data-placement="video"]').getAnimations().forEach(animation => animation.cancel());
+    });
+    const surface = await assertFloating(page);
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    await surface.evaluate(el => {
+        window.scrollTo(0, 0);
+        el.querySelector('[data-hm-video-direct]').__hmVideoPlayer.viewport.update();
+        el.getAnimations().forEach(animation => animation.cancel());
+    });
+    await expectInline(page);
+    expect(await page.evaluate(() => ({ starts: window.adStarts, requests: window.adRequests }))).toEqual({ starts: 1, requests: 1 });
+});
+
+test('a pending ad returned inline during entry waits for the visible portal return', async ({ page }) => {
+    await openPlayer(page, { content: true, deferResponse: true, transformed: 'scaled' });
+    await scrollPage(page, 1800);
+    const initial = await page.evaluate(() => {
+        window.videoLoaders[0].resolve();
+        const el = document.querySelector('[data-placement="video"]');
+        const start = window.videoManager.start.bind(window.videoManager);
+        window.adStartMotion = [];
+        window.videoManager.start = () => { window.adStartMotion.push(el.getAttribute('data-hm-video-motion')); start(); };
+        window.scrollTo(0, 0);
+        el.querySelector('[data-hm-video-direct]').__hmVideoPlayer.viewport.update();
+        return { phase: el.getAttribute('data-hm-video-motion'), starts: window.adStarts };
+    });
+    expect(initial).toEqual({ phase: 'exit', starts: 0 });
+    await expectInline(page);
+    await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+    expect(await page.evaluate(() => window.adStartMotion)).toEqual([null]);
 });
