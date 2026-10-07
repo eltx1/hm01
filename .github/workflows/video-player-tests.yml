@@ -43,3 +43,27 @@ jobs:
           name: horus-video-source-${{ github.run_id }}
           path: ${{ runner.temp }}/horus-video-source.tar
           retention-days: 3
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test tools
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+      - name: Exercise video ads and content on desktop and mobile
+        run: npx playwright test --config=playwright.traffic-gate.config.js video-inline-floating.playwright.spec.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-player-browser-${{ github.sha }}
+          path: test-results
+          retention-days: 7

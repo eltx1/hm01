@@ -49,7 +49,7 @@ async function openPlayer(page, options = {}) {
             Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.testVisibility });
         }
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
-        window.managerInits = 0; window.managerResizes = []; window.managerStops = 0; window.adClicks = 0; window.contentCompleteCalls = 0; window.videoManagers = [];
+        window.managerInits = 0; window.managerResizes = []; window.managerStops = 0; window.adClicks = 0; window.contentCompleteCalls = 0; window.videoManagers = []; window.videoLoaders = [];
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
         window.contentPlayCalls = 0; window.contentPauseCalls = 0; window.contentLoadCalls = 0;
         const nativeLoad = HTMLMediaElement.prototype.load;
@@ -95,11 +95,11 @@ async function openPlayer(page, options = {}) {
             }
             addEventListener(name, fn) { (this.events[name] ||= []).push(fn); }
             getAd() { return this.adApi ||= { isLinear: () => this.ad.linear, getWidth: () => this.ad.width, getHeight: () => this.ad.height, getMinSuggestedDuration: () => this.ad.minSuggestedDuration, getDuration: () => 10 }; }
-            emit(name) { (this.events[name] || []).slice().forEach(fn => fn({ getAd: () => this.getAd() })); }
+            emit(name, event = {}) { (this.events[name] || []).slice().forEach(fn => fn({ getAd: () => this.getAd(), ...event })); }
             discardAdBreak() { this.discardCalls = (this.discardCalls || 0) + 1; this.emit('content-resume'); }
             stop() { window.managerStops++; if (!options.noStopEvents) { this.emit('complete'); this.emit('all-completed'); } }
-            getCuePoints() { return []; }
-            init(width, height) { window.managerInits++; this.dimensions = [width, height]; }
+            getCuePoints() { return options.cuePoints || []; }
+            init(width, height) { window.managerInits++; this.dimensions = [width, height]; if (!options.noPreload && !options.cuePoints?.length) this.emit('loaded'); }
             setVolume(value) { this.volume = value; }
             start() { window.adStarts++; if (this.ad.linear) this.emit('content-pause'); this.emit('loaded'); this.emit('started'); }
             resize(width, height) { window.managerResizes.push([width, height]); this.dimensions = [width, height]; }
@@ -120,7 +120,7 @@ async function openPlayer(page, options = {}) {
                 destroy() { this.frame.remove(); }
             },
             AdsLoader: class {
-                constructor() { this.events = {}; }
+                constructor() { this.events = {}; window.videoLoaders.push(this); }
                 addEventListener(name, callback) { this.events[name] = callback; }
                 requestAds(request) {
                     window.adRequests++;
@@ -128,7 +128,7 @@ async function openPlayer(page, options = {}) {
                     window.lastAdPlaybackIntent = { autoPlay: request.willAutoPlay, muted: request.willPlayMuted };
                     window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
                     window.lastNonlinearDimensions = [request.nonLinearAdSlotWidth, request.nonLinearAdSlotHeight];
-                    this.events.manager({ getAdsManager: (_video, settings) => {
+                    this.resolve = () => this.events.manager({ getAdsManager: (_video, settings) => {
                         window.lastRenderingSettings = {
                             enablePreloading: settings.enablePreloading,
                             loadVideoTimeout: settings.loadVideoTimeout,
@@ -136,6 +136,7 @@ async function openPlayer(page, options = {}) {
                         };
                         return new Manager();
                     } });
+                    if (!options.deferResponse) this.resolve();
                 }
                 destroy() {}
                 contentComplete() { window.contentCompleteCalls++; }
@@ -404,12 +405,12 @@ test('GAM preserves a manual multi-size target while IMA receives the enlarged a
     expect(await page.evaluate(() => window.lastAdTagUrl)).toBe(result.tag);
 });
 
-test('records inline visibility before a delayed IMA SDK and starts once after floating', async ({ page }) => {
+test('records scroll while SDK is delayed, stays inline without an ad, then floats on a filled response', async ({ page }) => {
     await openPlayer(page, { delayedSdk: true, vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&sz=300x250%7C640x480' });
     await expectEnlargedInlineGeometry(page, [320, 180]);
     await expect.poll(() => page.locator('[data-hm-video-direct]').evaluate(el => el.__hmVideoPlayer.wasInlineVisible)).toBe(true);
-    await page.evaluate(() => window.scrollTo(0, 1800));
-    await assertFloating(page);
+    await scrollPage(page, 1800);
+    await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'inline');
     expect(await page.evaluate(() => window.adRequests)).toBe(0);
     await page.evaluate(() => { window.installIma(); document.querySelector('[data-hm-ima-sdk]').dispatchEvent(new Event('load')); });
     await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
@@ -419,7 +420,9 @@ test('records inline visibility before a delayed IMA SDK and starts once after f
         const box = document.querySelector('[data-hm-video-direct]').getBoundingClientRect();
         return { tag: window.lastAdTagUrl, size: window.lastAdDimensions, actual: [Math.round(box.width), Math.round(box.height)] };
     });
-    expect(request.size).toEqual(request.actual);
+    // The response was requested while inline; IMA is resized only after an
+    // actual ad is available and the compact surface becomes visible.
+    expect(request.size[0]).toBeGreaterThanOrEqual(request.actual[0]);
     expect(new URL(request.tag).searchParams.get('sz')).toBe('300x250|640x480');
     expect(request.actual[0]).toBeLessThanOrEqual(320);
 });
@@ -538,7 +541,7 @@ async function expectDecodedContent(page) {
     await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
 }
 
-test('real decoded content keeps its source and playback time across both transition directions', async ({ page }, testInfo) => {
+test('real decoded content stays inline without ads and keeps its source and playback time during scroll', async ({ page }, testInfo) => {
     await page.route('**/*', route => route.abort());
     await openPlayer(page, { content: true, realContent: true, transformed: true });
     await page.evaluate(() => window.videoManager.emit('ad-error'));
@@ -554,9 +557,9 @@ test('real decoded content keeps its source and playback time across both transi
     for (let cycle = 0; cycle < 2; cycle++) {
         let previousTime = await page.locator('video').evaluate(video => video.currentTime);
         await scrollPage(page, 1400);
-        await assertFloating(page);
+        await expect(page.locator('[data-placement="video"]')).toHaveAttribute('data-hm-video-floating-state', 'inline');
         await expect.poll(() => page.locator('video').evaluate(video => video.currentTime)).toBeGreaterThan(previousTime + 0.15);
-        if (cycle === 0) await attachLayout(page, testInfo, 'decoded-content-floating');
+        if (cycle === 0) await attachLayout(page, testInfo, 'decoded-content-scrolled-inline');
         previousTime = await page.locator('video').evaluate(video => video.currentTime);
         await scrollPage(page, 0);
         await expectInline(page, original);
@@ -834,7 +837,9 @@ test('a tall enlarged slot can float after partial exposure without requesting a
         const box = document.querySelector('[data-hm-video-direct]').getBoundingClientRect();
         return { size: window.lastAdDimensions, actual: [Math.round(box.width), Math.round(box.height)] };
     });
-    expect(request.size).toEqual(request.actual);
+    // The response was requested while inline; IMA is resized only after an
+    // actual ad is available and the compact surface becomes visible.
+    expect(request.size[0]).toBeGreaterThanOrEqual(request.actual[0]);
     expect(request.actual[0]).toBeLessThan(300);
     await scrollPage(page, slot.y - 80);
     await expectInline(page, slot);
@@ -1219,9 +1224,98 @@ test('a 200px inline rail keeps small third-party nonlinear controls unclipped a
     await expect.poll(() => media.evaluate(el => el.getBoundingClientRect().width)).toBe(200);
     await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
     await page.frameLocator('[data-test-ima]').getByRole('button', { name: 'Close ad' }).click();
-    await expect(rail.locator('[data-hm-video-label="1"]')).toBeVisible();
-    await expect(play).toBeHidden();
-    await expect(mute).toBeHidden();
+    await expect(rail.locator('[data-hm-video-label="1"]')).toBeHidden();
+    await expect(play).toBeVisible();
+    await expect(mute).toBeVisible();
     await expect(page.locator('[data-placement="video"]')).toBeVisible();
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+});
+
+for (const transformed of [false, true]) {
+    test(`only filled ads float, including a late preroll and later mid/postroll at the existing scroll position (portal=${transformed})`, async ({ page }, testInfo) => {
+        await openPlayer(page, { content: true, transformed, deferResponse: true });
+        const surface = page.locator('[data-placement="video"]');
+        const original = await inlineGeometry(page);
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        await scrollPage(page, 1800);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        expect(await page.evaluate(() => window.adStarts)).toBe(0);
+        await page.evaluate(() => window.videoLoaders[0].resolve());
+        await assertFloating(page);
+        await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
+        await attachLayout(page, testInfo, 'ad-only-sticky-preroll');
+        await page.evaluate(() => { window.videoManager.emit('complete'); window.videoManager.emit('content-resume'); window.videoManager.emit('all-completed'); });
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        expect(await page.evaluate(() => window.scrollY)).toBe(1800);
+        await scrollPage(page, 0);
+        await expectInline(page, original);
+        await attachLayout(page, testInfo, 'premium-content-controls');
+        await scrollPage(page, 1800);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        await page.locator('video').evaluate(video => {
+            Object.defineProperty(video, 'duration', { configurable: true, value: 100 });
+            Object.defineProperty(video, 'currentTime', { configurable: true, value: 60 });
+            video.dispatchEvent(new Event('timeupdate'));
+        });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        await page.evaluate(() => window.videoLoaders[1].resolve());
+        await assertFloating(page);
+        await page.evaluate(() => window.videoManager.emit('all-completed'));
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        await page.locator('video').evaluate(video => video.dispatchEvent(new Event('ended')));
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(3);
+        await page.evaluate(() => window.videoLoaders[2].resolve());
+        await assertFloating(page);
+        await page.evaluate(() => window.videoManager.emit('all-completed'));
+        await expect(surface).toBeHidden();
+        expect(await page.evaluate(() => window.adRequests)).toBe(3);
+    });
+}
+
+for (const secondFilled of [true, false]) {
+    test(`empty preroll retries exactly once before content; second filled=${secondFilled}`, async ({ page }) => {
+        await openPlayer(page, { content: true, deferResponse: true });
+        const surface = page.locator('[data-placement="video"]');
+        await scrollPage(page, 1800);
+        await page.evaluate(() => {
+            window.emptyAd = () => ({ getError: () => ({ getErrorCode: () => 1009, getVastErrorCode: () => 303 }) });
+            window.videoLoaders[0].events['ad-error'](window.emptyAd());
+        });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        expect(await page.evaluate(() => window.contentPlayCalls)).toBe(0);
+        await page.evaluate(secondFilled => {
+            if (secondFilled) window.videoLoaders[1].resolve();
+            else window.videoLoaders[1].events['ad-error'](window.emptyAd());
+            // Retired response and error cannot resurrect a player or retry.
+            window.videoLoaders[0].resolve();
+            window.videoLoaders[0].events['ad-error'](window.emptyAd());
+        }, secondFilled);
+        if (secondFilled) {
+            await assertFloating(page);
+            expect(await page.evaluate(() => window.contentPlayCalls)).toBe(0);
+            await page.evaluate(() => window.videoManager.emit('all-completed'));
+        }
+        await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        expect(await page.evaluate(() => window.adRequests)).toBe(2);
+        expect(await page.evaluate(() => window.adStarts)).toBe(secondFilled ? 1 : 0);
+    });
+}
+
+test('VMAP future preload stays inline, actual ad start floats without another scroll, content resume returns inline', async ({ page }) => {
+    await openPlayer(page, { content: true, cuePoints: [0, 50, -1] });
+    const surface = page.locator('[data-placement="video"]');
+    await page.evaluate(() => window.videoManager.emit('content-resume'));
+    await scrollPage(page, 1800);
+    await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+    await page.evaluate(() => window.videoManager.emit('loaded'));
+    await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+    await page.evaluate(() => { window.videoManager.emit('content-pause'); window.videoManager.emit('started'); });
+    await assertFloating(page);
+    await page.evaluate(() => window.videoManager.emit('content-resume'));
+    await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
     expect(await page.evaluate(() => window.adRequests)).toBe(1);
 });
