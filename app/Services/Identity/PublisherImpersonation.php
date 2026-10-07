@@ -31,7 +31,7 @@ final class PublisherImpersonation
             if ($target->hasPermission($permission)) return false;
         }
 
-        return Publisher::withoutGlobalScopes()->where('organization_id', $target->organization_id)
+        return Publisher::withoutGlobalScope('organization')->where('organization_id', $target->organization_id)
             ->where('status', AccountStatus::Active->value)->exists();
     }
 }

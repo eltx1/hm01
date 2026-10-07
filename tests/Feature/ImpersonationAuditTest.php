@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\{AccountStatus, OrganizationType, RoleName, UserStatus};
-use App\Models\{AuditLog, Role};
+use App\Models\{AuditLog, FinancialPeriod, Permission, PublisherStatement, Role};
 use App\Services\Audit\AuditRecorder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\{InteractsWithIdentity, InteractsWithPublisherSites};
@@ -97,6 +97,78 @@ class ImpersonationAuditTest extends TestCase
         $this->actingAs($target)->post(route('admin.impersonate.start', $second))->assertForbidden();
     }
 
+    public function test_soft_deleted_publisher_cannot_be_a_temporary_login_target(): void
+    {
+        [$admin, $target, $publisher] = $this->context();
+        $publisher->delete();
+
+        $this->post(route('admin.impersonate.start', $target))->assertForbidden()->assertSessionMissing('impersonator_id');
+        $this->assertAuthenticatedAs($admin);
+        $this->assertDatabaseMissing('audit_logs', ['event' => 'admin.impersonation.started']);
+    }
+
+    public function test_role_less_and_custom_staff_privileged_publishers_are_ineligible(): void
+    {
+        [$admin, $target] = $this->context();
+        $target->roles()->detach();
+        $this->post(route('admin.impersonate.start', $target))->assertForbidden()->assertSessionMissing('impersonator_id');
+
+        $role = Role::create([
+            'organization_id' => $target->organization_id, 'name' => 'CUSTOM_PUBLISHER_SUPPORT',
+            'display_name' => 'Custom publisher support', 'is_system' => false,
+        ]);
+        $target->roles()->attach($role);
+        foreach (['users.impersonate', 'dashboard.admin.view', 'roles.manage', 'organizations.manage'] as $permission) {
+            $role->permissions()->sync(Permission::whereIn('name', ['dashboard.publisher.view', $permission])->pluck('id'));
+            $this->post(route('admin.impersonate.start', $target))->assertForbidden()->assertSessionMissing('impersonator_id');
+            $this->assertAuthenticatedAs($admin);
+        }
+        $this->assertDatabaseMissing('audit_logs', ['event' => 'admin.impersonation.started']);
+        $role->permissions()->sync(Permission::where('name', 'dashboard.publisher.view')->pluck('id'));
+        $this->post(route('admin.impersonate.start', $target))->assertRedirect('/');
+        $this->assertAuthenticatedAs($target);
+        $this->delete(route('admin.impersonate.stop'))->assertRedirect('/');
+        $this->assertAuthenticatedAs($admin);
+    }
+
+    public function test_impersonated_publisher_only_sees_its_own_populated_statements_and_csv(): void
+    {
+        [$admin, $target, $publisher] = $this->context();
+        $otherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Other Publisher'), RoleName::PublisherViewer);
+        $otherPublisher = $this->makePublisherFor($otherUser);
+        $period = FinancialPeriod::create([
+            'period_key' => now()->format('Y-m'), 'currency' => 'USD',
+            'starts_on' => now()->startOfMonth(), 'ends_on' => now()->endOfMonth(), 'status' => 'CLOSED',
+        ]);
+        $statements = [];
+        foreach (['OWN' => $publisher, 'FOREIGN' => $otherPublisher] as $label => $owner) {
+            $statements[$label] = PublisherStatement::withoutGlobalScopes()->create([
+                'organization_id' => $owner->organization_id, 'publisher_id' => $owner->id,
+                'financial_period_id' => $period->id, 'statement_number' => 'HM-IMPERSONATION-'.$label,
+                'status' => 'FINALIZED', 'currency' => 'USD', 'publisher_earnings_minor' => 12345,
+                'balance_due_minor' => 12345, 'publisher_invoice_status' => 'NOT_REQUIRED',
+                'line_items' => [['site' => $label.' inventory', 'impressions' => 100, 'publisher_earnings_minor' => 12345]],
+                'snapshot' => [], 'snapshot_hash' => hash('sha256', $label), 'finalized_at' => now(),
+            ]);
+        }
+
+        $this->post(route('admin.impersonate.start', $target))->assertRedirect('/');
+        $this->get(route('publisher.finance.statements.index'))->assertOk()
+            ->assertSee('HM-IMPERSONATION-OWN')->assertDontSee('HM-IMPERSONATION-FOREIGN');
+        foreach (['publisher.finance.statements', 'publisher.reporting.statements'] as $route) {
+            $this->get(route($route.'.show', $statements['OWN']))->assertOk()
+                ->assertSee('OWN inventory')->assertDontSee('FOREIGN inventory');
+            $csv = $this->get(route($route.'.csv', $statements['OWN']))->assertOk()->streamedContent();
+            $this->assertStringContainsString('OWN inventory', $csv);
+            $this->assertStringNotContainsString('FOREIGN inventory', $csv);
+            $this->get(route($route.'.show', $statements['FOREIGN']))->assertNotFound();
+            $this->get(route($route.'.csv', $statements['FOREIGN']))->assertNotFound();
+        }
+        $this->assertAuthenticatedAs($target);
+        $this->delete(route('admin.impersonate.stop'))->assertRedirect('/');
+        $this->assertAuthenticatedAs($admin);
+    }
+
     public function test_publisher_losing_eligibility_preserves_safe_return(): void
     {
         [$admin, $target] = $this->context();
@@ -136,6 +208,23 @@ class ImpersonationAuditTest extends TestCase
         $admin->delete();
         $this->get(route('dashboard'))->assertRedirect(route('admin.login'))->assertSessionMissing('impersonator_id');
         $this->assertGuest();
+    }
+
+    public function test_suspended_original_admin_or_organization_revokes_on_normal_publisher_get(): void
+    {
+        [$admin, $target] = $this->context();
+        foreach (['user', 'organization'] as $scope) {
+            $this->actingAs($admin->fresh())->withSession(['two_factor_passed_at' => now()->timestamp])
+                ->post(route('admin.impersonate.start', $target))->assertRedirect('/');
+            $subject = $scope === 'user' ? $admin : $admin->organization;
+            $subject->update(['status' => $scope === 'user' ? UserStatus::Suspended : AccountStatus::Suspended]);
+
+            $this->get(route('publisher.reporting.index'))->assertRedirect(route('admin.login'))
+                ->assertSessionMissing('impersonator_id');
+            $this->assertGuest();
+            $subject->update(['status' => $scope === 'user' ? UserStatus::Active : AccountStatus::Active]);
+        }
+        $this->assertSame(2, AuditLog::where('event', 'admin.impersonation.revoked')->where('actor_id', $admin->id)->count());
     }
 
     public function test_publisher_mfa_changes_do_not_renew_original_admin_mfa(): void
