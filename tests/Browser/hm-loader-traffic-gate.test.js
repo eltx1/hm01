@@ -826,7 +826,9 @@ test('a failed normal attempt after early failure cannot create an unbounded res
 });
 
 test('a fresh unchanged snapshot after a parser stall preserves the early deadline and iframe', async () => {
-    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
+    const config = baseConfig();
+    config.trafficGate.timings.maxWaitMs = 15000;
+    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
     await runtime.flush();
     runtime.elapse(6000);
     runtime.domReady();
@@ -1468,3 +1470,56 @@ test('a pending frame that becomes ready never restarts while its server verific
     assert.equal(gate.maxTimer, deadline); assertNoMonetization(h.metrics);
     h.sendGate('PASS'); await boot; assert.equal(h.metrics.gamRequests, 1);
 });
+
+for (const elapsed of [10001, 14999]) {
+    test(`15 second window accepts a server-verified PASS at ${elapsed}ms exactly once`, async () => {
+        const config = baseConfig({ gam: true, standalone: true, direct: true });
+        config.trafficGate.timings.maxWaitMs = 15000;
+        const h = createHarness(config, { timerScale: 1 });
+        const boot = h.sandbox.HorusMediaLoader.boot();
+        await h.flush();
+        const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+        const deadline = gate.maxTimer;
+        assert.equal(deadline._idleTimeout, 15000);
+        h.sandbox.Date.now = () => gate.startedAt + elapsed;
+        assertNoMonetization(h.metrics);
+        h.reevaluateLoader();
+        h.sandbox.history.pushState({}, '', '/next');
+        h.sendGate('PASS', { serverVerified: false });
+        assertNoMonetization(h.metrics);
+        h.sendGate('PASS');
+        await boot;
+        await h.flush();
+        h.sendGate('PASS');
+        await h.sandbox.HorusMediaLoader.boot();
+        assert.equal(h.metrics.gateFrames, 1);
+        assert.equal(h.metrics.gamRequests, 1);
+        assert.equal(h.metrics.prebidAuctions, 1);
+        assert.equal(h.metrics.directScripts, 1);
+        assert.equal(h.messageListenerCount(), 0);
+        assert.equal(gate.maxTimer, null);
+    });
+}
+
+for (const fireDeadline of [false, true]) {
+    test(`15 second deadline rejects late PASS with timer delivered=${fireDeadline}`, async () => {
+        const config = baseConfig({ gam: true, standalone: true, direct: true });
+        config.trafficGate.timings.maxWaitMs = 15000;
+        const h = createHarness(config, { timerScale: 1 });
+        const boot = h.sandbox.HorusMediaLoader.boot();
+        await h.flush();
+        const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+        h.sandbox.Date.now = () => gate.startedAt + 15000;
+        if (fireDeadline) h.fireTimer(gate.maxTimer);
+        else h.sendGate('PASS'); // Network message wins the event-loop race.
+        await boot;
+        h.sendGate('PASS');
+        await h.sandbox.HorusMediaLoader.boot();
+        assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
+        assertNoMonetization(h.metrics);
+        assert.equal(gate.iframe, null);
+        assert.equal(gate.maxTimer, null);
+        assert.equal(h.messageListenerCount(), 0);
+        assert.equal(h.metrics.gateFrames, 1);
+    });
+}

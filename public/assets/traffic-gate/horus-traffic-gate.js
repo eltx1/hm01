@@ -10,7 +10,7 @@
     const HARD_BOOT_TIMEOUT_MS = 15000;
     const DEFAULT_TEST_TIMINGS = Object.freeze({
         initialWaitMs: 1500,
-        maxWaitMs: 10000,
+        maxWaitMs: 15000,
         retryIntervalMs: 1500,
     });
 
@@ -38,6 +38,7 @@
     let state = STATES.booting;
     let handshakeLocked = false;
     let handshakeStartedAt = null;
+    let deadlineAt = null;
     let boundParent = null;
     let widgetId = null;
     let challengeTimer = null;
@@ -122,7 +123,17 @@
         challengeTimer = setTimeout(() => timeout(category), Math.max(1, delayMs));
     }
 
+    function deadlineElapsed() {
+        if (terminal) return true;
+        if (deadlineAt !== null && Date.now() >= deadlineAt) {
+            timeout('GATE_MAX_WAIT');
+            return true;
+        }
+        return false;
+    }
+
     function applyConfiguredDeadline(maxWaitMs) {
+        deadlineAt = handshakeStartedAt + maxWaitMs;
         const elapsed = handshakeStartedAt === null ? 0 : Math.max(0, Date.now() - handshakeStartedAt);
         const remaining = maxWaitMs - elapsed;
         if (remaining <= 0) {
@@ -258,7 +269,7 @@
             retries += 1;
             retryTimer = setTimeout(() => {
                 retryTimer = null;
-                if (terminal) return;
+                if (deadlineElapsed()) return;
                 try {
                     window.turnstile.reset(widgetId);
                 } catch {
@@ -272,7 +283,7 @@
     }
 
     async function verifyToken(token, timings) {
-        if (terminal || verificationPending) return;
+        if (deadlineElapsed() || verificationPending) return;
         if (typeof token !== 'string' || !token || token.length > 2048 || !window.crypto?.randomUUID) {
             fail('INVALID_VERIFICATION_TOKEN');
             return;
@@ -280,7 +291,7 @@
         post(TYPES.progress, { phase: 'token' });
         verificationPending = true;
         const requestId = window.crypto.randomUUID();
-        for (let attempt = 0; attempt < 2 && !terminal; attempt += 1) {
+        for (let attempt = 0; attempt < 2 && !deadlineElapsed(); attempt += 1) {
             verificationController = new AbortController();
             const requestTimer = setTimeout(() => verificationController?.abort(), 4000);
             let retryable = true;
@@ -293,7 +304,9 @@
                     body: JSON.stringify({ token, pageNonce: boundParent.pageNonce, requestId }),
                 });
                 const result = await response.json();
-                if (terminal) return;
+                // Do not accept a late server response when browser timers are
+                // throttled or queued behind a completed network request.
+                if (deadlineElapsed()) return;
                 if (response.ok && result.success === true && result.pageNonce === boundParent.pageNonce) {
                     finish(TYPES.pass, STATES.passed, { provider: PROVIDER, serverVerified: true });
                     return;
@@ -309,7 +322,7 @@
     }
 
     function renderTurnstile(siteKey, timings, testMode) {
-        if (terminal) {
+        if (deadlineElapsed()) {
             return;
         }
         if (!widgetContainer || typeof window.turnstile?.render !== 'function') {
@@ -430,6 +443,7 @@
 
         handshakeLocked = true;
         handshakeStartedAt = Date.now();
+        deadlineAt = handshakeStartedAt + HARD_BOOT_TIMEOUT_MS;
         boundParent = {
             source: event.source,
             origin: event.origin,
