@@ -314,6 +314,51 @@ class TrafficGateFoundationTest extends TestCase
         $this->assertSame($before + 1, $site->configVersions()->count());
     }
 
+    public function test_fifteen_second_default_and_persisted_upgrade_reconcile_static_configs_without_inventory_changes(): void
+    {
+        $defaults = require config_path('traffic_gate.php');
+        $this->assertSame(15000, $defaults['max_wait_ms']);
+        [$site, $admin] = $this->fixture(active: true);
+        $this->configureReadyGlobal($admin);
+        $settings = app(GlobalSettingsService::class);
+        $settings->set($admin, 'traffic_gate.max_wait_ms', 10000, 'Previous default.');
+        app(SiteConfigPublisher::class)->publishActiveProduction($site, $admin);
+        $before = $site->configVersions()->orderByDesc('version')->firstOrFail()->payload;
+        $count = $site->configVersions()->count();
+        $migration = require database_path('migrations/2026_10_08_220000_extend_default_traffic_gate_wait.php');
+        $migration->up();
+        $this->assertSame(15000, $settings->get('traffic_gate.max_wait_ms'));
+        $auditCount = AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count();
+        $migration->up();
+        $this->assertSame($auditCount, AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count());
+        $this->artisan('traffic-gate:refresh-configs')->assertSuccessful();
+        $this->assertSame($count, $site->configVersions()->count());
+        $this->artisan('traffic-gate:refresh-configs', ['--apply' => true])->assertSuccessful();
+        $after = $site->configVersions()->orderByDesc('version')->firstOrFail()->payload;
+        $this->assertSame(15000, $after['trafficGate']['timings']['maxWaitMs']);
+        $this->assertSame('CLOUDFLARE_TURNSTILE_SERVER_VERIFIED', $after['trafficGate']['provider']);
+        $this->assertSame($before['placements'], $after['placements']);
+        $this->assertSame($before['trafficGate']['timings']['initialWaitMs'], $after['trafficGate']['timings']['initialWaitMs']);
+        $this->assertSame($before['trafficGate']['timings']['retryIntervalMs'], $after['trafficGate']['timings']['retryIntervalMs']);
+        $this->artisan('traffic-gate:refresh-configs', ['--apply' => true])->assertSuccessful();
+        $this->assertSame($count + 1, $site->configVersions()->count());
+    }
+
+    public function test_deadline_migration_preserves_custom_values_and_absent_overrides(): void
+    {
+        [, $admin] = $this->fixture();
+        $settings = app(GlobalSettingsService::class);
+        $migration = require database_path('migrations/2026_10_08_220000_extend_default_traffic_gate_wait.php');
+        $migration->up();
+        $this->assertDatabaseMissing('global_settings', ['key' => 'traffic_gate.max_wait_ms']);
+        foreach ([6000, 12000, 15000] as $custom) {
+            $settings->set($admin, 'traffic_gate.max_wait_ms', $custom, 'Custom deadline.');
+            $migration->up();
+            $migration->down();
+            $this->assertSame($custom, $settings->get('traffic_gate.max_wait_ms'));
+        }
+    }
+
     private function fixture(bool $active = false): array
     {
         $horusOrganization = $this->makeOrganization(OrganizationType::HorusMedia, 'Horus Media');

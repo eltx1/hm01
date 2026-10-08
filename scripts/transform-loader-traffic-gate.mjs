@@ -302,7 +302,7 @@ const trafficGateRuntime = String.raw`
     var TRAFFIC_GATE_PROTOCOL_VERSION = 2;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
     var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
-    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 10000;
+    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 15000;
     var TRAFFIC_GATE_STATES = {
         disabled: 'DISABLED', booting: 'BOOTING', pending: 'PENDING', passed: 'PASSED',
         error: 'ERROR', timeout: 'TIMEOUT', unavailable: 'UNAVAILABLE',
@@ -564,6 +564,12 @@ const trafficGateRuntime = String.raw`
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_PASS' && message.serverVerified === true) {
+            // A delayed message can run before a throttled timeout callback.
+            // Server verification is mandatory but cannot extend this attempt.
+            if (Date.now() - gate.startedAt >= gate.settings.maxWaitMs) {
+                trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.timeout, 'MAX_WAIT', true);
+                return;
+            }
             startupTrace('CF pass', { attempt: state.gateTraceAttempt });
             trafficGateAllow(TRAFFIC_GATE_STATES.passed, 'PASS');
             return;

@@ -447,3 +447,64 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
     expect(['MAX_WAIT', 'TURNSTILE_TIMEOUT']).toContain(gate.reason);
     expect(await page.locator('iframe[data-hm-traffic-gate="1"]').count()).toBe(0);
 });
+
+for (const verifiedAt of [12000, 15000]) {
+    test(`production bundle enforces the 15 second verification window at ${verifiedAt}ms`, async ({ page }) => {
+        const selected = config();
+        selected.trafficGate.timings.maxWaitMs = 15000;
+        selected.prebid.enabled = false;
+        let verifications = 0;
+        const unexpected = [];
+        await page.clock.install({ time: new Date('2026-10-08T12:00:00Z') });
+        await page.route('**/*', async route => {
+            const request = route.request();
+            const url = new URL(request.url());
+            const js = body => route.fulfill({ contentType: 'application/javascript', body });
+            const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+            if (url.origin === PUBLISHER) return route.fulfill({ contentType: 'text/html', body: publisherHtml() });
+            if (url.origin === CDN && url.pathname === '/hm-loader.js') return js(productionLoader);
+            if ([CDN, GATE].includes(url.origin) && url.pathname === `/configs/${SITE}/production.json`) return json(selected);
+            if (url.origin === CDN && url.pathname === '/configs/_global/control.json') return json({ controls: selected.controls });
+            if (url.origin === GATE && url.pathname === '/traffic-gate/') return route.fulfill({ contentType: 'text/html', body: gateHtml });
+            if (url.origin === GATE && url.pathname === '/assets/traffic-gate/horus-traffic-gate.js') return js(gateJs);
+            if (url.origin === 'https://challenges.cloudflare.com' && url.pathname === '/turnstile/v0/api.js') {
+                return js('window.turnstile = { render(node, options) { window.deliverToken = () => options.callback("synthetic-token"); return "widget"; }, remove() {} };');
+            }
+            if (url.origin === 'https://siteverify.horusmedia.net' && url.pathname === '/verify') {
+                const headers = { 'Access-Control-Allow-Origin': GATE, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type' };
+                if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+                verifications++;
+                return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ success: true, pageNonce: request.postDataJSON().pageNonce }) });
+            }
+            if (url.href === selected.gpt.url) return js(gptStub());
+            unexpected.push(url.href);
+            return route.abort('blockedbyclient');
+        });
+        await page.goto(PUBLISHER + '/');
+        const frame = page.frames().find(candidate => candidate.url().startsWith(GATE));
+        expect(frame).toBeTruthy();
+        await expect.poll(() => frame.evaluate(() => typeof window.deliverToken)).toBe('function');
+        const startedAt = await page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.trafficGate.startedAt);
+        await page.clock.pauseAt(new Date(startedAt + 10001));
+        expect(await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PENDING');
+        expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
+        expect(verifications).toBe(0);
+        await page.evaluate(() => { history.pushState({}, '', '/next'); window.HorusMediaLoader.boot(); });
+        await page.clock.runFor(verifiedAt - 10001);
+        if (verifiedAt < 15000) {
+            await frame.evaluate(() => window.deliverToken());
+            await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
+            await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
+            await page.evaluate(() => window.HorusMediaLoader.boot());
+            expect(verifications).toBe(1);
+            expect(await page.evaluate(() => window.__task52Engines.gamRequests)).toBe(1);
+        } else {
+            await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('TIMEOUT');
+            await page.evaluate(() => window.HorusMediaLoader.boot());
+            expect(verifications).toBe(0);
+            expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
+        }
+        expect(await page.locator('iframe[data-hm-traffic-gate]').count()).toBe(0);
+        expect(unexpected).toEqual([]);
+    });
+}

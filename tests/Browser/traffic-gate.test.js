@@ -43,6 +43,7 @@ function createHarness({
     libraryError = false,
     documentPreparation = false,
     hideReferrer = false,
+    deferVerification = false,
 } = {}) {
     const messages = [];
     const verificationCalls = [];
@@ -55,6 +56,8 @@ function createHarness({
     const scriptRequests = [];
     let releaseConfig;
     let releaseLibrary;
+    let releaseVerification;
+    let clock = 1000;
 
     const parent = {
         postMessage(payload, targetOrigin) {
@@ -127,6 +130,7 @@ function createHarness({
     const context = vm.createContext({
         console,
         AbortController,
+        Date: class extends Date { static now() { return clock; } },
         document,
         URL,
         encodeURIComponent,
@@ -140,7 +144,9 @@ function createHarness({
             if (url.startsWith('https://siteverify.')) {
                 verificationCalls.push(JSON.parse(options.body));
                 const next = verificationReplies?.shift() ?? { status: 200, body: { success: true, pageNonce: NONCE } };
-                return { ok: next.status === 200, status: next.status, json: async () => next.body };
+                const response = { ok: next.status === 200, status: next.status, json: async () => next.body };
+                if (deferVerification) return new Promise(resolve => { releaseVerification = () => resolve(response); });
+                return response;
             }
             const response = { ok: config !== null, json: async () => config };
             if (deferConfig) return new Promise(resolve => { releaseConfig = () => resolve(response); });
@@ -197,6 +203,8 @@ function createHarness({
         scriptRequests,
         releaseConfig: () => releaseConfig(),
         releaseLibrary: () => releaseLibrary(),
+        releaseVerification: () => releaseVerification(),
+        elapse: ms => { clock += ms; },
         get renderCount() { return renderCount; },
         get resetCount() { return resetCount; },
         get renderOptions() { return renderOptions; },
@@ -409,4 +417,61 @@ test('missing preparation referrer sends no wildcard message and preserves norma
     assert.equal(h.verificationCalls.length, 0);
     await h.hello();
     assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+});
+
+for (const elapsed of [10001, 14999, 15000, 16000]) {
+    test(`iframe server response at ${elapsed}ms respects the absolute 15 second deadline`, async () => {
+        const config = configFor('publisher.example');
+        config.trafficGate.timings.maxWaitMs = 15000;
+        const h = createHarness({ config, behavior: 'pending', deferVerification: true });
+        await h.hello();
+        assert.ok(h.timers.some(timer => timer.active && timer.delay === 15000));
+        h.elapse(10000);
+        const verify = h.renderOptions.callback('test-token');
+        await h.flush();
+        // Model a delayed network completion before the queued deadline timer.
+        h.elapse(elapsed - 10000);
+        h.releaseVerification();
+        await verify;
+        await h.flush();
+        const expected = elapsed < 15000 ? 'HORUS_TRAFFIC_GATE_PASS' : 'HORUS_TRAFFIC_GATE_TIMEOUT';
+        assert.equal(h.messages.at(-1).payload.type, expected);
+        assert.equal(h.verificationCalls.length, 1);
+        await h.renderOptions.callback('late-token');
+        assert.equal(h.verificationCalls.length, 1);
+        assert.equal(h.messages.filter(item => item.payload.type === expected).length, 1);
+    });
+}
+
+test('iframe timeout aborts pending verification and rejects a later successful response', async () => {
+    const config = configFor('publisher.example');
+    config.trafficGate.timings.maxWaitMs = 15000;
+    const h = createHarness({ config, deferVerification: true });
+    await h.hello();
+    h.elapse(15000);
+    await h.runTimer(15000);
+    h.releaseVerification();
+    await h.flush();
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_TIMEOUT');
+    assert.equal(h.messages.some(item => item.payload.type === 'HORUS_TRAFFIC_GATE_PASS'), false);
+});
+
+test('a token arriving at the iframe deadline cannot start a verification request', async () => {
+    const config = configFor('publisher.example');
+    config.trafficGate.timings.maxWaitMs = 15000;
+    const h = createHarness({ config, behavior: 'pending' });
+    await h.hello();
+    h.elapse(15000);
+    await h.renderOptions.callback('late-token');
+    assert.equal(h.verificationCalls.length, 0);
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_TIMEOUT');
+});
+
+test('admin test uses the same 15 second verification budget', async () => {
+    const h = createHarness({ parentOrigin: ADMIN_ORIGIN, behavior: 'pending' });
+    await h.hello({ testMode: true, candidateSiteKey: ALWAYS_PASS_INVISIBLE });
+    assert.ok(h.timers.some(timer => timer.active && timer.delay === 15000));
+    h.elapse(15000);
+    await h.runTimer(15000);
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_TIMEOUT');
 });
