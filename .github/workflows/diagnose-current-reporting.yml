@@ -75,29 +75,45 @@ jobs:
             exit 1
           fi
           node ops/audit/validate-scheduler-incident.mjs "$work/result.json"
-          # Check only whether either report command is still alive; never log argv/PIDs.
+          # Read every visible process in this /proc namespace. This is a scoped
+          # snapshot, not proof about hidden processes, other hosts or later starts.
+          # Never log status contents, argv, UIDs, process IDs or process paths.
           cat > "$work/process.php" <<'PHP'
           <?php
           ini_set('display_errors', '0'); ini_set('log_errors', '0');
+          function hmClassifyReportProcess(string|false $status, string|false $cmd, bool $exists): array
+          {
+              if (!$exists) return []; // A process which exited during the read.
+              if ($status===false || strlen($status)>16384 || !preg_match('/^State:\s+([A-Za-z])/m', $status, $state)) throw new RuntimeException();
+              if (in_array($state[1], ['Z', 'X', 'x'], true) || preg_match('/^Kthread:\s+1\s*$/m', $status)) return [];
+              if ($cmd===false || $cmd==='' || strlen($cmd)>65536 || !str_ends_with($cmd, chr(0))) throw new RuntimeException();
+              $args = explode(chr(0), $cmd);
+              $present = [];
+              foreach (['reporting:sync-site-gam'=>'MAIN_SYNC_PROCESS', 'reporting:sync-site-gam-video'=>'VIDEO_SYNC_PROCESS'] as $command=>$label) {
+                  $i=array_search($command,$args,true);
+                  if ($i!==false && $i>0 && in_array('artisan', array_map('basename', array_slice($args,0,$i)),true)) $present[]=$label;
+                  foreach ($args as $arg) {
+                      if (str_contains($arg, 'artisan') && preg_match('/(?<![A-Za-z0-9_:-])'.preg_quote($command, '/').'(?![A-Za-z0-9_:-])/', $arg)) $present[]=$label;
+                  }
+              }
+              return array_values(array_unique($present));
+          }
+          // Only test code can define this constant; no environment input enables it.
+          if (defined('HORUS_REPORT_PROCESS_PROBE_TEST_ONLY') && HORUS_REPORT_PROCESS_PROBE_TEST_ONLY===true) return;
           try {
               $marker = (string) @file_get_contents('.horus-release');
               if (!preg_match('/^release_id=5c3861f8ffdb97cec42c35476894e22b845beb3b$/m', $marker)) throw new RuntimeException();
-              $uid = posix_geteuid();
               $result = ['MAIN_SYNC_PROCESS' => 'ABSENT', 'VIDEO_SYNC_PROCESS' => 'ABSENT'];
               $paths = glob('/proc/[0-9]*/status');
               if (!is_array($paths) || !$paths || count($paths)>8192) throw new RuntimeException();
               foreach ($paths as $path) {
-                  $status = @file_get_contents($path);
-                  if ($status===false) continue;
-                  if (!preg_match('/^Uid:\\s+([0-9]+)/m', $status, $m) || (int)$m[1]!==$uid) continue;
-                  $cmd = @file_get_contents(dirname($path).'/cmdline');
-                  if ($cmd===false) { if (is_dir(dirname($path))) throw new RuntimeException(); continue; }
-                  $args = explode(chr(0), $cmd);
-                  foreach (['reporting:sync-site-gam'=>'MAIN_SYNC_PROCESS', 'reporting:sync-site-gam-video'=>'VIDEO_SYNC_PROCESS'] as $command=>$label) {
-                      $i=array_search($command,$args,true);
-                      if ($i!==false && $i>0 && basename($args[$i-1])==='artisan') $result[$label]='PRESENT';
-                  }
+                  $directory = dirname($path);
+                  $status = @file_get_contents($path, false, null, 0, 16385);
+                  $cmd = @file_get_contents($directory.'/cmdline', false, null, 0, 65537);
+                  clearstatcache(true, $directory);
+                  foreach (hmClassifyReportProcess($status, $cmd, is_dir($directory)) as $label) $result[$label]='PRESENT';
               }
+              echo "PROCESS_CHECK_SCOPE=VISIBLE_PROC_NAMESPACE\n";
               foreach ($result as $label=>$value) echo $label.'='.$value.PHP_EOL;
           } catch (Throwable $e) { echo "PROCESS_CHECK_UNAVAILABLE\n"; exit(1); }
           PHP
@@ -110,5 +126,13 @@ jobs:
             echo 'Process-class diagnosis unavailable. Raw output withheld.' >&2
             exit 1
           fi
-          grep -Ex '(MAIN_SYNC_PROCESS|VIDEO_SYNC_PROCESS)=(PRESENT|ABSENT)' "$work/process.txt"
+          # Require one exact complete projection. Reject partial or extra output.
+          node - "$work/process.txt" <<'JS'
+          const {readFileSync}=require('node:fs');
+          try {
+            const output=readFileSync(process.argv[2], 'utf8');
+            if (!/^PROCESS_CHECK_SCOPE=VISIBLE_PROC_NAMESPACE\nMAIN_SYNC_PROCESS=(PRESENT|ABSENT)\nVIDEO_SYNC_PROCESS=(PRESENT|ABSENT)\n$/.test(output)) throw new Error();
+            process.stdout.write(output);
+          } catch { console.error('Process-class diagnosis unavailable. Raw output withheld.'); process.exitCode=1; }
+          JS
 
