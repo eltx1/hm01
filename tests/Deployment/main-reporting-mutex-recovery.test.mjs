@@ -65,7 +65,7 @@ test('old lease guards reject absent expired recent changed and clock-invalid ob
  echo 'PASS';`);
 });
 test('process evidence handles wrapper argv and fails closed on unknown live processes',{skip:!php},()=>{
- fixture(`
+ fixture(String.raw`
  $live="State:\tS (sleeping)\n";
  foreach(["php\0/app/artisan\0reporting:sync-site-gam\0","php\0artisan\0--env=production\0reporting:sync-site-gam\0","sh\0-c\0php artisan reporting:sync-site-gam > /dev/null\0"] as $cmd){if(!hmMainRecoveryProcess($live,$cmd,true))exit(2);}
  foreach(["php\0artisan\0reporting:sync-site-gam-video\0","php\0artisan\0list\0"] as $cmd){if(hmMainRecoveryProcess($live,$cmd,true))exit(3);}
