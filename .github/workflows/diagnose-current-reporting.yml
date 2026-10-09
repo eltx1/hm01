@@ -1,0 +1,98 @@
+name: Diagnose current reporting scheduler classes
+on:
+  push:
+    branches: [codex/diagnose-reporting-20261009]
+    paths: [.github/workflows/diagnose-current-reporting.yml]
+permissions:
+  contents: read
+concurrency:
+  group: horus-readonly-reporting-incident
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/codex/diagnose-reporting-20261009'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      EXPECTED_SHA: 5c3861f8ffdb97cec42c35476894e22b845beb3b
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 5c3861f8ffdb97cec42c35476894e22b845beb3b
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Verify diagnostic disclosure contract
+        run: node --test tests/Deployment/scheduler-incident-audit.test.mjs
+      - name: Read generic scheduler classes only
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          work="$RUNNER_TEMP/reporting-health"
+          install -d -m 700 "$work"
+          printf '%s\n' "$SSH_KEY" > "$work/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 600 "$work/id_ed25519" "$work/known_hosts"
+          trap 'rm -f "$work/id_ed25519" "$work/known_hosts" "$work/result.json" "$work/error.txt" "$work/process.php" "$work/process.txt"' EXIT
+          unset SSH_KEY KNOWN_HOSTS
+          if ! timeout 120 ssh -F /dev/null -T -i "$work/id_ed25519" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && grep -Fxq 'release_id=$EXPECTED_SHA' .horus-release && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_ALLOWED_PREVIOUS_SHA='$EXPECTED_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < ops/audit/scheduler-incident.php > "$work/result.json" 2> "$work/error.txt"; then
+            echo 'Generic scheduler diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          node ops/audit/validate-scheduler-incident.mjs "$work/result.json"
+          # Check only whether either report command is still alive; never log argv/PIDs.
+          cat > "$work/process.php" <<'PHP'
+          <?php
+          ini_set('display_errors', '0'); ini_set('log_errors', '0');
+          try {
+              $marker = (string) @file_get_contents('.horus-release');
+              if (!preg_match('/^release_id=5c3861f8ffdb97cec42c35476894e22b845beb3b$/m', $marker)) throw new RuntimeException();
+              $uid = posix_geteuid();
+              $result = ['MAIN_SYNC_PROCESS' => 'ABSENT', 'VIDEO_SYNC_PROCESS' => 'ABSENT'];
+              $paths = glob('/proc/[0-9]*/status');
+              if (!is_array($paths) || !$paths || count($paths)>8192) throw new RuntimeException();
+              foreach ($paths as $path) {
+                  $status = @file_get_contents($path);
+                  if ($status===false) continue;
+                  if (!preg_match('/^Uid:\\s+([0-9]+)/m', $status, $m) || (int)$m[1]!==$uid) continue;
+                  $cmd = @file_get_contents(dirname($path).'/cmdline');
+                  if ($cmd===false) { if (is_dir(dirname($path))) throw new RuntimeException(); continue; }
+                  $args = explode(chr(0), $cmd);
+                  foreach (['reporting:sync-site-gam'=>'MAIN_SYNC_PROCESS', 'reporting:sync-site-gam-video'=>'VIDEO_SYNC_PROCESS'] as $command=>$label) {
+                      $i=array_search($command,$args,true);
+                      if ($i!==false && $i>0 && basename($args[$i-1])==='artisan') $result[$label]='PRESENT';
+                  }
+              }
+              foreach ($result as $label=>$value) echo $label.'='.$value.PHP_EOL;
+          } catch (Throwable $e) { echo "PROCESS_CHECK_UNAVAILABLE\n"; exit(1); }
+          PHP
+          if ! timeout 20 ssh -F /dev/null -T -i "$work/id_ed25519" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < "$work/process.php" > "$work/process.txt" 2> "$work/error.txt"; then
+            echo 'Process-class diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          grep -Ex '(MAIN_SYNC_PROCESS|VIDEO_SYNC_PROCESS)=(PRESENT|ABSENT)' "$work/process.txt"
+
