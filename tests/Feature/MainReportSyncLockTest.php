@@ -4,6 +4,11 @@ namespace Tests\Feature;
 
 use App\Services\Reporting\MainReportSyncLock;
 use App\Services\Reporting\MainReportSyncLockException;
+use Illuminate\Console\Scheduling\CacheEventMutex;
+use Illuminate\Console\Scheduling\Event;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use PDO;
 use Tests\TestCase;
@@ -37,18 +42,16 @@ class MainReportSyncLockTest extends TestCase
                     proc_close($process);
                 }
             }
+            DB::statement('DROP TABLE IF EXISTS '.$this->table.'_locks');
             DB::statement('DROP TABLE IF EXISTS '.$this->table);
         }
         parent::tearDown();
     }
 
-    public function test_real_workers_exclude_overlap_after_scheduler_throttle_expires_and_recover_after_sigkill(): void
+    public function test_real_workers_exclude_concurrent_main_runs_and_recover_after_sigkill(): void
     {
         $owner = $this->worker();
         $this->assertSame('acquired', $this->receive($owner)['state']);
-        // Scheduler cache TTL is not the ownership clock: an arbitrarily old
-        // logical scheduler lease cannot displace a still-live MySQL owner.
-        $this->travel(11)->minutes();
         for ($i = 0; $i < 3; $i++) {
             $contender = $this->worker();
             $this->assertSame('busy', $this->receive($contender)['state']);
@@ -64,6 +67,54 @@ class MainReportSyncLockTest extends TestCase
         $this->assertTrue($acquired, 'A killed process must not strand the database lock.');
         $this->lock->release();
         $this->assertSame(0, DB::table($this->table)->count());
+    }
+
+    public function test_real_database_scheduler_lease_expires_at_ten_minutes_without_displacing_a_live_mysql_owner(): void
+    {
+        $owner = $this->worker();
+        $this->assertSame('acquired', $this->receive($owner)['state']);
+        $start = Carbon::parse('2026-10-09 12:00:00', 'UTC');
+        $this->travelTo($start);
+        $event = $this->isolatedScheduledMainEvent();
+        $this->assertSame(10, $event->expiresAt);
+        $this->assertSame('*/5 * * * *', $event->expression);
+        $this->assertFalse($event->shouldSkipDueToOverlapping());
+        $first = DB::table($this->table.'_locks')->sole();
+        $this->assertSame($start->timestamp + 600, (int) $first->expiration);
+
+        $this->travelTo($start->copy()->addSeconds(599));
+        $this->assertTrue($event->shouldSkipDueToOverlapping());
+        $this->assertEquals($first, DB::table($this->table.'_locks')->sole());
+        // Simulated cache time, real DatabaseLock expiry and separate PHP/MySQL
+        // processes. This deliberately does not claim ten wall-clock minutes.
+        $this->travelTo($start->copy()->addSeconds(600));
+        $this->assertFalse($event->shouldSkipDueToOverlapping());
+        $next = DB::table($this->table.'_locks')->sole();
+        $this->assertNotSame($first->owner, $next->owner);
+        $this->assertSame($start->timestamp + 1200, (int) $next->expiration);
+        $contender = $this->worker();
+        $this->assertSame('busy', $this->receive($contender)['state']);
+        $this->send($owner, 'probe');
+        $this->assertSame('owned', $this->receive($owner)['state']);
+        $this->send($owner, 'release');
+        $this->assertSame('released', $this->receive($owner)['state']);
+    }
+
+    public function test_new_main_event_preserves_an_existing_legacy_mutex_owner_and_expiry(): void
+    {
+        $start = Carbon::parse('2026-10-09 12:00:00', 'UTC');
+        $this->travelTo($start);
+        $current = $this->isolatedScheduledMainEvent();
+        $legacy = clone $current;
+        $legacy->withoutOverlapping();
+        $this->assertSame(1440, $legacy->expiresAt);
+        $this->assertSame($legacy->mutexName(), $current->mutexName());
+        $this->assertFalse($legacy->shouldSkipDueToOverlapping());
+        $before = DB::table($this->table.'_locks')->sole();
+        $this->assertSame($start->timestamp + 86400, (int) $before->expiration);
+        $this->travelTo($start->copy()->addSeconds(600));
+        $this->assertTrue($current->shouldSkipDueToOverlapping());
+        $this->assertEquals($before, DB::table($this->table.'_locks')->sole());
     }
 
     public function test_killed_database_session_cannot_write_a_late_provider_response_after_replacement_acquires(): void
@@ -248,6 +299,27 @@ class MainReportSyncLockTest extends TestCase
         }
         $this->assertTrue($this->lock->acquire());
         $this->lock->release();
+    }
+
+    private function isolatedScheduledMainEvent(): Event
+    {
+        $this->app->make(Kernel::class)->bootstrap();
+        $events = collect($this->app->make(Schedule::class)->events())->filter(
+            fn (Event $event): bool => str_contains((string) $event->command, 'reporting:sync-site-gam')
+                && ! str_contains((string) $event->command, 'reporting:sync-site-gam-video')
+        )->values();
+        $this->assertCount(1, $events);
+        $event = clone $events[0];
+        $table = $this->table.'_locks';
+        DB::statement('CREATE TABLE '.$table.' (`key` VARCHAR(255) PRIMARY KEY, owner VARCHAR(255) NOT NULL, expiration INT NOT NULL) ENGINE=InnoDB');
+        $store = $this->table.'_cache';
+        config(['cache.stores.'.$store => [
+            'driver' => 'database', 'connection' => DB::getDefaultConnection(),
+            'lock_connection' => DB::getDefaultConnection(), 'table' => $table,
+            'lock_table' => $table, 'prefix' => 'isolated-main-sync-test:',
+        ]]);
+        $event->mutex = (new CacheEventMutex(app('cache')))->useStore($store);
+        return $event;
     }
 
     private function key(): string

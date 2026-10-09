@@ -1,0 +1,108 @@
+name: Observe main reporting lease privately
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/observe-main-reporting-lease.yml'
+      - 'ops/audit/observe-main-reporting-lease.php'
+      - 'ops/audit/validate-main-reporting-lease.mjs'
+      - 'tests/Deployment/main-reporting-lease-observation.test.mjs'
+      - 'tests/Deployment/main-reporting-lease-observation-test.php'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/observe-main-reporting-lease.yml'
+      - 'ops/audit/observe-main-reporting-lease.php'
+      - 'ops/audit/validate-main-reporting-lease.mjs'
+      - 'tests/Deployment/main-reporting-lease-observation.test.mjs'
+      - 'tests/Deployment/main-reporting-lease-observation-test.php'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: horus-main-reporting-lease-observation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Validate closed observation contract and pure PHP fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          php -l ops/audit/observe-main-reporting-lease.php
+          php -l tests/Deployment/main-reporting-lease-observation-test.php
+          php tests/Deployment/main-reporting-lease-observation-test.php
+          node --test tests/Deployment/main-reporting-lease-observation.test.mjs
+          set +e
+          php ops/audit/observe-main-reporting-lease.php > "$RUNNER_TEMP/invalid-observation.json" 2> "$RUNNER_TEMP/invalid-observation.err"
+          result=$?
+          set -e
+          test "$result" -eq 1
+          test ! -s "$RUNNER_TEMP/invalid-observation.err"
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; import {safeMainReportingLeaseResult} from "./ops/audit/validate-main-reporting-lease.mjs"; const value = safeMainReportingLeaseResult(JSON.parse(readFileSync(process.argv[1]))); if (value.audit_status !== "UNAVAILABLE") process.exit(1);' "$RUNNER_TEMP/invalid-observation.json"
+
+  observe:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: production
+    env:
+      EXPECTED_SHA: ${{ github.sha }}
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Record private lease metadata and emit fixed classes only
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_REPOSITORY" == 'eltx1/hm01' ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          # No attempt number: a rerun reuses the exact same private observation.
+          OPERATION_ID="$(printf '%s:%s' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" | sha256sum | cut -d ' ' -f 1)"
+          [[ "$OPERATION_ID" =~ ^[a-f0-9]{64}$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/id_ed25519" "$RUNNER_TEMP/main-lease.json" "$RUNNER_TEMP/main-lease.err"' EXIT
+          if ! timeout 90 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+            "cd -P '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_APP_LINK='$REMOTE_HOME/htdocs/app.horusmedia.net' HM_EXPECTED_SHA='$EXPECTED_SHA' HM_OPERATION_ID='$OPERATION_ID' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < ops/audit/observe-main-reporting-lease.php > "$RUNNER_TEMP/main-lease.json" 2> "$RUNNER_TEMP/main-lease.err"; then
+            echo 'Main reporting observation unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          test ! -s "$RUNNER_TEMP/main-lease.err" || { echo 'Main reporting observation unavailable. Raw output withheld.' >&2; exit 1; }
+          node ops/audit/validate-main-reporting-lease.mjs "$RUNNER_TEMP/main-lease.json"

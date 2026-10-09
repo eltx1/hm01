@@ -60,9 +60,18 @@ class MainReportSyncLock
             $connection = $this->database->connection();
             if (! in_array($connection->getDriverName(), ['mysql', 'mariadb'], true)
                 || $connection->getConfig('read') || $connection->getConfig('write')
-                || is_array($connection->getConfig('host')) || $connection->transactionLevel() !== 0) {
+                || is_array($connection->getConfig('host')) || $connection->transactionLevel() !== 0
+                // Laravel flattens read/write config while constructing the
+                // connection. Reject its lazy reader before opening the writer.
+                || ($connection->getRawReadPdo() !== null
+                    && (! $connection->getRawReadPdo() instanceof PDO
+                        || $connection->getRawReadPdo() !== $connection->getRawPdo()))) {
                 throw new MainReportSyncLockException('Main reporting requires a single MySQL writer without an existing transaction or read/write routing.');
             }
+            // A previous failed invocation may have discarded its PDO. A new
+            // invocation may reconnect here, before owning/guarding any work.
+            // Once active, the throwing reconnector below remains authoritative.
+            $connection->reconnectIfMissingConnection();
             $pdo = $connection->getPdo();
             if ($pdo->getAttribute(PDO::ATTR_PERSISTENT) || $pdo->inTransaction()
                 || ($connection->getRawReadPdo() !== null && $connection->getRawReadPdo() !== $pdo)) {

@@ -68,7 +68,8 @@ correction is introduced by this patch.
 
 The regular MySQL CI job must execute `MainReportSyncLockTest`, using real MySQL
 connections and separate PHP processes, not mocked locks. It covers contention,
-repeated cron launches beyond the throttle window, SIGKILL without finally,
+real database scheduler-lease expiry with a simulated clock while a separate
+PHP/MySQL owner remains alive, preservation of legacy lease ownership, SIGKILL without finally,
 database-session death, idle expiry, late responses, live jobs, poison state,
 transactions/commit loss, reconnect/purge rejection and healthy restoration.
 SQLite jobs cover command wiring with an explicit mock and the unchanged main/
