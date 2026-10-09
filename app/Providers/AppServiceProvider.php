@@ -54,6 +54,7 @@ class AppServiceProvider extends ServiceProvider
         ], ActionCenterProvider::class);
         $this->app->singleton(ActionCenter::class, fn ($app): ActionCenter => new ActionCenter($app->tagged(ActionCenterProvider::class)));
 
+        $this->app->singleton(\App\Services\Reporting\MainReportSyncLock::class);
         $this->app->bind(GamSoapTransportInterface::class, GamOfficialSoapTransport::class);
         $this->app->bind(DnsResolver::class, SystemDnsResolver::class);
         $this->app->bind(StaticDeliveryDriverInterface::class, function ($app): StaticDeliveryDriverInterface {

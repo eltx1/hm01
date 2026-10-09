@@ -42,7 +42,7 @@ class SchedulerHeartbeatRecoveryTest extends TestCase
             ['campaigns:monitor --reconcile', 1440],
             ['data-retention:prune --execute', 180],
             ['reporting:import hourly --retry-failed', 1440],
-            ['reporting:sync-site-gam', 1440],
+            ['reporting:sync-site-gam', 10],
             ['reporting:sync-site-gam-video', 1440],
             ['reporting:import daily --retry-failed', 1440],
             ['reporting:close-period --force', 1440],
