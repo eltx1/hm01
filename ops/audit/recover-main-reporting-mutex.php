@@ -173,6 +173,7 @@ function hmMainRecoveryRead(PDO $pdo, string $table, string $heartbeatTable, str
         if (abs($now-time())>5) throw new RuntimeException();
         $query=$pdo->prepare('SELECT `key`, `owner`, `expiration` FROM `'.$table.'` WHERE `key` = ?');
         $query->execute([$key]); $lease=$query->fetch(PDO::FETCH_ASSOC) ?: null;
+        if ($lease && $lease['key']!==$key) throw new RuntimeException();
         $query=$pdo->prepare('SELECT `last_seen_at` FROM `'.$heartbeatTable.'` WHERE `key` = ?');
         $query->execute(['scheduler']); $heartbeat=$query->fetchColumn();
         $parsed=is_string($heartbeat) ? strtotime($heartbeat.' UTC') : false;
@@ -183,8 +184,8 @@ function hmMainRecoveryRead(PDO $pdo, string $table, string $heartbeatTable, str
 function hmMainRecoveryDelete(PDO $pdo, string $table, array $expected, int $now): int
 {
     // A single compare-and-swap only. Never force-release or delete another row.
-    $query=$pdo->prepare('DELETE FROM `'.$table.'` WHERE `key` = ? AND `owner` = ? AND `expiration` = ? AND `expiration` > ? AND `expiration` < ?');
-    $query->execute([$expected['key'],$expected['owner'],$expected['expiration'],$now+900,$now+64800]);
+    $query=$pdo->prepare('DELETE FROM `'.$table.'` WHERE `key` = ? AND HEX(`key`) = HEX(?) AND HEX(`owner`) = HEX(?) AND `expiration` = ? AND `expiration` > ? AND `expiration` < ?');
+    $query->execute([$expected['key'],$expected['key'],$expected['owner'],$expected['expiration'],$now+900,$now+64800]);
     return $query->rowCount();
 }
 

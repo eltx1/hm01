@@ -29,8 +29,8 @@ test('cached bootstrap remains read-only and local before narrowly selected same
 });
 test('only write is exact main key-owner-expiration CAS with active-old-lease predicates',()=>{
  assert.equal((script.match(/DELETE FROM/g)||[]).length,1);
- assert.match(script,/WHERE `key` = \? AND `owner` = \? AND `expiration` = \? AND `expiration` > \? AND `expiration` < \?/);
- assert.match(script,/\[\$expected\['key'\],\$expected\['owner'\],\$expected\['expiration'\],\$now\+900,\$now\+64800\]/);
+ assert.match(script,/WHERE `key` = \? AND HEX\(`key`\) = HEX\(\?\) AND HEX\(`owner`\) = HEX\(\?\) AND `expiration` = \? AND `expiration` > \? AND `expiration` < \?/);
+ assert.match(script,/\[\$expected\['key'\],\$expected\['key'\],\$expected\['owner'\],\$expected\['expiration'\],\$now\+900,\$now\+64800\]/);
  assert.match(script,/sleep\(65\)/);
  assert.match(script,/\$mode==='preview'[\s\S]*else \{[\s\S]*hmMainRecoveryProcessAbsent\(\)[\s\S]*hmMainRecoveryDelete\(/);
  assert.match(script,/\$changed!==1/);
@@ -89,10 +89,12 @@ test('CAS targets only observed main row and preserves replacement and video lea
  fixture(`
  if(!in_array('sqlite',PDO::getAvailableDrivers(),true)){echo 'PASS';return;}
  $pdo=new PDO('sqlite::memory:');$pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
- $pdo->exec('CREATE TABLE cache_locks (key TEXT PRIMARY KEY, owner TEXT, expiration INTEGER)');
+ $pdo->exec('CREATE TABLE cache_locks (key TEXT COLLATE NOCASE PRIMARY KEY, owner TEXT COLLATE NOCASE, expiration INTEGER)');
  $insert=$pdo->prepare('INSERT INTO cache_locks VALUES (?, ?, ?)');$now=1800000000;
  $main=['key'=>'fixture-main','owner'=>'fixture-owner','expiration'=>$now+3600];
  $insert->execute(array_values($main));$insert->execute(['fixture-video','video-owner',$now+3600]);
+ if(hmMainRecoveryDelete($pdo,'cache_locks',array_replace($main,['owner'=>'FIXTURE-OWNER']),$now)!==0)exit(8);
+ if(hmMainRecoveryDelete($pdo,'cache_locks',array_replace($main,['key'=>'FIXTURE-MAIN']),$now)!==0)exit(9);
  $replacement=array_replace($main,['owner'=>'different-owner']);
  if(hmMainRecoveryDelete($pdo,'cache_locks',$replacement,$now)!==0)exit(2);
  if(hmMainRecoveryDelete($pdo,'cache_locks',array_replace($main,['expiration'=>$now+3601]),$now)!==0)exit(3);
