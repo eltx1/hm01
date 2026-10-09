@@ -369,9 +369,10 @@ class ReportMetricBasisTest extends TestCase
             ->assertOk()->streamedContent();
         $rows = $this->csvRows($csv);
         $this->assertSame('Unfilled impressions (ad unit, all sites)', $rows[0][7]);
-        $this->assertSame([self::FROM, '', '', '', '', '', '', '', '39.00'], $rows[1]);
-        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00'], $rows[2]);
-        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '', '39.00'], $rows[3]);
+        $this->assertSame('Includes estimates', $rows[0][9]);
+        $this->assertSame([self::FROM, '', '', '', '', '', '', '', '39.00', 'No'], $rows[1]);
+        $this->assertSame([self::KNOWN_DAY, '', '', '', '', '', '', '', '0.00', 'No'], $rows[2]);
+        $this->assertSame([self::TODAY, '400', '8', '2.00%', '97.50', '62.50%', '100', '', '39.00', 'No'], $rows[3]);
         $this->assertStringNotContainsString('876543', $csv);
     }
 

@@ -22,7 +22,7 @@ class WebsiteReportController extends Controller
                     ->orWhereHas('publisher', fn ($publisher) => $publisher->where('display_name', 'like', '%'.$search.'%'));
             }))->orderBy('display_name')->orderBy('id')->paginate(24)->withQueryString();
 
-        $totals = $reports->summaries($sites->getCollection(), $request->validated('from'), $request->validated('to'));
+        $totals = $reports->summaries($sites->getCollection(), $request->validated('from'), $request->validated('to'), includeEstimates: true);
 
         return view('admin.reporting.websites', [
             'sites' => $sites, 'search' => $search,
@@ -32,17 +32,19 @@ class WebsiteReportController extends Controller
                 'has_other_sources' => $totals->contains('has_other_sources', true),
             ]), 'currency' => $reports->currency(),
             'totals' => $totals,
+            'coverage' => app(\App\Services\Reporting\ReportCoverageService::class)->forPeriod($request->validated('from'), $request->validated('to'), $reports->currency(), siteIds: $sites->getCollection()->pluck('id')->all()),
         ]);
     }
 
     public function show(ReportPeriodRequest $request, Site $site, AdminWebsitePerformanceService $reports): View|StreamedResponse
     {
-        $summary = $reports->summary($site, $request->validated('from'), $request->validated('to'));
+        $summary = $reports->summary($site, $request->validated('from'), $request->validated('to'), includeEstimates: true);
+        $summary['coverage'] = app(\App\Services\Reporting\ReportCoverageService::class)->forPeriod($request->validated('from'), $request->validated('to'), $reports->currency(), $site);
         if ($request->validated('export') === 'video_csv') {
             return app(\App\Services\Reporting\VideoReportCsv::class)->download($summary['video'], false);
         }
         if ($request->validated('export') === 'csv') {
-            return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics($summary), $summary['currency'], false);
+            return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics($summary), $summary['currency'], false, includeFinality: true);
         }
 
         return view('admin.reporting.website', [

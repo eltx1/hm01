@@ -287,21 +287,22 @@ class ReportPerformanceMetricsTest extends TestCase
         $before = DailyReport::withoutGlobalScopes()->get()->map->getAttributes()->all();
         $response = $this->get(route('admin.reporting.websites.show', $site))->assertOk()
             ->assertSee('Gross revenue')->assertSee('Publisher earnings')->assertSee('Horus margin')
-            ->assertSee('60.00%')->assertDontSee('Other website');
+            ->assertSee('Includes estimates')->assertDontSee('Other website');
         $summary = $response->viewData('summary');
-        $this->assertSame(10000, $summary['gross_revenue_minor']);
-        $this->assertSame(7000, $summary['publisher_earnings_minor']);
-        $this->assertSame(3000, $summary['horus_earnings_minor']);
-        $this->assertSame(1000, $summary['impressions']);
-        $this->assertSame(10000, $summary['ecpm_minor']);
-        $this->assertCount(1, $summary['days']);
+        $this->assertSame(60000, $summary['gross_revenue_minor']);
+        $this->assertSame(42000, $summary['publisher_earnings_minor']);
+        $this->assertSame(18000, $summary['horus_earnings_minor']);
+        $this->assertSame(1050, $summary['impressions']);
+        $this->assertSame(57143, $summary['ecpm_minor']);
+        $this->assertTrue($summary['has_estimates']);
+        $this->assertCount(2, $summary['days']);
         $this->fixture('reports-admin-website', $response);
         $csv = $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-20',
             'to' => '2026-09-20', 'metrics' => ['clicks', 'viewability_bp'], 'export' => 'csv']))->assertOk()->streamedContent();
         $this->assertStringContainsString('2026-09-20,20,60.00%,100.00', $csv);
         $this->assertStringNotContainsString('Impressions', $csv);
         $this->assertStringNotContainsString('900.00', $csv);
-        $response = $this->get(route('admin.reporting.websites.show', $empty))->assertOk()->assertSee('No finalized reports for these dates');
+        $response = $this->get(route('admin.reporting.websites.show', $empty))->assertOk()->assertSee('No reports for these dates');
         $this->fixture('reports-admin-website-empty', $response);
         $this->assertSame($before, DailyReport::withoutGlobalScopes()->get()->map->getAttributes()->all());
         $response = $this->get(route('admin.reporting.websites.index'))->assertOk()->assertSee('New website')->assertSee('Other website');

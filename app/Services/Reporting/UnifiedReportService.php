@@ -26,10 +26,11 @@ final class UnifiedReportService
         CarbonInterface|string|null $from = null,
         CarbonInterface|string|null $to = null,
         ?string $currency = null,
+        bool $includeEstimates = false,
     ): array {
         [$from, $to] = $this->range($from, $to);
         $currency = $this->currency($currency);
-        $query = $this->daily($from, $to, $currency);
+        $query = $this->daily($from, $to, $currency, $includeEstimates);
         $rows = $query->with(['dimension.publisher', 'dimension.site', 'dimension.campaign', 'connection.source'])->get();
 
         $financialRows = $rows;
@@ -51,8 +52,11 @@ final class UnifiedReportService
 
         return [
             'from' => $from, 'to' => $to, 'currency' => $currency,
-            'video' => $video,
+            'video' => [...$video, 'includes_estimates' => $includeEstimates],
+            'has_estimates' => $rows->contains('finality', ReportFinality::Estimated),
+            'includes_estimates' => $includeEstimates,
             'financial_totals_including_video' => [
+                'has_estimates' => $financialRows->contains('finality', ReportFinality::Estimated),
                 'gross_revenue_minor' => (int) $financialRows->sum('gross_revenue_minor'),
                 'net_revenue_minor' => max(0, (int) $financialRows->sum('net_revenue_minor') - $adjustmentTotal),
                 'publisher_earnings_minor' => max(0, (int) $financialRows->sum('publisher_earnings_minor') - $publisherAdjustment),
@@ -63,7 +67,7 @@ final class UnifiedReportService
             'available' => $rows->isNotEmpty(),
             'updated_at' => $rows->max('updated_at'),
             'daily_revenue' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
-                ->map(fn ($group, $date) => ['date' => $date, ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'), 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor')])->values(),
+                ->map(fn ($group, $date) => ['date' => $date, 'has_estimates' => $group->contains('finality', ReportFinality::Estimated), ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'), 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor')])->values(),
             'managed_impressions' => $performance['impressions'],
             'horus_gam_impressions' => app(ReportMetricBasis::class)->counter($horusGam, 'impressions'),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
@@ -233,10 +237,9 @@ final class UnifiedReportService
         ];
     }
 
-    private function daily(CarbonImmutable $from, CarbonImmutable $to, ?string $currency = null): Builder
+    private function daily(CarbonImmutable $from, CarbonImmutable $to, ?string $currency = null, bool $includeEstimates = false): Builder
     {
-        return DailyReport::withoutGlobalScopes()
-            ->where('finality', ReportFinality::Finalized->value)
+        return ReportDisplayQuery::constrain(DailyReport::withoutGlobalScopes(), $includeEstimates)
             ->whereDate('report_date', '>=', $from->toDateString())
             ->whereDate('report_date', '<=', $to->toDateString())
             ->when($currency, fn (Builder $query) => $query->where('currency', strtoupper($currency)));
@@ -263,6 +266,7 @@ final class UnifiedReportService
     {
         return $rows->groupBy($key)->map(fn (Collection $group, $label) => [
             'label' => $labelFor ? $labelFor($group->first()) : $label,
+            'has_estimates' => $group->contains('finality', ReportFinality::Estimated),
             ...app(PerformanceMetrics::class)->summarize($group, 'gross_revenue_minor'),
             'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
             'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),

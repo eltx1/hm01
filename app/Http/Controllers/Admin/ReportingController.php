@@ -39,12 +39,13 @@ class ReportingController extends Controller
 
         $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
 
-        $summary = $reports->adminSummary($from, $to, $canonicalCurrency);
+        $summary = $reports->adminSummary($from, $to, $canonicalCurrency, includeEstimates: true);
+        $summary['coverage'] = app(\App\Services\Reporting\ReportCoverageService::class)->forPeriod($from->toDateString(), $to->toDateString(), $canonicalCurrency);
         if ($request->validated('export') === 'video_csv') {
             return app(\App\Services\Reporting\VideoReportCsv::class)->download($summary['video'], false);
         }
         if ($request->validated('export') === 'csv') {
-            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics($summary['performance']), $canonicalCurrency, false);
+            return app(\App\Services\Reporting\PerformanceReportCsv::class)->download($summary['daily_revenue'], $request->selectedMetrics($summary['performance']), $canonicalCurrency, false, includeFinality: true);
         }
 
         return view('admin.reporting.index', [
