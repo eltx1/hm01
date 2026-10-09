@@ -11,6 +11,7 @@ final class HorusMainReportingLeaseObservation
         '5c3861f8ffdb97cec42c35476894e22b845beb3b',
         'c1514c9daf9324a63b6b758c1068e1ab530766da',
         '4d3e0adbe403b45e8975fe7b1580d015e4ddcdb8',
+        '130a0d8e9dc78cfcfa2371ffa7af789f56ea3a74',
     ];
 
     public static function beginReadOnlyTransaction(object $connection, bool &$sessionProbeEnabled): void

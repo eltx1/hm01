@@ -102,7 +102,7 @@ test('proof parser and link validators reject wrong schema malformed SHA duplica
  const deploy=tools.parseProof(encode(deployProof()));tools.deployOk(deploy,run('deploy'),sha);
  for(const bad of [encode({...liveProof(),schema_version:'2'}),encode({...liveProof(),release_sha:'A'.repeat(40)}),
   encode({...liveProof(),release_sha:'a'.repeat(39)}),encode(liveProof())+'release_sha='+sha+'\n','x'.repeat(16385),encode(liveProof()).replace('schema_version=1','schema_version=1\r')]) assert.throws(()=>tools.parseProof(bad));
- for(const change of [{verify_run_id:'999'},{verify_run_attempt:'1'},{deploy_run_id:'invalid'},{release_sha:'f'.repeat(40)},
+ for(const change of [{verify_run_id:'999'},{verify_run_attempt:'1'},{deploy_run_id:'invalid'},
   {manifest_hash:'bad'},{unexpected:'field'}]) assert.throws(()=>tools.liveOk({...liveProof(),...change},run('verify')));
  for(const change of [{deploy_run_id:'999'},{deploy_run_attempt:'1'},{validation_run_id:'invalid'},{artifact_sha256:'bad'},{release_sha:'f'.repeat(40)}]) assert.throws(()=>tools.deployOk({...deployProof(),...change},run('deploy'),sha));
 });
@@ -121,11 +121,12 @@ test('all embedded proof scripts parse as async modules',()=>{
  for(const script of scripts) assert.doesNotThrow(()=>new AsyncFunction('github','context','core','require','process',script));
 });
 
-async function mockedProofChain(tamper=false) {
+async function mockedProofChain(tamper=false,differentProducerHeads=false) {
  const directory=mkdtempSync(join(tmpdir(),'horus-current-proof-'));
  const context={eventName:'push',ref:'refs/heads/main',repo:{owner:'eltx1',repo:'hm01'},payload:{repository:{...repository}}};
  const runs=Object.fromEntries(Object.keys(ids).map(kind=>[ids[kind],run(kind)]));
  const artifacts={101:artifact('verify','horus-production-live-proof'),102:artifact('deploy','horus-production-deploy-proof')};
+ if(differentProducerHeads){runs[101].head_sha='c'.repeat(40);runs[102].head_sha='d'.repeat(40);artifacts[101].workflow_run.head_sha=runs[101].head_sha;artifacts[102].workflow_run.head_sha=runs[102].head_sha;}
  const outputs=[];const failures=[];let finalPhase=false;
  const actions={
   getWorkflow:async ({workflow_id})=>{const kind=Object.keys(ids).find(kind=>basename(tools.kinds[kind].path)===workflow_id);return {data:{id:ids[kind]+1000,name:tools.kinds[kind].name,path:tools.kinds[kind].path,state:'active'}};},
@@ -157,4 +158,8 @@ test('complete trusted artifact chain exports only the verified release SHA',asy
 });
 test('run attempt changing after artifact download prevents any release pin',async()=>{
  const result=await mockedProofChain(true);assert.deepEqual(result.failures,['CURRENT_MAIN_TRUST_PROOF_INVALID']);assert.deepEqual(result.outputs[2],{});
+});
+
+test('trusted orchestration heads may differ while successful push validation pins the deployed release',async()=>{
+ const result=await mockedProofChain(false,true);assert.deepEqual(result.failures,[]);assert.deepEqual(result.outputs[2],{release_sha:sha});
 });

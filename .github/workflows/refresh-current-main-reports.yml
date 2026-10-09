@@ -113,7 +113,7 @@ jobs:
               function liveOk(proof,run) {
                 demand(Object.keys(proof).sort().join(',')===['schema_version','release_sha','deploy_run_id','manifest_hash','pages_deployment_url','lordai_config_path','lordai_config_sha256','lordai_loader_sha256','verify_run_id','verify_run_attempt'].sort().join(','));
                 demand(proof.verify_run_id===String(run.id) && proof.verify_run_attempt===String(run.run_attempt)
-                  && proof.release_sha===run.head_sha && id(proof.deploy_run_id) && digest(proof.manifest_hash)
+                  && id(proof.deploy_run_id) && digest(proof.manifest_hash)
                   && digest(proof.lordai_config_sha256) && digest(proof.lordai_loader_sha256));
               }
               function deployOk(proof,run,releaseSha) {
@@ -178,9 +178,9 @@ jobs:
               const live=trust.parseProof(fs.readFileSync(file,'utf8')); trust.liveOk(live,metadata.verify);
               const common={owner:context.repo.owner,repo:context.repo.repo};
               const {data:run}=await github.rest.actions.getWorkflowRun({...common,run_id:Number(live.deploy_run_id)});
-              trust.runOk(run,live.deploy_run_id,'deploy',metadata.workflows.deploy,live.release_sha);
+              trust.runOk(run,live.deploy_run_id,'deploy',metadata.workflows.deploy);
               const {data:attempt}=await github.rest.actions.getWorkflowRunAttempt({...common,run_id:run.id,attempt_number:run.run_attempt});
-              trust.runOk(attempt,run.id,'deploy',metadata.workflows.deploy,live.release_sha);
+              trust.runOk(attempt,run.id,'deploy',metadata.workflows.deploy,run.head_sha);
               trust.demand(attempt.run_attempt===run.run_attempt);
               const artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{...common,run_id:run.id,per_page:100});
               const matches=artifacts.filter(item=>item.name==='horus-production-deploy-proof');
@@ -221,10 +221,12 @@ jobs:
               const {data:attempt}=await github.rest.actions.getWorkflowRunAttempt({...common,run_id:validation.id,attempt_number:validation.run_attempt});
               trust.runOk(attempt,validation.id,'validation',metadata.workflows.validation,metadata.releaseSha);
               trust.demand(attempt.run_attempt===validation.run_attempt);
-              // Recheck immutable artifact provenance and current attempts after downloads.
+              // Producer workflow heads may differ from the deployed release. Only the
+              // linked successful PUSH validation must have the exact release SHA.
+              // Recheck each producer's own head/attempt and artifact provenance.
               for(const [kind,run] of [['verify',metadata.verify],['deploy',metadata.deploy],['validation',attempt]]) {
                 const {data:current}=await github.rest.actions.getWorkflowRun({...common,run_id:run.id});
-                trust.runOk(current,run.id,kind,metadata.workflows[kind],metadata.releaseSha);
+                trust.runOk(current,run.id,kind,metadata.workflows[kind],run.head_sha);
                 trust.demand(current.run_attempt===run.run_attempt);
               }
               for(const [name,artifact,run] of [['horus-production-live-proof',metadata.liveArtifact,metadata.verify],['horus-production-deploy-proof',metadata.deployArtifact,metadata.deploy]]) {
