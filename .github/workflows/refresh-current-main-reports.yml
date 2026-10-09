@@ -1,0 +1,117 @@
+name: Refresh current-day main reports
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/refresh-current-main-reports.yml'
+      - 'ops/audit/refresh-current-main-reports.php'
+      - 'ops/audit/validate-current-main-refresh.mjs'
+      - 'tests/Deployment/current-main-refresh.test.mjs'
+      - 'tests/Deployment/current-main-refresh-workflow.test.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refresh-current-main-reports.yml'
+permissions:
+  contents: read
+concurrency:
+  group: horus-current-main-report-recovery
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Validate bounded domain recovery and disclosure contract
+        run: |
+          php -l ops/audit/refresh-current-main-reports.php
+          node --test tests/Deployment/current-main-refresh.test.mjs tests/Deployment/current-main-refresh-workflow.test.mjs
+  refresh:
+    if: github.event_name == 'push' && github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      EXPECTED_RELEASE_SHA: 5c3861f8ffdb97cec42c35476894e22b845beb3b
+      SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+      REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Refresh only source-local today through existing distributed importer locks
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          work="$RUNNER_TEMP/current-main-recovery"
+          install -d -m 700 "$work"
+          printf '%s\n' "$SSH_KEY" > "$work/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 600 "$work/id_ed25519" "$work/known_hosts"
+          trap 'rm -f "$work/id_ed25519" "$work/known_hosts" "$work/result.json" "$work/error.txt"' EXIT
+          unset SSH_KEY KNOWN_HOSTS
+          operation="$(printf '%s' "eltx1/hm01:current-main:$GITHUB_RUN_ID" | sha256sum | cut -d' ' -f1)"
+          app="$REMOTE_HOME/htdocs/app.horusmedia.net"
+          invoke() {
+            local mode="$1"
+            if ! timeout 280 ssh -F /dev/null -T -i "$work/id_ed25519" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+              -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
+              "cd '$app' && test -x /usr/bin/timeout && HM_EXPECTED_RELEASE_SHA='$EXPECTED_RELEASE_SHA' HM_CURRENT_MAIN_MODE='$mode' HM_CURRENT_MAIN_OPERATION='$operation' HM_CURRENT_MAIN_APP_LINK='$app' /usr/bin/timeout --kill-after=10 240 /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+              < ops/audit/refresh-current-main-reports.php > "$work/result.json" 2> "$work/error.txt"; then
+              echo 'Current-day report refresh unavailable. Raw output withheld.' >&2
+              return 1
+            fi
+            node ops/audit/validate-current-main-refresh.mjs "$work/result.json"
+          }
+          invoke preview
+          preview_status="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(x.status);' "$work/result.json")"
+          case "$preview_status" in
+            COMPLETED) exit 0 ;;
+            ELIGIBLE) ;;
+            *) echo 'Current-day report preflight stopped safely.' >&2; exit 1 ;;
+          esac
+          deadline=$((SECONDS + 900))
+          for attempt in $(seq 1 40); do
+            if (( SECONDS >= deadline )); then
+              echo 'CURRENT_MAIN_REFRESH=PENDING'
+              exit 1
+            fi
+            invoke apply
+            status="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(x.status);' "$work/result.json")"
+            case "$status" in
+              COMPLETED) exit 0 ;;
+              PROGRESS) ;;
+              PENDING) sleep 65 ;;
+              *) echo 'Current-day report refresh stopped safely.' >&2; exit 1 ;;
+            esac
+          done
+          echo 'CURRENT_MAIN_REFRESH=PENDING'
+          exit 1
