@@ -75,6 +75,16 @@ test('guarded bootstrap preserves cached manifests and isolates provider cache w
   assert.doesNotMatch(audit, /Artisan::call|schedule:run|shell_exec|system\s*\(|exec\s*\(/);
 });
 
+test('read-only next-transaction window suppresses only raw session SQL in callbacks', () => {
+  assert.match(audit, /if \(\$sessionProbeEnabled && \$session !== null && \(string\) \$pdo->query/);
+  assert.match(audit, /\$sessionProbeEnabled = false;\s*try \{\s*\$connection->statement\('SET TRANSACTION READ ONLY'\);\s*\$connection->beginTransaction\(\);\s*\} finally \{\s*\$sessionProbeEnabled = true;/);
+  assert.match(audit, /HorusMainReportingLeaseObservation::beginReadOnlyTransaction\(\$db, \$sessionProbeEnabled\);\s*\$guard\(\);/);
+  const guard = audit.slice(audit.indexOf('$guard = static function'), audit.indexOf('$app->afterBootstrapping'));
+  assert.ok(guard.indexOf('assertSnapshot') < guard.indexOf('if ($sessionProbeEnabled'));
+  assert.ok(guard.indexOf('getRawPdo()') < guard.indexOf('if ($sessionProbeEnabled'));
+  assert.ok(guard.indexOf('getDefaultConnection()') < guard.indexOf('if ($sessionProbeEnabled'));
+});
+
 test('only the actual main cache expiration is read and reporting data and locks stay untouched', () => {
   assert.match(audit, /count\(\$events\) !== 1/);
   assert.match(audit, /CacheEventMutex/);

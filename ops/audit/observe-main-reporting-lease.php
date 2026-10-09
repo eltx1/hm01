@@ -13,6 +13,19 @@ final class HorusMainReportingLeaseObservation
         '4d3e0adbe403b45e8975fe7b1580d015e4ddcdb8',
     ];
 
+    public static function beginReadOnlyTransaction(object $connection, bool &$sessionProbeEnabled): void
+    {
+        // SET TRANSACTION affects the next transaction. Callback guards must not
+        // issue an autocommit SELECT between that SET and PDO beginTransaction.
+        $sessionProbeEnabled = false;
+        try {
+            $connection->statement('SET TRANSACTION READ ONLY');
+            $connection->beginTransaction();
+        } finally {
+            $sessionProbeEnabled = true;
+        }
+    }
+
     public static function release(string $marker, string $expected): string
     {
         if (! preg_match('/^[a-f0-9]{40}$/D', $expected)
@@ -131,13 +144,14 @@ try {
     $pdo = null;
     $default = null;
     $session = null;
-    $guard = static function () use (&$db, &$pdo, &$default, &$session, $link, $expected, $snapshot): void {
+    $sessionProbeEnabled = true;
+    $guard = static function () use (&$db, &$pdo, &$default, &$session, &$sessionProbeEnabled, $link, $expected, $snapshot): void {
         HorusMainReportingLeaseObservation::assertSnapshot($link, $expected, $snapshot);
         if ($db !== null && ($db->getRawPdo() !== $pdo
             || ($db->getRawReadPdo() !== null && $db->getRawReadPdo() !== $pdo)
             || app('db')->getDefaultConnection() !== $default
             || (app('db')->getConnections()[$default] ?? null) !== $db)) throw new RuntimeException('UNAVAILABLE');
-        if ($session !== null && (string) $pdo->query('SELECT CONNECTION_ID()')->fetchColumn() !== $session) {
+        if ($sessionProbeEnabled && $session !== null && (string) $pdo->query('SELECT CONNECTION_ID()')->fetchColumn() !== $session) {
             throw new RuntimeException('UNAVAILABLE');
         }
     };
@@ -169,7 +183,7 @@ try {
         // Provider remember() calls are process-only, including during registration.
         $config->set('cache.default', 'array');
     });
-    $app->beforeBootstrapping(Illuminate\Foundation\Bootstrap\BootProviders::class, function () use (&$db, &$pdo, &$default, &$session, $guard): void {
+    $app->beforeBootstrapping(Illuminate\Foundation\Bootstrap\BootProviders::class, function () use (&$db, &$pdo, &$default, &$session, &$sessionProbeEnabled, $guard): void {
         config(['cache.default' => 'array']);
         $default = app('db')->getDefaultConnection();
         $db = Illuminate\Support\Facades\DB::connection();
@@ -192,8 +206,8 @@ try {
         $db->beforeExecuting(static function () use ($guard): void { $guard(); });
         $db->beforeStartingTransaction(static function () use ($guard): void { $guard(); });
         $guard();
-        $db->statement('SET TRANSACTION READ ONLY');
-        $db->beginTransaction();
+        HorusMainReportingLeaseObservation::beginReadOnlyTransaction($db, $sessionProbeEnabled);
+        $guard();
     });
     $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
     if (! $db || $db->transactionLevel() !== 1 || ! $pdo->inTransaction()) throw new RuntimeException('UNAVAILABLE');

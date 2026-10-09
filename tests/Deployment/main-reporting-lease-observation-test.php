@@ -16,6 +16,34 @@ function rejects(callable $fixture): void
 }
 
 $helper = HorusMainReportingLeaseObservation::class;
+// Exercise the production helper with the same before-query/before-begin callbacks.
+$probeEnabled = true;
+$trace = [];
+$identityChecks = 0;
+$guard = static function () use (&$probeEnabled, &$trace, &$identityChecks): void {
+    $identityChecks++; // Marker, PDO and connection identity still checked.
+    if ($probeEnabled) $trace[] = 'SELECT CONNECTION_ID()';
+};
+$connection = new class($guard, $trace) {
+    public bool $failBegin = false;
+    private array $trace;
+    public function __construct(private Closure $guard, array &$trace) { $this->trace = &$trace; }
+    public function statement(string $sql): void { ($this->guard)(); $this->trace[] = $sql; }
+    public function beginTransaction(): void {
+        ($this->guard)();
+        if ($this->failBegin) throw new RuntimeException('Fixture failure');
+        $this->trace[] = 'BEGIN';
+    }
+};
+$guard();
+$helper::beginReadOnlyTransaction($connection, $probeEnabled);
+$guard();
+check($trace === ['SELECT CONNECTION_ID()', 'SET TRANSACTION READ ONLY', 'BEGIN', 'SELECT CONNECTION_ID()']);
+check($identityChecks === 4 && $probeEnabled === true);
+$connection->failBegin = true;
+rejects(function () use ($helper, $connection, &$probeEnabled): void { $helper::beginReadOnlyTransaction($connection, $probeEnabled); });
+check($probeEnabled === true);
+
 $expected = str_repeat('a', 40);
 foreach ([...$helper::KNOWN_RELEASES, $expected] as $release) {
     check($helper::release("release_id=$release\nartifact_sha256=fixture\n", $expected) === $release);
