@@ -3,9 +3,9 @@
     <p class="hm-pagination-summary">{{ __('Showing') }} <strong>{{ $paginator->firstItem() }}</strong> {{ __('to') }} <strong>{{ $paginator->lastItem() }}</strong> {{ __('of') }} <strong>{{ $paginator->total() }}</strong> {{ __('results') }}</p>
     <div class="hm-pagination-controls">
         @if ($paginator->onFirstPage())
-            <span class="hm-pagination-link hm-pagination-direction" aria-disabled="true">{{ __('pagination.previous') }}</span>
+            <span class="hm-pagination-link hm-pagination-direction" aria-disabled="true">{{ __('Previous') }}</span>
         @else
-            <a class="hm-pagination-link hm-pagination-direction" href="{{ $paginator->previousPageUrl() }}" rel="prev">{{ __('pagination.previous') }}</a>
+            <a class="hm-pagination-link hm-pagination-direction" href="{{ $paginator->previousPageUrl() }}" rel="prev">{{ __('Previous') }}</a>
         @endif
         <span class="hm-pagination-mobile">{{ __('Page') }} {{ $paginator->currentPage() }} / {{ $paginator->lastPage() }}</span>
         <div class="hm-pagination-pages">
@@ -24,9 +24,9 @@
             @endforeach
         </div>
         @if ($paginator->hasMorePages())
-            <a class="hm-pagination-link hm-pagination-direction" href="{{ $paginator->nextPageUrl() }}" rel="next">{{ __('pagination.next') }}</a>
+            <a class="hm-pagination-link hm-pagination-direction" href="{{ $paginator->nextPageUrl() }}" rel="next">{{ __('Next') }}</a>
         @else
-            <span class="hm-pagination-link hm-pagination-direction" aria-disabled="true">{{ __('pagination.next') }}</span>
+            <span class="hm-pagination-link hm-pagination-direction" aria-disabled="true">{{ __('Next') }}</span>
         @endif
     </div>
 </nav>

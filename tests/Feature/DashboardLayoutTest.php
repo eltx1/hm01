@@ -24,6 +24,8 @@ final class DashboardLayoutTest extends TestCase
             $this->assertStringContainsString('aria-current="page"', $html);
             $this->assertStringContainsString('status=ACTIVE', $html);
             $this->assertStringNotContainsString('<svg', $html);
+            $this->assertStringNotContainsString('&amp;laquo;', $html);
+            $this->assertStringNotContainsString('&amp;raquo;', $html);
             $this->assertStringNotContainsString('sm:', $html);
         }
         $single = new LengthAwarePaginator(range(1, 5), 5, 25);
