@@ -7,6 +7,8 @@ use App\Enums\PlacementType;
 use App\Models\DemandPlacement;
 use App\Models\Placement;
 use App\Models\PlacementSize;
+use App\Models\Site;
+use App\Models\SiteConfig;
 use App\Services\Demand\CustomThirdPartyTagConnector;
 use Illuminate\Database\Eloquent\Collection;
 use ReflectionClass;
@@ -64,13 +66,31 @@ final class VideoFloatingRecipeTest extends TestCase
         }
     }
 
+    public function test_additional_midroll_interval_has_a_bounded_default_without_changing_the_initial_midpoint(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $this->assertSame(60, config('horus.video_mid_roll_interval_seconds'));
+        foreach ([0, 30, 60, 600, -1, 1, 29, 601, 'invalid', 60.5] as $value) {
+            config(['horus.video_mid_roll_interval_seconds' => $value]);
+            $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+            $this->assertSame(in_array($value, [0, 30, 60, 600], true) ? (string) $value : '60', $attributes['data-hm-video-mid-roll-interval-seconds']);
+            $this->assertSame('0.5', $attributes['data-hm-video-mid-roll-ratio']);
+            $this->assertSame('pre,mid,post', $attributes['data-hm-video-breaks']);
+        }
+        $rewarded = $this->recipe(PlacementType::Rewarded, [])['attributes'];
+        $this->assertArrayNotHasKey('data-hm-video-mid-roll-interval-seconds', $rewarded);
+        config(['horus.video_content_url' => null]);
+        $adOnly = $this->recipe(PlacementType::Video, [])['attributes'];
+        $this->assertArrayNotHasKey('data-hm-video-mid-roll-interval-seconds', $adOnly);
+    }
+
     public function test_inventory_classification_and_audio_preference_are_explicit_and_independent(): void
     {
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
         foreach (['accompanying', 'instream'] as $inventory) {
             foreach (['muted', 'prefer_audible'] as $audio) {
-                config(['horus.video_inventory_type' => $inventory, 'horus.video_autoplay_audio' => $audio]);
-                $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+                config(['horus.video_autoplay_audio' => $audio]);
+                $attributes = $this->recipe(PlacementType::Video, [], $inventory)['attributes'];
                 $this->assertSame($inventory, $attributes['data-hm-video-content-mode']);
                 $this->assertSame($audio === 'prefer_audible' ? '0' : '1', $attributes['data-hm-video-muted']);
                 $this->assertSame('1', $attributes['data-hm-video-autoplay']);
@@ -92,20 +112,23 @@ final class VideoFloatingRecipeTest extends TestCase
     {
         config(['horus.video_inventory_type' => 'instream', 'horus.video_autoplay_audio' => 'prefer_audible',
             'horus.video_content_url' => null]);
-        $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+        $attributes = $this->recipe(PlacementType::Video, [], 'instream')['attributes'];
         $this->assertArrayNotHasKey('data-hm-video-content-mode', $attributes);
         $this->assertSame('1', $attributes['data-hm-video-muted']);
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
-        $attributes = $this->recipe(PlacementType::Rewarded, [])['attributes'];
+        $attributes = $this->recipe(PlacementType::Rewarded, [], 'instream')['attributes'];
         $this->assertArrayNotHasKey('data-hm-video-content-mode', $attributes);
         $this->assertSame('0', $attributes['data-hm-video-autoplay']);
     }
 
-    private function recipe(PlacementType $type, array $settings): array
+    private function recipe(PlacementType $type, array $settings, ?string $inventoryType = null): array
     {
         // Fully populated model relations keep this contract test off the DB and
         // away from external ad endpoints. Test the same recipe code used by Quick Monetize.
+        $site = new Site;
+        $site->setRelation('siteConfig', new SiteConfig(['video_inventory_type' => $inventoryType]));
         $placement = new Placement(['type' => $type, 'format_settings' => $settings]);
+        $placement->setRelation('site', $site);
         $placement->setRelation('sizes', new Collection([new PlacementSize([
             'size_type' => 'FIXED', 'width' => 320, 'height' => 180,
             'device' => PlacementDevice::All, 'is_active' => true,

@@ -47,6 +47,7 @@
 </article>
 @endif
 
+@include('admin.sites.video-inventory')
 @include('admin.sites.serving-control-center')
 @if(auth()->user()->hasPermission('reporting.sources.manage'))
     @include('admin.sites.gam-reporting')
