@@ -103,30 +103,53 @@ function hmMainRecoveryMountIdentity(string|false $mountinfo): ?string
     }
     return null;
 }
+function hmMainRecoveryHostSnapshot(): array
+{
+    return ['self_namespace'=>@readlink('/proc/self/ns/pid'),'init_namespace'=>@readlink('/proc/1/ns/pid'),
+        'boot'=>@file_get_contents('/proc/sys/kernel/random/boot_id',false,null,0,128),
+        'init_name'=>@file_get_contents('/proc/1/comm',false,null,0,128),
+        'self_status'=>@file_get_contents('/proc/self/status',false,null,0,16385),
+        'init_status'=>@file_get_contents('/proc/1/status',false,null,0,16385),
+        'mount'=>hmMainRecoveryMountIdentity(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577)),
+        'container'=>is_file('/.dockerenv') || is_file('/run/.containerenv')];
+}
+function hmMainRecoveryHostAfterWait(array $before,array $after,int $selfPid): bool
+{
+    return $after['container']===false && $before['self_namespace']===$after['self_namespace']
+        && is_string($before['boot']) && is_string($after['boot']) && trim($before['boot'])===trim($after['boot'])
+        && is_string($before['mount']) && $before['mount']===$after['mount']
+        && hmMainRecoveryHostEvidence($after['self_namespace'],$after['init_namespace'],$after['init_name'],
+            $after['self_status'],$after['init_status'],$after['boot'],$selfPid,true)
+        && hmMainRecoveryUniquePid($after['self_status'],'Pid',$selfPid)
+        && hmMainRecoveryUniquePid($after['self_status'],'NSpid',$selfPid)
+        && hmMainRecoveryUniquePid($after['init_status'],'Pid',1);
+}
 function hmMainRecoveryHostIdentity(): string
 {
     hmMainRecoveryStage('HOST_NAMESPACE');
-    $selfNamespace=@readlink('/proc/self/ns/pid'); $initNamespace=@readlink('/proc/1/ns/pid');
-    $bootId=@file_get_contents('/proc/sys/kernel/random/boot_id',false,null,0,128);
-    $initName=@file_get_contents('/proc/1/comm',false,null,0,128);
-    $selfStatus=@file_get_contents('/proc/self/status',false,null,0,16385); $initStatus=@file_get_contents('/proc/1/status',false,null,0,16385);
-    if (is_file('/.dockerenv') || is_file('/run/.containerenv')) throw new RuntimeException();
+    $snapshot=hmMainRecoveryHostSnapshot();
+    if ($snapshot['container']) throw new RuntimeException();
+    hmMainRecoveryStage('PROC_VISIBILITY');
+    if ($snapshot['mount']===null) throw new RuntimeException();
+    hmMainRecoveryStage('HOST_NAMESPACE');
     $witness=false;
-    if ($initNamespace===false) {
+    if ($snapshot['init_namespace']===false) {
         hmMainRecoveryReason('PID1_LINK_UNAVAILABLE');
-        // Check every remaining host identity predicate before waiting for a witness.
-        if (!hmMainRecoveryHostEvidence($selfNamespace,false,$initName,$selfStatus,$initStatus,$bootId,getmypid(),true)) throw new RuntimeException();
+        if (!hmMainRecoveryHostEvidence($snapshot['self_namespace'],false,$snapshot['init_name'],$snapshot['self_status'],
+            $snapshot['init_status'],$snapshot['boot'],getmypid(),true)) throw new RuntimeException();
         $witness=hmMainRecoveryNaturalTarget()!==null;
         hmMainRecoveryStage('HOST_NAMESPACE');
         if (!$witness) { hmMainRecoveryReason('PID1_LINK_WITNESS_UNAVAILABLE'); throw new RuntimeException(); }
-        if (@readlink('/proc/self/ns/pid')!==$selfNamespace) throw new RuntimeException();
+        // A witness may take time to appear. Re-read every host predicate and
+        // reject a newly readable mismatch or any namespace/boot/mount change.
+        $after=hmMainRecoveryHostSnapshot();
+        if (!hmMainRecoveryHostAfterWait($snapshot,$after,getmypid())) throw new RuntimeException();
+        $snapshot=$after;
     }
-    if (!hmMainRecoveryHostEvidence($selfNamespace,$initNamespace,$initName,$selfStatus,$initStatus,$bootId,getmypid(),$witness)) throw new RuntimeException();
-    hmMainRecoveryStage('PROC_VISIBILITY');
-    $mountIdentity=hmMainRecoveryMountIdentity(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577));
-    if ($mountIdentity===null) throw new RuntimeException();
+    if (!hmMainRecoveryHostEvidence($snapshot['self_namespace'],$snapshot['init_namespace'],$snapshot['init_name'],
+        $snapshot['self_status'],$snapshot['init_status'],$snapshot['boot'],getmypid(),$witness)) throw new RuntimeException();
     hmMainRecoveryReason('NONE');
-    return hash('sha256',$selfNamespace.'|'.trim($bootId).'|'.$mountIdentity);
+    return hash('sha256',$snapshot['self_namespace'].'|'.trim($snapshot['boot']).'|'.$snapshot['mount']);
 }
 
 function hmMainRecoveryProcessStart(string|false $stat,int $pid): ?string

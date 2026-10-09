@@ -190,9 +190,18 @@ test('PID1-link unavailable alternative requires exact Pid/NSpid plus positive w
  echo 'PASS';`);
 });
 test('host fallback is conditional on unavailable link and still requires canonical evidence and stable proc mount',()=>{
- assert.match(script,/if \(\$initNamespace===false\)/);
+ assert.match(script,/if \(\$snapshot\['init_namespace'\]===false\)/);
  assert.match(script,/hmMainRecoveryNaturalTarget\(\)!==null/);
  assert.match(script,/if \(\$initNamespace!==false\) return \$initNamespace===\$selfNamespace/);
- assert.match(script,/\$mountIdentity/);
+ assert.match(script,/\$snapshot\['mount'\]/);
  assert.doesNotMatch(script,/permission.denied/i);
+});
+
+test('fallback rechecks all host evidence after a witness wait and rejects newly readable mismatch',{skip:!php},()=>{
+ fixture(String.raw`
+ $before=['self_namespace'=>'pid:[1]','init_namespace'=>false,'boot'=>'12345678-1234-1234-1234-123456789abc','init_name'=>'systemd','self_status'=>"Pid:\t123\nNSpid:\t123\n",'init_status'=>"Pid:\t1\nNSpid:\t1\n",'mount'=>hash('sha256','mount'),'container'=>false];
+ if(!hmMainRecoveryHostAfterWait($before,$before,123))exit(2);
+ if(!hmMainRecoveryHostAfterWait($before,array_replace($before,['init_namespace'=>'pid:[1]']),123))exit(3);
+ foreach([['init_namespace'=>'pid:[2]'],['self_namespace'=>'pid:[2]'],['boot'=>'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'],['mount'=>hash('sha256','other')],['self_status'=>"Pid:\t124\nNSpid:\t123\n"],['init_status'=>"Pid:\t2\nNSpid:\t1\n"],['container'=>true]] as $change){if(hmMainRecoveryHostAfterWait($before,array_replace($before,$change),123))exit(4);}
+ echo 'PASS';`);
 });
