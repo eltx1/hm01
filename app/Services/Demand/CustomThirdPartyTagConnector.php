@@ -266,9 +266,11 @@ final class CustomThirdPartyTagConnector extends AbstractDemandConnector
             if ($contentUrl !== null) {
                 $attributes['data-hm-video-content-url'] = $contentUrl;
                 $attributes['data-hm-video-content-mode'] = VideoAdFormat::inventoryType($placement->placement->site);
-                $attributes['data-hm-video-muted'] = VideoAdFormat::prefersAudibleAutoplay() ? '0' : '1';
+                $attributes['data-hm-video-muted'] = '0';
+                $attributes['data-hm-video-fixed-instream'] = '1';
                 $attributes['data-hm-video-breaks'] = 'pre,mid,post';
                 $attributes['data-hm-video-mid-roll-ratio'] = '0.5';
+                $attributes['data-hm-video-break-schedule'] = 'interval';
                 $attributes['data-hm-video-mid-roll-interval-seconds'] = (string) VideoAdFormat::midRollIntervalSeconds();
             }
         }

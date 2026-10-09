@@ -23,19 +23,13 @@ final class TypedSettingsRegistry
             new SettingDefinition(
                 'video_player.content_url', 'VIDEO PLAYER', 'Platform video content URL', 'url', 'horus.video_content_url',
                 ['nullable', 'url', 'max:1800', 'regex:/^https:\\/\\//i'], [],
-                'HTTPS content video used by Horus video placements before they transition from inline playback to floating playback. Publishers continue to supply only their VAST URL. Video ad type is configured separately for each website.',
+                'HTTPS content video used by Horus video placements before they transition from inline playback to floating playback. Publishers continue to supply only their VAST URL. All content-video placements use the platform Instream declaration.',
                 'PUBLIC', true, false
             ),
             new SettingDefinition(
-                'video_player.autoplay_audio', 'VIDEO PLAYER', 'Video autoplay audio preference', 'enum', 'horus.video_autoplay_audio',
-                ['required', 'string', Rule::in(['muted', 'prefer_audible'])], ['muted', 'prefer_audible'],
-                'Prefer audible tries actual sound-on content playback before requesting ads, falls back to muted when the browser blocks sound, and waits for Play if both fail. Sound-on accompanying content may have restricted Google demand; this preference never changes inventory classification.',
-                'PUBLIC', true, false
-            ),
-            new SettingDefinition(
-                'video_player.mid_roll_interval_seconds', 'VIDEO PLAYER', 'Additional mid-roll interval (seconds)', 'integer', 'horus.video_mid_roll_interval_seconds',
-                ['required', 'integer', 'min:0', 'max:600', Rule::notIn(range(1, 29))], [],
-                'Seconds of visible content playback between additional mid-roll opportunities after the existing midpoint break. Default: 60. Use 0 to disable additional mid-rolls, or 30–600 seconds. This does not change the initial midpoint or postroll, and does not guarantee an ad.',
+                'video_player.mid_roll_interval_seconds', 'VIDEO PLAYER', 'Video ad interval (seconds)', 'integer', 'horus.video_mid_roll_interval_seconds',
+                ['required', 'integer', 'min:0', 'max:600', Rule::notIn(range(1, 4))], [],
+                'Seconds of visible content playback between ad opportunities, including after no-fill. Default: 5. Use 5–600 seconds, or 0 for midpoint-only scheduling. An active ad is never interrupted or overlapped; hidden, paused, buffering or dismissed players do not request repeated ads.',
                 'PUBLIC', true, false
             ),
             new SettingDefinition(

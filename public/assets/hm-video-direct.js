@@ -361,7 +361,7 @@
         var video = document.createElement('video');
         var adLayer = document.createElement('div');
         var closeButton = rewarded ? document.createElement('button') : null;
-        var startsMuted = container.getAttribute('data-hm-video-muted') !== '0';
+        var startsMuted = container.getAttribute('data-hm-video-fixed-instream') !== '1' && container.getAttribute('data-hm-video-muted') !== '0';
         // Preserve the initial mute default through insertion/portal setup in
         // WebKit. Later user mute choices change only the live property.
         if (startsMuted) video.setAttribute('muted', '');
@@ -436,9 +436,12 @@
             adPresentationActive: false,
             adResponseSeen: false,
             adPlaybackStarted: false,
+            adActivationRequired: false,
             audioIntentChanged: false,
             prerollAttempts: 0,
             prerollRetryTimer: null,
+            nextContentAdTimer: null,
+            adBreakCompleted: false,
             repeatMidrollElapsed: 0,
             repeatContentSample: null,
             contentBuffering: false,
@@ -498,6 +501,8 @@
         player.contentPlayGeneration += 1;
         player.adRuntimeGeneration += 1;
         window.clearTimeout(player.startupTimer);
+        window.clearTimeout(player.nextContentAdTimer);
+        player.nextContentAdTimer = null;
         window.clearTimeout(player.prerollRetryTimer);
         player.prerollRetryTimer = null;
         player.repeatContentSample = null;
@@ -1201,6 +1206,10 @@
         return binding.current();
     }
 
+    function fixedAudibleInventory(player) {
+        return player.container.getAttribute('data-hm-video-fixed-instream') === '1';
+    }
+
     function adPlaybackIntent(player) {
         var audio = mediaAudioState(player);
         var muted = audio.muted || audio.volume === 0;
@@ -1290,7 +1299,7 @@
         listenContent(player, player.overlayPlay, 'click', function (event) {
             if (event && event.stopPropagation) event.stopPropagation();
             if (player.adMediaActive || player.adBreakPending && !player.nonLinearAdActive || player.destroyed) return;
-            if (!player.preRollRequested && player.startContentFromGesture) {
+            if ((!player.preRollRequested || player.adActivationRequired && player.video.paused) && player.startContentFromGesture) {
                 if (event && event.isTrusted) player.startContentFromGesture();
                 return;
             }
@@ -1463,23 +1472,43 @@
 
     function finishContentAdBreak(player, position) {
         if (!player || player.destroyed) return;
+        var completed = player.adBreakCompleted;
         cleanupContentAdRuntime(player);
         if (position === 'postroll' || player.contentEnded) {
             finishContentPlayer(player, 'completed');
             return;
         }
         resumeContent(player);
+        if (completed && intervalContentSchedule(player) && repeatedMidrollInterval(player) && !player.adRules) {
+            var generation = player.adRuntimeGeneration;
+            // Continue only after the whole IMA response/pod has finished, never
+            // on an individual COMPLETE or on an empty ALL_ADS_COMPLETED event.
+            player.nextContentAdTimer = window.setTimeout(function () {
+                player.nextContentAdTimer = null;
+                if (player.destroyed || player.closing || generation !== player.adRuntimeGeneration
+                    || player.contentEnded || player.contentFailed || player.contentPausedByUser || player.adBreakPending) return;
+                if (player.viewport && player.viewport.update) player.viewport.update();
+                if (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5 || player.motion) return;
+                requestContentAdBreak(player, player.contentIma, player.contentVastUrl, 'midroll');
+            }, 0);
+        }
     }
 
     function failContentAdBreak(player, error, stage, position) {
         if (!player || player.destroyed) return;
         recordVideoError(player, error, stage);
-        if (retryMutedAutoplayPreroll(player, error, position)) return;
+        if (!fixedAudibleInventory(player) && retryMutedAutoplayPreroll(player, error, position)) return;
         if (retryEmptyPreroll(player, error, position, stage)) return;
         cleanupContentAdRuntime(player);
         if (position === 'postroll' || player.contentEnded) {
             finishContentPlayer(player, 'completed');
             return;
+        }
+        // An actual SDK autoplay denial alone enables recovery through the
+        // existing Play control, preserving automatic sound-on startup.
+        if (fixedAudibleInventory(player) && !player.adRules
+            && error && typeof error.getErrorCode === 'function' && Number(error.getErrorCode()) === 1205) {
+            player.adActivationRequired = true;
         }
         // A missing/failed ad must never prevent Horus-owned content from playing.
         // Conversely, if the content source itself failed, the already-attempted
@@ -1550,11 +1579,15 @@
         return schedulePrerollRetry(player, empty ? 'no-fill' : 'transient', code);
     }
 
+    function intervalContentSchedule(player) {
+        return player.container.getAttribute('data-hm-video-break-schedule') === 'interval';
+    }
+
     function repeatedMidrollInterval(player) {
         var raw = player.container.getAttribute('data-hm-video-mid-roll-interval-seconds');
         if (raw === null || raw === '') return 60;
         var seconds = Number(raw);
-        return Number.isInteger(seconds) && (seconds === 0 || seconds >= 30 && seconds <= 600) ? seconds : 60;
+        return Number.isInteger(seconds) && (seconds === 0 || seconds >= (intervalContentSchedule(player) ? 5 : 30) && seconds <= 600) ? seconds : 60;
     }
 
     function contentProgressNow() {
@@ -1568,12 +1601,13 @@
         if (!interval || player.destroyed || player.closing || player.adRules || !player.contentStarted
             || player.contentFailed || player.contentEnded || player.adBreakPending || player.adsManager
             || player.adMediaActive || player.nonLinearAdActive || player.contentPausedByUser
+            || (fixedAudibleInventory(player) && adPlaybackIntent(player).muted)
             || player.contentBuffering || video.paused || video.seeking || !Number.isFinite(playbackRate) || playbackRate <= 0 || document.visibilityState === 'hidden'
-            || Number(player.visibleRatio || 0) < 0.5 || (!player.midRollRequested && !player.midRollConsumedByOverlay)
+            || Number(player.visibleRatio || 0) < 0.5 || (!intervalContentSchedule(player) && !player.midRollRequested && !player.midRollConsumedByOverlay)
             || !Number.isFinite(duration) || !Number.isFinite(current) || duration <= 0 || current < 0
             // Horus UX choice for additional breaks: retain a short content tail
             // rather than placing another midroll directly before the postroll.
-            || duration - current <= 15) {
+            || duration - current <= (intervalContentSchedule(player) ? 1 : 15)) {
             player.repeatContentSample = null;
             return;
         }
@@ -1600,6 +1634,16 @@
     function requestContentAdBreak(player, ima, vastUrl, position) {
         if (!player || player.destroyed || player.closing || player.adBreakPending) return;
         if (player.adRules && position !== 'preroll') return;
+        // Fixed sound-on declarations require sound-on playback. Respect viewer
+        // mute without rewriting the tag or forcing audio back on.
+        if (fixedAudibleInventory(player) && adPlaybackIntent(player).muted) {
+            if (position === 'postroll') finishContentPlayer(player, 'completed');
+            else resumeContent(player);
+            return;
+        }
+        window.clearTimeout(player.nextContentAdTimer);
+        player.nextContentAdTimer = null;
+        player.adBreakCompleted = false;
         player.adBreakPending = true;
         player.currentBreak = position;
         player.repeatContentSample = null;
@@ -1729,6 +1773,7 @@
                     });
                     player.adsManager.addEventListener(adTypes.STARTED, function (adEvent) {
                         if (currentRequest()) player.adPlaybackStarted = true;
+                        if (currentRequest()) player.adActivationRequired = false;
                         if (currentRequest() && player.audioSync) player.audioSync.restoring = false;
                         if (applyAdMode(adEvent) === false) return;
                         if (!currentRequest()) return;
@@ -1753,7 +1798,10 @@
                         if (player.nonLinearAdActive) nonLinearEnded();
                         else setAdPresentation(player, false);
                     }
-                    if (adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, adEnded);
+                    if (adTypes.COMPLETE) player.adsManager.addEventListener(adTypes.COMPLETE, function () {
+                        if (currentRequest()) player.adBreakCompleted = true;
+                        adEnded();
+                    });
                     if (adTypes.SKIPPED) player.adsManager.addEventListener(adTypes.SKIPPED, adEnded);
                     if (adTypes.CONTENT_PAUSE_REQUESTED) player.adsManager.addEventListener(adTypes.CONTENT_PAUSE_REQUESTED, function (adEvent) {
                         if (!currentRequest()) return;
@@ -1898,11 +1946,11 @@
         }
         // This branch is selected by the publisher's explicit sound preference,
         // never inferred from a VAST parameter or an inventory declaration.
-        attempt(player.video.muted, !fromGesture);
+        attempt(player.video.muted, !fromGesture && !fixedAudibleInventory(player));
     }
 
     function initializeContentGesture(player, ima) {
-        if (!player || player.destroyed || player.closing || player.preRollRequested) return false;
+        if (!player || player.destroyed || player.closing || (player.preRollRequested && !player.adActivationRequired)) return false;
         if (player.gestureDisplayContainer) return true;
         try {
             // IMA requires this exact initialization inside the trusted user
@@ -1947,6 +1995,10 @@
                 if (name === 'pointerdown' && event && event.pointerType !== 'mouse') return;
                 if (name === 'pointerup' && event && event.pointerType === 'mouse') return;
                 if (name === 'keydown' && event && (event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey)) return;
+                if (event && event.isTrusted && player.adActivationRequired && player.video.paused && !player.adBreakPending) {
+                    player.startContentFromGesture();
+                    return;
+                }
                 if (event && event.isTrusted && player.startupPlaybackState === 'gesture') player.contentGesturePending = initializeContentGesture(player, ima);
             });
         });
@@ -1989,6 +2041,7 @@
         });
         listenContent(player, player.video, 'timeupdate', function () {
             requestRepeatedContentBreak(player, ima, vastUrl);
+            if (intervalContentSchedule(player) && repeatedMidrollInterval(player)) return;
             if (player.destroyed || player.adRules || player.midRollRequested || player.midRollConsumedByOverlay || !player.contentStarted || player.contentEnded) return;
             var duration = Number(player.video.duration || 0);
             var current = Number(player.video.currentTime || 0);
@@ -2056,6 +2109,14 @@
         }
 
         player.startContentFromGesture = function () {
+            if (player.adActivationRequired) {
+                if (!initializeContentGesture(player, ima)) return;
+                player.adActivationRequired = false;
+                player.contentPausedByUser = false;
+                player.contentAutoPlay = false;
+                requestContentAdBreak(player, ima, vastUrl, player.contentStarted ? 'midroll' : 'preroll');
+                return;
+            }
             if (player.startupPlaybackState === 'checking') {
                 player.startupPlaybackGeneration += 1;
                 window.clearTimeout(player.startupPlaybackTimer);
@@ -2071,6 +2132,10 @@
                 player.startupPlaybackState = 'gesture';
                 setStatus(player.container, 'content-ready', 'user-activation-required');
                 updateContentAdUi(player);
+            } else if (fixedAudibleInventory(player)) {
+                // Fixed sound-on autoplay requests start immediately through IMA;
+                // do not put an extra content-play probe or click gate in front.
+                beginPreroll();
             } else if (!player.video.muted) {
                 startAdManagerWhenViewable(player, function () { checkContentAutoplay(player, beginPreroll, false); });
             } else beginPreroll();
@@ -2220,7 +2285,8 @@
         }
         var accompanyingAvailable = player.contentMode && !player.contentFailed;
         var intent = player.adRequestIntent || adPlaybackIntent(player);
-        tag.searchParams.set('vpmute', intent.muted ? '1' : '0');
+        tag.searchParams.set('vpmute', fixedAudibleInventory(player) ? '0' : (intent.muted ? '1' : '0'));
+        if (fixedAudibleInventory(player)) tag.searchParams.set('plcmt', '1');
         tag.searchParams.set('vpa', intent.autoPlay ? 'auto' : 'click');
         // GAM sz is inventory targeting, not the IMA rendering surface. Keep
         // explicit single/multi-size targeting stable while responsive inline
@@ -2235,7 +2301,7 @@
         // mixed tags omit vad_type during publication, using saved provenance.
         if (!mixedContentAds(player) && (!player.contentMode || !tag.searchParams.get('vad_type'))) tag.searchParams.set('vad_type', 'linear');
         if (!player.rewarded && accompanyingAvailable) {
-            tag.searchParams.set('plcmt', player.contentInventoryType === 'instream' ? '1' : '2');
+            tag.searchParams.set('plcmt', fixedAudibleInventory(player) || player.contentInventoryType === 'instream' ? '1' : '2');
             if (breakPosition) {
                 var adRulesRequest = adRulesTag(tag);
                 if (!adRulesRequest) tag.searchParams.set('vpos', breakPosition);
@@ -2249,7 +2315,7 @@
             // request still runs but must not claim Accompanying Content. Also
             // remove Horus' historical standalone plcmt=4 declaration.
             if (player.contentMode && player.contentFailed) {
-                tag.searchParams.delete('plcmt');
+                if (!fixedAudibleInventory(player)) tag.searchParams.delete('plcmt');
                 tag.searchParams.delete('vpos');
                 tag.searchParams.delete('vid_d');
             } else if (tag.searchParams.get('plcmt') === '4') {

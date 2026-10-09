@@ -282,7 +282,11 @@ final class DirectDemandQuickMonetizeTest extends TestCase
         );
         $this->assertSame($vastUrl, base64_decode((string) data_get($candidate, 'tag.container.attributes.data-hm-vast-url'), true));
         $this->assertSame('https://cdn.horusmedia.net/content/horus-media.mp4', data_get($candidate, 'tag.container.attributes.data-hm-video-content-url'));
-        $this->assertSame('accompanying', data_get($candidate, 'tag.container.attributes.data-hm-video-content-mode'));
+        $this->assertSame('instream', data_get($candidate, 'tag.container.attributes.data-hm-video-content-mode'));
+        $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-fixed-instream'));
+        $this->assertSame('0', data_get($candidate, 'tag.container.attributes.data-hm-video-muted'));
+        $this->assertSame('interval', data_get($candidate, 'tag.container.attributes.data-hm-video-break-schedule'));
+        $this->assertSame('5', data_get($candidate, 'tag.container.attributes.data-hm-video-mid-roll-interval-seconds'));
         $this->assertSame('pre,mid,post', data_get($candidate, 'tag.container.attributes.data-hm-video-breaks'));
         $this->assertSame('1', data_get($candidate, 'tag.container.attributes.data-hm-video-inline-to-floating'));
         $this->assertSame(['VIDEO', 'OUTSTREAM'], data_get($candidate, 'tag.render.allowedFormats'));

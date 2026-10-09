@@ -149,22 +149,27 @@ jobs:
           retention-days: 14
 
   mysql:
-    runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_DATABASE: horus_test
-          MYSQL_USER: horus
-          MYSQL_PASSWORD: horus_test_password
-          MYSQL_ROOT_PASSWORD: root_test_password
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uhorus -phorus_test_password"
-          --health-interval=10s --health-timeout=5s --health-retries=10
+    # The official Ubuntu 24.04 runner already includes MySQL 8.0. Use it
+    # directly so Docker Hub outages/rate limits cannot prevent DB coverage.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      - name: Start and verify runner MySQL 8.0
+        env:
+          # Public, ephemeral runner credentials; never production credentials.
+          MYSQL_PWD: root
+        run: |
+          set -euo pipefail
+          sudo systemctl start mysql.service
+          mysqladmin --protocol=TCP --host=127.0.0.1 --user=root ping --wait=30
+          version="$(mysql --protocol=TCP --host=127.0.0.1 --user=root --batch --skip-column-names -e 'SELECT VERSION()')"
+          [[ "$version" == 8.0.* ]]
+          echo "Testing with MySQL $version"
+          mysql --protocol=TCP --host=127.0.0.1 --user=root <<'SQL'
+          CREATE DATABASE IF NOT EXISTS horus_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+          CREATE USER IF NOT EXISTS 'horus'@'%' IDENTIFIED BY 'horus_test_password';
+          GRANT ALL PRIVILEGES ON horus_test.* TO 'horus'@'%';
+          SQL
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'

@@ -49,11 +49,11 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
-          HORUS_UI_FIXTURES=1 php artisan test --filter='FormExperienceTest|ReportPerformanceMetricsTest|AdExchangeUnmatchedRequestsTest|NullableReportingMetricsViewTest|VideoReportExperienceTest|GamRevenueComparisonTest|GamRevenueCorrectionTest|ImpersonationAuditTest|SiteVideoInventoryTest'
+          HORUS_UI_FIXTURES=1 php artisan test --filter='FormExperienceTest|ReportPerformanceMetricsTest|AdExchangeUnmatchedRequestsTest|NullableReportingMetricsViewTest|VideoReportExperienceTest|GamRevenueComparisonTest|GamRevenueCorrectionTest|ImpersonationAuditTest|SiteVideoInventoryTest|DashboardLayoutTest'
       - name: Build and inspect report and publisher-login previews
         run: |
           npm run build
-          npx playwright test --config=playwright.form-experience.config.js video-reporting-experience.playwright.spec.js publisher-impersonation.playwright.spec.js site-video-inventory.playwright.spec.js
+          npx playwright test --config=playwright.form-experience.config.js video-reporting-experience.playwright.spec.js publisher-impersonation.playwright.spec.js site-video-inventory.playwright.spec.js dashboard-layout.playwright.spec.js
       - name: Preserve Video report visual evidence
         if: always()
         uses: actions/upload-artifact@v7
