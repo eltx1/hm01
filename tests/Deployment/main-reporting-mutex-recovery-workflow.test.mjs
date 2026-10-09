@@ -152,8 +152,9 @@ test('run attempt changing after artifact download prevents any release pin',asy
 });
 
 test('same-account private cron collector is fresh fail-closed and remote shell parses',()=>{
- const match=workflow.match(/cat > "\$work\/remote-run.sh" <<'REMOTE'\n([\s\S]*?)\n          REMOTE/);assert.ok(match);
- const remote=match[1].replace(/^          /gm,'');
+ const blocks=[...workflow.matchAll(/cat (?:>|>>) "\$work\/remote-run.sh" <<'REMOTE'\n([\s\S]*?)\n          REMOTE/g)].map(match=>match[1].replace(/^          /gm,''));assert.equal(blocks.length,2);
+ const observer=readFileSync('ops/audit/observe-canonical-scheduler.php','utf8');
+ const remote=blocks[0]+'\n'+observer+'\nOBSERVER_PHP\n'+blocks[1];
  const php=readFileSync('ops/audit/recover-main-reporting-mutex.php','utf8');
  const check=spawnSync('bash',['-n'],{input:remote+'\n'+php+'\nRECOVERY_PHP\n',encoding:'utf8'});assert.equal(check.status,0,check.stderr);
  assert.match(remote,/crontab -l 2>\/dev\/null/);assert.match(remote,/while sleep 1; do collect_cron; done/);
@@ -171,7 +172,7 @@ test('same-account private cron collector is fresh fail-closed and remote shell 
   const evidence=JSON.parse(readFileSync(join(directory,'cron.json'),'utf8'));
   assert.equal(evidence.available,true);assert.equal(Buffer.from(evidence.cron_base64,'base64').toString(),cron);
   writeFileSync(crontab,'#!/bin/sh\nexit 1\n',{mode:0o700});result=run();assert.equal(result.status,0,result.stderr);
-  assert.deepEqual(JSON.parse(readFileSync(join(directory,'cron.json'),'utf8')),{schema_version:1,available:false});
+  const unavailable=JSON.parse(readFileSync(join(directory,'cron.json'),'utf8'));assert.equal(unavailable.schema_version,1);assert.equal(unavailable.available,false);assert.equal(unavailable.uid,evidence.uid);assert.ok(Number.isInteger(unavailable.observed_at));
  } finally {rmSync(directory,{recursive:true,force:true});}
 });
 

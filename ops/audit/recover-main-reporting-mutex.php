@@ -4,6 +4,7 @@ ini_set('display_errors', '0');
 ini_set('log_errors', '0');
 
 function hmMainRecoveryStage(string $stage): void { $GLOBALS['hm_main_recovery_stage']=$stage; }
+function hmMainRecoveryReason(string $reason): void { $GLOBALS['hm_main_recovery_reason']=$reason; }
 
 function hmMainRecoveryLeaseEligible(?array $row, int $now): bool
 {
@@ -96,11 +97,33 @@ function hmMainRecoveryHostIdentity(): string
     return hash('sha256',$selfNamespace.'|'.trim($bootId));
 }
 
-function hmMainRecoveryProcessAbsent(): bool
+function hmMainRecoveryProcessStart(string|false $stat,int $pid): ?string
+{
+    if (!is_string($stat) || !str_starts_with($stat,$pid.' (') || ($end=strrpos($stat,') '))===false) return null;
+    $fields=preg_split('/\s+/',trim(substr($stat,$end+2)));
+    return isset($fields[19]) && preg_match('/^[0-9]+$/D',$fields[19]) ? $fields[19] : null;
+}
+function hmMainRecoveryOldScheduler(string|false $status,string|false $cmd,string|false $stat,int $pid,int $uid,int $boot,int $hz,int $acquired): bool
+{
+    if (!is_string($status) || !preg_match('/^Uid:[ \t]+([0-9]+)[ \t]+([0-9]+)/m',$status,$m) || (int)$m[1]!==$uid || (int)$m[2]!==$uid) return false;
+    if (!is_string($cmd)) return false;
+    $args=explode(chr(0),$cmd); $index=array_search('schedule:run',$args,true);
+    if ($index===false || $index<2 || !preg_match('/^php(?:[0-9]+(?:\.[0-9]+)*)?$/D',basename($args[0]))
+        || !in_array('artisan',array_map('basename',array_slice($args,1,$index-1)),true)) return false;
+    $start=hmMainRecoveryProcessStart($stat,$pid);
+    if ($start===null || $hz<1 || $boot<1) throw new RuntimeException();
+    // Old-release parents are included: their cwd need not equal today's release.
+    return $boot+((float)$start/$hz)<=$acquired+5;
+}
+
+function hmMainRecoveryProcessAbsent(int $legacyAcquiredAt): bool
 {
     hmMainRecoveryHostIdentity();
     if (!hmMainRecoveryProcVisibility(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577))) throw new RuntimeException();
     hmMainRecoveryStage('PROC_SCAN');
+    $hzValue=(string)getenv('HM_RECOVERY_CLK_TCK');
+    $kernel=@file_get_contents('/proc/stat',false,null,0,131073);
+    if (!preg_match('/^[1-9][0-9]{0,5}$/D',$hzValue) || !is_string($kernel) || !preg_match('/^btime ([0-9]+)$/m',$kernel,$boot)) throw new RuntimeException();
     $paths=glob('/proc/[0-9]*/status');
     if (!is_array($paths) || !$paths || count($paths)>8192) throw new RuntimeException();
     foreach ($paths as $path) {
@@ -109,6 +132,8 @@ function hmMainRecoveryProcessAbsent(): bool
         $cmd=@file_get_contents($directory.'/cmdline',false,null,0,65537);
         clearstatcache(true,$directory);
         if (hmMainRecoveryProcess($status,$cmd,is_dir($directory))) return false;
+        if (is_dir($directory) && hmMainRecoveryOldScheduler($status,$cmd,@file_get_contents($directory.'/stat',false,null,0,16385),
+            (int)basename($directory),posix_geteuid(),(int)$boot[1],(int)$hzValue,$legacyAcquiredAt)) return false;
     }
     return true;
 }
@@ -133,28 +158,96 @@ function hmMainRecoveryCronTarget(string|false|null $cron): ?array
 
 function hmMainRecoveryCronEvidencePayload(array $evidence,int $now,int $uid): ?array
 {
-    if (($evidence['schema_version'] ?? null)!==1 || ($evidence['available'] ?? null)!==true
-        || ($evidence['uid'] ?? null)!==$uid || !is_int($evidence['observed_at'] ?? null)
-        || $evidence['observed_at']>$now || $now-$evidence['observed_at']>5
-        || !is_string($evidence['cron_base64'] ?? null) || strlen($evidence['cron_base64'])>87384) return null;
+    if (($evidence['schema_version'] ?? null)!==1) { hmMainRecoveryReason('CRON_SCHEMA_INVALID'); return null; }
+    if (($evidence['uid'] ?? null)!==$uid) { hmMainRecoveryReason('CRON_UID_MISMATCH'); return null; }
+    if (!is_int($evidence['observed_at'] ?? null)) { hmMainRecoveryReason('CRON_TIME_INVALID'); return null; }
+    if ($evidence['observed_at']>$now) { hmMainRecoveryReason('CRON_CAPTURE_FUTURE'); return null; }
+    if ($now-$evidence['observed_at']>5) { hmMainRecoveryReason('CRON_CAPTURE_STALE'); return null; }
+    if (($evidence['available'] ?? null)===false) { hmMainRecoveryReason('CRON_CAPTURE_UNAVAILABLE'); return null; }
+    if (($evidence['available'] ?? null)!==true) { hmMainRecoveryReason('CRON_SCHEMA_INVALID'); return null; }
+    if (!is_string($evidence['cron_base64'] ?? null) || strlen($evidence['cron_base64'])>87384) { hmMainRecoveryReason('CRON_ENCODING_INVALID'); return null; }
     $cron=base64_decode($evidence['cron_base64'],true);
-    return $cron===false ? null : hmMainRecoveryCronTarget($cron);
+    if ($cron===false) { hmMainRecoveryReason('CRON_ENCODING_INVALID'); return null; }
+    $target=hmMainRecoveryCronTarget($cron);
+    if ($target===null) hmMainRecoveryReason('CRON_TARGET_UNCLASSIFIED');
+    return $target;
 }
-function hmMainRecoveryFreshCron(): ?array
+function hmMainRecoveryNaturalPayload(array $evidence,int $now,int $uid,string $php,string $artisan,string $namespace,string $release,int $observerPid): ?array
+{
+    $witness=$evidence['witness'] ?? null;
+    if (($evidence['schema_version'] ?? null)!==1 || ($evidence['source'] ?? null)!=='CANONICAL_PROCESS_IDENTITY'
+        || ($evidence['available'] ?? null)!==true || ($evidence['collector_pid'] ?? null)!==$observerPid
+        || !is_string($evidence['collector_start'] ?? null) || !preg_match('/^[0-9]+$/D',$evidence['collector_start'])
+        || ($evidence['uid'] ?? null)!==$uid || ($evidence['namespace'] ?? null)!==$namespace
+        || ($evidence['release_sha'] ?? null)!==$release || !is_array($witness)
+        || !is_int($witness['pid'] ?? null) || $witness['pid']<1 || !is_string($witness['start'] ?? null)
+        || !preg_match('/^[0-9]+$/D',$witness['start']) || ($witness['uid'] ?? null)!==$uid
+        || ($witness['php'] ?? null)!==$php || ($witness['artisan'] ?? null)!==$artisan || ($witness['namespace'] ?? null)!==$namespace
+        || !is_int($witness['observed_at'] ?? null) || $witness['observed_at']>$now || $now-$witness['observed_at']>5) return null;
+    return [$php,$artisan];
+}
+function hmMainRecoveryNaturalTarget(): ?array
 {
     hmMainRecoveryStage('CRON_EVIDENCE');
+    $file=(string)getenv('HM_RECOVERY_PROCESS_EVIDENCE'); $pidValue=(string)getenv('HM_RECOVERY_OBSERVER_PID');
+    $deadlineValue=(string)getenv('HM_RECOVERY_OBSERVER_DEADLINE');
+    if (!preg_match('~^/[A-Za-z0-9/_.-]+$~D',$file) || !preg_match('/^[1-9][0-9]*$/D',$pidValue)
+        || !preg_match('/^[1-9][0-9]*$/D',$deadlineValue) || (int)$deadlineValue>time()+185) { hmMainRecoveryReason('PROCESS_EVIDENCE_INVALID'); return null; }
+    $uid=posix_geteuid(); $pid=(int)$pidValue; $deadline=(int)$deadlineValue;
+    $waitUntil=min(time()+90,$deadline); $namespace=@readlink('/proc/self/ns/pid');
+    do {
+        clearstatcache();
+        if (is_file($file)) {
+            if (is_link($file) || is_link(dirname($file)) || @fileowner($file)!==$uid || @fileowner(dirname($file))!==$uid
+                || (@fileperms($file)&0077)!==0 || (@fileperms(dirname($file))&0077)!==0) { hmMainRecoveryReason('PROCESS_EVIDENCE_INVALID'); return null; }
+            $bytes=@file_get_contents($file,false,null,0,16385);
+            try { $evidence=is_string($bytes) && strlen($bytes)<=16384 ? json_decode($bytes,true,512,JSON_THROW_ON_ERROR) : null; }
+            catch (Throwable) { $evidence=null; }
+            if (!is_array($evidence)) { hmMainRecoveryReason('PROCESS_EVIDENCE_INVALID'); return null; }
+            if (($evidence['available'] ?? null)===true && is_string($namespace)) {
+                $target=hmMainRecoveryNaturalPayload($evidence,time(),$uid,(string)realpath(PHP_BINARY),(string)realpath('artisan'),$namespace,(string)getenv('HM_EXPECTED_RELEASE_SHA'),$pid);
+                if ($target!==null) {
+                    $start=hmMainRecoveryProcessStart(@file_get_contents('/proc/'.$pid.'/stat',false,null,0,16385),$pid);
+                    $known=$GLOBALS['hm_main_recovery_observer_start'] ?? null;
+                    $live=$start!==null && hash_equals($evidence['collector_start'],$start) && @readlink('/proc/'.$pid.'/ns/pid')===$namespace;
+                    $finished=$start===null && time()>=$deadline && is_string($known) && hash_equals($known,$evidence['collector_start']);
+                    if (!$live && !$finished) { hmMainRecoveryReason('PROCESS_EVIDENCE_INVALID'); return null; }
+                    if ($known!==null && $known!==$evidence['collector_start']) { hmMainRecoveryReason('PROCESS_EVIDENCE_INVALID'); return null; }
+                    $GLOBALS['hm_main_recovery_observer_start']=$evidence['collector_start'];
+                    hmMainRecoveryReason('NONE'); return $target;
+                }
+            }
+        }
+        if (time()>=$waitUntil) break;
+        sleep(1);
+    } while(true);
+    hmMainRecoveryReason('PROCESS_WITNESS_UNAVAILABLE'); return null;
+}
+
+function hmMainRecoveryFreshCron(): ?array
+{
+    hmMainRecoveryStage('CRON_EVIDENCE'); hmMainRecoveryReason('NONE');
     // Fresh same-account SSH-shell evidence; no disabled PHP execution function
     // or privilege escalation is used. The private collector refreshes every second.
     $file=(string)getenv('HM_RECOVERY_CRON_EVIDENCE');
-    if (!preg_match('~^/[A-Za-z0-9/_.-]+$~D',$file)) return null;
+    if (!preg_match('~^/[A-Za-z0-9/_.-]+$~D',$file)) { hmMainRecoveryReason('CRON_PATH_INVALID'); return null; }
     clearstatcache(true,$file); clearstatcache(true,dirname($file));
-    if (!is_file($file) || is_link($file) || is_link(dirname($file)) || !is_dir(dirname($file))
-        || @fileowner($file)!==posix_geteuid() || @fileowner(dirname($file))!==posix_geteuid()
-        || (@fileperms($file)&0077)!==0 || (@fileperms(dirname($file))&0077)!==0) return null;
+    if (!is_file($file)) { hmMainRecoveryReason('CRON_FILE_MISSING'); return null; }
+    if (is_link($file) || is_link(dirname($file))) { hmMainRecoveryReason('CRON_FILE_LINK'); return null; }
+    if (!is_dir(dirname($file))) { hmMainRecoveryReason('CRON_DIRECTORY_INVALID'); return null; }
+    if (@fileowner($file)!==posix_geteuid() || @fileowner(dirname($file))!==posix_geteuid()) { hmMainRecoveryReason('CRON_FILE_OWNER'); return null; }
+    if ((@fileperms($file)&0077)!==0 || (@fileperms(dirname($file))&0077)!==0) { hmMainRecoveryReason('CRON_FILE_MODE'); return null; }
     $bytes=@file_get_contents($file,false,null,0,131073);
-    if (!is_string($bytes) || strlen($bytes)>131072) return null;
-    $evidence=json_decode($bytes,true,512,JSON_THROW_ON_ERROR);
-    return is_array($evidence) ? hmMainRecoveryCronEvidencePayload($evidence,time(),posix_geteuid()) : null;
+    if (!is_string($bytes)) { hmMainRecoveryReason('CRON_FILE_UNREADABLE'); return null; }
+    if (strlen($bytes)>131072) { hmMainRecoveryReason('CRON_FILE_OVERSIZE'); return null; }
+    try { $evidence=json_decode($bytes,true,512,JSON_THROW_ON_ERROR); }
+    catch (Throwable) { hmMainRecoveryReason('CRON_JSON_INVALID'); return null; }
+    if (!is_array($evidence)) { hmMainRecoveryReason('CRON_JSON_INVALID'); return null; }
+    $target=hmMainRecoveryCronEvidencePayload($evidence,time(),posix_geteuid());
+    // Only a genuinely unavailable capture may use positive observed identity.
+    // Invalid permissions, stale data or unclassified/conflicting targets stay fatal.
+    if ($target===null && ($GLOBALS['hm_main_recovery_reason'] ?? '')==='CRON_CAPTURE_UNAVAILABLE') return hmMainRecoveryNaturalTarget();
+    return $target;
 }
 
 function hmMainRecoveryEnvironment(string $link, string $root, string $expected, ?array $initialCron=null): array
@@ -208,7 +301,7 @@ if (defined('HORUS_MAIN_RECOVERY_TEST_ONLY') && HORUS_MAIN_RECOVERY_TEST_ONLY===
 $mode=(string)(getenv('HM_MAIN_RECOVERY_MODE') ?: 'preview');
 $output=['schema_version'=>1,'target'=>'MAIN_SYNC_SCHEDULER_MUTEX','mode'=>in_array($mode,['preview','apply'],true) ? $mode : 'preview','status'=>'UNAVAILABLE','changed_rows'=>0];
 $pdo=null;
-hmMainRecoveryStage('INPUTS');
+hmMainRecoveryStage('INPUTS'); hmMainRecoveryReason('NONE');
 try {
     if (!in_array($mode,['preview','apply'],true)) throw new RuntimeException();
     // Trusted workflow supplies exactly the separately verified deployed release.
@@ -277,13 +370,13 @@ try {
     } elseif (!hmMainRecoveryLeaseEligible($first['lease'],$first['now'])) {
         $output['status']='BLOCKED';
     } else {
-        $first['process']=hmMainRecoveryProcessAbsent() ? 'ABSENT' : 'PRESENT';
+        $first['process']=hmMainRecoveryProcessAbsent((int)$first['lease']['expiration']-86400) ? 'ABSENT' : 'PRESENT';
         $start=hrtime(true);
         sleep(65);
         hmMainRecoveryEnvironment($link,$root,$expected,$cron);
         if (!hash_equals($hostIdentity,hmMainRecoveryHostIdentity())) throw new RuntimeException();
         $second=hmMainRecoveryRead($pdo,$table,$heartbeatTable,$key);
-        $second['process']=hmMainRecoveryProcessAbsent() ? 'ABSENT' : 'PRESENT';
+        $second['process']=hmMainRecoveryProcessAbsent((int)$first['lease']['expiration']-86400) ? 'ABSENT' : 'PRESENT';
         $elapsed=(hrtime(true)-$start)/1e9;
         hmMainRecoveryStage('OBSERVATION_STABILITY');
         if (!hmMainRecoveryEligible($first,$second,$elapsed)) {
@@ -294,7 +387,7 @@ try {
             // Single scheduler host is confirmed for this repair. Recheck every
             // local identity/absence predicate immediately before exact CAS.
             hmMainRecoveryEnvironment($link,$root,$expected,$cron);
-            if (!hash_equals($hostIdentity,hmMainRecoveryHostIdentity()) || !hmMainRecoveryProcessAbsent()) throw new RuntimeException();
+            if (!hash_equals($hostIdentity,hmMainRecoveryHostIdentity()) || !hmMainRecoveryProcessAbsent((int)$first['lease']['expiration']-86400)) throw new RuntimeException();
             $final=hmMainRecoveryRead($pdo,$table,$heartbeatTable,$key);
             hmMainRecoveryStage('FINAL_RECHECK');
             if (!hmMainRecoverySameLease($second['lease'],$final['lease'])
@@ -310,10 +403,12 @@ try {
         }
     }
     $output['stage']=in_array($output['status'],['ELIGIBLE','NO_ACTION','RELEASED'],true) ? 'COMPLETE' : ($GLOBALS['hm_main_recovery_stage'] ?? 'INPUTS');
+    $output['reason']=$GLOBALS['hm_main_recovery_reason'] ?? 'NONE';
     echo json_encode($output,JSON_THROW_ON_ERROR).PHP_EOL;
 } catch (Throwable $exception) {
     try { if ($pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack(); } catch (Throwable) { /* No raw database error may escape. */ }
     $output['stage']=$GLOBALS['hm_main_recovery_stage'] ?? 'INPUTS';
+    $output['reason']=$GLOBALS['hm_main_recovery_reason'] ?? 'NONE';
     echo json_encode($output,JSON_THROW_ON_ERROR).PHP_EOL;
     exit(1);
 }
