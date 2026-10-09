@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\InteractsWithIdentity;
 use Tests\TestCase;
 
@@ -248,11 +249,6 @@ class GlobalSettingsGovernanceTest extends TestCase
             $this->assertSame($value, GlobalSetting::query()->findOrFail($key)->value);
             $this->assertSame($value, config('horus.video_mid_roll_interval_seconds'));
         }
-        foreach ([-1, 1, 29, 601, 60.5, 'invalid', null] as $value) {
-            $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
-                ->put(route('admin.settings.update', ['key' => $key]), ['value' => $value])
-                ->assertSessionHasErrors('value');
-        }
         $this->assertSame(600, GlobalSetting::query()->findOrFail($key)->value);
         $this->assertDatabaseHas('audit_logs', ['event' => 'settings.global.updated', 'actor_id' => $this->adOps->id]);
         $this->assertSame('muted', config('horus.video_autoplay_audio'));
@@ -260,6 +256,46 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->delete(route('admin.settings.reset', ['key' => $key]))->assertRedirect();
         $this->assertSame(60, app(GlobalSettingsService::class)->get($key));
+    }
+
+    #[DataProvider('invalidAdditionalMidrollIntervals')]
+    public function test_invalid_additional_midroll_interval_is_rejected_before_integer_coercion(mixed $value): void
+    {
+        $key = 'video_player.mid_roll_interval_seconds';
+        app(GlobalSettingsService::class)->set($this->adOps, $key, 600);
+
+        try {
+            app(TypedSettingsRegistry::class)->normalize($key, $value);
+            $this->fail('Invalid raw interval was accepted: '.json_encode($value));
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('value', $exception->errors());
+        }
+
+        // Each named case gets a fresh actor and one HTTP write. A validation
+        // matrix must not exhaust the real ten-per-minute sensitive limiter.
+        $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.settings.update', ['key' => $key]), ['value' => $value])
+            ->assertStatus(302)->assertSessionHasErrors('value');
+
+        $this->assertSame(600, GlobalSetting::query()->findOrFail($key)->value);
+        $this->assertSame(600, config('horus.video_mid_roll_interval_seconds'));
+        $this->assertSame(1, \App\Models\AuditLog::query()->where('event', 'settings.global.updated')->count());
+    }
+
+    public static function invalidAdditionalMidrollIntervals(): array
+    {
+        return [
+            'negative integer' => [-1],
+            'one is below enabled minimum' => [1],
+            'twenty-nine is below enabled minimum' => [29],
+            'above maximum' => [601],
+            'fractional number' => [60.5],
+            'fractional string' => ['60.5'],
+            'non-numeric string' => ['invalid'],
+            'empty string' => [''],
+            'null value' => [null],
+            'array value' => [[60]],
+        ];
     }
 
     public function test_high_impact_change_requires_reason_password_and_exact_confirmation(): void

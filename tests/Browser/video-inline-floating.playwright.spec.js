@@ -83,8 +83,34 @@ async function openPlayer(page, options = {}) {
         }
         window.viewportListenerCount = () => listenerSets.reduce((total, live) => total + [...live.values()].reduce((sum, listeners) => sum + listeners.size, 0), 0);
         if (!options.realContent) {
-            HTMLMediaElement.prototype.play = function () { window.contentPlayCalls++; return Promise.resolve(); };
-            HTMLMediaElement.prototype.pause = function () { window.contentPauseCalls++; };
+            // Synthetic play() must agree with paused and the media events;
+            // production intentionally ignores a fulfilled play on paused media.
+            // Keep every real-content test on native playback and native state.
+            const mediaStates = new WeakMap();
+            const stateFor = media => {
+                if (!mediaStates.has(media)) mediaStates.set(media, { paused: true, generation: 0 });
+                return mediaStates.get(media);
+            };
+            Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
+                configurable: true, get() { return stateFor(this).paused; },
+            });
+            HTMLMediaElement.prototype.play = function () {
+                window.contentPlayCalls++;
+                const state = stateFor(this), wasPaused = state.paused;
+                state.paused = false;
+                const generation = state.generation;
+                return Promise.resolve().then(() => {
+                    if (!wasPaused || state.paused || generation !== state.generation) return;
+                    this.dispatchEvent(new Event('play'));
+                    if (!state.paused && generation === state.generation) this.dispatchEvent(new Event('playing'));
+                });
+            };
+            HTMLMediaElement.prototype.pause = function () {
+                window.contentPauseCalls++;
+                const state = stateFor(this), wasPaused = state.paused;
+                state.paused = true; state.generation++;
+                if (!wasPaused) Promise.resolve().then(() => this.dispatchEvent(new Event('pause')));
+            };
         }
         if (options.rejectContentAutoplay) {
             const nativePlay = HTMLMediaElement.prototype.play;

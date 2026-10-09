@@ -51,8 +51,32 @@ export function initializeTestMedia(options) {
     });
     Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { configurable: true, get() { return this.__testTime || 0; }, set(value) { this.__testTime = value; } });
     Object.defineProperty(HTMLMediaElement.prototype, 'duration', { configurable: true, get() { return 120; } });
-    HTMLMediaElement.prototype.play = function () { window.videoMetrics.contentPlays++; return Promise.resolve(); };
-    HTMLMediaElement.prototype.pause = function () {};
+    // Fulfilled synthetic playback must expose the same paused state and media
+    // events as successful playback. Each element owns its independent state.
+    const mediaStates = new WeakMap();
+    const stateFor = media => {
+        if (!mediaStates.has(media)) mediaStates.set(media, { paused: true, generation: 0 });
+        return mediaStates.get(media);
+    };
+    Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
+        configurable: true, get() { return stateFor(this).paused; },
+    });
+    HTMLMediaElement.prototype.play = function () {
+        window.videoMetrics.contentPlays++;
+        const state = stateFor(this), wasPaused = state.paused;
+        state.paused = false;
+        const generation = state.generation;
+        return Promise.resolve().then(() => {
+            if (!wasPaused || state.paused || generation !== state.generation) return;
+            this.dispatchEvent(new Event('play'));
+            if (!state.paused && generation === state.generation) this.dispatchEvent(new Event('playing'));
+        });
+    };
+    HTMLMediaElement.prototype.pause = function () {
+        const state = stateFor(this), wasPaused = state.paused;
+        state.paused = true; state.generation++;
+        if (!wasPaused) Promise.resolve().then(() => this.dispatchEvent(new Event('pause')));
+    };
     if (options.blockedInitially) localStorage.setItem('hm:click-guard:v2:STARTUP_RECOVERY', JSON.stringify({ v: 2, clicks: [], blockedUntil: Date.now() + 3600000 }));
 }
 
