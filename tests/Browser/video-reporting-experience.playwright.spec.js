@@ -54,8 +54,17 @@ for (const name of ['publisher-reports', 'publisher-finance', 'admin-reports', '
             await expect(page.locator('.report-reconciliation')).toContainText('322.00');
         } else {
             await expect(video).toContainText('Video Horus margin');
-            await expect(video.locator('.report-kpi-primary')).toContainText(name === 'admin-website' ? '250.00' : '350.00');
+            await expect(video.locator('.report-kpi-primary')).toContainText(name === 'admin-website' ? '260.00' : '360.00');
+            const daily = video.locator(mobile ? '.video-mobile-rows' : '.video-performance-table').first();
+            const rows = daily.locator(mobile ? '.publisher-report-mobile-row' : 'tbody tr');
+            await expect(rows).toHaveCount(3);
+            const estimated = rows.filter({ hasText: mobile ? '21 Sep 2026' : '2026-09-21' });
+            await expect(estimated).toHaveCount(1);
+            await expect(estimated).toContainText('Estimated · Awaiting finalization');
+            await expect(mobile ? estimated.locator('.publisher-row-earnings > strong') : estimated.locator('td').nth(2))
+                .toHaveText(mobile ? '10.00 USD' : '10.00');
         }
+        await expect(video.locator('.report-finality-state')).toHaveText('Includes estimates · Awaiting finalization');
         for (const theme of ['dark', 'light']) {
             await expect(page.locator('html')).toHaveAttribute('data-hm-theme', theme);
             const dimensions = await video.evaluate(element => ({ x: element.getBoundingClientRect().x, right: element.getBoundingClientRect().right, width: document.documentElement.clientWidth }));

@@ -22,4 +22,5 @@
             </div>
         </details>
     </form>
+<p class="report-footnote muted">Today and Yesterday use {{ config('app.timezone') }}. Dates follow each source's reporting day; estimates remain visible while awaiting finalization.</p>
 </div>

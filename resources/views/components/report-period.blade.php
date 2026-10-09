@@ -33,4 +33,5 @@
             <a class="pill" href="{{ request()->url() }}?{{ http_build_query(['from' => $start, 'to' => $end] + $context + ($metrics === null ? [] : ['metrics' => $metrics])) }}" @if($fromValue === $start && $toValue === $end)aria-current="true"@endif>{{ $label }}</a>
         @endforeach
     </nav>
+<p class="report-footnote muted">Today and Yesterday use {{ config('app.timezone') }}. Dates follow each source's reporting day; estimates remain visible while awaiting finalization.</p>
 </div>

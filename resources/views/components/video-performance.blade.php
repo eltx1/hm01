@@ -1,4 +1,4 @@
-@props(['video', 'publisher' => false, 'from' => null, 'to' => null])
+@props(['video', 'publisher' => false, 'from' => null, 'to' => null, 'coverage' => []])
 @if($video['available'] || ($video['configured'] ?? false) || ($video['has_configuration'] ?? false))
 @php
     $start = $from ? \Carbon\CarbonImmutable::parse($from)->toDateString() : ($video['days']->first()['date'] ?? now()->toDateString());
@@ -9,11 +9,12 @@
     <header class="video-report-heading">
         <div><p class="eyebrow">VIDEO REPORTING</p><h2 id="video-performance-heading">Video performance</h2><p class="muted">{{ \Carbon\CarbonImmutable::parse($start)->format('j M Y') }} – {{ \Carbon\CarbonImmutable::parse($end)->format('j M Y') }}</p></div>
         <div class="video-report-actions">
-            <span class="report-state">{{ $video['has_estimates'] ? 'Includes estimates' : ($video['available'] ? 'Finalized reports' : ($publisher ? 'Awaiting data' : 'No imported data')) }}</span>
+            <span class="report-state report-finality-state">{{ $video['has_estimates'] ? 'Includes estimates · Awaiting finalization' : ($video['available'] ? 'Finalized reports' : ($publisher ? 'Awaiting data' : 'No imported data')) }}</span>
             @if($video['available'])<a class="hm-button-secondary" href="{{ request()->fullUrlWithQuery(['export' => 'video_csv']) }}">Export Video CSV</a>@endif
         </div>
     </header>
-    @unless($publisher)<p class="video-report-intro">Independent Video results for this period. Video earnings are included once in financial balances and statements.</p>@endunless
+    @unless($publisher)<p class="video-report-intro">Independent Video results for this period. Finalized Video earnings are included once in financial balances and statements. Estimated results are awaiting finalization.</p>@endunless
+    <x-report-coverage :coverage="$coverage" channel="Video" />
     @if(($video['configuration_state'] ?? '') === 'disabled')
     <aside class="video-source-notice"><p>{{ $publisher ? 'Video reporting is disabled.' : 'Video reporting is disabled. Historical results remain available for their original dates.' }}</p></aside>
     @elseif(($video['source_health'] ?? '') === 'failed')
@@ -61,7 +62,7 @@
         @else
             <p>{{ $publisher ? 'No Video results for these dates.' : 'No imported Video results match the selected period.' }}</p>
         @endif
-        @unless($publisher)<p class="muted">Missing data does not mean zero earnings. This admin report includes finalized data only; today's estimates may not appear yet.</p>@endunless</div>
+        @unless($publisher)<p class="muted">Missing data does not mean zero earnings.@if($video['includes_estimates'] ?? false) This report includes imported estimates awaiting finalization.@else This view includes finalized data only.@endif</p>@endunless</div>
     @endif
     @if($video['starts_on'] ?? null)<p class="report-footnote muted">{{ $video['starts_on'] > now()->toDateString() ? 'Reporting starts' : 'Reporting began' }} {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
     <details class="report-data-details video-report-basis">

@@ -2,26 +2,26 @@
 
 namespace App\Services\Reporting;
 
-use App\Enums\ReportFinality;
 use App\Models\DailyReport;
 use App\Models\Site;
 use Illuminate\Support\Collection;
 
 final class AdminWebsitePerformanceService
 {
-    public function summaries(Collection $sites, string $from, string $to): Collection
+    public function summaries(Collection $sites, string $from, string $to, bool $includeEstimates = false): Collection
     {
-        return $this->rows($sites->pluck('id')->all(), $from, $to)
+        return $this->rows($sites->pluck('id')->all(), $from, $to, $includeEstimates)
             ->groupBy('site_id')
             ->map(fn ($rows) => $this->totals($rows));
     }
 
-    public function summary(Site $site, string $from, string $to): array
+    public function summary(Site $site, string $from, string $to, bool $includeEstimates = false): array
     {
-        $rows = $this->rows([$site->id], $from, $to);
+        $rows = $this->rows([$site->id], $from, $to, $includeEstimates);
 
         return [
-            'video' => $this->video($site, $from, $to),
+            'video' => [...$this->video($site, $from, $to, $includeEstimates), 'includes_estimates' => $includeEstimates],
+            'includes_estimates' => $includeEstimates,
             'from' => $from, 'to' => $to, 'currency' => $this->currency(),
             'available' => $rows->isNotEmpty(), 'updated_at' => $rows->max('updated_at'),
             ...$this->totals($rows),
@@ -30,12 +30,12 @@ final class AdminWebsitePerformanceService
         ];
     }
 
-    private function video(Site $site, string $from, string $to): array
+    private function video(Site $site, string $from, string $to, bool $includeEstimates): array
     {
-        $rows = VideoPerformanceService::constrain(DailyReport::query(), true)
+        $rows = VideoPerformanceService::constrain(ReportDisplayQuery::constrain(DailyReport::query(), $includeEstimates), true)
             ->where('organization_id', $site->organization_id)
             ->whereHas('dimension', fn ($query) => $query->where('site_id', $site->id)->where('organization_id', $site->organization_id))
-            ->where('currency', $this->currency())->where('finality', ReportFinality::Finalized->value)
+            ->where('currency', $this->currency())
             ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
             ->with(['dimension.site', 'connection.source'])->get();
 
@@ -47,13 +47,12 @@ final class AdminWebsitePerformanceService
         return strtoupper((string) config('reporting.canonical_currency', 'USD'));
     }
 
-    private function rows(array $siteIds, string $from, string $to): Collection
+    private function rows(array $siteIds, string $from, string $to, bool $includeEstimates): Collection
     {
         // Keep source/day/unit identity until the independent unit totals have
         // been deduplicated. Financial amounts still aggregate each fact once.
-        $query = DailyReport::query()
+        $query = ReportDisplayQuery::constrain(DailyReport::query(), $includeEstimates)
             ->join('report_dimensions', 'report_dimensions.id', '=', 'daily_reports.report_dimension_id')
-            ->where('daily_reports.finality', ReportFinality::Finalized->value)
             ->where('daily_reports.currency', $this->currency())
             ->whereDate('daily_reports.report_date', '>=', $from)
             ->whereDate('daily_reports.report_date', '<=', $to)
@@ -64,6 +63,7 @@ final class AdminWebsitePerformanceService
                 'report_dimensions.organization_id as metric_unit_organization_id',
                 'report_dimensions.gam_connection_id as metric_unit_gam_connection_id')
             ->selectRaw('MAX(daily_reports.updated_at) as updated_at')
+            ->selectRaw("MAX(CASE WHEN daily_reports.finality = 'ESTIMATED' THEN 1 ELSE 0 END) as has_estimates")
             ->groupBy('report_dimensions.site_id', 'daily_reports.organization_id',
                 'daily_reports.report_source_connection_id', 'daily_reports.report_date',
                 'report_dimensions.gam_connection_id', 'report_dimensions.organization_id');
@@ -91,6 +91,7 @@ final class AdminWebsitePerformanceService
     {
         return [
             ...app(PerformanceMetrics::class)->summarize($rows, 'gross_revenue_minor'),
+            'has_estimates' => $rows->contains(fn ($row) => (bool) $row->has_estimates),
             'gross_revenue_minor' => (int) $rows->sum('gross_revenue_minor'),
             'publisher_earnings_minor' => (int) $rows->sum('publisher_earnings_minor'),
             'horus_earnings_minor' => (int) $rows->sum('horus_earnings_minor'),

@@ -49,6 +49,7 @@
 .report-page-heading h2 { font-size: clamp(1.35rem, 2vw, 1.85rem); letter-spacing: -.035em; margin: .3rem 0; }
 .report-page-heading p, .report-card-heading p, .report-finance-strip p { margin: .3rem 0 0; }
 .report-state { color: var(--hm-muted); white-space: nowrap; font-size: .74rem; }
+.report-finality-state { white-space: normal; overflow-wrap: anywhere; }
 .report-state > span { color: var(--hm-success); margin-right: .35rem; }
 .report-period { padding: 1rem 1.1rem; border: 1px solid var(--hm-line); border-radius: .85rem; background: var(--hm-glass); }
 .report-period .report-filter { display: flex; align-items: flex-end; gap: .75rem; }

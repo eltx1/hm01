@@ -89,7 +89,7 @@ class VideoReportExperienceTest extends TestCase
 
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
         $response = $this->get(route('admin.reporting.index', $period))->assertOk()
-            ->assertSee('Combined financial totals')->assertSee('Video revenue over time')->assertSee('Video Horus margin');
+            ->assertSee('Combined reported totals')->assertSee('Video revenue over time')->assertSee('Video Horus margin');
         $this->fixture('admin-reports', $response->getContent());
         $response = $this->get(route('admin.reporting.websites.show', [$site, ...$period]))->assertOk()
             ->assertSee('Video daily breakdown')->assertDontSee('second.example.test');
@@ -98,7 +98,8 @@ class VideoReportExperienceTest extends TestCase
         $this->fixture('admin-before', $this->before($video, false));
         $csv = $this->get(route('admin.reporting.websites.show', [$site, ...$period, 'export' => 'video_csv']))->assertOk()->streamedContent();
         $this->assertStringContainsString('Video Horus margin', $csv);
-        $this->assertStringNotContainsString('2026-09-21', $csv);
+        $this->assertStringContainsString('2026-09-21', $csv);
+        $this->assertStringContainsString('Yes', $csv);
         $filtered = $this->get(route('publisher.reporting.index', ['from' => '2026-09-20', 'to' => '2026-09-20']));
         // No publisher belongs to the staff organization; the scoped lookup must not expose another tenant.
         $filtered->assertNotFound();

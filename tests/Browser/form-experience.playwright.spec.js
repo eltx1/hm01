@@ -160,17 +160,38 @@ test('admin can find a website and read all selected daily metrics in both theme
     await open(page, 'reports-admin-website', target.pathname);
     await expect(page.getByRole('heading', { name: 'Example publishing', exact: true })).toBeVisible();
     const totals = page.getByRole('region', { name: 'Website revenue totals' });
-    await expect(totals).toContainText('100.00');
-    await expect(totals).toContainText('70.00');
-    await expect(totals).toContainText('30.00');
+    await expect(totals).toContainText('600.00');
+    await expect(totals).toContainText('420.00');
+    await expect(totals).toContainText('180.00');
+    await expect(page.locator('.report-page-heading .report-state')).toContainText('Includes estimates');
     const daily = page.getByRole('region', { name: 'Website daily performance', exact: true });
     for (const theme of ['dark', 'light']) {
         if (page.viewportSize().width <= 600) {
-            await expect(daily.locator('dt')).toHaveText(['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', 'Unfilled impressions']);
-            await expect(daily.locator('dd')).toHaveText(['1,000', '20', '2.00%', '100.00 USD', '60.00%', '25']);
+            const rows = daily.locator('.publisher-report-mobile-row');
+            await expect(rows).toHaveCount(2);
+            const estimated = rows.nth(0);
+            const finalized = rows.nth(1);
+            await expect(estimated.locator('.publisher-report-mobile-row-heading > span > strong').first()).toHaveText('21 Sep 2026');
+            await expect(estimated.locator('.publisher-report-mobile-row-heading')).toContainText('Includes estimates · Awaiting finalization');
+            await expect(finalized.locator('.publisher-report-mobile-row-heading > span > strong').first()).toHaveText('20 Sep 2026');
+            await expect(finalized.locator('.publisher-report-mobile-row-heading')).toContainText('Finalized');
+            for (const row of [estimated, finalized]) {
+                await expect(row.locator('dt')).toHaveText(['Impressions', 'Clicks', 'CTR', 'CPM (eCPM)', 'Active View', 'Unfilled impressions']);
+            }
+            await expect(estimated.locator('dd')).toHaveText(['50', '0', '0.00%', '10,000.00 USD', 'Unavailable', 'Unavailable']);
+            await expect(finalized.locator('dd')).toHaveText(['1,000', '20', '2.00%', '100.00 USD', '60.00%', '25']);
+            await expect(estimated.locator('.publisher-row-earnings')).toContainText('500.00 USD');
+            await expect(finalized.locator('.publisher-row-earnings')).toContainText('100.00 USD');
             for (const value of await daily.locator('dt, dd').all()) await expect(value).toBeVisible();
         } else {
-            await expect(daily.locator('tbody tr td')).toHaveText(['1,000', '20', '2.00%', '100.00', '60.00%', '25', '100.00']);
+            const rows = daily.locator('tbody tr');
+            await expect(rows).toHaveCount(2);
+            await expect(rows.nth(0).locator('th')).toContainText('2026-09-21');
+            await expect(rows.nth(0).locator('th')).toContainText('Includes estimates · Awaiting finalization');
+            await expect(rows.nth(1).locator('th')).toContainText('2026-09-20');
+            await expect(rows.nth(1).locator('th')).toContainText('Finalized');
+            await expect(rows.nth(0).locator('td')).toHaveText(['50', '0', '0.00%', '10,000.00', 'Unavailable', 'Unavailable', '500.00']);
+            await expect(rows.nth(1).locator('td')).toHaveText(['1,000', '20', '2.00%', '100.00', '60.00%', '25', '100.00']);
         }
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
         await page.screenshot({ path: info.outputPath(`reports-admin-website-${theme}.png`), fullPage: true });
@@ -188,7 +209,7 @@ test('admin can find a website and read all selected daily metrics in both theme
     expect(csv.searchParams.get('from')).toBe('2026-09-01');
     await page.unrouteAll({ behavior: 'wait' });
     await open(page, 'reports-admin-website-empty');
-    await expect(page.getByText('No finalized reports for these dates', { exact: true })).toBeVisible();
+    await expect(page.getByText('No reports for these dates', { exact: true })).toBeVisible();
 });
 
 test('publisher report explains mixed and missing data without showing gross revenue', async ({ page }, info) => {

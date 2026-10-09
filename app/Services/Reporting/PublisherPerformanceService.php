@@ -13,14 +13,13 @@ final class PublisherPerformanceService
     public function summary(Publisher $publisher, string $from, string $to): array
     {
         $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
-        $rows = DailyReport::withoutGlobalScopes()
+        $rows = ReportDisplayQuery::constrain(DailyReport::withoutGlobalScopes(), true)
             ->where('organization_id', $publisher->organization_id)
             ->whereHas('dimension', fn ($query) => $query->where('publisher_id', $publisher->id)
                 ->where('organization_id', $publisher->organization_id))
             ->where('currency', $currency)
             ->whereDate('report_date', '>=', $from)
             ->whereDate('report_date', '<=', $to)
-            ->whereIn('finality', [ReportFinality::Estimated->value, ReportFinality::Finalized->value])
             ->with(['dimension.site', 'connection.source'])
             ->get();
 
@@ -29,6 +28,7 @@ final class PublisherPerformanceService
 
         return [
             'video' => $video,
+            'coverage' => app(ReportCoverageService::class)->forPeriod($from, $to, $currency, $publisher),
             'from' => $from, 'to' => $to, 'currency' => $currency,
             'available' => $rows->isNotEmpty(),
             'updated_at' => $rows->max('updated_at'),
