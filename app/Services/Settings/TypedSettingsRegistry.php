@@ -21,9 +21,21 @@ final class TypedSettingsRegistry
                 'Public product/company name shown by Horus Media.', 'PUBLIC'
             ),
             new SettingDefinition(
-                'video_player.content_url', 'VIDEO PLAYER', 'Platform accompanying video URL', 'url', 'horus.video_content_url',
+                'video_player.content_url', 'VIDEO PLAYER', 'Platform video content URL', 'url', 'horus.video_content_url',
                 ['nullable', 'url', 'max:1800', 'regex:/^https:\\/\\//i'], [],
                 'HTTPS content video used by Horus video placements before they transition from inline playback to floating playback. Publishers continue to supply only their VAST URL.',
+                'PUBLIC', true, false
+            ),
+            new SettingDefinition(
+                'video_player.inventory_type', 'VIDEO PLAYER', 'Fixed video inventory classification', 'enum', 'horus.video_inventory_type',
+                ['required', 'string', Rule::in(['accompanying', 'instream'])], ['accompanying', 'instream'],
+                'Select instream only when the video is the focus of the visit or explicitly requested by the viewer. This fixed declaration applies to platform video placements and does not change with browser audio capability.',
+                'PUBLIC', true, false
+            ),
+            new SettingDefinition(
+                'video_player.autoplay_audio', 'VIDEO PLAYER', 'Video autoplay audio preference', 'enum', 'horus.video_autoplay_audio',
+                ['required', 'string', Rule::in(['muted', 'prefer_audible'])], ['muted', 'prefer_audible'],
+                'Prefer audible tries actual sound-on content playback before requesting ads, falls back to muted when the browser blocks sound, and waits for Play if both fail. Sound-on accompanying content may have restricted Google demand; this preference never changes inventory classification.',
                 'PUBLIC', true, false
             ),
             new SettingDefinition(

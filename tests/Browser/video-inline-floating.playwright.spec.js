@@ -4,6 +4,8 @@ import { applyPlacementPresetTransform } from '../../scripts/transform-loader-pl
 
 // Generated 12-second, silent H.264 baseline fixture; no third-party media or ads.
 const contentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback.mp4.base64', import.meta.url), 'utf8'), 'base64');
+// Local VP9/Opus fixture with a quiet generated tone for actual sound-capability tests.
+const audioContentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback-audio.webm.base64', import.meta.url), 'utf8'), 'base64');
 const runtime = await readFile(process.env.HORUS_VIDEO_RUNTIME_PATH || new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
 const emblemBytes = await readFile(new URL('../../public/assets/brand/horusmedia-emblem-header.png', import.meta.url));
 const loader = applyPlacementPresetTransform(await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8'));
@@ -18,15 +20,16 @@ async function openPlayer(page, options = {}) {
         if (path === '/player.js') { resourceRequests.runtime++; return route.fulfill({ contentType: 'application/javascript', body: runtime }); }
         if (path === '/ad.js') return route.fulfill({ contentType: 'application/javascript', body: '' });
         if (path === '/broken-ad.mp4') return route.fulfill({ status: 404, body: '' });
-        if (path === '/content.mp4') {
+        if (path === '/content.mp4' || path === '/content.webm') {
             resourceRequests.content++;
             if (!options.content) return route.fulfill({ status: 404, body: '' });
+            const bytes = options.audibleContent ? audioContentBytes : contentBytes;
             const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
             const start = range ? Number(range[1]) : 0;
-            const end = Math.min(contentBytes.length - 1, range && range[2] ? Number(range[2]) : contentBytes.length - 1);
-            return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4',
-                headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${contentBytes.length}` } : {}) },
-                body: contentBytes.subarray(start, end + 1) });
+            const end = Math.min(bytes.length - 1, range && range[2] ? Number(range[2]) : bytes.length - 1);
+            return route.fulfill({ status: range ? 206 : 200, contentType: options.audibleContent ? 'video/webm' : 'video/mp4',
+                headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${bytes.length}` } : {}) },
+                body: bytes.subarray(start, end + 1) });
         }
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
             *{box-sizing:border-box} html,body{margin:0;overflow-anchor:none;background:#f4f5f7;color:#172237;font:16px/1.7 system-ui,sans-serif}
@@ -86,6 +89,13 @@ async function openPlayer(page, options = {}) {
             const nativePlay = HTMLMediaElement.prototype.play;
             HTMLMediaElement.prototype.play = function (...args) {
                 if (!window.allowContentPlay) return Promise.reject(new DOMException('User activation required', 'NotAllowedError'));
+                return nativePlay.apply(this, args);
+            };
+        }
+        if (options.rejectUnmutedAutoplay) {
+            const nativePlay = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function (...args) {
+                if (!this.muted) return Promise.reject(new DOMException('Sound requires user activation', 'NotAllowedError'));
                 return nativePlay.apply(this, args);
             };
         }
@@ -158,7 +168,10 @@ async function openPlayer(page, options = {}) {
         };
         // Deliberately omit the child floating attribute: cached pre-fix recipes
         // must still work through the loader's authoritative placement metadata.
-        if (options.content) attributes['data-hm-video-content-url'] = 'https://reader.example/content.mp4';
+        if (options.content) attributes['data-hm-video-content-url'] = 'https://reader.example/content.' + (options.audibleContent ? 'webm' : 'mp4');
+        if (options.contentMode) attributes['data-hm-video-content-mode'] = options.contentMode;
+        if (options.startMuted === false) attributes['data-hm-video-muted'] = '0';
+        if (options.startAutoplay === false) attributes['data-hm-video-autoplay'] = '0';
         if (options.adFormat) attributes['data-hm-video-ad-format'] = options.adFormat;
         const videoSettings = { autoMount: false, position: options.alwaysFloating ? 'bottom_right' : options.inlineOnly ? 'inline' : 'inline_to_bottom_right', floatingPosition: options.inlineOnly ? null : 'bottom_right', closeable: true, closeOutside: true };
         const placements = [{ code: 'video', type: 'VIDEO', format: { settings: videoSettings } }];
@@ -179,6 +192,7 @@ async function openPlayer(page, options = {}) {
         };
         window.fetch = async () => ({ ok: true, json: async () => config });
     }, options);
+    if (options.primeUserActivation) await page.getByRole('heading', { name: 'A quieter way to see the city' }).click();
     await page.addScriptTag({ content: loader });
     // boot returns a promise that may wait for IMA. Start, but do not block the
     // delayed-SDK test's scroll on that render promise.
@@ -1550,4 +1564,77 @@ test('a pending ad returned inline during entry waits for the visible portal ret
     await expectInline(page);
     await expect.poll(() => page.evaluate(() => window.adStarts)).toBe(1);
     expect(await page.evaluate(() => window.adStartMotion)).toEqual([null]);
+});
+
+for (const rejectUnmutedAutoplay of [false, true]) {
+    test(`explicit instream audible preference uses actual playback outcome: muted fallback ${rejectUnmutedAutoplay}`, async ({ page }) => {
+        await openPlayer(page, { content: true, audibleContent: true, contentMode: 'instream', startMuted: false, rejectUnmutedAutoplay,
+            vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_type=video' });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        expect(await page.evaluate(() => {
+            const tag = new URL(window.lastAdTagUrl);
+            return { plcmt: tag.searchParams.get('plcmt'), vpmute: tag.searchParams.get('vpmute'), vpa: tag.searchParams.get('vpa'),
+                imaMuted: window.lastAdPlaybackIntent.muted, volume: window.videoManager.volume, muted: document.querySelector('video').muted };
+        })).toEqual({ plcmt: '1', vpmute: rejectUnmutedAutoplay ? '1' : '0', vpa: 'auto',
+            imaMuted: rejectUnmutedAutoplay, volume: rejectUnmutedAutoplay ? 0 : 1, muted: rejectUnmutedAutoplay });
+    });
+}
+
+test('audible and muted autoplay denial leaves Play available without a VAST request', async ({ page }, testInfo) => {
+    await openPlayer(page, { content: true, audibleContent: true, contentMode: 'instream', startMuted: false, rejectContentAutoplay: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_type=video' });
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-detail', 'user-activation-required');
+    expect(await page.evaluate(() => window.adRequests)).toBe(0);
+    await testInfo.attach('fallback-controls-geometry', {
+        contentType: 'application/json',
+        body: JSON.stringify(await page.evaluate(() => Object.fromEntries([
+            ['surface', '[data-placement="video"]'], ['rail', '[data-hm-video-chrome]'],
+            ['label', '[data-hm-video-label]'], ['controls', '[data-hm-video-content-controls]'],
+            ['mute', '[data-hm-video-content-control="mute"]'], ['close', '[data-hm-placement-close]'],
+        ].map(([name, selector]) => {
+            const node = document.querySelector(selector), box = node.getBoundingClientRect(), style = getComputedStyle(node);
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return [name, { box: box.toJSON(), display: style.display, position: style.position,
+                padding: style.padding, margin: style.margin, boxSizing: style.boxSizing,
+                hit: hit?.getAttribute('data-hm-video-content-control') || hit?.getAttribute('data-hm-placement-close') || hit?.tagName }];
+        })))),
+    });
+    await page.evaluate(() => { window.allowContentPlay = true; });
+    await page.locator('[data-hm-video-content-control="mute"]').click();
+    await page.locator('[data-hm-video-content-control="play"]').click();
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    expect(await page.evaluate(() => {
+        const tag = new URL(window.lastAdTagUrl);
+        return { plcmt: tag.searchParams.get('plcmt'), vpmute: tag.searchParams.get('vpmute'), vpa: tag.searchParams.get('vpa'),
+            autoPlay: window.lastAdPlaybackIntent.autoPlay };
+    })).toEqual({ plcmt: '1', vpmute: '0', vpa: 'click', autoPlay: false });
+});
+
+test('real audio-track content validates audible playback before the first instream ad', async ({ page }) => {
+    await openPlayer(page, { content: true, realContent: true, audibleContent: true, contentMode: 'instream',
+        startMuted: false, primeUserActivation: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_type=video' });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    expect(await page.evaluate(() => ({
+        muted: document.querySelector('video').muted,
+        volume: document.querySelector('video').volume,
+        readyState: document.querySelector('video').readyState >= 2,
+        vpmute: new URL(window.lastAdTagUrl).searchParams.get('vpmute'),
+        vpa: new URL(window.lastAdTagUrl).searchParams.get('vpa'),
+    }))).toEqual({ muted: false, volume: 1, readyState: true, vpmute: '0', vpa: 'auto' });
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expectDecodedContent(page);
+});
+
+test('real audio-track content continues muted after browser sound denial', async ({ page }) => {
+    await openPlayer(page, { content: true, realContent: true, audibleContent: true, contentMode: 'instream',
+        startMuted: false, rejectUnmutedAutoplay: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_type=video' });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    expect(await page.evaluate(() => ({
+        muted: document.querySelector('video').muted, vpmute: new URL(window.lastAdTagUrl).searchParams.get('vpmute'),
+        plcmt: new URL(window.lastAdTagUrl).searchParams.get('plcmt'),
+    }))).toEqual({ muted: true, vpmute: '1', plcmt: '1' });
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expectDecodedContent(page);
 });

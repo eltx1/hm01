@@ -9,6 +9,16 @@ final class VideoAdFormat
     public const VIDEO_ONLY = 'video_only';
     public const MIXED = 'mixed';
 
+    public static function inventoryType(): string
+    {
+        return config('horus.video_inventory_type') === 'instream' ? 'instream' : 'accompanying';
+    }
+
+    public static function prefersAudibleAutoplay(): bool
+    {
+        return config('horus.video_autoplay_audio') === 'prefer_audible';
+    }
+
     /** @return array<string, string> */
     public static function choices(): array
     {

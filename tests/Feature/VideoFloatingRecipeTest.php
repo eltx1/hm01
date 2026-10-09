@@ -64,6 +64,43 @@ final class VideoFloatingRecipeTest extends TestCase
         }
     }
 
+    public function test_inventory_classification_and_audio_preference_are_explicit_and_independent(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        foreach (['accompanying', 'instream'] as $inventory) {
+            foreach (['muted', 'prefer_audible'] as $audio) {
+                config(['horus.video_inventory_type' => $inventory, 'horus.video_autoplay_audio' => $audio]);
+                $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+                $this->assertSame($inventory, $attributes['data-hm-video-content-mode']);
+                $this->assertSame($audio === 'prefer_audible' ? '0' : '1', $attributes['data-hm-video-muted']);
+                $this->assertSame('1', $attributes['data-hm-video-autoplay']);
+                $this->assertSame('mixed', $attributes['data-hm-video-ad-format']);
+            }
+        }
+    }
+
+    public function test_unknown_preferences_preserve_the_existing_accompanying_muted_defaults(): void
+    {
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4',
+            'horus.video_inventory_type' => 'invalid', 'horus.video_autoplay_audio' => 'invalid']);
+        $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+        $this->assertSame('accompanying', $attributes['data-hm-video-content-mode']);
+        $this->assertSame('1', $attributes['data-hm-video-muted']);
+    }
+
+    public function test_instream_and_sound_preferences_do_not_reclassify_ad_only_or_rewarded_inventory(): void
+    {
+        config(['horus.video_inventory_type' => 'instream', 'horus.video_autoplay_audio' => 'prefer_audible',
+            'horus.video_content_url' => null]);
+        $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
+        $this->assertArrayNotHasKey('data-hm-video-content-mode', $attributes);
+        $this->assertSame('1', $attributes['data-hm-video-muted']);
+        config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
+        $attributes = $this->recipe(PlacementType::Rewarded, [])['attributes'];
+        $this->assertArrayNotHasKey('data-hm-video-content-mode', $attributes);
+        $this->assertSame('0', $attributes['data-hm-video-autoplay']);
+    }
+
     private function recipe(PlacementType $type, array $settings): array
     {
         // Fully populated model relations keep this contract test off the DB and

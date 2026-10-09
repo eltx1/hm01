@@ -410,6 +410,7 @@
             adsLoader: null,
             adsManager: null,
             displayContainer: null,
+            gestureDisplayContainer: null,
             intersectionObserver: null,
             resizeHandler: null,
             started: false,
@@ -420,6 +421,11 @@
             granted: false,
             closedDispatched: false,
             contentMode: false,
+            contentInventoryType: container.getAttribute('data-hm-video-content-mode') === 'instream' ? 'instream' : 'accompanying',
+            contentAutoPlay: video.autoplay === true,
+            startupPlaybackState: null,
+            startupPlaybackGeneration: 0,
+            contentGesturePending: false,
             contentStarted: false,
             contentEnded: false,
             contentFailed: false,
@@ -468,6 +474,8 @@
     function destroyPlayer(player, reason) {
         if (!player || player.destroyed) return;
         player.destroyed = true;
+        player.startupPlaybackGeneration += 1;
+        window.clearTimeout(player.startupPlaybackTimer);
         cancelPlayerMotion(player);
         var shell = placementSurface(player);
         if (shell) shell.__hmAnimateDismiss = null;
@@ -486,6 +494,8 @@
         try { if (player.adsManager && player.adsManager.destroy) player.adsManager.destroy(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
+        try { if (player.gestureDisplayContainer && player.gestureDisplayContainer !== player.displayContainer && player.gestureDisplayContainer.destroy) player.gestureDisplayContainer.destroy(); } catch (error) {}
+        player.gestureDisplayContainer = null;
         try { if (player.video && player.video.pause) player.video.pause(); } catch (error) {}
         if (reason) setStatus(player.container, reason);
         if (player.rewarded && !player.closedDispatched) {
@@ -1071,9 +1081,13 @@
     }
 
     function adPlaybackIntent(player) {
-        // Content breaks are requested automatically by the content timeline.
-        // Rewarded/click-to-start paths retain their actual click intent.
-        return { autoPlay: player.contentMode || player.video.autoplay === true, muted: player.video.muted === true };
+        var volume = Number(player.video.volume);
+        volume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+        var muted = player.video.muted === true || volume === 0;
+        // Classification is publisher-declared. Playback signals describe the
+        // actual content start and live audio level, including a zero-volume slider.
+        return { autoPlay: player.contentMode ? player.contentAutoPlay : player.video.autoplay === true,
+            muted: muted, volume: muted ? 0 : volume };
     }
 
     function nonLinearDimensions(player, dimensions) {
@@ -1156,6 +1170,10 @@
         listenContent(player, player.overlayPlay, 'click', function (event) {
             if (event && event.stopPropagation) event.stopPropagation();
             if (player.adMediaActive || player.adBreakPending && !player.nonLinearAdActive || player.destroyed) return;
+            if (!player.preRollRequested && player.startContentFromGesture) {
+                if (event && event.isTrusted) player.startContentFromGesture();
+                return;
+            }
             if (player.video.paused) { player.contentPausedByUser = false; resumeContent(player); }
             else { player.contentPausedByUser = true; player.contentPlayGeneration += 1; player.video.pause(); }
             updateContentAdUi(player);
@@ -1234,7 +1252,9 @@
         // alive and therefore never enter this cleanup path between breaks.
         try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
-        try { if (player.displayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
+        // Keep the gesture-unlocked IMA media element through legitimate content
+        // breaks and confirmed no-fill retry. Final player teardown owns it.
+        try { if (player.displayContainer && player.displayContainer !== player.gestureDisplayContainer && player.displayContainer.destroy) player.displayContainer.destroy(); } catch (error) {}
         player.adsManager = null;
         player.adsLoader = null;
         player.displayContainer = null;
@@ -1259,6 +1279,7 @@
 
     function markContentPlaying(player) {
         if (!player || player.destroyed || player.closing || player.contentFailed || player.adMediaActive || player.contentPausedByUser) return;
+        if (player.startupPlaybackState === 'checking') return;
         tracePhase('Video content', player.container);
         player.contentStarted = true;
         player.container.setAttribute('data-hm-video-detail', '');
@@ -1382,8 +1403,9 @@
         armStartupPhase('request');
 
         try {
-            player.displayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
-            player.displayContainer.initialize();
+            var gestureDisplay = player.gestureDisplayContainer;
+            player.displayContainer = gestureDisplay || new ima.AdDisplayContainer(player.adLayer, player.video);
+            if (!gestureDisplay) player.displayContainer.initialize();
             player.adsLoader = new ima.AdsLoader(player.displayContainer);
             player.adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, function (event) {
                 if (!currentRequest() || player.currentBreak !== position || player.adsManager) return;
@@ -1539,7 +1561,7 @@
                     var dimensions = managerDimensions(player);
                     player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
                     if (!currentRequest() || !player.adsManager) return;
-                    if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
+                    if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.volume);
                     presentUnscheduledAdResponse(player, vastUrl);
                     startAdManagerWhenViewable(player, function () {
                         if (currentRequest() && player.adsManager) {
@@ -1591,6 +1613,70 @@
         player.contentListeners.push([target, name, callback]);
     }
 
+    function checkContentAutoplay(player, ready, fromGesture) {
+        if (!player || player.destroyed || player.closing || player.preRollRequested || player.startupPlaybackState === 'checking') return;
+        var generation = ++player.startupPlaybackGeneration;
+        player.startupPlaybackState = 'checking';
+        player.contentGesturePending = false;
+        player.contentAutoPlay = !fromGesture;
+        function current() { return !player.destroyed && !player.closing && !player.preRollRequested && generation === player.startupPlaybackGeneration; }
+        function waitForPlay(detail) {
+            if (!current()) return;
+            window.clearTimeout(player.startupPlaybackTimer);
+            player.startupPlaybackGeneration += 1;
+            player.startupPlaybackState = 'gesture';
+            player.contentAutoPlay = false;
+            try { player.video.pause(); } catch (error) {}
+            player.video.controls = true;
+            setStatus(player.container, 'content-ready', detail || 'user-activation-required');
+            updateContentAdUi(player);
+        }
+        // A stalled media promise is not proof that audible autoplay works.
+        // Leave the real Play control available rather than inventing a signal.
+        player.startupPlaybackTimer = window.setTimeout(function () { waitForPlay('playback-check-timeout'); }, 5000);
+        function attempt(muted, allowMutedFallback) {
+            if (!current()) return;
+            player.video.muted = muted;
+            function rejected(error) {
+                if (!current()) return;
+                if (allowMutedFallback && String(error && error.name || '') === 'NotAllowedError') { attempt(true, false); return; }
+                waitForPlay(String(error && error.name || '') === 'NotAllowedError' ? 'user-activation-required' : 'playback-check-failed');
+            }
+            try {
+                var result = player.video.play();
+                if (!result || typeof result.then !== 'function') { waitForPlay('playback-check-unavailable'); return; }
+                result.then(function () {
+                    if (!current()) return;
+                    window.clearTimeout(player.startupPlaybackTimer);
+                    player.startupPlaybackState = 'ready';
+                    player.video.pause();
+                    updateContentAdUi(player);
+                    ready();
+                }).catch(rejected);
+            } catch (error) { rejected(error); }
+        }
+        // This branch is selected by the publisher's explicit sound preference,
+        // never inferred from a VAST parameter or an inventory declaration.
+        attempt(player.video.muted, !fromGesture);
+    }
+
+    function initializeContentGesture(player, ima) {
+        if (!player || player.destroyed || player.closing || player.preRollRequested) return false;
+        if (player.gestureDisplayContainer) return true;
+        try {
+            // IMA requires this exact initialization inside the trusted user
+            // event, before any play promise. Reuse it for the first request.
+            player.gestureDisplayContainer = new ima.AdDisplayContainer(player.adLayer, player.video);
+            player.gestureDisplayContainer.initialize();
+            return true;
+        } catch (error) {
+            try { if (player.gestureDisplayContainer && player.gestureDisplayContainer.destroy) player.gestureDisplayContainer.destroy(); } catch (ignored) {}
+            player.gestureDisplayContainer = null;
+            setStatus(player.container, 'content-ready', 'player-activation-failed');
+            return false;
+        }
+    }
+
     function prepareContentPlayer(player, ima, vastUrl, contentUrl) {
         if (!player || player.destroyed) return;
         if (state.active && state.active !== player && !state.active.destroyed) {
@@ -1610,13 +1696,32 @@
         if (player.video.muted) player.video.setAttribute('muted', '');
         player.video.setAttribute('controls', '');
         player.video.setAttribute('preload', 'metadata');
-        player.video.setAttribute('aria-label', 'Accompanying video content');
+        player.video.setAttribute('aria-label', player.contentInventoryType === 'instream' ? 'Video content' : 'Accompanying video content');
         var surface = placementSurface(player);
         if (surface && surface.style && !player.floating && !(player.viewport && player.viewport.portal)) surface.style.position = 'relative';
 
         installOverlayControls(player);
+        ['pointerdown', 'pointerup', 'keydown', 'touchend'].forEach(function (name) {
+            listenContent(player, player.video, name, function (event) {
+                if (name === 'pointerdown' && event && event.pointerType !== 'mouse') return;
+                if (name === 'pointerup' && event && event.pointerType === 'mouse') return;
+                if (name === 'keydown' && event && (event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey)) return;
+                if (event && event.isTrusted && player.startupPlaybackState === 'gesture') player.contentGesturePending = initializeContentGesture(player, ima);
+            });
+        });
         listenContent(player, player.video, 'play', function () { if (!player.adMediaActive) player.contentPausedByUser = false; });
-        listenContent(player, player.video, 'playing', function () { markContentPlaying(player); updateContentAdUi(player); });
+        listenContent(player, player.video, 'playing', function () {
+            if (player.startupPlaybackState === 'gesture' && !player.preRollRequested) {
+                if (!player.contentGesturePending) { player.video.pause(); return; }
+                player.contentGesturePending = false;
+                player.startupPlaybackState = 'ready';
+                player.contentAutoPlay = false;
+                player.video.pause();
+                beginPreroll();
+                return;
+            }
+            markContentPlaying(player); updateContentAdUi(player);
+        });
         listenContent(player, player.video, 'pause', function () { updateContentAdUi(player); });
         listenContent(player, player.video, 'volumechange', function () { updateContentAdUi(player); });
         listenContent(player, player.video, 'error', function () {
@@ -1690,7 +1795,7 @@
         // must not suppress the preroll request; its error is recorded while the
         // VAST path remains independently eligible to run.
         player.video.src = contentUrl;
-        player.container.setAttribute('data-hm-video-content-mode', 'accompanying');
+        player.container.setAttribute('data-hm-video-content-mode', player.contentInventoryType);
         setStatus(player.container, 'content-ready');
 
         function beginPreroll() {
@@ -1699,7 +1804,26 @@
             requestContentAdBreak(player, ima, vastUrl, 'preroll');
         }
 
-        player.viewport.ready(beginPreroll);
+        player.startContentFromGesture = function () {
+            if (player.startupPlaybackState === 'checking') {
+                player.startupPlaybackGeneration += 1;
+                window.clearTimeout(player.startupPlaybackTimer);
+                player.startupPlaybackState = 'gesture';
+                player.video.pause();
+                updateContentAdUi(player);
+                return;
+            }
+            if (initializeContentGesture(player, ima)) checkContentAutoplay(player, beginPreroll, true);
+        };
+        player.viewport.ready(function () {
+            if (!player.contentAutoPlay) {
+                player.startupPlaybackState = 'gesture';
+                setStatus(player.container, 'content-ready', 'user-activation-required');
+                updateContentAdUi(player);
+            } else if (!player.video.muted) {
+                startAdManagerWhenViewable(player, function () { checkContentAutoplay(player, beginPreroll, false); });
+            } else beginPreroll();
+        });
     }
 
     function startAds(player, ima, vastUrl) {
@@ -1783,7 +1907,7 @@
                 });
                 var dimensions = managerDimensions(player);
                 player.adsManager.init(dimensions[0], dimensions[1], ima.ViewMode.NORMAL);
-                if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.muted ? 0 : 1);
+                if (player.adsManager.setVolume) player.adsManager.setVolume(player.adRequestIntent.volume);
                 presentUnscheduledAdResponse(player, vastUrl);
                 startAdManagerWhenViewable(player, function () {
                     if (!player.destroyed && player.adsManager) {
@@ -1860,7 +1984,7 @@
         // mixed tags omit vad_type during publication, using saved provenance.
         if (!mixedContentAds(player) && (!player.contentMode || !tag.searchParams.get('vad_type'))) tag.searchParams.set('vad_type', 'linear');
         if (!player.rewarded && accompanyingAvailable) {
-            tag.searchParams.set('plcmt', '2');
+            tag.searchParams.set('plcmt', player.contentInventoryType === 'instream' ? '1' : '2');
             if (breakPosition) {
                 var adRulesRequest = adRulesTag(tag);
                 if (!adRulesRequest) tag.searchParams.set('vpos', breakPosition);

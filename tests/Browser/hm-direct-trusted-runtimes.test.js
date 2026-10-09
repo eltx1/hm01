@@ -230,6 +230,7 @@ function runVideo(selectedContainer, options = {}) {
             type: '',
             disabled: false,
             muted: false,
+            volume: 1,
             autoplay: false,
             playsInline: false,
             paused: false,
@@ -366,7 +367,7 @@ function runVideo(selectedContainer, options = {}) {
     const ima = {
         AdDisplayContainer: class {
             constructor(layer, video) { this.layer = layer; this.video = video; displays.push(this); }
-            initialize() { this.initialized = true; }
+            initialize() { this.initialized = true; if (options.onDisplayInitialize) options.onDisplayInitialize(this); }
             destroy() { this.destroyed = true; }
         },
         AdsLoader,
@@ -1926,6 +1927,90 @@ test('unmuted midroll manager volume matches the request and GAM vpmute declarat
     target.__hmDestroy('dismissed');
 });
 
+test('zero volume is declared muted and a chosen partial volume is preserved for the next ad', async () => {
+    for (const volume of [0, 0.35]) {
+        const { target, runtime, video } = mixedContentFixture();
+        await tick();
+        runtime.managers[0].emit('all-ads-completed'); await tick();
+        video.muted = false; video.volume = volume; video.currentTime = 60; video.emit('timeupdate');
+        assert.equal(runtime.requested[1].willPlayMuted, volume === 0);
+        assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpmute'), volume === 0 ? '1' : '0');
+        assert.equal(runtime.managers[1].volume, volume);
+        target.__hmDestroy('dismissed');
+    }
+});
+
+test('explicit instream classification stays fixed through audible success or muted fallback', async () => {
+    for (const rejectAudible of [false, true]) {
+        const attempts = [];
+        const { target, runtime, video } = mixedContentFixture({
+            'data-hm-video-content-mode': 'instream', 'data-hm-video-muted': '0',
+        }, { contentPlay: media => {
+            attempts.push(media.muted);
+            return rejectAudible && !media.muted ? Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' })) : Promise.resolve();
+        } });
+        await tick();
+        assert.deepEqual(attempts, rejectAudible ? [false, true] : [false]);
+        assert.equal(runtime.requested.length, 1);
+        const tag = new URL(runtime.requested[0].adTagUrl);
+        assert.equal(tag.searchParams.get('plcmt'), '1');
+        assert.equal(tag.searchParams.get('vpmute'), rejectAudible ? '1' : '0');
+        assert.equal(tag.searchParams.get('vpa'), 'auto');
+        assert.equal(video.muted, rejectAudible);
+        assert.equal(runtime.managers[0].volume, rejectAudible ? 0 : 1);
+        assert.equal(runtime.requested[0].willPlayMuted, rejectAudible);
+        assert.equal(tag.searchParams.get('gdpr_consent'), 'fixture-consent');
+        target.__hmDestroy('dismissed');
+    }
+});
+
+test('sound preference alone never upgrades accompanying inventory to instream', async () => {
+    const { target, runtime } = mixedContentFixture({ 'data-hm-video-muted': '0' });
+    await tick();
+    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('plcmt'), '2');
+    target.__hmDestroy('dismissed');
+});
+
+test('audible startup waits for actual play success before requesting an ad and ignores late success after dismissal', async () => {
+    let finish;
+    const { target, runtime } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { contentPlay: () => new Promise(resolve => { finish = resolve; }) });
+    await tick();
+    assert.equal(runtime.requested.length, 0);
+    target.__hmDestroy('dismissed'); finish(); await tick();
+    assert.equal(runtime.requested.length, 0);
+});
+
+test('two autoplay denials wait for a real Play action and preserve fixed instream classification', async () => {
+    let allow = false;
+    const { target, runtime } = mixedContentFixture({
+        'data-hm-video-content-mode': 'instream', 'data-hm-video-muted': '0',
+    }, { withChrome: true, contentPlay: () => allow ? Promise.resolve() : Promise.reject(Object.assign(new Error('blocked'), { name: 'NotAllowedError' })) });
+    await tick();
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(target.__hmVideoPlayer.startupPlaybackState, 'gesture');
+    allow = true; target.__hmVideoPlayer.overlayMute.click(); target.__hmVideoPlayer.overlayPlay.click(); await tick();
+    assert.equal(runtime.requested.length, 1);
+    const tag = new URL(runtime.requested[0].adTagUrl);
+    assert.equal(tag.searchParams.get('vpa'), 'click');
+    assert.equal(tag.searchParams.get('vpmute'), '0');
+    assert.equal(tag.searchParams.get('plcmt'), '1');
+    assert.equal(runtime.requested[0].willAutoPlay, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('explicit click-start content does not request before Play and declares click for subsequent timeline breaks', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0' }, { withChrome: true });
+    await tick();
+    assert.equal(runtime.requested.length, 0);
+    target.__hmVideoPlayer.overlayPlay.click(); await tick();
+    assert.equal(runtime.requested[0].willAutoPlay, false);
+    runtime.managers[0].emit('all-ads-completed'); await tick();
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested[1].willAutoPlay, false);
+    assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpa'), 'click');
+    target.__hmDestroy('dismissed');
+});
+
 test('nonlinear USER_CLOSE honors an explicit content pause and leaves native play usable', async () => {
     const { target, runtime } = mixedContentFixture({}, { ad: { linear: false }, withChrome: true });
     await tick();
@@ -2205,4 +2290,106 @@ test('ad-only presentation keeps IMA pointer ownership while the ad is available
     runtime.managers[0].emit('complete');
     assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none');
     target.__hmDestroy('dismissed');
+});
+
+test('trusted Play initializes IMA synchronously and reuses the unlocked display across retry and later content breaks', async () => {
+    let inClick = false;
+    const initializations = [];
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0' }, {
+        withChrome: true, deferManagerLoad: true, onDisplayInitialize: display => initializations.push({ display, inClick }),
+    });
+    await tick();
+    inClick = true; target.__hmVideoPlayer.overlayPlay.click(); inClick = false;
+    assert.equal(initializations.length, 1);
+    assert.equal(initializations[0].inClick, true);
+    assert.equal(runtime.requested.length, 0, 'request still waits for actual content play success');
+    await tick();
+    const display = runtime.displays[0];
+    assert.equal(target.__hmVideoPlayer.displayContainer, display);
+    emitLoaderError(runtime.loaders[0], emptyVastEvent()); await tick();
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(runtime.displays.length, 1);
+    assert.equal(display.destroyed, undefined);
+    runtime.loaders[1].emitManagerLoaded();
+    runtime.managers[1].emit('all-ads-completed'); await tick();
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 3);
+    assert.equal(runtime.displays.length, 1);
+    assert.equal(target.__hmVideoPlayer.displayContainer, display);
+    assert.equal(initializations.length, 1);
+    target.__hmDestroy('dismissed');
+    assert.equal(display.destroyed, true);
+});
+
+test('gesture startup preserves viewer mute and zero-volume choices instead of restoring the configured audio default', async () => {
+    for (const muted of [false, true]) {
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0', 'data-hm-video-muted': '0' }, { withChrome: true });
+        await tick();
+        video.muted = muted; video.volume = 0;
+        target.__hmVideoPlayer.overlayPlay.click(); await tick();
+        assert.equal(video.muted, muted);
+        assert.equal(video.volume, 0);
+        assert.equal(runtime.requested[0].willPlayMuted, true);
+        assert.equal(runtime.managers[0].volume, 0);
+        target.__hmDestroy('dismissed');
+    }
+});
+
+test('synthetic Play cannot initialize IMA or declare a click-start request', async () => {
+    const { target, runtime } = mixedContentFixture({ 'data-hm-video-autoplay': '0' }, { withChrome: true, trustedClick: false });
+    await tick(); target.__hmVideoPlayer.overlayPlay.click(); await tick();
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(runtime.displays.length, 0);
+    target.__hmDestroy('dismissed');
+});
+
+test('stalled audible startup ignores late playing and resolution until a new trusted gesture', async () => {
+    const clock = videoClock(); let complete;
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { clock, withChrome: true, contentPlay: () => new Promise(resolve => { complete = resolve; }) });
+    await tick(); clock.advance(5000); video.emit('playing'); complete(); await tick();
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(video.paused, true);
+    assert.equal(target.__hmVideoPlayer.startupPlaybackState, 'gesture');
+    target.__hmDestroy('dismissed');
+});
+
+test('native touch playback initializes on activation-triggering release rather than early pointerdown', async () => {
+    const timing = [];
+    let active = false;
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0' }, { onDisplayInitialize: () => timing.push(active) });
+    await tick();
+    video.emit('pointerdown', { isTrusted: true, pointerType: 'touch' });
+    assert.equal(timing.length, 0);
+    active = true; video.emit('pointerup', { isTrusted: true, pointerType: 'touch' });
+    video.emit('touchend', { isTrusted: true }); active = false;
+    assert.deepEqual(timing, [true]);
+    video.emit('playing'); await tick();
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(runtime.requested[0].willAutoPlay, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('native Escape and modified key shortcuts cannot initialize click-start advertising', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0' });
+    await tick();
+    for (const event of [{ key: 'Escape' }, { key: 'l', ctrlKey: true }, { key: 'l', metaKey: true }, { key: 'ArrowLeft', altKey: true }]) video.emit('keydown', { isTrusted: true, ...event });
+    video.emit('playing'); await tick();
+    assert.equal(runtime.displays.length, 0); assert.equal(runtime.requested.length, 0);
+    target.__hmDestroy('dismissed');
+});
+
+test('audible startup waits for renewed visibility and preserves a viewer mute choice made while waiting', async () => {
+    for (const userMutes of [false, true]) {
+        const attempts = [];
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { contentPlay: media => { attempts.push(media.muted); return Promise.resolve(); } });
+        runtime.intersectionObservers[0].emit(0); await tick();
+        assert.equal(attempts.length, 0); assert.equal(runtime.requested.length, 0);
+        assert.equal(target.__hmVideoPlayer.viewport.canRequestOffscreen, true);
+        if (userMutes) video.muted = true;
+        runtime.intersectionObservers[0].emit(0.6); await tick();
+        assert.deepEqual(attempts, [userMutes]);
+        assert.equal(runtime.requested.length, 1);
+        assert.equal(runtime.requested[0].willPlayMuted, userMutes);
+        target.__hmDestroy('dismissed');
+    }
 });
