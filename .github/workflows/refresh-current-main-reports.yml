@@ -13,6 +13,7 @@ on:
       - '.github/workflows/refresh-current-main-reports.yml'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: horus-current-main-report-recovery
   cancel-in-progress: false
@@ -42,7 +43,6 @@ jobs:
     timeout-minutes: 20
     environment: production
     env:
-      EXPECTED_RELEASE_SHA: 5c3861f8ffdb97cec42c35476894e22b845beb3b
       SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
       REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
     steps:
@@ -53,9 +53,194 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      - name: Resolve latest trusted successful live verification
+        id: live_source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            // BEGIN_PROOF_TOOLS
+            function proofTools() {
+              const repository = 'eltx1/hm01';
+              const repositoryId = 1315038901;
+              const kinds = {
+                verify: {name:'Verify production live',path:'.github/workflows/verify-production-live.yml',events:['workflow_run','workflow_dispatch']},
+                deploy: {name:'Deploy production',path:'.github/workflows/deploy-production.yml',events:['workflow_run','workflow_dispatch']},
+                validation: {name:'Production release validation',path:'.github/workflows/production-release.yml',events:['push']},
+              };
+              const demand = value => { if (!value) throw new Error('UNTRUSTED_PROOF'); };
+              const id = value => /^[1-9][0-9]*$/.test(String(value)) && Number.isSafeInteger(Number(value));
+              const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+              const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+              const time = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+              function contextOk(context) {
+                demand(context.eventName==='push' && context.ref==='refs/heads/main'
+                  && `${context.repo.owner}/${context.repo.repo}`===repository
+                  && context.payload.repository?.full_name===repository && context.payload.repository.id===repositoryId);
+              }
+              function workflowOk(workflow,kind) {
+                const expected=kinds[kind];
+                demand(expected && id(workflow.id) && workflow.name===expected.name && workflow.path===expected.path && workflow.state==='active');
+              }
+              function runOk(run,runId,kind,workflowId,releaseSha=null) {
+                const expected=kinds[kind];
+                demand(expected && id(runId) && Number(run.id)===Number(runId) && id(run.run_attempt)
+                  && Number(run.workflow_id)===Number(workflowId) && run.name===expected.name && run.path===expected.path
+                  && expected.events.includes(run.event) && run.status==='completed' && run.conclusion==='success'
+                  && run.head_branch==='main' && sha(run.head_sha) && (!releaseSha || run.head_sha===releaseSha)
+                  && run.repository?.full_name===repository && run.head_repository?.full_name===repository
+                  && run.repository.id===repositoryId && run.head_repository.id===repositoryId
+                  && time(run.run_started_at) && time(run.updated_at) && Date.parse(run.updated_at)>=Date.parse(run.run_started_at));
+              }
+              function artifactOk(artifact,run,name,maxBytes=65536) {
+                demand(id(artifact.id) && artifact.name===name && artifact.expired===false
+                  && Number.isSafeInteger(artifact.size_in_bytes) && artifact.size_in_bytes>0 && artifact.size_in_bytes<=maxBytes
+                  && /^sha256:[a-f0-9]{64}$/.test(artifact.digest)
+                  && Number(artifact.workflow_run?.id)===Number(run.id) && artifact.workflow_run.head_sha===run.head_sha
+                  && artifact.workflow_run.head_branch==='main' && artifact.workflow_run.repository_id===repositoryId
+                  && artifact.workflow_run.head_repository_id===repositoryId && time(artifact.created_at)
+                  && Date.parse(artifact.created_at)>=Date.parse(run.run_started_at) && Date.parse(artifact.created_at)<=Date.parse(run.updated_at));
+              }
+              function parseProof(text) {
+                demand(typeof text==='string' && text.length>0 && text.length<=16384);
+                const proof=Object.create(null);
+                for (const line of text.replace(/\n$/,'').split('\n')) {
+                  const match=/^([a-z][a-z0-9_]*)=([^\r\n]*)$/.exec(line);
+                  demand(match && !Object.hasOwn(proof,match[1])); proof[match[1]]=match[2];
+                }
+                demand(proof.schema_version==='1' && sha(proof.release_sha));
+                return proof;
+              }
+              function liveOk(proof,run) {
+                demand(Object.keys(proof).sort().join(',')===['schema_version','release_sha','deploy_run_id','manifest_hash','pages_deployment_url','lordai_config_path','lordai_config_sha256','lordai_loader_sha256','verify_run_id','verify_run_attempt'].sort().join(','));
+                demand(proof.verify_run_id===String(run.id) && proof.verify_run_attempt===String(run.run_attempt)
+                  && id(proof.deploy_run_id) && digest(proof.manifest_hash)
+                  && digest(proof.lordai_config_sha256) && digest(proof.lordai_loader_sha256));
+              }
+              function deployOk(proof,run,releaseSha) {
+                demand(Object.keys(proof).sort().join(',')===['schema_version','release_sha','validation_run_id','artifact_sha256','deploy_run_id','deploy_run_attempt'].sort().join(','));
+                demand(proof.release_sha===releaseSha && proof.deploy_run_id===String(run.id)
+                  && proof.deploy_run_attempt===String(run.run_attempt) && id(proof.validation_run_id) && digest(proof.artifact_sha256));
+              }
+              return {demand,id,sha,kinds,contextOk,workflowOk,runOk,artifactOk,parseProof,liveOk,deployOk};
+            }
+            // END_PROOF_TOOLS
+            const fs=require('fs'); const path=require('path'); const trust=proofTools();
+            try {
+              trust.contextOk(context);
+              const common={owner:context.repo.owner,repo:context.repo.repo};
+              const workflows={};
+              for(const [kind,expected] of Object.entries(trust.kinds)) {
+                const {data:workflow}=await github.rest.actions.getWorkflow({...common,workflow_id:path.basename(expected.path)});
+                trust.workflowOk(workflow,kind); workflows[kind]=workflow.id;
+              }
+              // Choose the newest success once. Never fall back to an older proof on rejection.
+              const {data:listing}=await github.rest.actions.listWorkflowRuns({...common,workflow_id:workflows.verify,branch:'main',status:'success',per_page:1});
+              trust.demand(Array.isArray(listing.workflow_runs) && listing.workflow_runs.length===1);
+              const runId=listing.workflow_runs[0].id;
+              const {data:run}=await github.rest.actions.getWorkflowRun({...common,run_id:runId});
+              trust.runOk(run,runId,'verify',workflows.verify);
+              const {data:attempt}=await github.rest.actions.getWorkflowRunAttempt({...common,run_id:run.id,attempt_number:run.run_attempt});
+              trust.runOk(attempt,run.id,'verify',workflows.verify,run.head_sha);
+              trust.demand(attempt.run_attempt===run.run_attempt);
+              const artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{...common,run_id:run.id,per_page:100});
+              const matches=artifacts.filter(item=>item.name==='horus-production-live-proof');
+              trust.demand(matches.length===1); trust.artifactOk(matches[0],attempt,'horus-production-live-proof');
+              const directory=path.join(process.env.RUNNER_TEMP,'current-main-trust');
+              fs.mkdirSync(directory,{recursive:true,mode:0o700});
+              fs.writeFileSync(path.join(directory,'tools.cjs'),`module.exports=(${proofTools.toString()})();`,{mode:0o600});
+              fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify({workflows,verify:attempt,liveArtifact:matches[0]}),{mode:0o600});
+              core.setOutput('run_id',String(run.id)); core.setOutput('artifact_id',String(matches[0].id));
+            } catch { core.setFailed('CURRENT_MAIN_TRUST_PROOF_INVALID'); }
+
+      - name: Download exact immutable live proof
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.live_source.outputs.artifact_id }}
+          path: ${{ runner.temp }}/current-main-trust/live
+          run-id: ${{ steps.live_source.outputs.run_id }}
+          repository: eltx1/hm01
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+          merge-multiple: true
+
+      - name: Validate live proof and its trusted deployment source
+        id: deploy_source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'); const path=require('path');
+            try {
+              const directory=path.join(process.env.RUNNER_TEMP,'current-main-trust');
+              const trust=require(path.join(directory,'tools.cjs')); trust.contextOk(context);
+              const metadata=JSON.parse(fs.readFileSync(path.join(directory,'metadata.json'),'utf8'));
+              const file=path.join(directory,'live','live-proof.env'); const stat=fs.lstatSync(file);
+              trust.demand(stat.isFile() && !stat.isSymbolicLink() && stat.size<=16384);
+              const live=trust.parseProof(fs.readFileSync(file,'utf8')); trust.liveOk(live,metadata.verify);
+              const common={owner:context.repo.owner,repo:context.repo.repo};
+              const {data:run}=await github.rest.actions.getWorkflowRun({...common,run_id:Number(live.deploy_run_id)});
+              trust.runOk(run,live.deploy_run_id,'deploy',metadata.workflows.deploy);
+              const {data:attempt}=await github.rest.actions.getWorkflowRunAttempt({...common,run_id:run.id,attempt_number:run.run_attempt});
+              trust.runOk(attempt,run.id,'deploy',metadata.workflows.deploy,run.head_sha);
+              trust.demand(attempt.run_attempt===run.run_attempt);
+              const artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{...common,run_id:run.id,per_page:100});
+              const matches=artifacts.filter(item=>item.name==='horus-production-deploy-proof');
+              trust.demand(matches.length===1); trust.artifactOk(matches[0],attempt,'horus-production-deploy-proof');
+              Object.assign(metadata,{releaseSha:live.release_sha,deploy:attempt,deployArtifact:matches[0]});
+              fs.writeFileSync(path.join(directory,'metadata.json'),JSON.stringify(metadata),{mode:0o600});
+              core.setOutput('run_id',String(run.id)); core.setOutput('artifact_id',String(matches[0].id));
+            } catch { core.setFailed('CURRENT_MAIN_TRUST_PROOF_INVALID'); }
+
+      - name: Download exact immutable deployment proof
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.deploy_source.outputs.artifact_id }}
+          path: ${{ runner.temp }}/current-main-trust/deploy
+          run-id: ${{ steps.deploy_source.outputs.run_id }}
+          repository: eltx1/hm01
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+          merge-multiple: true
+
+      - name: Verify complete proof chain and pin current expected release
+        id: release_proof
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'); const path=require('path');
+            try {
+              const directory=path.join(process.env.RUNNER_TEMP,'current-main-trust');
+              const trust=require(path.join(directory,'tools.cjs')); trust.contextOk(context);
+              const metadata=JSON.parse(fs.readFileSync(path.join(directory,'metadata.json'),'utf8'));
+              const file=path.join(directory,'deploy','deploy-proof.env'); const stat=fs.lstatSync(file);
+              trust.demand(stat.isFile() && !stat.isSymbolicLink() && stat.size<=16384);
+              const deployed=trust.parseProof(fs.readFileSync(file,'utf8'));
+              trust.deployOk(deployed,metadata.deploy,metadata.releaseSha);
+              const common={owner:context.repo.owner,repo:context.repo.repo};
+              const {data:validation}=await github.rest.actions.getWorkflowRun({...common,run_id:Number(deployed.validation_run_id)});
+              trust.runOk(validation,deployed.validation_run_id,'validation',metadata.workflows.validation,metadata.releaseSha);
+              const {data:attempt}=await github.rest.actions.getWorkflowRunAttempt({...common,run_id:validation.id,attempt_number:validation.run_attempt});
+              trust.runOk(attempt,validation.id,'validation',metadata.workflows.validation,metadata.releaseSha);
+              trust.demand(attempt.run_attempt===validation.run_attempt);
+              // Producer workflow heads may differ from the deployed release. Only the
+              // linked successful PUSH validation must have the exact release SHA.
+              // Recheck each producer's own head/attempt and artifact provenance.
+              for(const [kind,run] of [['verify',metadata.verify],['deploy',metadata.deploy],['validation',attempt]]) {
+                const {data:current}=await github.rest.actions.getWorkflowRun({...common,run_id:run.id});
+                trust.runOk(current,run.id,kind,metadata.workflows[kind],run.head_sha);
+                trust.demand(current.run_attempt===run.run_attempt);
+              }
+              for(const [name,artifact,run] of [['horus-production-live-proof',metadata.liveArtifact,metadata.verify],['horus-production-deploy-proof',metadata.deployArtifact,metadata.deploy]]) {
+                const {data:current}=await github.rest.actions.getArtifact({...common,artifact_id:artifact.id});
+                trust.artifactOk(current,run,name); trust.demand(current.digest===artifact.digest);
+              }
+              // Never substitute branch HEAD. SSH also checks this exact pin on every call.
+              core.setOutput('release_sha',metadata.releaseSha);
+            } catch { core.setFailed('CURRENT_MAIN_TRUST_PROOF_INVALID'); }
+
       - name: Refresh only source-local today through existing distributed importer locks
         shell: bash
         env:
+          EXPECTED_RELEASE_SHA: ${{ steps.release_proof.outputs.release_sha }}
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
           USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
           SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
@@ -67,7 +252,8 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
           [[ "$EXPECTED_RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
           work="$RUNNER_TEMP/current-main-recovery"
           install -d -m 700 "$work"
@@ -76,7 +262,7 @@ jobs:
           chmod 600 "$work/id_ed25519" "$work/known_hosts"
           trap 'rm -f "$work/id_ed25519" "$work/known_hosts" "$work/result.json" "$work/error.txt"' EXIT
           unset SSH_KEY KNOWN_HOSTS
-          operation="$(printf '%s' "eltx1/hm01:current-main:$GITHUB_RUN_ID" | sha256sum | cut -d' ' -f1)"
+          operation="$(printf '%s' "eltx1/hm01:current-main:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" | sha256sum | cut -d' ' -f1)"
           app="$REMOTE_HOME/htdocs/app.horusmedia.net"
           invoke() {
             local mode="$1"

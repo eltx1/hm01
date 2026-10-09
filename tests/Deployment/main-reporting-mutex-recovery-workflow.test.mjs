@@ -178,3 +178,8 @@ test('same-account private cron collector is fresh fail-closed and remote shell 
 test('trusted orchestration heads may differ while successful push validation pins the deployed release',async()=>{
  const result=await mockedProofChain(false,true);assert.deepEqual(result.failures,[]);assert.deepEqual(result.outputs[2],{release_sha:sha});
 });
+
+test('nonzero SSH path prints only validated closed JSON and never raw diagnostics',()=>{
+ assert.match(workflow,/< "\$work\/remote-run.sh" > "\$work\/result.json" 2> "\$work\/error.txt"; then[\s\S]*node ops\/audit\/validate-main-reporting-recovery.mjs "\$work\/result.json" \|\| true[\s\S]*Raw output withheld/);
+ assert.doesNotMatch(workflow,/cat[^\n]*(?:result.json|error.txt)|echo[^\n]*\$\{?error/);
+});

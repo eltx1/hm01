@@ -3,6 +3,8 @@
 ini_set('display_errors', '0');
 ini_set('log_errors', '0');
 
+function hmMainRecoveryStage(string $stage): void { $GLOBALS['hm_main_recovery_stage']=$stage; }
+
 function hmMainRecoveryLeaseEligible(?array $row, int $now): bool
 {
     if (!$row || !is_string($row['key'] ?? null) || $row['key']==='' || strlen($row['key'])>255
@@ -83,12 +85,14 @@ function hmMainRecoveryHostEvidence(string|false $selfNamespace,string|false $in
 }
 function hmMainRecoveryHostIdentity(): string
 {
+    hmMainRecoveryStage('HOST_NAMESPACE');
     $selfNamespace=@readlink('/proc/self/ns/pid'); $initNamespace=@readlink('/proc/1/ns/pid');
     $bootId=@file_get_contents('/proc/sys/kernel/random/boot_id',false,null,0,128);
     if (is_file('/.dockerenv') || is_file('/run/.containerenv')
         || !hmMainRecoveryHostEvidence($selfNamespace,$initNamespace,@file_get_contents('/proc/1/comm',false,null,0,128),
-            @file_get_contents('/proc/self/status',false,null,0,16385),@file_get_contents('/proc/1/status',false,null,0,16385),$bootId)
-        || !hmMainRecoveryProcVisibility(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577))) throw new RuntimeException();
+            @file_get_contents('/proc/self/status',false,null,0,16385),@file_get_contents('/proc/1/status',false,null,0,16385),$bootId)) throw new RuntimeException();
+    hmMainRecoveryStage('PROC_VISIBILITY');
+    if (!hmMainRecoveryProcVisibility(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577))) throw new RuntimeException();
     return hash('sha256',$selfNamespace.'|'.trim($bootId));
 }
 
@@ -96,6 +100,7 @@ function hmMainRecoveryProcessAbsent(): bool
 {
     hmMainRecoveryHostIdentity();
     if (!hmMainRecoveryProcVisibility(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577))) throw new RuntimeException();
+    hmMainRecoveryStage('PROC_SCAN');
     $paths=glob('/proc/[0-9]*/status');
     if (!is_array($paths) || !$paths || count($paths)>8192) throw new RuntimeException();
     foreach ($paths as $path) {
@@ -110,6 +115,7 @@ function hmMainRecoveryProcessAbsent(): bool
 
 function hmMainRecoveryCronTarget(string|false|null $cron): ?array
 {
+    hmMainRecoveryStage('CRON_TARGET');
     if (!is_string($cron) || strlen($cron)>65536) return null;
     $entries=[];
     foreach (explode("\n",$cron) as $line) {
@@ -136,6 +142,7 @@ function hmMainRecoveryCronEvidencePayload(array $evidence,int $now,int $uid): ?
 }
 function hmMainRecoveryFreshCron(): ?array
 {
+    hmMainRecoveryStage('CRON_EVIDENCE');
     // Fresh same-account SSH-shell evidence; no disabled PHP execution function
     // or privilege escalation is used. The private collector refreshes every second.
     $file=(string)getenv('HM_RECOVERY_CRON_EVIDENCE');
@@ -152,20 +159,25 @@ function hmMainRecoveryFreshCron(): ?array
 
 function hmMainRecoveryEnvironment(string $link, string $root, string $expected, ?array $initialCron=null): array
 {
+    hmMainRecoveryStage('ENVIRONMENT_IDENTITY');
     clearstatcache(true,$link);
     if (realpath($link)!==$root || realpath('.')!==$root
         || !function_exists('posix_geteuid') || posix_geteuid()!==posix_getuid()
         || @fileowner($root.'/artisan')!==posix_geteuid()) throw new RuntimeException();
+    hmMainRecoveryStage('RELEASE_MARKER');
     $marker=@file_get_contents('.horus-release');
     if (!is_string($marker) || preg_match_all('/^release_id=([a-f0-9]{40})$/m',$marker,$matches)!==1 || $matches[1][0]!==$expected) throw new RuntimeException();
     $cron=hmMainRecoveryFreshCron();
-    if (!$cron || !is_executable($cron[0]) || realpath($cron[0])!==realpath(PHP_BINARY)
+    if (!$cron) throw new RuntimeException();
+    hmMainRecoveryStage('CRON_TARGET');
+    if (!is_executable($cron[0]) || realpath($cron[0])!==realpath(PHP_BINARY)
         || realpath($cron[1])!==realpath('artisan') || ($initialCron!==null && $cron!==$initialCron)) throw new RuntimeException();
     return $cron;
 }
 
 function hmMainRecoveryRead(PDO $pdo, string $table, string $heartbeatTable, string $key): array
 {
+    hmMainRecoveryStage('READ_LEASE');
     $pdo->exec('SET TRANSACTION READ ONLY');
     $pdo->beginTransaction();
     try {
@@ -183,6 +195,7 @@ function hmMainRecoveryRead(PDO $pdo, string $table, string $heartbeatTable, str
 
 function hmMainRecoveryDelete(PDO $pdo, string $table, array $expected, int $now): int
 {
+    hmMainRecoveryStage('COMPARE_AND_SWAP');
     // A single compare-and-swap only. Never force-release or delete another row.
     $query=$pdo->prepare('DELETE FROM `'.$table.'` WHERE `key` = ? AND HEX(`key`) = HEX(?) AND HEX(`owner`) = HEX(?) AND `expiration` = ? AND `expiration` > ? AND `expiration` < ?');
     $query->execute([$expected['key'],$expected['key'],$expected['owner'],$expected['expiration'],$now+900,$now+64800]);
@@ -195,6 +208,7 @@ if (defined('HORUS_MAIN_RECOVERY_TEST_ONLY') && HORUS_MAIN_RECOVERY_TEST_ONLY===
 $mode=(string)(getenv('HM_MAIN_RECOVERY_MODE') ?: 'preview');
 $output=['schema_version'=>1,'target'=>'MAIN_SYNC_SCHEDULER_MUTEX','mode'=>in_array($mode,['preview','apply'],true) ? $mode : 'preview','status'=>'UNAVAILABLE','changed_rows'=>0];
 $pdo=null;
+hmMainRecoveryStage('INPUTS');
 try {
     if (!in_array($mode,['preview','apply'],true)) throw new RuntimeException();
     // Trusted workflow supplies exactly the separately verified deployed release.
@@ -205,15 +219,18 @@ try {
     $root=realpath($link);
     if (!is_string($root)) throw new RuntimeException();
     $cron=hmMainRecoveryEnvironment($link,$root,$expected);
+    hmMainRecoveryStage('BOOTSTRAP');
     require 'vendor/autoload.php';
     $app=require 'bootstrap/app.php';
     $db=null; $originalCache=[]; $originalScheduleStore=null;
     $app->afterBootstrapping(Illuminate\Foundation\Bootstrap\LoadConfiguration::class,function($app) use (&$originalCache,&$originalScheduleStore): void {
+        hmMainRecoveryStage('BOOTSTRAP_CONFIG');
         $config=$app->make('config');
         $config->set(['logging.default'=>'null','logging.deprecations.channel'=>'null','app.debug'=>false]);
         $originalCache=$config->get('cache');
         $originalScheduleStore=$config->get('cache.schedule_store',Illuminate\Support\Env::get('SCHEDULE_CACHE_DRIVER',static fn()=>Illuminate\Support\Env::get('SCHEDULE_CACHE_STORE'))) ?? $originalCache['default'];
         if (!$app->make('config_loaded_from_cache')) throw new RuntimeException();
+        hmMainRecoveryStage('BOOTSTRAP_MANIFEST');
         $packagesPath=$app->getCachedPackagesPath(); $servicesPath=$app->getCachedServicesPath();
         if (!is_file($packagesPath) || !is_readable($packagesPath) || !is_file($servicesPath) || !is_readable($servicesPath)) throw new RuntimeException();
         $packages=require $packagesPath; $services=require $servicesPath;
@@ -224,6 +241,7 @@ try {
         if ($services['providers']!=$providers->collapse()->toArray()) throw new RuntimeException();
     });
     $app->beforeBootstrapping(Illuminate\Foundation\Bootstrap\BootProviders::class,function() use (&$db): void {
+        hmMainRecoveryStage('DATABASE');
         config(['cache.default'=>'array']);
         $db=Illuminate\Support\Facades\DB::connection();
         if ($db->getDriverName()!=='mysql') throw new RuntimeException();
@@ -231,10 +249,12 @@ try {
     });
     $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
     if (!$db) throw new RuntimeException();
+    hmMainRecoveryStage('SCHEDULE');
     $events=array_values(array_filter(app(Illuminate\Console\Scheduling\Schedule::class)->events(),static fn($event)=>preg_match('/(?:^|[\s\x27\x22])reporting:sync-site-gam(?:[\s\x27\x22]|$)/',(string)($event->command ?? ''))===1));
     if (count($events)!==1) throw new RuntimeException();
     $event=$events[0];
     if (!$event->withoutOverlapping || !in_array($event->expiresAt,[1440,10],true) || $event->expression!=='*/5 * * * *' || $event->runInBackground || $event->onOneServer) throw new RuntimeException();
+    hmMainRecoveryStage('CACHE_CONFIGURATION');
     $storeName=$event->mutex->store ?? $originalScheduleStore;
     $store=$originalCache['stores'][$storeName] ?? [];
     if (($store['driver'] ?? '')!=='database') throw new RuntimeException();
@@ -244,12 +264,14 @@ try {
     $heartbeatTable=$db->getTablePrefix().'system_heartbeats';
     foreach ([$table,$heartbeatTable] as $identifier) if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D',$identifier)) throw new RuntimeException();
     $key=(string)($store['prefix'] ?? $originalCache['prefix']).$event->mutexName();
+    hmMainRecoveryStage('DATABASE');
     $pdo=$db->getPdo();
     if ((bool)$pdo->getAttribute(PDO::ATTR_PERSISTENT)) throw new RuntimeException();
     $db->rollBack();
     // Use this exact PDO session from here onward, with no framework reconnect.
     $hostIdentity=hmMainRecoveryHostIdentity();
     $first=hmMainRecoveryRead($pdo,$table,$heartbeatTable,$key);
+    hmMainRecoveryStage('LEASE_ELIGIBILITY');
     if (!$first['lease'] || (int)$first['lease']['expiration']<=$first['now']) {
         $output['status']='NO_ACTION';
     } elseif (!hmMainRecoveryLeaseEligible($first['lease'],$first['now'])) {
@@ -263,6 +285,7 @@ try {
         $second=hmMainRecoveryRead($pdo,$table,$heartbeatTable,$key);
         $second['process']=hmMainRecoveryProcessAbsent() ? 'ABSENT' : 'PRESENT';
         $elapsed=(hrtime(true)-$start)/1e9;
+        hmMainRecoveryStage('OBSERVATION_STABILITY');
         if (!hmMainRecoveryEligible($first,$second,$elapsed)) {
             $output['status']='BLOCKED';
         } elseif ($mode==='preview') {
@@ -273,6 +296,7 @@ try {
             hmMainRecoveryEnvironment($link,$root,$expected,$cron);
             if (!hash_equals($hostIdentity,hmMainRecoveryHostIdentity()) || !hmMainRecoveryProcessAbsent()) throw new RuntimeException();
             $final=hmMainRecoveryRead($pdo,$table,$heartbeatTable,$key);
+            hmMainRecoveryStage('FINAL_RECHECK');
             if (!hmMainRecoverySameLease($second['lease'],$final['lease'])
                 || !hmMainRecoveryLeaseEligible($final['lease'],$final['now'])
                 || $final['now']<$second['now'] || $final['now']-$second['now']>15
@@ -285,9 +309,11 @@ try {
 
         }
     }
+    $output['stage']=in_array($output['status'],['ELIGIBLE','NO_ACTION','RELEASED'],true) ? 'COMPLETE' : ($GLOBALS['hm_main_recovery_stage'] ?? 'INPUTS');
     echo json_encode($output,JSON_THROW_ON_ERROR).PHP_EOL;
 } catch (Throwable $exception) {
     try { if ($pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack(); } catch (Throwable) { /* No raw database error may escape. */ }
+    $output['stage']=$GLOBALS['hm_main_recovery_stage'] ?? 'INPUTS';
     echo json_encode($output,JSON_THROW_ON_ERROR).PHP_EOL;
     exit(1);
 }
