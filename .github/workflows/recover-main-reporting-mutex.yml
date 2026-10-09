@@ -302,6 +302,8 @@ jobs:
               -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
               "/bin/bash -s -- '$EXPECTED_RELEASE_SHA' '$app' '$mode'" \
               < "$work/remote-run.sh" > "$work/result.json" 2> "$work/error.txt"; then
+              # A failed remote invocation may still supply a safe closed-stage result.
+              node ops/audit/validate-main-reporting-recovery.mjs "$work/result.json" || true
               echo 'Targeted main lease recovery unavailable. Raw output withheld.' >&2
               return 1
             fi

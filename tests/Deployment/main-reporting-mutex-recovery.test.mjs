@@ -39,7 +39,7 @@ test('only write is exact main key-owner-expiration CAS with active-old-lease pr
  assert.doesNotMatch(script,/(?:INSERT|UPDATE|TRUNCATE)\s+(?:INTO|TABLE|`)|getMessage\(|print_r\(|var_dump\(/i);
 });
 test('public projection reconstructs allowlisted classes and discards private fields',()=>{
- const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'ELIGIBLE',changed_rows:0};
+ const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'ELIGIBLE',changed_rows:0,stage:'COMPLETE'};
  assert.deepEqual(safeMainReportingRecovery({...raw,owner:'secret',key:'secret',expiration:123,financial_data:'secret'}),raw);
  for (const invalid of [{...raw,status:'RELEASED'}, {...raw,changed_rows:1}, {...raw,status:'secret'}, {...raw,mode:'secret'}, {...raw,target:'VIDEO_SYNC'}, {...raw,mode:'apply'}]) assert.throws(()=>safeMainReportingRecovery(invalid));
  assert.deepEqual(safeMainReportingRecovery({...raw,mode:'apply',status:'RELEASED',changed_rows:1}),{...raw,mode:'apply',status:'RELEASED',changed_rows:1});
@@ -131,4 +131,11 @@ test('cron evidence rejects stale unavailable wrong-account malformed and future
  if(hmMainRecoveryCronEvidencePayload($good,105,1000)!==['/usr/bin/php8.4','/home/fixture/current/artisan'])exit(2);
  foreach([['observed_at'=>99],['observed_at'=>106],['uid'=>0],['available'=>false],['schema_version'=>2],['cron_base64'=>'invalid!']] as $change){if(hmMainRecoveryCronEvidencePayload(array_replace($good,$change),105,1000)!==null)exit(3);}
  echo 'PASS';`);
+});
+
+test('failure stages are closed enums and unknown or injected stage text is never exposed',()=>{
+ const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'UNAVAILABLE',changed_rows:0,stage:'HOST_NAMESPACE'};
+ assert.deepEqual(safeMainReportingRecovery({...raw,path:'private',error:'private'}),raw);
+ for(const stage of [undefined,'/private/path','HOST_NAMESPACE\nsecret','UNKNOWN']) assert.throws(()=>safeMainReportingRecovery({...raw,stage}));
+ for(const stage of ['ENVIRONMENT_IDENTITY','RELEASE_MARKER','CRON_EVIDENCE','CRON_TARGET','BOOTSTRAP','DATABASE','SCHEDULE','HOST_NAMESPACE','PROC_SCAN','READ_LEASE']) assert.ok(script.includes("hmMainRecoveryStage('"+stage+"')"),stage);
 });
