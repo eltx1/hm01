@@ -1707,6 +1707,19 @@ async function requestedAudioSignals(page) {
     }));
 }
 
+function audioVolumePrecision(value) {
+    if (Array.isArray(value)) return value.map(audioVolumePrecision);
+    // WebKit exposes native volume as float32. Normalize only volume fields;
+    // mute state, request snapshots, event counts and array lengths stay exact.
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+        ['volume', 'mediaVolume'].includes(key) && typeof entry === 'number' ? Math.round(entry * 1e6) / 1e6 : entry,
+    ]));
+}
+
+async function currentMediaAudio(page) {
+    return audioVolumePrecision(await page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })));
+}
+
 for (const choice of [
     { name: 'mute', startMuted: false, muted: true, volume: 1 },
     { name: 'zero volume', startMuted: false, muted: false, volume: 0 },
@@ -1729,13 +1742,13 @@ for (const choice of [
         await page.evaluate(() => window.videoLoaders[0].resolve());
         await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
         const effectiveVolume = choice.muted ? 0 : choice.volume;
-        expect(await page.evaluate(() => window.adStartStates)).toEqual([
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates))).toEqual([
             { volume: effectiveVolume, mediaMuted: choice.muted, mediaVolume: choice.volume },
         ]);
-        await expect.poll(() => page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        await expect.poll(() => currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         expect(await page.evaluate(() => window.adRequestHistory)).toEqual([submitted]);
-        expect(await page.evaluate(() => window.managerVolumeWrites)).toEqual([{ manager: 0, volume: effectiveVolume }]);
+        expect(audioVolumePrecision(await page.evaluate(() => window.managerVolumeWrites))).toEqual([{ manager: 0, volume: effectiveVolume }]);
     });
 }
 
@@ -1754,7 +1767,7 @@ for (const choice of [
             window.firstAudioManager.volume = choice.sdkVolume;
             window.firstAudioManager.emit(choice.event);
         }, choice);
-        await expect.poll(() => page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        await expect.poll(() => currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         await page.evaluate(() => {
             // IMA can restore its pre-ad snapshot before CONTENT_RESUME and
@@ -1765,7 +1778,7 @@ for (const choice of [
             window.firstAudioManager.emit('all-completed');
         });
         await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
-        await expect.poll(() => page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        await expect.poll(() => currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         await page.locator('video').evaluate(video => {
             // Only the editorial timeline is synthetic here; browser-native
@@ -1777,7 +1790,7 @@ for (const choice of [
         await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(2);
         expect((await requestedAudioSignals(page))[1]).toEqual({ vpmute: choice.muted ? '1' : '0', vpa: 'auto',
             plcmt: '1', position: 'midroll', autoPlay: true, muted: choice.muted });
-        expect(await page.evaluate(() => window.adStartStates[1])).toEqual({ volume: choice.sdkVolume,
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates[1]))).toEqual({ volume: choice.sdkVolume,
             mediaMuted: choice.muted, mediaVolume: choice.volume });
         await page.evaluate(() => {
             window.firstAudioManager.volume = 0.9;
@@ -1785,9 +1798,9 @@ for (const choice of [
             window.firstAudioManager.volume = 0;
             window.firstAudioManager.emit('volume-muted');
         });
-        expect(await page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        expect(await currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
-        expect(await page.evaluate(() => window.videoManager.getVolume())).toBe(choice.sdkVolume);
+        expect(await page.evaluate(() => window.videoManager.getVolume())).toBeCloseTo(choice.sdkVolume, 6);
         expect(await page.evaluate(() => window.adRequestHistory[0])).toEqual(submitted);
         expect(await page.evaluate(() => window.adRequests)).toBe(2);
         expect(await page.evaluate(() => window.managerVolumeWrites.length)).toBeLessThanOrEqual(3);
@@ -1811,9 +1824,9 @@ for (const choice of [
             video.muted = choice.muted; video.volume = choice.volume;
         }, choice);
         const effectiveVolume = choice.muted ? 0 : choice.volume;
-        await expect.poll(() => page.evaluate(() => window.videoManager.getVolume())).toBe(effectiveVolume);
+        await expect.poll(() => page.evaluate(() => window.videoManager.getVolume())).toBeCloseTo(effectiveVolume, 6);
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        expect(await page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        expect(await currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         await page.evaluate(() => {
             window.firstAudioManager.emit('complete');
@@ -1821,14 +1834,14 @@ for (const choice of [
         });
         // Exercise queued browser volumechange from SDK restoration before
         // its terminal resume callback, not only same-task restoration.
-        await expect.poll(() => page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        await expect.poll(() => currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         await page.evaluate(() => {
             window.firstAudioManager.emit('content-resume');
             window.firstAudioManager.emit('all-completed');
         });
         await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
-        await expect.poll(() => page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
+        await expect.poll(() => currentMediaAudio(page))
             .toEqual({ muted: choice.muted, volume: choice.volume });
         await page.locator('video').evaluate(video => {
             Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
@@ -1838,7 +1851,7 @@ for (const choice of [
         await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(2);
         expect((await requestedAudioSignals(page))[1]).toEqual({ vpmute: effectiveVolume === 0 ? '1' : '0', vpa: 'auto',
             plcmt: '1', position: 'midroll', autoPlay: true, muted: effectiveVolume === 0 });
-        expect(await page.evaluate(() => window.adStartStates[1])).toEqual({ volume: effectiveVolume,
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates[1]))).toEqual({ volume: effectiveVolume,
             mediaMuted: choice.muted, mediaVolume: choice.volume });
         expect(await page.evaluate(() => window.adRequestHistory[0])).toEqual(submitted);
         expect(await page.evaluate(() => window.adRequests)).toBe(2);
@@ -1846,20 +1859,36 @@ for (const choice of [
     });
 }
 
-test('X cancels a pending response after an audio change and a stale manager cannot start', async ({ page }) => {
+test('visible X cancels a pending midroll after an audio change and a stale manager cannot start', async ({ page }) => {
     await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, deferResponse: true,
         vastUrl: audioIntentFixtureTag });
     await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
-    const submitted = await page.evaluate(() => window.adRequestHistory[0]);
-    await page.locator('video').evaluate(video => { video.muted = true; video.volume = 0.25; });
-    await page.locator('[data-hm-placement-close]').click();
-    await expect(page.locator('[data-placement="video"]')).toBeHidden();
     await page.evaluate(() => window.videoLoaders[0].resolve());
+    await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+    const surface = page.locator('[data-placement="video"]');
+    // The loader exposes X after a rendered player, never on an unresolved
+    // initial request. Establish a real filled preroll before the pending break.
+    await expect(surface).toHaveAttribute('data-hm-status', 'rendered');
+    await expect(surface.locator('[data-hm-placement-close]')).toBeVisible();
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+    await page.locator('video').evaluate(video => {
+        Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+        Object.defineProperty(video, 'currentTime', { configurable: true, value: 6 });
+        video.dispatchEvent(new Event('timeupdate'));
+    });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    const submitted = await page.evaluate(() => window.adRequestHistory);
+    await page.locator('video').evaluate(video => { video.muted = true; video.volume = 0.25; });
+    await expect(surface.locator('[data-hm-placement-close]')).toBeVisible();
+    await surface.locator('[data-hm-placement-close]').click();
+    await expect(surface).toBeHidden();
+    await page.evaluate(() => window.videoLoaders[1].resolve());
     await scrollPage(page, 1400);
     await scrollPage(page, 0);
     expect(await page.evaluate(() => ({ requests: window.adRequests, managers: window.videoManagers.length, starts: window.adStarts })))
-        .toEqual({ requests: 1, managers: 0, starts: 0 });
-    expect(await page.evaluate(() => window.adRequestHistory)).toEqual([submitted]);
+        .toEqual({ requests: 2, managers: 1, starts: 1 });
+    expect(await page.evaluate(() => window.adRequestHistory)).toEqual(submitted);
 });
 
 test('silent content startup followed by IMA 1205 gets exactly one truthful muted preroll fallback', async ({ page }) => {
@@ -1895,7 +1924,7 @@ test('silent content startup followed by IMA 1205 gets exactly one truthful mute
         window.videoLoaders[1].resolve();
     });
     await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
-    expect(await page.evaluate(() => window.adStartStates)).toEqual([
+    expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates))).toEqual([
         { volume: 1, mediaMuted: false, mediaVolume: 1 }, { volume: 0, mediaMuted: true, mediaVolume: 1 },
     ]);
     expect(await page.evaluate(() => ({ requests: window.adRequests, managers: window.videoManagers.length,
@@ -1926,35 +1955,29 @@ test('a second IMA 1205 exhausts the shared preroll budget and leaves content us
     await expect(page.locator('[data-hm-placement-close]')).toBeVisible();
 });
 
-for (const cancel of ['close', 'unmute', 'partial volume']) {
+for (const cancel of ['unmute', 'partial volume']) {
     test(`viewer ${cancel} during the IMA 1205 fallback delay cancels its pending request`, async ({ page }) => {
         await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, deferResponse: true,
             adStartErrors: [1205], vastUrl: audioIntentFixtureTag });
         await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
         const cancelled = await page.evaluate(cancel => {
             window.videoLoaders[0].resolve();
-            const surface = document.querySelector('[data-placement="video"]'), video = document.querySelector('video');
+            const video = document.querySelector('video');
             const reason = document.querySelector('#video-runtime').getAttribute('data-hm-video-preroll-retry');
             // Act in the same task as failure, before the bounded retry timer.
-            if (cancel === 'close') surface.querySelector('[data-hm-placement-close]').click();
-            else {
-                if (cancel === 'unmute') video.muted = false;
-                else video.volume = 0.4;
-                video.dispatchEvent(new Event('volumechange'));
-            }
+            if (cancel === 'unmute') video.muted = false;
+            else video.volume = 0.4;
+            video.dispatchEvent(new Event('volumechange'));
             return reason;
         }, cancel);
         expect(cancelled).toBe('autoplay-muted');
         await page.waitForTimeout(1250);
         expect(await page.evaluate(() => ({ requests: window.adRequests, started: window.adStartedEvents })))
             .toEqual({ requests: 1, started: 0 });
-        if (cancel === 'close') await expect(page.locator('[data-placement="video"]')).toBeHidden();
-        else {
-            await expect(page.locator('[data-placement="video"]')).toBeVisible();
-            await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
-            expect(await page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })))
-                .toEqual(cancel === 'unmute' ? { muted: false, volume: 1 } : { muted: true, volume: 0.4 });
-        }
+        await expect(page.locator('[data-placement="video"]')).toBeVisible();
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        expect(await currentMediaAudio(page))
+            .toEqual(cancel === 'unmute' ? { muted: false, volume: 1 } : { muted: true, volume: 0.4 });
     });
 }
 
@@ -1980,8 +2003,8 @@ for (const exclusion of ['VMAP', 'click start', 'already started', 'changed view
         }, exclusion);
         await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
         await page.waitForTimeout(1250);
-        expect(await page.evaluate(() => ({ requests: window.adRequests, muted: document.querySelector('video').muted,
-            volume: document.querySelector('video').volume })))
+        expect(audioVolumePrecision(await page.evaluate(() => ({ requests: window.adRequests, muted: document.querySelector('video').muted,
+            volume: document.querySelector('video').volume }))))
             .toEqual({ requests: 1, muted: false, volume: exclusion === 'changed viewer intent' ? 0.4 : 1 });
         await expect(page.locator('#video-runtime')).not.toHaveAttribute('data-hm-video-preroll-retry', 'autoplay-muted');
         expect((await requestedAudioSignals(page))[0].vpa).toBe(exclusion === 'click start' ? 'click' : 'auto');
