@@ -73,28 +73,60 @@ function hmMainRecoveryProcVisibility(string|false $mountinfo): bool
     return $found===1;
 }
 
-function hmMainRecoveryHostEvidence(string|false $selfNamespace,string|false $initNamespace,string|false $initName,
-    string|false $selfStatus,string|false $initStatus,string|false $bootId): bool
+function hmMainRecoveryUniquePid(string $status,string $field,int $expected): bool
 {
-    if (!is_string($selfNamespace) || !preg_match('/^pid:\[[0-9]+\]$/D',$selfNamespace) || $selfNamespace!==$initNamespace
+    return preg_match_all('/^'.preg_quote($field,'/').':.*$/m',$status,$matches)===1
+        && preg_match('/^'.preg_quote($field,'/').':[ \t]+'.$expected.'[ \t]*$/D',$matches[0][0])===1;
+}
+function hmMainRecoveryHostEvidence(string|false $selfNamespace,string|false $initNamespace,string|false $initName,
+    string|false $selfStatus,string|false $initStatus,string|false $bootId,?int $selfPid=null,bool $positiveWitness=false): bool
+{
+    if (!is_string($selfNamespace) || !preg_match('/^pid:\[[0-9]+\]$/D',$selfNamespace)
         || !is_string($initName) || !in_array(trim($initName),['systemd','init'],true)
         || !is_string($bootId) || !preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/D',trim($bootId))) return false;
     foreach ([$selfStatus,$initStatus] as $status) {
         if (!is_string($status) || !preg_match('/^NSpid:[ \t]+([0-9]+)[ \t]*$/m',$status)) return false;
     }
-    return preg_match('/^NSpid:[ \t]+1[ \t]*$/m',$initStatus)===1;
+    if (!hmMainRecoveryUniquePid($initStatus,'NSpid',1)) return false;
+    // A readable disagreement never enters the link-unavailable alternative.
+    if ($initNamespace!==false) return $initNamespace===$selfNamespace;
+    return $positiveWitness && is_int($selfPid) && $selfPid>0
+        && hmMainRecoveryUniquePid($selfStatus,'Pid',$selfPid) && hmMainRecoveryUniquePid($selfStatus,'NSpid',$selfPid)
+        && hmMainRecoveryUniquePid($initStatus,'Pid',1);
+}
+function hmMainRecoveryMountIdentity(string|false $mountinfo): ?string
+{
+    if (!hmMainRecoveryProcVisibility($mountinfo)) return null;
+    foreach(explode("\n",$mountinfo) as $line) {
+        $parts=explode(' - ',$line); $before=explode(' ',$parts[0]);
+        if (($before[4] ?? '')==='/proc') return hash('sha256',$line);
+    }
+    return null;
 }
 function hmMainRecoveryHostIdentity(): string
 {
     hmMainRecoveryStage('HOST_NAMESPACE');
     $selfNamespace=@readlink('/proc/self/ns/pid'); $initNamespace=@readlink('/proc/1/ns/pid');
     $bootId=@file_get_contents('/proc/sys/kernel/random/boot_id',false,null,0,128);
-    if (is_file('/.dockerenv') || is_file('/run/.containerenv')
-        || !hmMainRecoveryHostEvidence($selfNamespace,$initNamespace,@file_get_contents('/proc/1/comm',false,null,0,128),
-            @file_get_contents('/proc/self/status',false,null,0,16385),@file_get_contents('/proc/1/status',false,null,0,16385),$bootId)) throw new RuntimeException();
+    $initName=@file_get_contents('/proc/1/comm',false,null,0,128);
+    $selfStatus=@file_get_contents('/proc/self/status',false,null,0,16385); $initStatus=@file_get_contents('/proc/1/status',false,null,0,16385);
+    if (is_file('/.dockerenv') || is_file('/run/.containerenv')) throw new RuntimeException();
+    $witness=false;
+    if ($initNamespace===false) {
+        hmMainRecoveryReason('PID1_LINK_UNAVAILABLE');
+        // Check every remaining host identity predicate before waiting for a witness.
+        if (!hmMainRecoveryHostEvidence($selfNamespace,false,$initName,$selfStatus,$initStatus,$bootId,getmypid(),true)) throw new RuntimeException();
+        $witness=hmMainRecoveryNaturalTarget()!==null;
+        hmMainRecoveryStage('HOST_NAMESPACE');
+        if (!$witness) { hmMainRecoveryReason('PID1_LINK_WITNESS_UNAVAILABLE'); throw new RuntimeException(); }
+        if (@readlink('/proc/self/ns/pid')!==$selfNamespace) throw new RuntimeException();
+    }
+    if (!hmMainRecoveryHostEvidence($selfNamespace,$initNamespace,$initName,$selfStatus,$initStatus,$bootId,getmypid(),$witness)) throw new RuntimeException();
     hmMainRecoveryStage('PROC_VISIBILITY');
-    if (!hmMainRecoveryProcVisibility(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577))) throw new RuntimeException();
-    return hash('sha256',$selfNamespace.'|'.trim($bootId));
+    $mountIdentity=hmMainRecoveryMountIdentity(@file_get_contents('/proc/self/mountinfo',false,null,0,1048577));
+    if ($mountIdentity===null) throw new RuntimeException();
+    hmMainRecoveryReason('NONE');
+    return hash('sha256',$selfNamespace.'|'.trim($bootId).'|'.$mountIdentity);
 }
 
 function hmMainRecoveryProcessStart(string|false $stat,int $pid): ?string

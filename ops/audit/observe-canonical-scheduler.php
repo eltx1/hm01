@@ -47,6 +47,10 @@ function hmSchedulerArtisan(string|false $cmd): ?string
     return $script;
 }
 
+function hmSchedulerNextInspection(bool $baseline,bool $matched,float $tick): float
+{
+    return $tick+($matched ? 1.0 : ($baseline ? 181.0 : 0.25));
+}
 function hmSchedulerSameFile(string $left,string $right): bool
 {
     $a=@stat($left); $b=@stat($right);
@@ -88,7 +92,7 @@ try {
     $envelope=['schema_version'=>1,'source'=>'CANONICAL_PROCESS_IDENTITY','collector_pid'=>$pid,'collector_start'=>$collectorStart,
         'uid'=>$uid,'namespace'=>$namespace,'release_sha'=>$expected,'available'=>false];
     hmSchedulerWrite($file,$envelope);
-    $start=hrtime(true); $seen=[]; $known=[]; $details=0; $captures=0; $lastWritten=0;
+    $start=hrtime(true); $seen=[]; $known=[]; $nextDetail=[]; $baseline=[]; $identities=[]; $details=0; $captures=0; $lastWritten=0;
     for($iteration=0;$iteration<360 && (hrtime(true)-$start)<180e9 && $details<1200 && $captures<240;$iteration++) {
         clearstatcache();
         $marker=@file_get_contents($root.'/.horus-release');
@@ -100,11 +104,18 @@ try {
         foreach($paths as $dir) {
             $candidate=(int)basename($dir); $present[$candidate]=true;
             if ($candidate===$pid) continue;
-            if (@fileowner($dir)!==$uid) { unset($seen[$candidate],$known[$candidate]); continue; }
-            if (!isset($seen[$candidate])) $seen[$candidate]=$tick;
+            if (@fileowner($dir)!==$uid) { unset($seen[$candidate],$known[$candidate],$nextDetail[$candidate],$baseline[$candidate],$identities[$candidate]); continue; }
+            $identity=@fileinode($dir);
+            if (!isset($seen[$candidate]) || ($identities[$candidate] ?? null)!==$identity) {
+                $seen[$candidate]=$tick; $identities[$candidate]=$identity; $nextDetail[$candidate]=0; $baseline[$candidate]=$iteration===0; unset($known[$candidate]);
+            }
             if (!isset($known[$candidate]) && $tick-$seen[$candidate]>2) continue;
+            if (($nextDetail[$candidate] ?? 0)>$tick) continue;
             if (++$details>1200) break;
-            if (hmSchedulerArtisan(@file_get_contents($dir.'/cmdline',false,null,0,65537))===null) continue;
+            if (hmSchedulerArtisan(@file_get_contents($dir.'/cmdline',false,null,0,65537))===null) {
+                $nextDetail[$candidate]=hmSchedulerNextInspection($baseline[$candidate],false,$tick); continue;
+            }
+            $nextDetail[$candidate]=hmSchedulerNextInspection(false,true,$tick);
             if (++$captures>240) break;
             $witness=hmSchedulerCapture($candidate,$uid,$root,$php,$namespace);
             if ($witness!==null) {
@@ -116,6 +127,7 @@ try {
             }
         }
         $seen=array_intersect_key($seen,$present); $known=array_intersect_key($known,$present);
+        $nextDetail=array_intersect_key($nextDetail,$present); $baseline=array_intersect_key($baseline,$present); $identities=array_intersect_key($identities,$present);
         $second=time()%60; usleep(($second>=58 || $second<=2) ? random_int(80000,120000) : random_int(900000,1100000));
     }
 } catch (Throwable) {

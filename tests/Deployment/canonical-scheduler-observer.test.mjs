@@ -90,3 +90,20 @@ test('real bounded observer loop captures an isolated short-lived canonical PHP 
   rmSync(directory,{recursive:true,force:true});
  }
 });
+
+test('baseline negative scans are not repeated and new PID transition retries stay bounded',{skip:!php},()=>{
+ const result=run(String.raw`
+ if(hmSchedulerNextInspection(true,false,0.0)!==181.0)exit(2);
+ if(hmSchedulerNextInspection(false,false,0.0)!==0.25)exit(3);
+ if(hmSchedulerNextInspection(false,true,0.0)!==1.0)exit(4);
+ $next=0.0;$count=0;
+ for($tick=0.0;$tick<2.0;$tick+=0.08){if($tick>=$next){$count++;$next=hmSchedulerNextInspection(true,false,$tick);}}
+ if($count!==1)exit(5);
+ echo 'PASS';`);
+ assert.equal(result.status,0,result.stderr);assert.equal(result.stdout,'PASS');
+});
+test('observer invalidates negative cache when a PID disappears or directory identity changes',()=>{
+ assert.match(source,/fileinode\(\$dir\)/);
+ assert.match(source,/identities\[\$candidate\] \?\? null\)!==\$identity/);
+ for(const name of ['nextDetail','baseline','identities']) assert.ok(source.includes('$'+name+'=array_intersect_key($'+name+',$present)'));
+});

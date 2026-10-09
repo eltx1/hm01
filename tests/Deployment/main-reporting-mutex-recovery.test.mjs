@@ -176,3 +176,23 @@ test('positive canonical witness denies wrong identity or stale observation and 
  if(hmMainRecoveryOldScheduler($status,$cmd,$stat,44,1001,1000,100,1200))exit(6);
  echo 'PASS';`);
 });
+
+test('PID1-link unavailable alternative requires exact Pid/NSpid plus positive witness; readable mismatch remains fatal',{skip:!php},()=>{
+ fixture(String.raw`
+ $ns='pid:[1]';$boot='12345678-1234-1234-1234-123456789abc';$self="Pid:\t123\nNSpid:\t123\n";$init="Pid:\t1\nNSpid:\t1\n";
+ if(!hmMainRecoveryHostEvidence($ns,false,'systemd',$self,$init,$boot,123,true))exit(2);
+ if(hmMainRecoveryHostEvidence($ns,false,'systemd',$self,$init,$boot,123,false))exit(3);
+ if(hmMainRecoveryHostEvidence($ns,'pid:[2]','systemd',$self,$init,$boot,123,true))exit(4);
+ foreach([[$self."Pid:\t123\n",$init],[$self."NSpid:\t123\n",$init],["Pid:\t122\nNSpid:\t123\n",$init],[$self,"Pid:\t2\nNSpid:\t1\n"],[$self,"Pid:\t1\nNSpid:\t1 2\n"]] as $bad){if(hmMainRecoveryHostEvidence($ns,false,'systemd',$bad[0],$bad[1],$boot,123,true))exit(5);}
+ $mount='24 1 0:4 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw';
+ if(hmMainRecoveryMountIdentity($mount)===null||hmMainRecoveryMountIdentity($mount)===hmMainRecoveryMountIdentity(str_replace('24 1','25 1',$mount)))exit(6);
+ if(hmMainRecoveryMountIdentity($mount.',hidepid=2')!==null)exit(7);
+ echo 'PASS';`);
+});
+test('host fallback is conditional on unavailable link and still requires canonical evidence and stable proc mount',()=>{
+ assert.match(script,/if \(\$initNamespace===false\)/);
+ assert.match(script,/hmMainRecoveryNaturalTarget\(\)!==null/);
+ assert.match(script,/if \(\$initNamespace!==false\) return \$initNamespace===\$selfNamespace/);
+ assert.match(script,/\$mountIdentity/);
+ assert.doesNotMatch(script,/permission.denied/i);
+});
