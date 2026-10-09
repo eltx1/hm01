@@ -34,11 +34,14 @@ class GamAdUnitReportClient
 
     public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
     {
+        app(MainReportSyncLock::class)->assertOwned();
         $response = null;
         $result = $this->operations->execute($connection, 'reporting.ad_unit.'.$method, $service, $method, $payload,
             function () use ($connection, $service, $method, $payload, &$response): array {
                 $transport = $this->transport instanceof GamOfficialSoapTransport ? $this->transport->withTimeout(15) : $this->transport;
+                app(MainReportSyncLock::class)->assertOwned();
                 $response = $transport->call($connection, $service, $method, $payload);
+                app(MainReportSyncLock::class)->assertOwned();
 
                 // Download URLs contain temporary credentials. Never persist them in audit payloads.
                 return $method === 'getReportDownloadUrlWithOptions' ? ['download_url_received' => true] : $response;
@@ -85,6 +88,7 @@ class GamAdUnitReportClient
             throw new RuntimeException('Google returned an invalid report download location.');
         }
         try {
+            app(MainReportSyncLock::class)->assertOwned();
             $download = Http::connectTimeout(10)->timeout(40)->withOptions(['allow_redirects' => false, 'stream' => true, 'read_timeout' => 15])->get($url);
             if (! $download->successful()) {
                 throw new RuntimeException('Report download failed.');
@@ -100,8 +104,11 @@ class GamAdUnitReportClient
                 }
             }
             $stream->close();
+            app(MainReportSyncLock::class)->assertOwned();
 
             return $csv;
+        } catch (MainReportSyncLockException $exception) {
+            throw $exception;
         } catch (\Throwable) {
             // HTTP exceptions may include the signed URL; keep it out of logs and the UI.
             throw new RuntimeException('The Google report could not be downloaded safely. It will be retried.');
