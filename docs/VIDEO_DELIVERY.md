@@ -59,16 +59,30 @@ The Loader allows at most 60 seconds for the trusted video renderer, covering
 these phases with a small scheduling margin; GPT and other providers keep their
 existing timeout limits. Independent banner startup remains parallel.
 
-Ad failures release owned content or close the ad-only/rewarded attempt. There
-are no automatic auction retries. VMAP content-resume without preroll retires the
+Ordinary content video permits at most **two total preroll attempts**: the
+initial request and one retry after a 1,000ms delay. All retry causes share this
+single budget. Eligible pre-response loader errors are no-fill codes 303/1009
+and selected transient codes 301/1012. A narrowly qualified initial audible
+autoplay denial (IMA 1205) can instead consume that same retry with muted
+playback. Mixed error causes cannot produce a third request. Known VMAP,
+rewarded/ad-only inventory, a manager/ad/content response that has already
+begun, and unrelated fatal errors do not enter the generic retry path. Each
+actual attempt retains the independent request, viewability and media watchdogs
+above; there is no new shared cutoff across attempts.
+
+Retries recheck player ownership, visibility, consent and playback intent.
+Dismissal, navigation/teardown or a superseded attempt retires pending work.
+After an ineligible or exhausted failure, owned content resumes or the
+ad-only/rewarded attempt closes. VMAP content-resume without preroll retires the
 initial startup watchdog and retains the SDK-owned future schedule. Existing
-consent, viewability, Click Guard and reward-completion requirements remain in
-force. Test fixtures use a simulated IMA boundary and never contact paid demand.
+Click Guard and reward-completion requirements remain in force. Test fixtures
+use a simulated IMA boundary and never contact paid demand.
 
 ## Mixed-format lifecycle and geometry
 
 Mixed support uses the existing IMA content player and ad display container.
-There is no GPT fallback, second renderer, auction retry, or synthetic impression.
+There is no GPT fallback, second renderer or synthetic impression. The bounded
+startup retry above never retries an active ad or creates an overlay retry loop.
 A true non-linear `LOADED` event resumes content, keeps the SDK layer clickable,
 and leaves content clock/EOS observation attached. `LINEAR_CHANGED` restores the
 correct ownership if the creative changes mode. Linear video and SDK-converted
@@ -96,7 +110,8 @@ countdown. A midpoint reached under an active overlay is consumed rather than
 queued as an immediate back-to-back midroll. EOS retires that overlay and allows
 only the existing one postroll. A true non-linear postroll cannot continue content
 that has already ended and closes cleanly; a linear/full-slot postroll still plays.
-The normal pre/mid/post policy otherwise stays unchanged.
+The initial midpoint and final postroll remain; longer content may additionally
+use the eligible repeat opportunities described below.
 
 VMAP remains SDK-scheduled and its manager survives between linear breaks. The
 HTML5 IMA compatibility matrix lists VMAP overlays as unsupported; GAM also
@@ -124,9 +139,13 @@ and rewarded fallback remains linear. The working manual tag was used only as
 structural evidence: its unrelated page URL, `npa=0`, `tfcd=0` and test parameters
 are not copied into generated production requests.
 
-For each request, `vpmute` (1/0), `vpa` (auto/click), IMA playback hints and actual
-manager volume use the same playback intent. A zero-volume slider is muted even
-when the media element's `muted` flag is false; nonzero viewer volume is retained.
+At dispatch, `vpmute` (1/0), `vpa` (auto/click) and IMA playback hints come from
+one fixed snapshot of the observed playback intent. A later viewer mute/volume
+change cannot rewrite a request already sent. The arriving and playing IMA
+manager instead follows the latest viewer audio state, including a change made
+while waiting for the response. SDK initialization or media-state restoration
+cannot overwrite that newer choice. A zero-volume slider is muted even when the
+media element's `muted` flag is false; nonzero viewer volume is retained.
 Content-timeline breaks retain the original content start method; click-start
 content and rewarded requests retain click intent. Page/description,
 consent, viewability and break-position signals remain truthful. A returned 303
@@ -139,11 +158,46 @@ Regression fixtures are deterministic IMA boundary doubles and local content,
 never paid ad requests. Their rendering and event tests verify Horus behavior,
 not Google's live auction eligibility or the exact creative returned in VSI.
 
+## Additional mid-roll opportunities
+
+The global Video Player setting `video_player.mid_roll_interval_seconds` is
+labeled **Additional mid-roll interval (seconds)**. It defaults to 60; 0 disables
+additional mid-rolls, and enabled values must be whole seconds from 30 through
+600. Saving uses the existing permission, audit and active-site publication
+path. Recipes publish `data-hm-video-mid-roll-interval-seconds`; the original
+`data-hm-video-mid-roll-ratio=0.5` remains for the initial midpoint.
+
+Additional breaks are considered only after that first midpoint opportunity,
+after the configured interval of genuine eligible content playback. A wall-clock
+timer alone cannot create an auction. Hidden documents, offscreen players below
+50% visibility, pauses, stalls, seeking, live ad pods and non-linear overlays do
+not accrue eligible playback. VMAP remains exclusively SDK-scheduled. A repeat
+also requires at least 15 seconds of real content remaining; seeking, skipped
+opportunities and resume events cannot cause catch-up or back-to-back requests.
+The current approximately 49.4-second content clip therefore retains its
+midpoint and postroll with no additional break. There is no artificial replay,
+extra content-completion signaling or guarantee of fill.
+
 ## Explicit inventory and autoplay preferences
 
-The Video Player settings expose a fixed `video_player.inventory_type` declaration:
-`accompanying` (the unchanged default, GAM `plcmt=2`) or `instream` (`plcmt=1`).
-This does not vary by visitor, browser capability, mute button, or ad response.
+Each website's admin overview and Inventory page expose **Video ad type / نوع إعلان الفيديو**:
+**Accompanying content (2)** (GAM `plcmt=2`) or **Instream (1)** (`plcmt=1`).
+The nullable `site_configs.video_inventory_type` field defaults to accompanying
+for existing and future websites. No global inventory value is inherited: the
+retired `video_player.inventory_type` registry entry, UI control, and config
+fallback are removed. Any historical stored global row is retained for history
+but ignored, including cached values. Content URL, autoplay audio and the
+additional mid-roll interval remain global.
+
+Only Horus admins with `video_player.manage` can save the dedicated field. The
+change is audited, and only the selected active website gets a new static
+production configuration. Inactive websites save the value for activation;
+repeating an unchanged save does not queue another version. Selecting a type
+does not activate a website or placement. Normal runtime refresh during
+deployment regenerates existing static recipes with the site's effective value.
+The recipe emits that value as `data-hm-video-content-mode`; the runtime maps it
+to the fixed `plcmt` without varying by visitor, browser capability, mute button,
+or ad response.
 Use instream only where video content is the focus of the visit or explicitly
 requested by the viewer. Merely adding a video to an editorial page does not
 establish that classification. Ad-only and rewarded inventory are unchanged.
@@ -160,7 +214,11 @@ An audible capability check never starts offscreen. If SDK readiness arrives
 after the inline slot has scrolled away, this opt-in mode waits for the slot to
 be visible again before probing or requesting; the existing muted mode keeps
 its late-response floating behavior. Viewer mute and volume changes while
-waiting are preserved.
+waiting are preserved. Successful playback of the current silent content clip
+does not prove that the browser will allow an audible ad. Only the narrowly
+qualified IMA 1205 denial described above enables the one muted fallback; the
+runtime never treats arbitrary VAST errors as autoplay denials or restarts a
+failed manager in place.
 
 As verified on October 9, 2026, Google's accompanying-content definition still
 requires muted-by-default playback. Google's October 8 notification removes two

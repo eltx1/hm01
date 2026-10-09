@@ -56,6 +56,7 @@ async function openPlayer(page, options = {}) {
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
         window.managerInits = 0; window.managerResizes = []; window.managerStops = 0; window.adClicks = 0; window.contentCompleteCalls = 0; window.videoManagers = []; window.videoLoaders = [];
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
+        window.adRequestHistory = []; window.adStartStates = []; window.adStartedEvents = 0; window.managerVolumeWrites = [];
         window.contentPlayCalls = 0; window.contentPauseCalls = 0; window.contentLoadCalls = 0;
         const nativeLoad = HTMLMediaElement.prototype.load;
         HTMLMediaElement.prototype.load = function (...args) { window.contentLoadCalls++; return nativeLoad.apply(this, args); };
@@ -82,8 +83,34 @@ async function openPlayer(page, options = {}) {
         }
         window.viewportListenerCount = () => listenerSets.reduce((total, live) => total + [...live.values()].reduce((sum, listeners) => sum + listeners.size, 0), 0);
         if (!options.realContent) {
-            HTMLMediaElement.prototype.play = function () { window.contentPlayCalls++; return Promise.resolve(); };
-            HTMLMediaElement.prototype.pause = function () { window.contentPauseCalls++; };
+            // Synthetic play() must agree with paused and the media events;
+            // production intentionally ignores a fulfilled play on paused media.
+            // Keep every real-content test on native playback and native state.
+            const mediaStates = new WeakMap();
+            const stateFor = media => {
+                if (!mediaStates.has(media)) mediaStates.set(media, { paused: true, generation: 0 });
+                return mediaStates.get(media);
+            };
+            Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
+                configurable: true, get() { return stateFor(this).paused; },
+            });
+            HTMLMediaElement.prototype.play = function () {
+                window.contentPlayCalls++;
+                const state = stateFor(this), wasPaused = state.paused;
+                state.paused = false;
+                const generation = state.generation;
+                return Promise.resolve().then(() => {
+                    if (!wasPaused || state.paused || generation !== state.generation) return;
+                    this.dispatchEvent(new Event('play'));
+                    if (!state.paused && generation === state.generation) this.dispatchEvent(new Event('playing'));
+                });
+            };
+            HTMLMediaElement.prototype.pause = function () {
+                window.contentPauseCalls++;
+                const state = stateFor(this), wasPaused = state.paused;
+                state.paused = true; state.generation++;
+                if (!wasPaused) Promise.resolve().then(() => this.dispatchEvent(new Event('pause')));
+            };
         }
         if (options.rejectContentAutoplay) {
             const nativePlay = HTMLMediaElement.prototype.play;
@@ -102,6 +129,7 @@ async function openPlayer(page, options = {}) {
         class Manager {
             constructor() {
                 this.events = {};
+                this.index = window.videoManagers.length;
                 this.ad = { linear: !options.nonlinear, width: 300, height: 50, minSuggestedDuration: 0, ...(options.ads?.[window.videoManagers.length] || options.ad || {}) };
                 window.videoManagers.push(this); window.videoManager = this;
             }
@@ -111,11 +139,35 @@ async function openPlayer(page, options = {}) {
             discardAdBreak() { this.discardCalls = (this.discardCalls || 0) + 1; this.emit('content-resume'); }
             stop() { window.managerStops++; if (!options.noStopEvents) { this.emit('complete'); this.emit('all-completed'); } }
             getCuePoints() { return options.cuePoints || []; }
-            init(width, height) { window.managerInits++; this.dimensions = [width, height]; if (!options.noPreload && !options.cuePoints?.length) this.emit('loaded'); }
-            setVolume(value) { this.volume = value; }
-            start() { window.adStarts++; if (this.ad.linear) this.emit('content-pause'); this.emit('loaded'); this.emit('started'); }
+            restoreMediaAudio() {
+                if (!options.restoreMediaAudio) return;
+                const video = document.querySelector('video');
+                video.muted = options.startMuted !== false; video.volume = 1;
+            }
+            init(width, height) {
+                window.managerInits++; this.dimensions = [width, height]; this.restoreMediaAudio();
+                if (!options.noPreload && !options.cuePoints?.length) this.emit('loaded');
+            }
+            getVolume() { return this.volume; }
+            setVolume(value) {
+                this.volume = value; window.managerVolumeWrites.push({ manager: this.index, volume: value });
+                if (options.echoVolumeEvents) {
+                    this.emit('volume-changed');
+                    Promise.resolve().then(() => this.emit('volume-changed'));
+                }
+            }
+            start() {
+                window.adStarts++;
+                const video = document.querySelector('video');
+                window.adStartStates.push({ volume: this.volume, mediaMuted: video.muted, mediaVolume: video.volume });
+                if (this.ad.linear) this.emit('content-pause');
+                this.emit('loaded');
+                const code = options.adStartErrors?.[this.index];
+                if (code) { this.emit('ad-error', { getError: () => ({ getErrorCode: () => code }) }); return; }
+                window.adStartedEvents++; this.emit('started');
+            }
             resize(width, height) { window.managerResizes.push([width, height]); this.dimensions = [width, height]; }
-            destroy() { window.adDestroys++; if (options.pauseOnDestroy) document.querySelector('video')?.pause(); }
+            destroy() { window.adDestroys++; this.restoreMediaAudio(); if (options.pauseOnDestroy) document.querySelector('video')?.pause(); }
         }
         window.installIma = () => { window.google = { ima: {
             AdDisplayContainer: class {
@@ -138,6 +190,11 @@ async function openPlayer(page, options = {}) {
                     window.adRequests++;
                     window.lastAdTagUrl = request.adTagUrl || null;
                     window.lastAdPlaybackIntent = { autoPlay: request.willAutoPlay, muted: request.willPlayMuted };
+                    const video = document.querySelector('video');
+                    // Snapshot what was actually submitted; later mute changes
+                    // must not rewrite an earlier request's signaling history.
+                    window.adRequestHistory.push({ tag: request.adTagUrl, autoPlay: request.willAutoPlay, muted: request.willPlayMuted,
+                        mediaMuted: video.muted, mediaVolume: video.volume, readyState: video.readyState });
                     window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
                     window.lastNonlinearDimensions = [request.nonLinearAdSlotWidth, request.nonLinearAdSlotHeight];
                     this.resolve = () => this.events.manager({ getAdsManager: (_video, settings) => {
@@ -156,7 +213,7 @@ async function openPlayer(page, options = {}) {
             AdsRequest: class { setAdWillAutoPlay(value) { this.willAutoPlay = value; } setAdWillPlayMuted(value) { this.willPlayMuted = value; } setContinuousPlayback() {} },
             AdsRenderingSettings: class {}, AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: 'manager' } },
             AdErrorEvent: { Type: { AD_ERROR: 'ad-error' } }, ViewMode: { NORMAL: 'normal' },
-            AdEvent: { Type: { LOADED: 'loaded', STARTED: 'started', COMPLETE: 'complete', SKIPPED: 'skipped', ALL_ADS_COMPLETED: 'all-completed', CONTENT_PAUSE_REQUESTED: 'content-pause', CONTENT_RESUME_REQUESTED: 'content-resume', LINEAR_CHANGED: 'linear-changed', USER_CLOSE: 'user-close' } },
+            AdEvent: { Type: { LOADED: 'loaded', STARTED: 'started', COMPLETE: 'complete', SKIPPED: 'skipped', ALL_ADS_COMPLETED: 'all-completed', CONTENT_PAUSE_REQUESTED: 'content-pause', CONTENT_RESUME_REQUESTED: 'content-resume', LINEAR_CHANGED: 'linear-changed', USER_CLOSE: 'user-close', VOLUME_CHANGED: 'volume-changed', VOLUME_MUTED: 'volume-muted' } },
         } }; };
         if (options.noObserver) window.IntersectionObserver = undefined;
         if (options.delayedSdk) {
@@ -1638,3 +1695,327 @@ test('real audio-track content continues muted after browser sound denial', asyn
     await page.evaluate(() => window.videoManager.emit('all-completed'));
     await expectDecodedContent(page);
 });
+
+const audioIntentFixtureTag = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/audio-intent-fixture&ad_type=video';
+
+async function requestedAudioSignals(page) {
+    return page.evaluate(() => window.adRequestHistory.map(request => {
+        const tag = new URL(request.tag);
+        return { vpmute: tag.searchParams.get('vpmute'), vpa: tag.searchParams.get('vpa'),
+            plcmt: tag.searchParams.get('plcmt'), position: tag.searchParams.get('vpos'),
+            autoPlay: request.autoPlay, muted: request.muted };
+    }));
+}
+
+function audioVolumePrecision(value) {
+    if (Array.isArray(value)) return value.map(audioVolumePrecision);
+    // WebKit exposes native volume as float32. Normalize only volume fields;
+    // mute state, request snapshots, event counts and array lengths stay exact.
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+        ['volume', 'mediaVolume'].includes(key) && typeof entry === 'number' ? Math.round(entry * 1e6) / 1e6 : entry,
+    ]));
+}
+
+async function currentMediaAudio(page) {
+    return audioVolumePrecision(await page.locator('video').evaluate(video => ({ muted: video.muted, volume: video.volume })));
+}
+
+for (const choice of [
+    { name: 'mute', startMuted: false, muted: true, volume: 1 },
+    { name: 'zero volume', startMuted: false, muted: false, volume: 0 },
+    { name: 'partial volume', startMuted: false, muted: false, volume: 0.35 },
+    { name: 'unmute', startMuted: true, muted: false, volume: 0.6 },
+]) {
+    test(`pending VAST response starts with the latest viewer ${choice.name}, without rewriting its request`, async ({ page }) => {
+        await openPlayer(page, { content: true, contentMode: 'instream', startMuted: choice.startMuted,
+            deferResponse: true, restoreMediaAudio: true, echoVolumeEvents: true, vastUrl: audioIntentFixtureTag });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        const submitted = await page.evaluate(() => window.adRequestHistory[0]);
+        expect(await requestedAudioSignals(page)).toEqual([{ vpmute: choice.startMuted ? '1' : '0', vpa: 'auto',
+            plcmt: '1', position: 'preroll', autoPlay: true, muted: choice.startMuted }]);
+        await page.locator('video').evaluate((video, choice) => {
+            video.muted = choice.muted; video.volume = choice.volume;
+        }, choice);
+        // Native volumechange is asynchronous. Let it run before the delayed
+        // response; init() deliberately restores the old recipe audio state.
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await page.evaluate(() => window.videoLoaders[0].resolve());
+        await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+        const effectiveVolume = choice.muted ? 0 : choice.volume;
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates))).toEqual([
+            { volume: effectiveVolume, mediaMuted: choice.muted, mediaVolume: choice.volume },
+        ]);
+        await expect.poll(() => currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        expect(await page.evaluate(() => window.adRequestHistory)).toEqual([submitted]);
+        expect(audioVolumePrecision(await page.evaluate(() => window.managerVolumeWrites))).toEqual([{ manager: 0, volume: effectiveVolume }]);
+    });
+}
+
+for (const choice of [
+    { name: 'mute', startMuted: false, sdkVolume: 0, event: 'volume-muted', muted: true, volume: 1 },
+    { name: 'partial volume', startMuted: false, sdkVolume: 0.35, event: 'volume-changed', muted: false, volume: 0.35 },
+    { name: 'unmute', startMuted: true, sdkVolume: 0.6, event: 'volume-changed', muted: false, volume: 0.6 },
+]) {
+    test(`IMA ${choice.name} survives shared-media restoration and signals the next manual break`, async ({ page }) => {
+        await openPlayer(page, { content: true, contentMode: 'instream', startMuted: choice.startMuted,
+            restoreMediaAudio: true, echoVolumeEvents: true, vastUrl: audioIntentFixtureTag });
+        await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+        const submitted = await page.evaluate(() => window.adRequestHistory[0]);
+        await page.evaluate(choice => {
+            window.firstAudioManager = window.videoManager;
+            window.firstAudioManager.volume = choice.sdkVolume;
+            window.firstAudioManager.emit(choice.event);
+        }, choice);
+        await expect.poll(() => currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        await page.evaluate(() => {
+            // IMA can restore its pre-ad snapshot before CONTENT_RESUME and
+            // again during destroy(). Neither is a new viewer audio choice.
+            window.firstAudioManager.emit('complete');
+            window.firstAudioManager.restoreMediaAudio();
+            window.firstAudioManager.emit('content-resume');
+            window.firstAudioManager.emit('all-completed');
+        });
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        await expect.poll(() => currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        await page.locator('video').evaluate(video => {
+            // Only the editorial timeline is synthetic here; browser-native
+            // audio properties and volumechange events remain unmodified.
+            Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+            Object.defineProperty(video, 'currentTime', { configurable: true, value: 6 });
+            video.dispatchEvent(new Event('timeupdate'));
+        });
+        await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(2);
+        expect((await requestedAudioSignals(page))[1]).toEqual({ vpmute: choice.muted ? '1' : '0', vpa: 'auto',
+            plcmt: '1', position: 'midroll', autoPlay: true, muted: choice.muted });
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates[1]))).toEqual({ volume: choice.sdkVolume,
+            mediaMuted: choice.muted, mediaVolume: choice.volume });
+        await page.evaluate(() => {
+            window.firstAudioManager.volume = 0.9;
+            window.firstAudioManager.emit('volume-changed');
+            window.firstAudioManager.volume = 0;
+            window.firstAudioManager.emit('volume-muted');
+        });
+        expect(await currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        expect(await page.evaluate(() => window.videoManager.getVolume())).toBeCloseTo(choice.sdkVolume, 6);
+        expect(await page.evaluate(() => window.adRequestHistory[0])).toEqual(submitted);
+        expect(await page.evaluate(() => window.adRequests)).toBe(2);
+        expect(await page.evaluate(() => window.managerVolumeWrites.length)).toBeLessThanOrEqual(3);
+    });
+}
+
+for (const choice of [
+    { name: 'mute with partial volume', muted: true, volume: 0.35 },
+    { name: 'zero volume', muted: false, volume: 0 },
+    { name: 'partial volume', muted: false, volume: 0.35 },
+]) {
+    test(`native ${choice.name} during an active ad survives SDK restoration into the next break`, async ({ page }) => {
+        await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false,
+            restoreMediaAudio: true, echoVolumeEvents: true, vastUrl: audioIntentFixtureTag });
+        await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+        const submitted = await page.evaluate(() => window.adRequestHistory[0]);
+        await page.locator('video').evaluate((video, choice) => {
+            // Change the shared native media element while IMA owns it. This
+            // must survive just like a choice made in IMA's own controls.
+            window.firstAudioManager = window.videoManager;
+            video.muted = choice.muted; video.volume = choice.volume;
+        }, choice);
+        const effectiveVolume = choice.muted ? 0 : choice.volume;
+        await expect.poll(() => page.evaluate(() => window.videoManager.getVolume())).toBeCloseTo(effectiveVolume, 6);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        await page.evaluate(() => {
+            window.firstAudioManager.emit('complete');
+            window.firstAudioManager.restoreMediaAudio();
+        });
+        // Exercise queued browser volumechange from SDK restoration before
+        // its terminal resume callback, not only same-task restoration.
+        await expect.poll(() => currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        await page.evaluate(() => {
+            window.firstAudioManager.emit('content-resume');
+            window.firstAudioManager.emit('all-completed');
+        });
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        await expect.poll(() => currentMediaAudio(page))
+            .toEqual({ muted: choice.muted, volume: choice.volume });
+        await page.locator('video').evaluate(video => {
+            Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+            Object.defineProperty(video, 'currentTime', { configurable: true, value: 6 });
+            video.dispatchEvent(new Event('timeupdate'));
+        });
+        await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(2);
+        expect((await requestedAudioSignals(page))[1]).toEqual({ vpmute: effectiveVolume === 0 ? '1' : '0', vpa: 'auto',
+            plcmt: '1', position: 'midroll', autoPlay: true, muted: effectiveVolume === 0 });
+        expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates[1]))).toEqual({ volume: effectiveVolume,
+            mediaMuted: choice.muted, mediaVolume: choice.volume });
+        expect(await page.evaluate(() => window.adRequestHistory[0])).toEqual(submitted);
+        expect(await page.evaluate(() => window.adRequests)).toBe(2);
+        expect(await page.evaluate(() => window.managerVolumeWrites.length)).toBeLessThanOrEqual(4);
+    });
+}
+
+test('visible X cancels a pending midroll after an audio change and a stale manager cannot start', async ({ page }) => {
+    await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, deferResponse: true,
+        vastUrl: audioIntentFixtureTag });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    await page.evaluate(() => window.videoLoaders[0].resolve());
+    await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+    const surface = page.locator('[data-placement="video"]');
+    // The loader exposes X after a rendered player, never on an unresolved
+    // initial request. Establish a real filled preroll before the pending break.
+    await expect(surface).toHaveAttribute('data-hm-status', 'rendered');
+    await expect(surface.locator('[data-hm-placement-close]')).toBeVisible();
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+    await page.locator('video').evaluate(video => {
+        Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+        Object.defineProperty(video, 'currentTime', { configurable: true, value: 6 });
+        video.dispatchEvent(new Event('timeupdate'));
+    });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    const submitted = await page.evaluate(() => window.adRequestHistory);
+    await page.locator('video').evaluate(video => { video.muted = true; video.volume = 0.25; });
+    await expect(surface.locator('[data-hm-placement-close]')).toBeVisible();
+    await surface.locator('[data-hm-placement-close]').click();
+    await expect(surface).toBeHidden();
+    await page.evaluate(() => window.videoLoaders[1].resolve());
+    await scrollPage(page, 1400);
+    await scrollPage(page, 0);
+    expect(await page.evaluate(() => ({ requests: window.adRequests, managers: window.videoManagers.length, starts: window.adStarts })))
+        .toEqual({ requests: 2, managers: 1, starts: 1 });
+    expect(await page.evaluate(() => window.adRequestHistory)).toEqual(submitted);
+});
+
+test('silent content startup followed by IMA 1205 gets exactly one truthful muted preroll fallback', async ({ page }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, contentMode: 'instream', startMuted: false,
+        deferResponse: true, adStartErrors: [1205], vastUrl: audioIntentFixtureTag });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    const firstRequest = await page.evaluate(() => window.adRequestHistory[0]);
+    // The real silent MP4 decoded and play() fulfilled unmuted. That does not
+    // establish that a subsequent audio-bearing ad can autoplay audibly.
+    expect(firstRequest.readyState).toBeGreaterThanOrEqual(2);
+    expect(firstRequest.mediaMuted).toBe(false);
+    expect(await requestedAudioSignals(page)).toEqual([{ vpmute: '0', vpa: 'auto', plcmt: '1',
+        position: 'preroll', autoPlay: true, muted: false }]);
+    await page.evaluate(() => {
+        window.originalAudioVideo = document.querySelector('video');
+        window.originalAudioSource = window.originalAudioVideo.getAttribute('src');
+        window.videoLoaders[0].resolve();
+    });
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-preroll-retry', 'autoplay-muted');
+    expect(await page.evaluate(() => window.adStartedEvents)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    expect(await requestedAudioSignals(page)).toEqual([
+        { vpmute: '0', vpa: 'auto', plcmt: '1', position: 'preroll', autoPlay: true, muted: false },
+        { vpmute: '1', vpa: 'auto', plcmt: '1', position: 'preroll', autoPlay: true, muted: true },
+    ]);
+    expect(await page.evaluate(() => window.adRequestHistory[0])).toEqual(firstRequest);
+    await page.evaluate(() => {
+        // Old loader/manager callbacks arriving after the new request must not
+        // create a third request or turn the muted retry audible again.
+        window.videoManagers[0].emit('ad-error', { getError: () => ({ getErrorCode: () => 1205 }) });
+        window.videoLoaders[0].resolve();
+        window.videoLoaders[1].resolve();
+    });
+    await expect.poll(() => page.evaluate(() => window.adStartedEvents)).toBe(1);
+    expect(audioVolumePrecision(await page.evaluate(() => window.adStartStates))).toEqual([
+        { volume: 1, mediaMuted: false, mediaVolume: 1 }, { volume: 0, mediaMuted: true, mediaVolume: 1 },
+    ]);
+    expect(await page.evaluate(() => ({ requests: window.adRequests, managers: window.videoManagers.length,
+        sameVideo: document.querySelector('video') === window.originalAudioVideo,
+        sameSource: document.querySelector('video').getAttribute('src') === window.originalAudioSource })))
+        .toEqual({ requests: 2, managers: 2, sameVideo: true, sameSource: true });
+    await page.evaluate(() => window.videoManager.emit('all-completed'));
+    await expectDecodedContent(page);
+    expect(await page.locator('video').evaluate(video => video.muted)).toBe(true);
+    expect(await page.evaluate(() => window.adRequests)).toBe(2);
+});
+
+test('a second IMA 1205 exhausts the shared preroll budget and leaves content usable', async ({ page }) => {
+    await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, deferResponse: true,
+        adStartErrors: [1205, 1205], vastUrl: audioIntentFixtureTag });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+    await page.evaluate(() => window.videoLoaders[0].resolve());
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    await page.evaluate(() => window.videoLoaders[1].resolve());
+    await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+    // Observe beyond the retry delay, rather than accepting an immediate count
+    // that could conceal a queued third attempt.
+    await page.waitForTimeout(1250);
+    expect(await page.evaluate(() => ({ requests: window.adRequests, started: window.adStartedEvents, muted: document.querySelector('video').muted })))
+        .toEqual({ requests: 2, started: 0, muted: true });
+    await expect(page.locator('[data-placement="video"]')).toBeVisible();
+    await expect(page.locator('[data-hm-video-content-control="mute"]')).toBeVisible();
+    // The loader exposes X only after the placement reports rendered.
+    // After both startup attempts fail, verify the real content controls work
+    // without inventing a rendered ad or requesting a third one.
+    const play = page.locator('[data-hm-video-content-control="play"]');
+    await expect(play).toBeVisible();
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(false);
+    expect(await page.evaluate(() => window.adRequests)).toBe(2);
+});
+
+for (const cancel of ['unmute', 'partial volume']) {
+    test(`viewer ${cancel} during the IMA 1205 fallback delay cancels its pending request`, async ({ page }) => {
+        await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, deferResponse: true,
+            adStartErrors: [1205], vastUrl: audioIntentFixtureTag });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        const cancelled = await page.evaluate(cancel => {
+            window.videoLoaders[0].resolve();
+            const video = document.querySelector('video');
+            const reason = document.querySelector('#video-runtime').getAttribute('data-hm-video-preroll-retry');
+            // Act in the same task as failure, before the bounded retry timer.
+            if (cancel === 'unmute') video.muted = false;
+            else video.volume = 0.4;
+            video.dispatchEvent(new Event('volumechange'));
+            return reason;
+        }, cancel);
+        expect(cancelled).toBe('autoplay-muted');
+        await page.waitForTimeout(1250);
+        expect(await page.evaluate(() => ({ requests: window.adRequests, started: window.adStartedEvents })))
+            .toEqual({ requests: 1, started: 0 });
+        await expect(page.locator('[data-placement="video"]')).toBeVisible();
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        expect(await currentMediaAudio(page))
+            .toEqual(cancel === 'unmute' ? { muted: false, volume: 1 } : { muted: true, volume: 0.4 });
+    });
+}
+
+for (const exclusion of ['VMAP', 'click start', 'already started', 'changed viewer intent']) {
+    test(`IMA 1205 does not retry or force mute after ${exclusion}`, async ({ page }) => {
+        await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false,
+            startAutoplay: exclusion !== 'click start', deferResponse: true,
+            adStartErrors: exclusion === 'already started' ? [] : [1205],
+            cuePoints: exclusion === 'VMAP' ? [0, 5] : [],
+            vastUrl: audioIntentFixtureTag + (exclusion === 'VMAP' ? '&output=xml_vmap1&ad_rule=1' : '') });
+        if (exclusion === 'click start') {
+            await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-detail', 'user-activation-required');
+            await page.locator('[data-hm-video-content-control="play"]').click();
+        }
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
+        await page.evaluate(exclusion => {
+            if (exclusion === 'changed viewer intent') {
+                document.querySelector('video').volume = 0.4;
+                document.querySelector('video').dispatchEvent(new Event('volumechange'));
+            }
+            window.videoLoaders[0].resolve();
+            if (exclusion === 'already started') window.videoManager.emit('ad-error', { getError: () => ({ getErrorCode: () => 1205 }) });
+        }, exclusion);
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        await page.waitForTimeout(1250);
+        expect(audioVolumePrecision(await page.evaluate(() => ({ requests: window.adRequests, muted: document.querySelector('video').muted,
+            volume: document.querySelector('video').volume }))))
+            .toEqual({ requests: 1, muted: false, volume: exclusion === 'changed viewer intent' ? 0.4 : 1 });
+        await expect(page.locator('#video-runtime')).not.toHaveAttribute('data-hm-video-preroll-retry', 'autoplay-muted');
+        expect((await requestedAudioSignals(page))[0].vpa).toBe(exclusion === 'click start' ? 'click' : 'auto');
+    });
+}

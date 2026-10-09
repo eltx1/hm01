@@ -2,6 +2,7 @@
 
 namespace App\Services\Inventory;
 
+use App\Models\Site;
 use Illuminate\Validation\ValidationException;
 
 final class VideoAdFormat
@@ -9,14 +10,23 @@ final class VideoAdFormat
     public const VIDEO_ONLY = 'video_only';
     public const MIXED = 'mixed';
 
-    public static function inventoryType(): string
+    public static function inventoryType(?Site $site = null): string
     {
-        return config('horus.video_inventory_type') === 'instream' ? 'instream' : 'accompanying';
+        // Unconfigured websites always retain plcmt=2. A retired global setting
+        // must never silently opt a website into instream classification.
+        return $site?->siteConfig?->video_inventory_type === 'instream' ? 'instream' : 'accompanying';
     }
 
     public static function prefersAudibleAutoplay(): bool
     {
         return config('horus.video_autoplay_audio') === 'prefer_audible';
+    }
+
+    public static function midRollIntervalSeconds(): int
+    {
+        $value = filter_var(config('horus.video_mid_roll_interval_seconds', 60), FILTER_VALIDATE_INT);
+
+        return $value === 0 || ($value !== false && $value >= 30 && $value <= 600) ? $value : 60;
     }
 
     /** @return array<string, string> */

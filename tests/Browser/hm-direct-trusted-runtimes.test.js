@@ -207,6 +207,7 @@ function chunkedAttributes(baseAttribute, value, chunkSize = 1800) {
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function runVideo(selectedContainer, options = {}) {
+    const documentListeners = {};
     const requested = [];
     const managers = [];
     const loaders = [];
@@ -270,6 +271,8 @@ function runVideo(selectedContainer, options = {}) {
         CONTENT_RESUME_REQUESTED: 'content-resume-requested',
         LINEAR_CHANGED: 'linear-changed',
         USER_CLOSE: 'user-close',
+        VOLUME_CHANGED: 'volume-changed',
+        VOLUME_MUTED: 'volume-muted',
     };
     class AdsManager {
         constructor() {
@@ -297,17 +300,27 @@ function runVideo(selectedContainer, options = {}) {
             this.stopCalls++;
             for (const event of options.stopEvents || ['complete', 'all-ads-completed']) this.emit(event);
         }
-        init(width, height, mode) { this.initialized = [width, height, mode]; if (options.loadedDuringInit) this.emit(adEventTypes.LOADED); }
-        setVolume(volume) { this.volume = volume; }
+        init(width, height, mode) {
+            this.initialized = [width, height, mode];
+            if (options.onManagerInit) options.onManagerInit(this);
+            if (options.loadedDuringInit) this.emit(adEventTypes.LOADED);
+        }
+        setVolume(volume) {
+            this.volume = volume;
+            this.setVolumeCalls = (this.setVolumeCalls || 0) + 1;
+            if (options.onManagerSetVolume) options.onManagerSetVolume(this);
+        }
+        getVolume() { return this.volume; }
         start() {
             if (options.managerStartThrows) throw new Error('manager-start-failed');
             this.started = true;
             if (!options.loadedDuringInit) this.emit(adEventTypes.LOADED);
+            if (options.onManagerStart && options.onManagerStart(this) === false) return;
             if (!options.deferMediaStart) this.emit(adEventTypes.STARTED);
         }
         resize(width, height, mode) { this.resized = [width, height, mode]; }
         getCuePoints() { return options.cuePoints || []; }
-        destroy() { this.destroyed = true; }
+        destroy() { this.destroyed = true; if (options.onManagerDestroy) options.onManagerDestroy(this); }
     }
     class AdsLoader {
         constructor() { this.listeners = {}; this.contentCompleteCalled = false; this.contentCompleteCalls = 0; this.pendingManager = null; loaders.push(this); }
@@ -354,6 +367,10 @@ function runVideo(selectedContainer, options = {}) {
     }
 
     const document = {
+        visibilityState: 'visible',
+        addEventListener(name, callback) { (documentListeners[name] ||= []).push(callback); },
+        removeEventListener(name, callback) { documentListeners[name] = (documentListeners[name] || []).filter(item => item !== callback); },
+        emit(name) { (documentListeners[name] || []).slice().forEach(callback => callback()); },
         documentElement: { clientWidth: 1280, clientHeight: 720, lang: options.lang || 'en' },
         head: { appendChild(node) { created.push(node); return node; } },
         querySelector() { return null; },
@@ -386,6 +403,7 @@ function runVideo(selectedContainer, options = {}) {
         MutationObserver,
         IntersectionObserver,
         Promise,
+        performance: { now: options.clock ? options.clock.now : () => Date.now() },
         console,
         innerWidth: 1280,
         innerHeight: 720,
@@ -1376,7 +1394,7 @@ test('a stale content play rejection cannot close a newer successful resume', as
     const video = runtime.created.find(node => node.tagName === 'VIDEO');
     let rejectOld;
     let calls = 0;
-    video.play = () => ++calls === 1 ? new Promise((_, reject) => { rejectOld = reject; }) : Promise.resolve();
+    video.play = () => { video.paused = false; return ++calls === 1 ? new Promise((_, reject) => { rejectOld = reject; }) : Promise.resolve(); };
     runtime.managers[0].emit('content-resume-requested');
     runtime.managers[0].emit('all-ads-completed');
     await tick();
@@ -1400,7 +1418,7 @@ test('an autoplay policy refusal keeps native content playback available without
     assert.equal(attributes['data-hm-video-detail'], 'user-activation-required');
     assert.equal(video.controls, true);
     assert.equal(target.__hmVideoPlayer.adLayer.style.pointerEvents, 'none', 'empty ad layer must not cover native controls');
-    video.emit('playing');
+    video.paused = false; video.emit('playing');
     assert.equal(attributes['data-hm-video-status'], 'content-playing');
     assert.equal(runtime.requested.length, 1);
 });
@@ -1428,6 +1446,8 @@ function videoClock() {
     let now = 0, next = 0;
     const timers = new Map();
     return {
+        now() { return now; },
+        pending() { return timers.size; },
         setTimeout(fn, delay) { const id = ++next; timers.set(id, { fn, at: now + delay }); return id; },
         clearTimeout(id) { timers.delete(id); },
         advance(ms) {
@@ -2154,10 +2174,14 @@ function emitLoaderError(loader, event) {
 
 for (const code of [303, 1009]) {
     test(`confirmed preroll no-fill ${code} makes one fresh request before content, preserving the tag and ignoring retired callbacks`, async () => {
-        const { attributes, target, runtime, video } = mixedContentFixture({}, { deferManagerLoad: true });
+        const clock = videoClock();
+        const { attributes, target, runtime, video } = mixedContentFixture({}, { clock, deferManagerLoad: true });
         await tick();
         const first = runtime.loaders[0];
         emitLoaderError(first, emptyVastEvent(code));
+        assert.equal(runtime.requested.length, 1);
+        clock.advance(999); assert.equal(runtime.requested.length, 1);
+        clock.advance(1);
         assert.equal(runtime.requested.length, 2);
         assert.equal(runtime.requested[1].adTagUrl, runtime.requested[0].adTagUrl);
         assert.equal(attributes['data-hm-video-preroll-attempts'], '2');
@@ -2177,9 +2201,11 @@ for (const code of [303, 1009]) {
 }
 
 test('two empty prerolls fall through to content, while midroll/postroll no-fill never retries', async () => {
-    const { attributes, target, runtime, video } = mixedContentFixture({}, { deferManagerLoad: true });
+    const clock = videoClock();
+    const { attributes, target, runtime, video } = mixedContentFixture({}, { clock, deferManagerLoad: true });
     await tick();
     emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    clock.advance(1000);
     emitLoaderError(runtime.loaders[1], emptyVastEvent());
     await tick();
     assert.equal(runtime.requested.length, 2);
@@ -2197,7 +2223,7 @@ test('two empty prerolls fall through to content, while midroll/postroll no-fill
     assert.equal(target.__hmVideoPlayer.destroyed, true);
 });
 
-for (const code of [100, 301, 402, 403, 1005, 1007, 1012, 1205, 900]) {
+for (const code of [100, 101, 102, 302, 400, 402, 403, 1005, 1007, 1010, 1013, 1022, 1205, 1300, 900]) {
     test(`preroll error ${code} is not confirmed no-fill, even with a contradictory VAST wrapper code`, async () => {
         const { target, runtime, attributes } = mixedContentFixture({}, { deferManagerLoad: true });
         await tick();
@@ -2227,7 +2253,7 @@ test('one retry retains a bounded deadline and never resurrects after close', as
     const { target, runtime, attributes } = mixedContentFixture({}, { clock, deferManagerLoad: true });
     await tick();
     emitLoaderError(runtime.loaders[0], emptyVastEvent());
-    clock.advance(15000);
+    clock.advance(16000);
     await tick();
     assert.equal(runtime.requested.length, 2);
     assert.equal(attributes['data-hm-video-status'], 'content-playing');
@@ -2293,10 +2319,11 @@ test('ad-only presentation keeps IMA pointer ownership while the ad is available
 });
 
 test('trusted Play initializes IMA synchronously and reuses the unlocked display across retry and later content breaks', async () => {
+    const clock = videoClock();
     let inClick = false;
     const initializations = [];
     const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-autoplay': '0' }, {
-        withChrome: true, deferManagerLoad: true, onDisplayInitialize: display => initializations.push({ display, inClick }),
+        clock, withChrome: true, deferManagerLoad: true, onDisplayInitialize: display => initializations.push({ display, inClick }),
     });
     await tick();
     inClick = true; target.__hmVideoPlayer.overlayPlay.click(); inClick = false;
@@ -2306,7 +2333,7 @@ test('trusted Play initializes IMA synchronously and reuses the unlocked display
     await tick();
     const display = runtime.displays[0];
     assert.equal(target.__hmVideoPlayer.displayContainer, display);
-    emitLoaderError(runtime.loaders[0], emptyVastEvent()); await tick();
+    emitLoaderError(runtime.loaders[0], emptyVastEvent()); clock.advance(1000); await tick();
     assert.equal(runtime.requested.length, 2);
     assert.equal(runtime.displays.length, 1);
     assert.equal(display.destroyed, undefined);
@@ -2392,4 +2419,789 @@ test('audible startup waits for renewed visibility and preserves a viewer mute c
         assert.equal(runtime.requested[0].willPlayMuted, userMutes);
         target.__hmDestroy('dismissed');
     }
+});
+
+for (const content of [true, false]) {
+    for (const choice of [
+        { name: 'mute', initialMuted: false, muted: true, volume: 1, expected: 0 },
+        { name: 'zero volume', initialMuted: false, muted: false, volume: 0, expected: 0 },
+        { name: 'partial volume', initialMuted: false, muted: false, volume: 0.35, expected: 0.35 },
+        { name: 'unmute', initialMuted: true, muted: false, volume: 0.6, expected: 0.6 },
+    ]) {
+        test(`${content ? 'content' : 'ad-only'} pending response uses latest ${choice.name} without changing request-time hints`, async () => {
+            const { target, runtime, video } = mixedContentFixture({
+                'data-hm-video-muted': choice.initialMuted ? '1' : '0',
+                ...(!content ? { 'data-hm-video-content-url': '' } : {}),
+            }, { deferManagerLoad: true });
+            await tick();
+            const request = runtime.requested[0], sentTag = request.adTagUrl;
+            assert.equal(request.willPlayMuted, choice.initialMuted);
+            video.muted = choice.muted; video.volume = choice.volume; video.emit('volumechange');
+            runtime.loaders[0].emitManagerLoaded();
+            assert.equal(runtime.managers[0].volume, choice.expected);
+            assert.equal(runtime.managers[0].started, true);
+            assert.equal(request.willPlayMuted, choice.initialMuted);
+            assert.equal(request.adTagUrl, sentTag);
+            assert.equal(runtime.requested.length, 1);
+            target.__hmDestroy('dismissed');
+        });
+    }
+}
+
+test('manager initialization cannot reset a viewer audio choice on shared media', async () => {
+    let media;
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, {
+        deferManagerLoad: true,
+        onManagerInit: () => { media.muted = false; media.volume = 1; media.emit('volumechange'); },
+    });
+    media = video; await tick();
+    video.muted = true; video.volume = 0.35; video.emit('volumechange');
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(video.muted, true); assert.equal(video.volume, 0.35);
+    assert.equal(runtime.managers[0].volume, 0);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    target.__hmDestroy('dismissed');
+});
+
+test('viewability-delayed start rechecks audio without rewriting the earlier request', async () => {
+    const { target, runtime, video } = mixedContentFixture({
+        'data-hm-video-muted': '0', 'data-hm-video-inline-to-floating': '0',
+    }, { deferManagerLoad: true });
+    await tick();
+    runtime.intersectionObservers[0].emit(0);
+    runtime.loaders[0].emitManagerLoaded();
+    assert.equal(runtime.managers[0].started, false);
+    // Even if the queued native volumechange has not arrived, start reads live state.
+    video.muted = true; video.volume = 0;
+    runtime.intersectionObservers[0].emit(0.6);
+    assert.equal(runtime.managers[0].started, true);
+    assert.equal(runtime.managers[0].volume, 0);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('active media volume changes sync IMA without reauction or synchronous and asynchronous feedback loops', async () => {
+    let media;
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, {
+        onManagerSetVolume: manager => {
+            assert.ok(manager.setVolumeCalls < 12, 'volume echoes must not recurse');
+            manager.emit('volume-changed'); media?.emit('volumechange');
+            queueMicrotask(() => { manager.emit('volume-changed'); media?.emit('volumechange'); });
+        },
+    });
+    media = video; await tick();
+    const manager = runtime.managers[0];
+    for (const [muted, volume, expected] of [[true, 1, 0], [false, 0, 0], [false, 0.35, 0.35], [false, 0.8, 0.8]]) {
+        video.muted = muted; video.volume = volume; video.emit('volumechange'); await tick();
+        assert.equal(manager.volume, expected);
+        assert.equal(runtime.requested.length, 1);
+        assert.equal(manager.stopCalls, 0); assert.equal(manager.destroyed, false);
+    }
+    assert.equal(manager.setVolumeCalls, 4);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    target.__hmDestroy('dismissed');
+});
+
+for (const adVolume of [0, 0.4]) {
+  for (const earlyEvent of [false, true]) {
+    test(`IMA-owned volume ${adVolume} survives ${earlyEvent ? 'early' : 'queued'} content restoration and is declared by the next break`, async () => {
+        let media;
+        const initialMuted = adVolume > 0;
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': initialMuted ? '1' : '0' }, {
+            onManagerDestroy: () => {
+                media.muted = initialMuted; media.volume = 1; media.emit('volumechange');
+            },
+        });
+        media = video; await tick();
+        const manager = runtime.managers[0], originalTag = runtime.requested[0].adTagUrl;
+        manager.volume = adVolume; manager.emit(adVolume === 0 ? 'volume-muted' : 'volume-changed');
+        assert.equal(video.muted, adVolume === 0);
+        assert.equal(video.volume, adVolume === 0 ? 1 : adVolume);
+        assert.equal(manager.stopCalls, 0); assert.equal(manager.destroyed, false);
+        assert.equal(runtime.requested.length, 1);
+        // A completed creative opens the bounded SDK restoration window.
+        manager.emit('complete');
+        video.muted = initialMuted; video.volume = 1;
+        if (earlyEvent) video.emit('volumechange');
+        else queueMicrotask(() => video.emit('volumechange'));
+        manager.emit('content-resume-requested');
+        manager.emit('all-ads-completed'); await tick();
+        assert.equal(video.muted, adVolume === 0);
+        assert.equal(video.volume, adVolume === 0 ? 1 : adVolume);
+        video.currentTime = 60; video.emit('timeupdate');
+        assert.equal(runtime.requested.length, 2);
+        assert.equal(runtime.requested[1].willPlayMuted, adVolume === 0);
+        assert.equal(runtime.managers[1].volume, adVolume);
+        assert.equal(runtime.requested[0].adTagUrl, originalTag);
+        assert.equal(runtime.requested[0].willPlayMuted, initialMuted);
+        target.__hmDestroy('dismissed');
+    });
+  }
+}
+
+test('retired and dismissed IMA volume events cannot change the next player audio or request', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' });
+    await tick();
+    const old = runtime.managers[0];
+    old.emit('all-ads-completed'); await tick();
+    video.volume = 0.35; video.emit('volumechange');
+    old.volume = 0; old.emit('volume-muted');
+    assert.equal(video.muted, false); assert.equal(video.volume, 0.35);
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.managers[1].volume, 0.35);
+    target.__hmDestroy('dismissed');
+    const active = runtime.managers[1]; active.volume = 0; active.emit('volume-muted');
+    assert.equal(video.muted, false); assert.equal(video.volume, 0.35);
+    assert.equal(runtime.requested.length, 2);
+});
+
+test('an audio change during confirmed no-fill affects only the bounded retry request', async () => {
+    const clock = videoClock();
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { clock, deferManagerLoad: true });
+    await tick();
+    video.muted = true; video.emit('volumechange');
+    emitLoaderError(runtime.loaders[0], emptyVastEvent()); clock.advance(1000); await tick();
+    assert.equal(runtime.requested.length, 2);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    assert.equal(runtime.requested[1].willPlayMuted, true);
+    runtime.loaders[1].emitManagerLoaded();
+    assert.equal(runtime.managers[1].volume, 0);
+    target.__hmDestroy('dismissed');
+});
+
+test('dismissal during pending audio response prevents late initialization and volume writes', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { deferManagerLoad: true });
+    await tick(); video.muted = true; video.emit('volumechange'); target.__hmDestroy('dismissed');
+    runtime.loaders[0].emitManagerLoaded(); await tick();
+    assert.equal(runtime.managers[0].initialized, undefined);
+    assert.equal(runtime.managers[0].setVolumeCalls, undefined);
+    assert.equal(runtime.requested.length, 1);
+});
+
+test('synchronous manager initialization failure cannot reactivate its stale audio binding', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, {
+        onManagerInit: manager => manager.emit('ad-error', { getError: () => ({ getErrorCode: () => 400 }) }),
+    });
+    await tick();
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(runtime.managers[0].setVolumeCalls, undefined);
+    assert.equal(target.__hmVideoPlayer.audioSync, null);
+    assert.equal(video.muted, false); assert.equal(video.volume, 1);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('closing and unavailable SDK audio APIs neither restart ads nor overwrite viewer state', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' });
+    await tick();
+    const manager = runtime.managers[0];
+    manager.getVolume = () => { throw new Error('volume temporarily unavailable'); };
+    assert.doesNotThrow(() => manager.emit('volume-changed'));
+    manager.setVolume = () => { throw new Error('volume temporarily unavailable'); };
+    video.muted = true;
+    assert.doesNotThrow(() => video.emit('volumechange'));
+    assert.equal(runtime.requested.length, 1); assert.equal(manager.destroyed, false);
+    target.__hmVideoPlayer.closing = true;
+    manager.getVolume = () => 1;
+    manager.emit('volume-changed');
+    assert.equal(video.muted, true);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+test('a volume-sync callback that retires a delayed manager cannot start that stale manager', async () => {
+    const { target, runtime, video } = mixedContentFixture({
+        'data-hm-video-muted': '0', 'data-hm-video-inline-to-floating': '0',
+    }, {
+        deferManagerLoad: true,
+        onManagerSetVolume: manager => {
+            if (manager.setVolumeCalls === 2) manager.emit('ad-error', { getError: () => ({ getErrorCode: () => 400 }) });
+        },
+    });
+    await tick(); runtime.intersectionObservers[0].emit(0); runtime.loaders[0].emitManagerLoaded();
+    video.muted = true; runtime.intersectionObservers[0].emit(0.6); await tick();
+    assert.equal(runtime.managers[0].started, false); assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(target.__hmVideoPlayer.audioSync, null);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+for (const stage of ['completion', 'midroll']) {
+    for (const choice of [
+        { name: 'mute', initialMuted: false, muted: true, volume: 1, expected: 0 },
+        { name: 'zero volume', initialMuted: false, muted: false, volume: 0, expected: 0 },
+        { name: 'partial volume', initialMuted: false, muted: false, volume: 0.35, expected: 0.35 },
+        { name: 'unmute', initialMuted: true, muted: false, volume: 0.6, expected: 0.6 },
+    ]) {
+        test(`latest raw ${choice.name} immediately before ${stage} survives queued volumechange`, async () => {
+            const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': choice.initialMuted ? '1' : '0' });
+            await tick();
+            const manager = runtime.managers[0];
+            manager.emit('complete');
+            if (stage === 'midroll') { manager.emit('all-ads-completed'); await tick(); }
+            video.muted = choice.muted; video.volume = choice.volume;
+            // The media properties change before their queued event is dispatched.
+            if (stage === 'completion') { manager.emit('all-ads-completed'); await tick(); }
+            video.currentTime = 60; video.emit('timeupdate');
+            assert.equal(runtime.requested.length, 2);
+            assert.equal(runtime.requested[1].willPlayMuted, choice.expected === 0);
+            assert.equal(runtime.managers[1].volume, choice.expected);
+            assert.equal(video.muted, choice.muted); assert.equal(video.volume, choice.volume);
+            video.emit('volumechange');
+            assert.equal(runtime.requested.length, 2);
+            assert.equal(runtime.requested[0].willPlayMuted, choice.initialMuted);
+            target.__hmDestroy('dismissed');
+        });
+    }
+}
+
+for (const nextCreative of [false, true]) {
+    test(`native mute matching the pre-ad baseline wins during ${nextCreative ? 'next pod creative' : 'active ad'}`, async () => {
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '1' });
+        await tick();
+        const manager = runtime.managers[0];
+        manager.volume = 0.4; manager.emit('volume-changed');
+        assert.equal(video.muted, false);
+        if (nextCreative) { manager.emit('complete'); manager.emit('started'); }
+        video.muted = true; video.volume = 1; video.emit('volumechange');
+        assert.equal(video.muted, true); assert.equal(manager.volume, 0);
+        assert.equal(manager.destroyed, false); assert.equal(runtime.requested.length, 1);
+        manager.emit('complete'); manager.emit('all-ads-completed'); await tick();
+        video.currentTime = 60; video.emit('timeupdate');
+        assert.equal(runtime.requested[1].willPlayMuted, true);
+        assert.equal(runtime.managers[1].volume, 0);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('Horus mute records a synchronous choice before queued volumechange and the next break', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { withChrome: true });
+    await tick();
+    runtime.managers[0].emit('all-ads-completed'); await tick();
+    const player = target.__hmVideoPlayer;
+    player.overlayMute.emit('click', { isTrusted: true });
+    assert.equal(video.muted, true); assert.equal(player.viewerAudioState.muted, true);
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested[1].willPlayMuted, true); assert.equal(runtime.managers[1].volume, 0);
+    target.__hmDestroy('dismissed');
+});
+
+test('retained VMAP manager preserves SDK audio across successive break restoration windows', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { cuePoints: [0, 50, -1] });
+    await tick();
+    const manager = runtime.managers[0];
+    manager.volume = 0.4; manager.emit('volume-changed');
+    manager.emit('complete');
+    video.muted = false; video.volume = 1; video.emit('volumechange');
+    manager.emit('content-resume-requested'); await tick();
+    assert.equal(video.volume, 0.4);
+    manager.emit('content-pause-requested'); manager.emit('started');
+    manager.volume = 0; manager.emit('volume-muted');
+    manager.emit('skipped');
+    video.muted = false; video.volume = 0.4; video.emit('volumechange');
+    manager.emit('content-resume-requested'); await tick();
+    assert.equal(video.muted, true); assert.equal(video.volume, 0.4);
+    assert.equal(runtime.requested.length, 1); assert.equal(manager.destroyed, false);
+    // Content is authoritative again after the restoration window closes.
+    video.muted = false; video.emit('volumechange');
+    assert.equal(manager.volume, 0.4);
+    target.__hmDestroy('dismissed');
+});
+
+
+test('delayed start captures the latest pre-break audio for later SDK restoration', async () => {
+    const { target, runtime, video } = mixedContentFixture({
+        'data-hm-video-muted': '0', 'data-hm-video-inline-to-floating': '0',
+    }, { deferManagerLoad: true });
+    await tick();
+    runtime.intersectionObservers[0].emit(0); runtime.loaders[0].emitManagerLoaded();
+    video.volume = 0.6;
+    runtime.intersectionObservers[0].emit(0.6);
+    const manager = runtime.managers[0];
+    assert.equal(manager.volume, 0.6);
+    manager.volume = 0; manager.emit('volume-muted'); manager.emit('complete');
+    video.muted = false; video.volume = 0.6; video.emit('volumechange');
+    manager.emit('content-resume-requested'); manager.emit('all-ads-completed'); await tick();
+    assert.equal(video.muted, true); assert.equal(video.volume, 0.6);
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested[1].willPlayMuted, true);
+    runtime.loaders[1].emitManagerLoaded();
+    assert.equal(runtime.managers[1].volume, 0);
+    assert.equal(runtime.requested[0].willPlayMuted, false);
+    target.__hmDestroy('dismissed');
+});
+
+function autoplayDisallowedEvent() {
+    return { getError: () => ({ getErrorCode: () => 1205, message: 'Autoplay is disallowed' }) };
+}
+
+test('silent content success followed by IMA 1205 makes one delayed muted request on the same player', async () => {
+    const clock = videoClock(), probes = [];
+    const { target, runtime, video } = mixedContentFixture({
+        'data-hm-video-muted': '0', 'data-hm-video-content-mode': 'instream',
+    }, { clock, deferMediaStart: true, contentPlay: media => {
+        // Models the production video-only MP4: play resolves without proving
+        // that a subsequent creative containing audio may autoplay.
+        media.audioTracks = []; probes.push(media.muted); return Promise.resolve();
+    } });
+    await tick();
+    const player = target.__hmVideoPlayer, manager = runtime.managers[0], originalSource = video.src;
+    const first = runtime.requested[0], firstTag = first.adTagUrl;
+    assert.deepEqual(probes, [false]); assert.equal(player.contentStarted, false);
+    assert.equal(player.adPlaybackStarted, false); assert.equal(first.willPlayMuted, false);
+    // A queued playing event from the probe cannot mark editorial content started.
+    video.emit('playing'); assert.equal(player.contentStarted, false);
+    manager.emit('ad-error', autoplayDisallowedEvent());
+    assert.equal(manager.destroyed, true); assert.equal(runtime.loaders[0].destroyed, true);
+    assert.equal(runtime.loaders[0].contentCompleteCalls, 1);
+    assert.equal(runtime.displays[0].destroyed, true);
+    assert.equal(player.adsManager, null); assert.equal(player.audioSync, null);
+    assert.equal(video.muted, true); assert.equal(video.volume, 1); assert.equal(video.src, originalSource);
+    assert.equal(target.getAttribute('data-hm-video-preroll-retry'), 'autoplay-muted');
+    assert.equal(runtime.requested.length, 1);
+    manager.emit('ad-error', autoplayDisallowedEvent()); manager.emit('started'); manager.emit('all-ads-completed');
+    clock.advance(999); assert.equal(runtime.requested.length, 1);
+    clock.advance(1); await tick();
+    assert.equal(runtime.requested.length, 2); assert.equal(target.__hmVideoPlayer, player);
+    assert.equal(runtime.created.filter(node => node.tagName === 'VIDEO').length, 1);
+    assert.equal(runtime.requested[1].willPlayMuted, true); assert.equal(runtime.requested[1].willAutoPlay, true);
+    const mutedTag = new URL(runtime.requested[1].adTagUrl);
+    assert.equal(mutedTag.searchParams.get('vpmute'), '1'); assert.equal(mutedTag.searchParams.get('plcmt'), '1');
+    assert.equal(mutedTag.searchParams.get('gdpr_consent'), 'fixture-consent');
+    assert.equal(runtime.managers[1].volume, 0); assert.equal(first.willPlayMuted, false); assert.equal(first.adTagUrl, firstTag);
+    // Another actual autoplay error stops this startup recovery; it cannot loop.
+    runtime.managers[1].emit('ad-error', autoplayDisallowedEvent()); await tick();
+    clock.advance(10000); await tick();
+    assert.equal(runtime.requested.length, 2); assert.equal(video.paused, false);
+    assert.equal(target.getAttribute('data-hm-video-status'), 'content-playing');
+    target.__hmDestroy('dismissed');
+});
+
+for (const change of ['mute', 'zero', 'partial', 'mute-unmute']) {
+    test(`IMA 1205 cannot replace changed pending viewer intent: ${change}`, async () => {
+        const clock = videoClock();
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { clock, deferManagerLoad: true, deferMediaStart: true });
+        await tick();
+        if (change === 'mute' || change === 'mute-unmute') {
+            video.muted = true; video.emit('volumechange');
+            if (change === 'mute-unmute') { video.muted = false; video.emit('volumechange'); }
+        } else video.volume = change === 'zero' ? 0 : 0.4; // No queued native event yet.
+        runtime.loaders[0].emitManagerLoaded();
+        const audio = [video.muted, video.volume];
+        runtime.managers[0].emit('ad-error', autoplayDisallowedEvent());
+        clock.advance(10000); await tick();
+        assert.equal(runtime.requested.length, 1); assert.deepEqual([video.muted, video.volume], audio);
+        assert.equal(runtime.requested[0].willPlayMuted, false);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+for (const change of ['unmute', 'partial', 'close']) {
+    test(`IMA muted retry cancels safely if the viewer chooses ${change} during its delay`, async () => {
+        const clock = videoClock();
+        const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { clock, deferMediaStart: true });
+        await tick();
+        runtime.managers[0].emit('ad-error', autoplayDisallowedEvent());
+        assert.equal(video.muted, true); assert.equal(runtime.requested.length, 1);
+        if (change === 'close') target.__hmDestroy('dismissed');
+        else if (change === 'unmute') { video.muted = false; video.emit('volumechange'); }
+        else video.volume = 0.4; // Timer must inspect raw media before its event.
+        clock.advance(10000); await tick();
+        assert.equal(runtime.requested.length, 1); assert.equal(target.__hmVideoPlayer.prerollRetryTimer, null);
+        if (change !== 'close') {
+            assert.equal(video.paused, false); assert.equal(video.muted, change !== 'unmute');
+            assert.equal(video.volume, change === 'partial' ? 0.4 : 1);
+        }
+        target.__hmDestroy('dismissed');
+    });
+}
+
+for (const scenario of ['already-muted', 'click-start', 'started-ad', 'known-vmap', 'discovered-vmap', 'content-resumed', 'closing', 'request-error']) {
+    test(`IMA 1205 does not start a muted reauction for ${scenario}`, async () => {
+        const clock = videoClock();
+        const overrides = { 'data-hm-video-muted': scenario === 'already-muted' ? '1' : '0' };
+        if (scenario === 'click-start') overrides['data-hm-video-autoplay'] = '0';
+        if (scenario === 'known-vmap') overrides['data-hm-vast-url'] = Buffer.from('https://ads.example/vast?ad_rule=1').toString('base64');
+        const { target, runtime, video } = mixedContentFixture(overrides, {
+            clock, deferMediaStart: true, withChrome: true,
+            deferManagerLoad: scenario === 'request-error',
+            cuePoints: scenario === 'discovered-vmap' ? [0, 50, -1] : [],
+        });
+        await tick();
+        if (scenario === 'click-start') { target.__hmVideoPlayer.overlayPlay.click(); await tick(); }
+        if (scenario === 'started-ad') runtime.managers[0].emit('started');
+        if (scenario === 'content-resumed') { runtime.managers[0].emit('content-resume-requested'); await tick(); }
+        if (scenario === 'closing') target.__hmVideoPlayer.closing = true;
+        const muted = video.muted;
+        if (scenario === 'request-error') emitLoaderError(runtime.loaders[0], autoplayDisallowedEvent());
+        else runtime.managers[0].emit('ad-error', autoplayDisallowedEvent());
+        clock.advance(10000); await tick();
+        assert.equal(runtime.requested.length, 1); assert.equal(video.muted, muted);
+        assert.equal(target.getAttribute('data-hm-video-preroll-retry'), null);
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('a preceding empty response consumes the same retry budget as IMA 1205 recovery', async () => {
+    const clock = videoClock();
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, { clock, deferManagerLoad: true, deferMediaStart: true });
+    await tick();
+    emitLoaderError(runtime.loaders[0], emptyVastEvent()); clock.advance(1000); await tick();
+    assert.equal(runtime.requested.length, 2);
+    runtime.loaders[1].emitManagerLoaded();
+    runtime.managers[1].emit('ad-error', autoplayDisallowedEvent());
+    clock.advance(10000); await tick();
+    assert.equal(runtime.requested.length, 2); assert.equal(video.muted, false); assert.equal(video.paused, false);
+    target.__hmDestroy('dismissed');
+});
+
+
+test('synchronous IMA 1205 from start retires its manager before the muted replacement starts', async () => {
+    const clock = videoClock();
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, {
+        clock,
+        onManagerStart: manager => {
+            if (manager.volume > 0) { manager.emit('ad-error', autoplayDisallowedEvent()); return false; }
+        },
+    });
+    await tick();
+    assert.equal(runtime.requested.length, 1); assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(target.__hmVideoPlayer.adPlaybackStarted, false); assert.equal(video.muted, true);
+    clock.advance(1000); await tick();
+    assert.equal(runtime.requested.length, 2); assert.equal(runtime.managers[1].volume, 0);
+    assert.equal(runtime.managers[1].destroyed, false); assert.equal(target.__hmVideoPlayer.adPlaybackStarted, true);
+    assert.equal(target.getAttribute('data-hm-video-status'), 'started');
+    clock.advance(15000);
+    assert.equal(runtime.managers[1].destroyed, false, 'no retired startup watchdog remains');
+    target.__hmDestroy('dismissed');
+});
+
+for (const code of [301, 1012]) {
+    test(`loader transient ${code} receives one delayed retry without being classified as no-fill`, async () => {
+        const clock = videoClock();
+        const { target, runtime, attributes } = mixedContentFixture({}, { clock, deferManagerLoad: true });
+        await tick();
+        const first = runtime.loaders[0];
+        emitLoaderError(first, emptyVastEvent(code));
+        emitLoaderError(first, emptyVastEvent(code));
+        first.emitManagerLoaded();
+        assert.equal(runtime.requested.length, 1);
+        assert.equal(attributes['data-hm-video-preroll-retry'], 'transient');
+        clock.advance(999); assert.equal(runtime.requested.length, 1);
+        clock.advance(1); assert.equal(runtime.requested.length, 2);
+        emitLoaderError(runtime.loaders[1], emptyVastEvent(1009));
+        await tick(); clock.advance(60000);
+        assert.equal(runtime.requested.length, 2);
+        assert.equal(attributes['data-hm-video-status'], 'content-playing');
+        target.__hmDestroy('dismissed');
+    });
+}
+
+test('late eligible failure gets a fresh full request phase after the one-second retry delay', async () => {
+    const clock = videoClock();
+    const { target, runtime, attributes } = mixedContentFixture({}, { clock, deferManagerLoad: true });
+    await tick(); clock.advance(14000);
+    emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    clock.advance(1000); assert.equal(runtime.requested.length, 2);
+    clock.advance(14999); assert.notEqual(attributes['data-hm-video-status'], 'content-playing');
+    clock.advance(1); await tick();
+    assert.equal(attributes['data-hm-video-status'], 'content-playing');
+    assert.equal(runtime.requested.length, 2);
+    target.__hmDestroy('dismissed');
+});
+
+test('close cancels the delayed retry and its stale loader cannot resurrect the player', async () => {
+    const clock = videoClock();
+    const { target, runtime, attributes } = mixedContentFixture({}, { clock, deferManagerLoad: true });
+    await tick(); emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    assert.notEqual(target.__hmVideoPlayer.prerollRetryTimer, null);
+    target.__hmDestroy('dismissed');
+    assert.equal(target.__hmVideoPlayer.prerollRetryTimer, null);
+    clock.advance(60000); runtime.loaders[0].emitManagerLoaded();
+    emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    assert.equal(runtime.requested.length, 1);
+    assert.equal(attributes['data-hm-video-status'], 'dismissed');
+});
+
+test('known ad-rules tag never retries an empty initial loader response', async () => {
+    const clock = videoClock();
+    const { target, runtime } = mixedContentFixture({
+        'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_rule=1').toString('base64'),
+    }, { clock, deferManagerLoad: true });
+    await tick(); emitLoaderError(runtime.loaders[0], emptyVastEvent());
+    await tick(); clock.advance(60000);
+    assert.equal(runtime.requested.length, 1);
+    target.__hmDestroy('dismissed');
+});
+
+async function repeatedBreakFixture(duration = 400, interval) {
+    const clock = videoClock();
+    const overrides = interval === undefined ? {} : { 'data-hm-video-mid-roll-interval-seconds': String(interval) };
+    const fixture = mixedContentFixture(overrides, { clock, contentDuration: duration });
+    await tick(); fixture.runtime.managers[0].emit('all-ads-completed'); await tick();
+    fixture.video.currentTime = duration / 2; fixture.video.emit('timeupdate');
+    assert.equal(fixture.runtime.requested.length, 2, 'existing midpoint remains the first midroll');
+    fixture.runtime.managers[1].emit('all-ads-completed'); await tick();
+    fixture.video.emit('timeupdate');
+    return { ...fixture, clock };
+}
+function advanceRealContent(fixture, seconds) {
+    for (let i = 0; i < seconds; i++) {
+        fixture.clock.advance(1000);
+        fixture.video.currentTime += 1;
+        fixture.video.emit('timeupdate');
+    }
+}
+
+test('long real content earns successive midrolls only after another sixty eligible seconds', async () => {
+    const f = await repeatedBreakFixture(600);
+    advanceRealContent(f, 59); assert.equal(f.runtime.requested.length, 2);
+    f.clock.advance(60000); f.video.emit('timeupdate');
+    assert.equal(f.runtime.requested.length, 2, 'wall time without media progress earns no request');
+    advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 3);
+    const request = new URL(f.runtime.requested[2].adTagUrl);
+    assert.equal(request.searchParams.get('vpos'), 'midroll');
+    assert.equal(request.searchParams.get('plcmt'), '2');
+    assert.equal(request.searchParams.get('gdpr_consent'), 'fixture-consent');
+    assert.equal(f.runtime.requested[2].continuousPlayback, false);
+    f.runtime.managers[2].emit('all-ads-completed'); await tick(); f.video.emit('timeupdate');
+    advanceRealContent(f, 60); assert.equal(f.runtime.requested.length, 4);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('current 49.4-second clip retains midpoint and one postroll without invented repeats or looping', async () => {
+    const f = await repeatedBreakFixture(49.4);
+    const originalSource = f.video.src;
+    advanceRealContent(f, 24);
+    assert.equal(f.runtime.requested.length, 2);
+    f.video.currentTime = 49.4; f.video.emit('ended');
+    assert.equal(f.runtime.requested.length, 3);
+    assert.equal(new URL(f.runtime.requested[2].adTagUrl).searchParams.get('vpos'), 'postroll');
+    f.runtime.managers[2].emit('all-ads-completed');
+    f.video.emit('ended'); f.clock.advance(600000); f.video.emit('timeupdate');
+    assert.equal(f.runtime.requested.length, 3);
+    assert.equal(f.video.src, originalSource);
+    assert.equal(f.target.__hmVideoPlayer.destroyed, true);
+});
+
+for (const [raw, expected] of [[0, 0], [30, 30], [600, 600], [29, 60], [601, 60], ['broken', 60], [30.5, 60]]) {
+    test(`additional midroll interval ${raw} has bounded runtime semantics`, async () => {
+        const f = await repeatedBreakFixture(3000, raw);
+        advanceRealContent(f, expected ? expected - 1 : 601);
+        assert.equal(f.runtime.requested.length, 2);
+        if (expected) { advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 3); }
+        f.target.__hmDestroy('dismissed');
+    });
+}
+
+for (const mode of ['hidden', 'offscreen', 'paused', 'stalled', 'seeking']) {
+    test(`${mode} content earns no additional opportunity and cannot queue catch-up ads`, async () => {
+        const f = await repeatedBreakFixture(600);
+        advanceRealContent(f, 20);
+        if (mode === 'hidden') { f.runtime.sandbox.document.visibilityState = 'hidden'; f.runtime.sandbox.document.emit('visibilitychange'); }
+        if (mode === 'offscreen') f.runtime.intersectionObservers[0].emit(0);
+        if (mode === 'paused') { f.video.paused = true; f.video.emit('pause'); }
+        if (mode === 'stalled') f.video.emit('stalled');
+        if (mode === 'seeking') { f.video.seeking = true; f.video.emit('seeking'); }
+        advanceRealContent(f, 60);
+        assert.equal(f.runtime.requested.length, 2);
+        if (mode === 'hidden') { f.runtime.sandbox.document.visibilityState = 'visible'; f.runtime.sandbox.document.emit('visibilitychange'); }
+        if (mode === 'offscreen') f.runtime.intersectionObservers[0].emit(0.6);
+        f.video.paused = false; f.video.seeking = false; f.video.emit('seeked'); f.video.emit('playing'); f.video.emit('timeupdate');
+        assert.equal(f.runtime.requested.length, 2);
+        advanceRealContent(f, 39); assert.equal(f.runtime.requested.length, 2);
+        advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 3);
+        f.target.__hmDestroy('dismissed');
+    });
+}
+
+test('seeks and zero-time jumps do not count as genuine content progress', async () => {
+    const f = await repeatedBreakFixture(600);
+    f.video.currentTime += 60; f.video.emit('timeupdate');
+    f.clock.advance(1000); f.video.currentTime += 60; f.video.emit('timeupdate');
+    assert.equal(f.target.__hmVideoPlayer.repeatMidrollElapsed, 0);
+    advanceRealContent(f, 59); assert.equal(f.runtime.requested.length, 2);
+    advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 3);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('per-ad COMPLETE and early content-resume cannot interrupt a live pod or earn a new break', async () => {
+    const f = await repeatedBreakFixture(900);
+    advanceRealContent(f, 60);
+    const manager = f.runtime.managers[2], loader = f.runtime.loaders[2];
+    manager.emit('complete'); manager.emit('content-resume-requested'); await tick();
+    const completions = loader.contentCompleteCalls;
+    advanceRealContent(f, 60);
+    assert.equal(f.runtime.requested.length, 3);
+    assert.equal(manager.destroyed, false);
+    assert.equal(loader.contentCompleteCalls, completions, 'no SDK contentComplete from individual ad/counter');
+    manager.emit('started'); manager.emit('complete');
+    assert.equal(manager.destroyed, false);
+    manager.emit('all-ads-completed'); await tick(); f.video.emit('timeupdate');
+    advanceRealContent(f, 59); assert.equal(f.runtime.requested.length, 3);
+    advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 4);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('additional no-fill consumes its opportunity and requires a new full content interval', async () => {
+    const f = await repeatedBreakFixture(700);
+    advanceRealContent(f, 60);
+    f.runtime.managers[2].emit('ad-error', emptyVastEvent()); await tick(); f.video.emit('timeupdate');
+    assert.equal(f.runtime.requested.length, 3);
+    advanceRealContent(f, 59); assert.equal(f.runtime.requested.length, 3);
+    advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 4);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('additional midrolls leave the final fifteen seconds of real content for the postroll transition', async () => {
+    const f = await repeatedBreakFixture(140);
+    advanceRealContent(f, 69);
+    assert.equal(f.runtime.requested.length, 2);
+    f.video.currentTime = 140; f.video.emit('ended');
+    assert.equal(f.runtime.requested.length, 3);
+    assert.equal(new URL(f.runtime.requested[2].adTagUrl).searchParams.get('vpos'), 'postroll');
+    f.target.__hmDestroy('dismissed');
+});
+
+test('VMAP later cues stay SDK-owned even after long content progress', async () => {
+    const clock = videoClock();
+    const f = mixedContentFixture({}, { clock, contentDuration: 900, cuePoints: [0, 300, 600, -1] });
+    await tick(); f.runtime.managers[0].emit('content-resume-requested'); await tick();
+    advanceRealContent({ ...f, clock }, 700);
+    assert.equal(f.runtime.requested.length, 1);
+    assert.equal(f.runtime.managers[0].destroyed, false);
+    assert.equal(f.runtime.loaders[0].contentCompleteCalls, 0);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('dismissal removes content scheduling and can never restart after time advances', async () => {
+    const f = await repeatedBreakFixture(600);
+    advanceRealContent(f, 59); f.target.__hmDestroy('dismissed');
+    advanceRealContent(f, 600);
+    f.video.emit('playing'); f.video.emit('ended');
+    assert.equal(f.runtime.requested.length, 2);
+    assert.equal(f.target.__hmVideoPlayer.contentListeners.length, 0);
+});
+
+test('additional request remeasures eligibility so stale observer geometry cannot request after removal', async () => {
+    const f = await repeatedBreakFixture(600);
+    advanceRealContent(f, 59);
+    f.target.isConnected = false;
+    advanceRealContent(f, 1);
+    assert.equal(f.runtime.requested.length, 2);
+    assert.equal(f.target.__hmVideoPlayer.destroyed, true);
+});
+
+test('additional request skips a just-hidden surface rather than queueing the earned opportunity', async () => {
+    const f = await repeatedBreakFixture(600);
+    advanceRealContent(f, 59);
+    const player = f.target.__hmVideoPlayer, update = player.viewport.update;
+    player.viewport.update = () => { player.visibleRatio = 0; };
+    advanceRealContent(f, 1);
+    assert.equal(f.runtime.requested.length, 2);
+    assert.equal(player.repeatMidrollElapsed, 0);
+    player.viewport.update = update; player.visibleRatio = 0.6; f.video.emit('timeupdate');
+    advanceRealContent(f, 59); assert.equal(f.runtime.requested.length, 2);
+    advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, 3);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('playing at double speed still needs a full wall-time interval for an additional opportunity', async () => {
+    const f = await repeatedBreakFixture(1000);
+    f.video.playbackRate = 2;
+    for (let i = 0; i < 59; i++) { f.clock.advance(1000); f.video.currentTime += 2; f.video.emit('timeupdate'); }
+    assert.equal(f.runtime.requested.length, 2);
+    f.clock.advance(1000); f.video.currentTime += 2; f.video.emit('timeupdate');
+    assert.equal(f.runtime.requested.length, 3);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('unknown content duration cannot create a repeated opportunity', async () => {
+    const f = await repeatedBreakFixture(600);
+    f.video.duration = Infinity;
+    advanceRealContent(f, 120);
+    assert.equal(f.runtime.requested.length, 2);
+    f.target.__hmDestroy('dismissed');
+});
+
+for (const rate of [0, -1, NaN]) {
+    test(`non-playing rate ${rate} cannot earn an additional content break`, async () => {
+        const f = await repeatedBreakFixture(600);
+        f.video.playbackRate = rate;
+        advanceRealContent(f, 70);
+        assert.equal(f.runtime.requested.length, 2);
+        assert.equal(f.target.__hmVideoPlayer.repeatMidrollElapsed, 0);
+        f.target.__hmDestroy('dismissed');
+    });
+}
+
+test('half-speed content needs sixty actual media seconds as well as wall time', async () => {
+    const f = await repeatedBreakFixture(1000);
+    f.video.playbackRate = 0.5;
+    for (let i = 0; i < 119; i++) { f.clock.advance(1000); f.video.currentTime += 0.5; f.video.emit('timeupdate'); }
+    assert.equal(f.runtime.requested.length, 2);
+    f.clock.advance(1000); f.video.currentTime += 0.5; f.video.emit('timeupdate');
+    assert.equal(f.runtime.requested.length, 3);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('repeated timeupdate events at one timestamp cannot earn additional content time', async () => {
+    const f = await repeatedBreakFixture(1000);
+    for (let i = 0; i < 70; i++) { f.video.currentTime += 1; f.video.emit('timeupdate'); }
+    assert.equal(f.target.__hmVideoPlayer.repeatMidrollElapsed, 0);
+    assert.equal(f.runtime.requested.length, 2);
+    f.target.__hmDestroy('dismissed');
+});
+
+
+for (const queuedRestore of [false, true]) {
+    for (const choice of [
+        { name: 'mute with partial volume', muted: true, volume: 0.35, expected: 0 },
+        { name: 'unmuted zero volume', muted: false, volume: 0, expected: 0 },
+        { name: 'partial volume', muted: false, volume: 0.4, expected: 0.4 },
+    ]) {
+        test(`native ${choice.name} survives ${queuedRestore ? 'queued' : 'early'} SDK restoration and the next break`, async () => {
+            let media;
+            const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '0' }, {
+                onManagerDestroy: () => { media.muted = false; media.volume = 1; media.emit('volumechange'); },
+            });
+            media = video; await tick();
+            const manager = runtime.managers[0], originalTag = runtime.requested[0].adTagUrl;
+            video.muted = choice.muted; video.volume = choice.volume; video.emit('volumechange');
+            assert.equal(manager.volume, choice.expected);
+            manager.emit('volume-changed'); // The SDK echo must preserve native zero-volume representation.
+            assert.equal(video.muted, choice.muted); assert.equal(video.volume, choice.volume);
+            manager.emit('complete');
+            video.muted = false; video.volume = 1;
+            if (queuedRestore) queueMicrotask(() => video.emit('volumechange'));
+            else video.emit('volumechange');
+            manager.emit('content-resume-requested'); manager.emit('all-ads-completed'); await tick();
+            assert.equal(video.muted, choice.muted); assert.equal(video.volume, choice.volume);
+            video.currentTime = 60; video.emit('timeupdate');
+            assert.equal(runtime.requested.length, 2);
+            assert.equal(runtime.requested[1].willPlayMuted, choice.expected === 0);
+            assert.equal(new URL(runtime.requested[1].adTagUrl).searchParams.get('vpmute'), choice.expected === 0 ? '1' : '0');
+            assert.equal(runtime.managers[1].volume, choice.expected);
+            assert.equal(runtime.requested[0].adTagUrl, originalTag);
+            manager.volume = 1; manager.emit('volume-changed');
+            assert.equal(video.muted, choice.muted); assert.equal(video.volume, choice.volume);
+            target.__hmDestroy('dismissed');
+        });
+    }
+}
+
+test('native baseline mute chosen before COMPLETE survives even when its event is still queued', async () => {
+    const { target, runtime, video } = mixedContentFixture({ 'data-hm-video-muted': '1' });
+    await tick();
+    const manager = runtime.managers[0];
+    manager.volume = 0.4; manager.emit('volume-changed');
+    video.muted = true; video.volume = 1; // A native choice made while the ad still plays.
+    manager.emit('complete');
+    video.emit('volumechange'); // Its queued event arrives during the restoration window.
+    manager.emit('content-resume-requested'); manager.emit('all-ads-completed'); await tick();
+    assert.equal(video.muted, true); assert.equal(video.volume, 1);
+    video.currentTime = 60; video.emit('timeupdate');
+    assert.equal(runtime.requested[1].willPlayMuted, true); assert.equal(runtime.managers[1].volume, 0);
+    target.__hmDestroy('dismissed');
 });

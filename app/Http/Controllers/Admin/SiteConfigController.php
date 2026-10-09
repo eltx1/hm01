@@ -20,6 +20,38 @@ use Illuminate\Validation\Rule;
 
 class SiteConfigController extends Controller
 {
+    public function updateVideoInventory(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
+    {
+        $data = $request->validate([
+            'video_inventory_type' => ['required', 'string', Rule::in(['accompanying', 'instream'])],
+        ]);
+        $version = DB::transaction(function () use ($site, $data, $request, $audit, $publisher) {
+            $lockedSite = Site::withoutGlobalScopes()->lockForUpdate()->findOrFail($site->id);
+            $config = SiteConfig::withoutGlobalScopes()->firstOrCreate(
+                ['site_id' => $lockedSite->id],
+                ['organization_id' => $lockedSite->organization_id],
+            );
+            if ($config->video_inventory_type === $data['video_inventory_type']) {
+                return false;
+            }
+
+            $before = $config->only('video_inventory_type');
+            $config->update($data);
+            $audit->record('site.config.video_inventory.updated', $lockedSite->organization_id, $request->user(), $config,
+                $before, $config->only('video_inventory_type'), ['site_id' => $lockedSite->id]);
+
+            return $publisher->publishActiveProduction($lockedSite, $request->user());
+        });
+
+        if ($version === false) {
+            return back()->with('status', 'Video ad type is already saved for this website.');
+        }
+
+        return back()->with('status', $version
+            ? 'Video ad type saved for this website. Production configuration v'.$version->version.' was queued automatically.'
+            : 'Video ad type saved for this website. It will publish automatically when the website is activated.');
+    }
+
     public function update(Request $request, Site $site, AuditRecorder $audit, SiteConfigPublisher $publisher): RedirectResponse
     {
         $data = $request->validate([

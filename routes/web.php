@@ -180,6 +180,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/sites/{site}/inventory/page-targeting', [InventoryController::class, 'pageTargeting'])->middleware('permission:inventory.manage')->name('admin.sites.inventory.page-targeting');
         Route::post('/admin/sites/{site}/inventory/duplicate-layout', [InventoryController::class, 'duplicateLayout'])->middleware('permission:inventory.manage')->name('admin.sites.inventory.duplicate-layout');
         Route::post('/admin/sites/{site}/inventory/seller-declarations', [InventoryController::class, 'storeSellerDeclaration'])->middleware('permission:supply_chain.sellers.manage')->name('admin.sites.inventory.sellers.store');
+        Route::put('/admin/sites/{site}/configuration/video-inventory', [SiteConfigController::class, 'updateVideoInventory'])->middleware(['horus', 'permission:video_player.manage'])->name('admin.sites.config.video-inventory');
         Route::put('/admin/sites/{site}/configuration', [SiteConfigController::class, 'update'])->middleware('permission:configs.manage')->name('admin.sites.config.update');
         Route::get('/admin/sites/{site}/configuration/preview', [SiteConfigController::class, 'preview'])->middleware('permission:configs.view')->name('admin.sites.config.preview');
         Route::post('/admin/sites/{site}/configuration/publish', [SiteConfigController::class, 'publish'])->middleware('permission:configs.publish')->name('admin.sites.config.publish');
