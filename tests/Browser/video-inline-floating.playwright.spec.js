@@ -585,6 +585,34 @@ test('sticky clearance is removed inline and recalculated on every later float',
     await expect(page.locator('[data-hm-video-placeholder]')).toHaveCount(0);
 });
 
+test('native content playback produces successive five-second midrolls after no-fill', async ({ page, browserName }) => {
+    await page.route('**/*', route => route.abort());
+    await openPlayer(page, { content: true, realContent: true, fixedVideo: true, startMuted: false,
+        primeUserActivation: true, deferResponse: true,
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video' });
+    // Chromium continues decoded content after scroll; WebKit may suspend it.
+    // Keep WebKit visible to test actual playback, not fabricated time updates.
+    if (browserName === 'chromium') await scrollPage(page, 1800);
+    await page.evaluate(() => {
+        window.emptyAd = () => ({ getError: () => ({ getErrorCode: () => 1009, getVastErrorCode: () => 303 }) });
+        window.videoLoaders[0].events['ad-error'](window.emptyAd());
+    });
+    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+    await page.evaluate(() => window.videoLoaders[1].events['ad-error'](window.emptyAd()));
+    let previousTime = 0;
+    for (const count of [3, 4]) {
+        await expect.poll(() => page.evaluate(() => window.adRequests), { timeout: 8000 }).toBe(count);
+        const state = await page.evaluate(() => ({ time: document.querySelector('video').currentTime,
+            position: new URL(window.lastAdTagUrl).searchParams.get('vpos'), starts: window.adStarts }));
+        expect(state.position).toBe('midroll');
+        expect(state.starts).toBe(0);
+        expect(state.time - previousTime).toBeGreaterThanOrEqual(4.9);
+        expect(state.time - previousTime).toBeLessThan(6.5);
+        previousTime = state.time;
+        await page.evaluate(() => window.videoLoaders.at(-1).events['ad-error'](window.emptyAd()));
+    }
+});
+
 for (const transformed of [false, true]) {
     test(`closing the returned inline player is permanent (portal=${transformed})`, async ({ page }) => {
         await openPlayer(page, { transformed });
@@ -1412,6 +1440,65 @@ for (const content of [true, false]) {
             sameMedia: window.originalMedia === document.querySelector('[data-hm-video-direct] video'),
             inert: document.querySelector('[data-hm-video-ad-layer]').hasAttribute('inert'),
         }))).toEqual({ requests: 1, sameMedia: true, inert: false });
+    });
+}
+
+for (const transformed of [false, true]) {
+    test(`five-second midrolls continue after scroll, then a filled response floats; portal=${transformed}`, async ({ page }) => {
+        await openPlayer(page, { content: true, fixedVideo: true, startMuted: false, deferResponse: true, transformed,
+            vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video' });
+        const surface = page.locator('[data-placement="video"]');
+        await scrollPage(page, 1800);
+        await page.evaluate(() => {
+            window.emptyAd = () => ({ getError: () => ({ getErrorCode: () => 1009, getVastErrorCode: () => 303 }) });
+            window.videoLoaders[0].events['ad-error'](window.emptyAd());
+        });
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
+        await page.evaluate(() => window.videoLoaders[1].events['ad-error'](window.emptyAd()));
+        await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+        await page.evaluate(() => {
+            const video = document.querySelector('video');
+            Object.defineProperty(video, 'duration', { configurable: true, value: 100 });
+            Object.defineProperty(video, 'currentTime', { configurable: true, writable: true, value: 0 });
+            window.contentClock = performance.now();
+            performance.now = () => window.contentClock;
+            window.advanceContent = seconds => {
+                for (let i = 0; i < seconds; i++) {
+                    window.contentClock += 1000; video.currentTime += 1;
+                    video.dispatchEvent(new Event('timeupdate'));
+                }
+            };
+            video.dispatchEvent(new Event('timeupdate'));
+        });
+        for (let cycle = 0; cycle < 3; cycle++) {
+            const count = 2 + cycle;
+            await page.evaluate(() => window.advanceContent(4));
+            expect(await page.evaluate(() => window.adRequests)).toBe(count);
+            await scrollPage(page, 1800 + cycle * 100);
+            await page.evaluate(() => window.advanceContent(1));
+            expect(await page.evaluate(() => window.adRequests)).toBe(count + 1);
+            await expect(surface).toHaveAttribute('data-hm-video-floating-state', 'inline');
+            expect(await page.evaluate(() => window.adStarts)).toBe(0);
+            if (cycle < 2) {
+                await page.evaluate(() => window.videoLoaders.at(-1).events['ad-error'](window.emptyAd()));
+                await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-status', 'content-playing');
+                await page.evaluate(() => document.querySelector('video').dispatchEvent(new Event('timeupdate')));
+            }
+        }
+        const requests = await page.evaluate(() => window.adRequestHistory.map(({ tag, muted }) => {
+            const url = new URL(tag);
+            return [url.searchParams.get('vpos'), url.searchParams.get('plcmt'), url.searchParams.get('vpmute'), muted];
+        }));
+        expect(requests).toEqual(['preroll', 'preroll', 'midroll', 'midroll', 'midroll'].map(position => [position, '1', '0', false]));
+        await page.evaluate(() => window.videoLoaders.at(-1).resolve());
+        await assertFloating(page);
+        expect(await page.evaluate(() => window.adStarts)).toBe(1);
+        await page.evaluate(() => { window.videoManager.emit('complete'); window.videoManager.emit('all-completed'); });
+        // The return-inline animation must not cancel immediate continuation.
+        await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(6);
+        await page.evaluate(() => window.videoLoaders.at(-1).resolve());
+        await assertFloating(page);
+        expect(await page.evaluate(() => window.adStarts)).toBe(2);
     });
 }
 

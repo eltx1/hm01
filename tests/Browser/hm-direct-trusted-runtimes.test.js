@@ -3297,6 +3297,57 @@ test('new interval never overlaps a live ad and resumes opportunities after comp
     f.target.__hmDestroy('dismissed');
 });
 
+test('five-second requests survive scrolling past inline content and repeated empty responses', async () => {
+    const clock = videoClock();
+    const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, deferManagerLoad: true, contentDuration: 100 }), clock };
+    let top = 0;
+    f.target.getBoundingClientRect = () => ({ top, bottom: top + 180, left: 0, right: 320, width: 320, height: 180 });
+    await tick();
+    top = -1000; f.runtime.sandbox.scrollY = 1000;
+    const player = f.target.__hmVideoPlayer;
+    player.viewport.update();
+    assert.equal(player.viewport.canRequestOffscreen, true);
+    emitLoaderError(f.runtime.loaders[0], emptyVastEvent()); clock.advance(1000);
+    emitLoaderError(f.runtime.loaders[1], emptyVastEvent()); await tick();
+    f.video.emit('timeupdate');
+    for (let i = 0; i < 3; i++) {
+        const count = f.runtime.requested.length;
+        for (let second = 0; second < 4; second++) {
+            player.viewport.update(); // Continued scrolling must not erase the sample.
+            advanceRealContent(f, 1);
+        }
+        assert.equal(f.runtime.requested.length, count);
+        player.viewport.update(); advanceRealContent(f, 1);
+        assert.equal(f.runtime.requested.length, count + 1);
+        assert.equal(new URL(f.runtime.requested.at(-1).adTagUrl).searchParams.get('vpos'), 'midroll');
+        assertFixedVideoRequest(f.runtime.requested.at(-1));
+        assert.equal(player.floating, false, 'empty content does not float');
+        emitLoaderError(f.runtime.loaders.at(-1), emptyVastEvent()); await tick();
+        f.video.emit('timeupdate');
+    }
+    f.target.__hmDestroy('dismissed');
+});
+
+for (const mode of ['inline-only', 'below-fold', 'background', 'removed']) {
+    test(`five-second offscreen requests still require an eligible floating surface: ${mode}`, async () => {
+        const clock = videoClock();
+        const f = { ...mixedContentFixture({ ...fixedVideoAttributes,
+            ...(mode === 'inline-only' ? { 'data-hm-video-inline-to-floating': '0' } : {}),
+        }, { clock, contentDuration: 100 }), clock };
+        let top = 0;
+        f.target.getBoundingClientRect = () => ({ top, bottom: top + 180, left: 0, right: 320, width: 320, height: 180 });
+        await tick(); f.runtime.managers[0].emit('all-ads-completed'); await tick();
+        top = mode === 'below-fold' ? 1000 : -1000;
+        f.runtime.sandbox.scrollY = 1000;
+        if (mode === 'background') f.runtime.sandbox.document.visibilityState = 'hidden';
+        if (mode === 'removed') f.target.isConnected = false;
+        f.video.emit('timeupdate'); advanceRealContent(f, 12);
+        assert.equal(f.runtime.requested.length, 1);
+        assert.equal(f.target.__hmVideoPlayer.viewport.canRequestOffscreen, false);
+        f.target.__hmDestroy('dismissed');
+    });
+}
+
 test('hidden, paused and viewer-muted fixed inventory does not spin auctions or rewrite constants', async () => {
     const clock = videoClock();
     const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, contentDuration: 100 }), clock };
