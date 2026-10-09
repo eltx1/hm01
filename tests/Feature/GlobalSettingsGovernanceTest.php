@@ -44,6 +44,8 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertArrayHasKey('supply_chain.manager_domain', $registry->all());
         $this->assertArrayHasKey('video_player.content_url', $registry->all());
         $this->assertSame('url', $registry->get('video_player.content_url')->type);
+        $this->assertSame(['accompanying', 'instream'], $registry->get('video_player.inventory_type')->allowedValues);
+        $this->assertSame(['muted', 'prefer_audible'], $registry->get('video_player.autoplay_audio')->allowedValues);
         $this->assertSame('domain', $registry->get('supply_chain.manager_domain')->type);
         $this->assertTrue($registry->get('supply_chain.manager_domain')->highImpact);
         $this->expectException(ValidationException::class);
@@ -182,8 +184,10 @@ class GlobalSettingsGovernanceTest extends TestCase
             ->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.settings.index'))
             ->assertOk()
-            ->assertSee('Platform accompanying video URL')
+            ->assertSee('Platform video content URL')
             ->assertSee('video_player.content_url')
+            ->assertSee('video_player.inventory_type')
+            ->assertSee('video_player.autoplay_audio')
             ->assertSee($videoRoute, false)
             ->assertSee('Save setting');
 
@@ -203,6 +207,32 @@ class GlobalSettingsGovernanceTest extends TestCase
             ->withSession(['two_factor_passed_at' => now()->timestamp])
             ->put(route('admin.settings.update', ['key' => 'reporting.retry_delay_minutes']), ['value' => 60])
             ->assertForbidden();
+    }
+
+    public function test_video_classification_and_audio_preferences_are_explicit_independent_and_validated(): void
+    {
+        $values = ['video_player.inventory_type' => ['accompanying', 'instream'],
+            'video_player.autoplay_audio' => ['muted', 'prefer_audible']];
+        $registry = app(TypedSettingsRegistry::class);
+        foreach ($values as $key => $choices) {
+            foreach ($choices as $choice) {
+                $this->assertSame($choice, $registry->normalize($key, $choice));
+                $this->actingAs($this->adOps)
+                    ->withSession(['two_factor_passed_at' => now()->timestamp])
+                    ->put(route('admin.settings.update', ['key' => $key]), ['value' => $choice])
+                    ->assertRedirect()->assertSessionHasNoErrors();
+                $this->assertSame($choice, GlobalSetting::query()->findOrFail($key)->value);
+            }
+            $this->actingAs($this->adOps)
+                ->withSession(['two_factor_passed_at' => now()->timestamp])
+                ->put(route('admin.settings.update', ['key' => $key]), ['value' => 'invented'])
+                ->assertSessionHasErrors('value');
+            $this->actingAs($this->publisher)
+                ->put(route('admin.settings.update', ['key' => $key]), ['value' => $choices[0]])
+                ->assertForbidden();
+        }
+        $this->assertSame('instream', GlobalSetting::query()->findOrFail('video_player.inventory_type')->value);
+        $this->assertSame('prefer_audible', GlobalSetting::query()->findOrFail('video_player.autoplay_audio')->value);
     }
 
     public function test_high_impact_change_requires_reason_password_and_exact_confirmation(): void
