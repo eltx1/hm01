@@ -1580,11 +1580,25 @@ for (const rejectUnmutedAutoplay of [false, true]) {
     });
 }
 
-test('audible and muted autoplay denial leaves Play available without a VAST request', async ({ page }) => {
+test('audible and muted autoplay denial leaves Play available without a VAST request', async ({ page }, testInfo) => {
     await openPlayer(page, { content: true, audibleContent: true, contentMode: 'instream', startMuted: false, rejectContentAutoplay: true,
         vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&ad_type=video' });
     await expect(page.locator('#video-runtime')).toHaveAttribute('data-hm-video-detail', 'user-activation-required');
     expect(await page.evaluate(() => window.adRequests)).toBe(0);
+    await testInfo.attach('fallback-controls-geometry', {
+        contentType: 'application/json',
+        body: JSON.stringify(await page.evaluate(() => Object.fromEntries([
+            ['surface', '[data-placement="video"]'], ['rail', '[data-hm-video-chrome]'],
+            ['label', '[data-hm-video-label]'], ['controls', '[data-hm-video-content-controls]'],
+            ['mute', '[data-hm-video-content-control="mute"]'], ['close', '[data-hm-placement-close]'],
+        ].map(([name, selector]) => {
+            const node = document.querySelector(selector), box = node.getBoundingClientRect(), style = getComputedStyle(node);
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return [name, { box: box.toJSON(), display: style.display, position: style.position,
+                padding: style.padding, margin: style.margin, boxSizing: style.boxSizing,
+                hit: hit?.getAttribute('data-hm-video-content-control') || hit?.getAttribute('data-hm-placement-close') || hit?.tagName }];
+        })))),
+    });
     await page.evaluate(() => { window.allowContentPlay = true; });
     await page.locator('[data-hm-video-content-control="mute"]').click();
     await page.locator('[data-hm-video-content-control="play"]').click();
