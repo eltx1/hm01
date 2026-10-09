@@ -1299,7 +1299,7 @@
         listenContent(player, player.overlayPlay, 'click', function (event) {
             if (event && event.stopPropagation) event.stopPropagation();
             if (player.adMediaActive || player.adBreakPending && !player.nonLinearAdActive || player.destroyed) return;
-            if ((!player.preRollRequested || player.adActivationRequired) && player.startContentFromGesture) {
+            if ((!player.preRollRequested || player.adActivationRequired && player.video.paused) && player.startContentFromGesture) {
                 if (event && event.isTrusted) player.startContentFromGesture();
                 return;
             }
@@ -1559,11 +1559,6 @@
             player.currentBreak = null;
             if (player.contentStarted || player.contentEnded || player.adPlaybackStarted || player.adRules || player.adRuleCuePoints.length
                 || typeof stillEligible === 'function' && !stillEligible()) {
-                resumeContent(player);
-                return;
-            }
-            if (player.viewport && player.viewport.update) player.viewport.update();
-            if (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5 || player.motion) {
                 resumeContent(player);
                 return;
             }
@@ -2000,7 +1995,7 @@
                 if (name === 'pointerdown' && event && event.pointerType !== 'mouse') return;
                 if (name === 'pointerup' && event && event.pointerType === 'mouse') return;
                 if (name === 'keydown' && event && (event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey)) return;
-                if (event && event.isTrusted && player.adActivationRequired && !player.adBreakPending) {
+                if (event && event.isTrusted && player.adActivationRequired && player.video.paused && !player.adBreakPending) {
                     player.startContentFromGesture();
                     return;
                 }

@@ -3240,6 +3240,12 @@ test('fixed audible denial recovers on Play and reuses the gesture-initialized d
     assert.equal(player.adActivationRequired, true);
     assert.equal(f.runtime.requested.length, 1);
     assert.equal(f.video.muted, false);
+    // Silent editorial media can still autoplay after an audible ad denial.
+    // The viewer's Pause action must pause it, never start an advertisement.
+    assert.equal(f.video.paused, false);
+    player.overlayPlay.click();
+    assert.equal(f.video.paused, true);
+    assert.equal(f.runtime.requested.length, 1);
     player.overlayPlay.click(); await tick();
     assert.equal(f.runtime.requested.length, 2);
     assertFixedVideoRequest(f.runtime.requested[1]);
