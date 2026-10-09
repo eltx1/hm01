@@ -32,14 +32,14 @@ test('only write is exact main key-owner-expiration CAS with active-old-lease pr
  assert.match(script,/WHERE `key` = \? AND HEX\(`key`\) = HEX\(\?\) AND HEX\(`owner`\) = HEX\(\?\) AND `expiration` = \? AND `expiration` > \? AND `expiration` < \?/);
  assert.match(script,/\[\$expected\['key'\],\$expected\['key'\],\$expected\['owner'\],\$expected\['expiration'\],\$now\+900,\$now\+64800\]/);
  assert.match(script,/sleep\(65\)/);
- assert.match(script,/\$mode==='preview'[\s\S]*else \{[\s\S]*hmMainRecoveryProcessAbsent\(\)[\s\S]*hmMainRecoveryDelete\(/);
+ assert.match(script,/\$mode==='preview'[\s\S]*else \{[\s\S]*hmMainRecoveryProcessAbsent\([\s\S]*hmMainRecoveryDelete\(/);
  assert.match(script,/\$changed!==1/);
  assert.equal((script.match(/hmMainRecoveryDelete\(/g)||[]).length,2,'Only one explicitly gated apply call is allowed');
  assert.doesNotMatch(script,/HM_.*(?:ATTEST|VERIFIED_SINGLE|SINGLE_HOST_PROOF)/);
  assert.doesNotMatch(script,/(?:INSERT|UPDATE|TRUNCATE)\s+(?:INTO|TABLE|`)|getMessage\(|print_r\(|var_dump\(/i);
 });
 test('public projection reconstructs allowlisted classes and discards private fields',()=>{
- const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'ELIGIBLE',changed_rows:0,stage:'COMPLETE'};
+ const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'ELIGIBLE',changed_rows:0,stage:'COMPLETE',reason:'NONE'};
  assert.deepEqual(safeMainReportingRecovery({...raw,owner:'secret',key:'secret',expiration:123,financial_data:'secret'}),raw);
  for (const invalid of [{...raw,status:'RELEASED'}, {...raw,changed_rows:1}, {...raw,status:'secret'}, {...raw,mode:'secret'}, {...raw,target:'VIDEO_SYNC'}, {...raw,mode:'apply'}]) assert.throws(()=>safeMainReportingRecovery(invalid));
  assert.deepEqual(safeMainReportingRecovery({...raw,mode:'apply',status:'RELEASED',changed_rows:1}),{...raw,mode:'apply',status:'RELEASED',changed_rows:1});
@@ -134,8 +134,74 @@ test('cron evidence rejects stale unavailable wrong-account malformed and future
 });
 
 test('failure stages are closed enums and unknown or injected stage text is never exposed',()=>{
- const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'UNAVAILABLE',changed_rows:0,stage:'HOST_NAMESPACE'};
+ const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'UNAVAILABLE',changed_rows:0,stage:'HOST_NAMESPACE',reason:'NONE'};
  assert.deepEqual(safeMainReportingRecovery({...raw,path:'private',error:'private'}),raw);
  for(const stage of [undefined,'/private/path','HOST_NAMESPACE\nsecret','UNKNOWN']) assert.throws(()=>safeMainReportingRecovery({...raw,stage}));
  for(const stage of ['ENVIRONMENT_IDENTITY','RELEASE_MARKER','CRON_EVIDENCE','CRON_TARGET','BOOTSTRAP','DATABASE','SCHEDULE','HOST_NAMESPACE','PROC_SCAN','READ_LEASE']) assert.ok(script.includes("hmMainRecoveryStage('"+stage+"')"),stage);
+});
+
+test('cron evidence detail is a closed reason without private values',()=>{
+ const raw={schema_version:1,target:'MAIN_SYNC_SCHEDULER_MUTEX',mode:'preview',status:'UNAVAILABLE',changed_rows:0,stage:'CRON_EVIDENCE',reason:'CRON_CAPTURE_UNAVAILABLE'};
+ assert.deepEqual(safeMainReportingRecovery({...raw,file:'/private',uid:123}),raw);
+ for(const reason of [undefined,'/private','CRON_CAPTURE_UNAVAILABLE\nsecret']) assert.throws(()=>safeMainReportingRecovery({...raw,reason}));
+});
+test('unavailable static cron capture produces its exact safe reason',{skip:!php},()=>{
+ fixture(`
+ hmMainRecoveryReason('NONE');
+ if(hmMainRecoveryCronEvidencePayload(['schema_version'=>1,'available'=>false,'uid'=>1000,'observed_at'=>100],100,1000)!==null)exit(2);
+ if($GLOBALS['hm_main_recovery_reason']!=='CRON_CAPTURE_UNAVAILABLE')exit(3);
+ hmMainRecoveryCronEvidencePayload(['schema_version'=>1,'available'=>false,'uid'=>1000,'observed_at'=>90],100,1000);
+ if($GLOBALS['hm_main_recovery_reason']!=='CRON_CAPTURE_STALE')exit(4);
+ foreach([['available'=>'false'],['available'=>null],['uid'=>0]] as $change){hmMainRecoveryCronEvidencePayload(array_replace(['schema_version'=>1,'available'=>false,'uid'=>1000,'observed_at'=>100],$change),100,1000);if($GLOBALS['hm_main_recovery_reason']==='CRON_CAPTURE_UNAVAILABLE')exit(5);}
+ echo 'PASS';`);
+});
+
+test('positive process proof cannot override bad static evidence or weaken legacy lease guards',()=>{
+ assert.match(script,/reason'\] \?\? ''\)==='CRON_CAPTURE_UNAVAILABLE'\) return hmMainRecoveryNaturalTarget/);
+ assert.match(script,/min\(time\(\)\+90,\$deadline\)/);
+ assert.match(script,/hmMainRecoveryOldScheduler\(/);
+ assert.match(script,/\$legacyAcquiredAt/);
+});
+test('positive canonical witness denies wrong identity or stale observation and old previous-release parents block',{skip:!php},()=>{
+ fixture(String.raw`
+ $w=['pid'=>55,'start'=>'123','uid'=>1000,'php'=>'/php','artisan'=>'/app/artisan','cwd'=>'/home','namespace'=>'pid:[1]','observed_at'=>100];
+ $e=['schema_version'=>1,'source'=>'CANONICAL_PROCESS_IDENTITY','available'=>true,'collector_pid'=>50,'collector_start'=>'111','uid'=>1000,'namespace'=>'pid:[1]','release_sha'=>str_repeat('a',40),'witness'=>$w];
+ if(hmMainRecoveryNaturalPayload($e,105,1000,'/php','/app/artisan','pid:[1]',str_repeat('a',40),50)!==['/php','/app/artisan'])exit(2);
+ foreach([['uid'=>0],['php'=>'/other'],['artisan'=>'/other/artisan'],['namespace'=>'pid:[2]'],['observed_at'=>99]] as $change){$bad=$e;$bad['witness']=array_replace($w,$change);if(hmMainRecoveryNaturalPayload($bad,105,1000,'/php','/app/artisan','pid:[1]',str_repeat('a',40),50)!==null)exit(3);}
+ $fields=array_fill(0,20,'0');$fields[0]='T';$fields[19]='10000';$stat='44 (php8.4) '.implode(' ',$fields);
+ $status="State:\tT (stopped)\nUid:\t1000\t1000\t1000\t1000\n";
+ $cmd="/usr/bin/php8.4\0/home/old-release/artisan\0schedule:run\0";
+ if(!hmMainRecoveryOldScheduler($status,$cmd,$stat,44,1000,1000,100,1200))exit(4);
+ if(hmMainRecoveryOldScheduler($status,$cmd,$stat,44,1000,1000,100,1000))exit(5);
+ if(hmMainRecoveryOldScheduler($status,$cmd,$stat,44,1001,1000,100,1200))exit(6);
+ echo 'PASS';`);
+});
+
+test('PID1-link unavailable alternative requires exact Pid/NSpid plus positive witness; readable mismatch remains fatal',{skip:!php},()=>{
+ fixture(String.raw`
+ $ns='pid:[1]';$boot='12345678-1234-1234-1234-123456789abc';$self="Pid:\t123\nNSpid:\t123\n";$init="Pid:\t1\nNSpid:\t1\n";
+ if(!hmMainRecoveryHostEvidence($ns,false,'systemd',$self,$init,$boot,123,true))exit(2);
+ if(hmMainRecoveryHostEvidence($ns,false,'systemd',$self,$init,$boot,123,false))exit(3);
+ if(hmMainRecoveryHostEvidence($ns,'pid:[2]','systemd',$self,$init,$boot,123,true))exit(4);
+ foreach([[$self."Pid:\t123\n",$init],[$self."NSpid:\t123\n",$init],["Pid:\t122\nNSpid:\t123\n",$init],[$self,"Pid:\t2\nNSpid:\t1\n"],[$self,"Pid:\t1\nNSpid:\t1 2\n"]] as $bad){if(hmMainRecoveryHostEvidence($ns,false,'systemd',$bad[0],$bad[1],$boot,123,true))exit(5);}
+ $mount='24 1 0:4 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw';
+ if(hmMainRecoveryMountIdentity($mount)===null||hmMainRecoveryMountIdentity($mount)===hmMainRecoveryMountIdentity(str_replace('24 1','25 1',$mount)))exit(6);
+ if(hmMainRecoveryMountIdentity($mount.',hidepid=2')!==null)exit(7);
+ echo 'PASS';`);
+});
+test('host fallback is conditional on unavailable link and still requires canonical evidence and stable proc mount',()=>{
+ assert.match(script,/if \(\$snapshot\['init_namespace'\]===false\)/);
+ assert.match(script,/hmMainRecoveryNaturalTarget\(\)!==null/);
+ assert.match(script,/if \(\$initNamespace!==false\) return \$initNamespace===\$selfNamespace/);
+ assert.match(script,/\$snapshot\['mount'\]/);
+ assert.doesNotMatch(script,/permission.denied/i);
+});
+
+test('fallback rechecks all host evidence after a witness wait and rejects newly readable mismatch',{skip:!php},()=>{
+ fixture(String.raw`
+ $before=['self_namespace'=>'pid:[1]','init_namespace'=>false,'boot'=>'12345678-1234-1234-1234-123456789abc','init_name'=>'systemd','self_status'=>"Pid:\t123\nNSpid:\t123\n",'init_status'=>"Pid:\t1\nNSpid:\t1\n",'mount'=>hash('sha256','mount'),'container'=>false];
+ if(!hmMainRecoveryHostAfterWait($before,$before,123))exit(2);
+ if(!hmMainRecoveryHostAfterWait($before,array_replace($before,['init_namespace'=>'pid:[1]']),123))exit(3);
+ foreach([['init_namespace'=>'pid:[2]'],['self_namespace'=>'pid:[2]'],['boot'=>'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'],['mount'=>hash('sha256','other')],['self_status'=>"Pid:\t124\nNSpid:\t123\n"],['init_status'=>"Pid:\t2\nNSpid:\t1\n"],['container'=>true]] as $change){if(hmMainRecoveryHostAfterWait($before,array_replace($before,$change),123))exit(4);}
+ echo 'PASS';`);
 });

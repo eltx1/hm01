@@ -4,8 +4,10 @@ on:
     paths:
       - '.github/workflows/recover-main-reporting-mutex.yml'
       - 'ops/audit/recover-main-reporting-mutex.php'
+      - 'ops/audit/observe-canonical-scheduler.php'
       - 'ops/audit/validate-main-reporting-recovery.mjs'
       - 'tests/Deployment/main-reporting-mutex-recovery.test.mjs'
+      - 'tests/Deployment/canonical-scheduler-observer.test.mjs'
       - 'tests/Deployment/main-reporting-mutex-recovery-workflow.test.mjs'
   push:
     branches: [main]
@@ -35,7 +37,8 @@ jobs:
       - name: Validate exact legacy lease recovery and disclosure contract
         run: |
           php -l ops/audit/recover-main-reporting-mutex.php
-          node --test tests/Deployment/main-reporting-mutex-recovery.test.mjs tests/Deployment/main-reporting-mutex-recovery-workflow.test.mjs
+          php -l ops/audit/observe-canonical-scheduler.php
+          node --test tests/Deployment/main-reporting-mutex-recovery.test.mjs tests/Deployment/main-reporting-mutex-recovery-workflow.test.mjs tests/Deployment/canonical-scheduler-observer.test.mjs
   recover:
     if: github.event_name == 'push' && github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main'
     needs: validate
@@ -270,9 +273,16 @@ jobs:
           [[ "$mode" == preview || "$mode" == apply ]]
           cd "$app"
           test -x /usr/bin/timeout
-          evidence_dir="$(mktemp -d /tmp/horus-main-lease.XXXXXXXXXX)"
-          watcher=''
-          trap 'status=$?; if [[ -n "$watcher" ]]; then kill "$watcher" 2>/dev/null || true; wait "$watcher" 2>/dev/null || true; fi; rm -rf "$evidence_dir"; exit "$status"' EXIT
+          test -d storage/framework && test -w storage/framework
+          evidence_dir="$(mktemp -d "$PWD/storage/framework/horus-main-lease.XXXXXXXXXX")"
+          watcher=''; observer=''
+          trap 'status=$?; if [[ -n "$watcher" ]]; then kill "$watcher" 2>/dev/null || true; wait "$watcher" 2>/dev/null || true; fi; if [[ -n "$observer" ]]; then kill "$observer" 2>/dev/null || true; wait "$observer" 2>/dev/null || true; fi; rm -rf "$evidence_dir"; exit "$status"' EXIT
+          cat > "$evidence_dir/observer.php" <<'OBSERVER_PHP'
+          REMOTE
+          cat ops/audit/observe-canonical-scheduler.php >> "$work/remote-run.sh"
+          printf '\nOBSERVER_PHP\n' >> "$work/remote-run.sh"
+          cat >> "$work/remote-run.sh" <<'REMOTE'
+          chmod 600 "$evidence_dir/observer.php"
           collect_cron() {
             local cron encoded observed uid
             observed="$(date +%s)"; uid="$(id -u)"
@@ -280,7 +290,7 @@ jobs:
               encoded="$(printf '%s' "$cron" | base64 -w 0)"
               printf '{"schema_version":1,"available":true,"observed_at":%s,"uid":%s,"cron_base64":"%s"}\n' "$observed" "$uid" "$encoded" > "$evidence_dir/next"
             else
-              printf '{"schema_version":1,"available":false}\n' > "$evidence_dir/next"
+              printf '{"schema_version":1,"available":false,"observed_at":%s,"uid":%s}\n' "$observed" "$uid" > "$evidence_dir/next"
             fi
             chmod 600 "$evidence_dir/next"
             mv -f "$evidence_dir/next" "$evidence_dir/cron.json"
@@ -288,7 +298,11 @@ jobs:
           collect_cron
           (while sleep 1; do collect_cron; done) &
           watcher=$!
-          HM_EXPECTED_RELEASE_SHA="$expected" HM_RECOVERY_APP_LINK="$app" HM_MAIN_RECOVERY_MODE="$mode" HM_RECOVERY_CRON_EVIDENCE="$evidence_dir/cron.json" /usr/bin/timeout --kill-after=10 240 /usr/bin/php8.4 -d display_errors=0 -d log_errors=0 <<'RECOVERY_PHP'
+          observer_deadline=$(( $(date +%s) + 180 ))
+          /usr/bin/php8.4 -d display_errors=0 -d log_errors=0 "$evidence_dir/observer.php" "$app" "$expected" "$evidence_dir/process.json" >/dev/null 2>/dev/null &
+          observer=$!
+          clk_tck="$(getconf CLK_TCK)"
+          HM_EXPECTED_RELEASE_SHA="$expected" HM_RECOVERY_APP_LINK="$app" HM_MAIN_RECOVERY_MODE="$mode" HM_RECOVERY_CRON_EVIDENCE="$evidence_dir/cron.json" HM_RECOVERY_PROCESS_EVIDENCE="$evidence_dir/process.json" HM_RECOVERY_OBSERVER_PID="$observer" HM_RECOVERY_OBSERVER_DEADLINE="$observer_deadline" HM_RECOVERY_CLK_TCK="$clk_tck" /usr/bin/timeout --kill-after=10 240 /usr/bin/php8.4 -d display_errors=0 -d log_errors=0 <<'RECOVERY_PHP'
           REMOTE
           cat ops/audit/recover-main-reporting-mutex.php >> "$work/remote-run.sh"
           printf '\nRECOVERY_PHP\n' >> "$work/remote-run.sh"
