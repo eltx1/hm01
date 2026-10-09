@@ -54,6 +54,7 @@ async function openPlayer(page, options = {}) {
             Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.testVisibility });
         }
         window.adRequests = 0; window.adStarts = 0; window.adDestroys = 0; window.imaFrameLoads = 0;
+        window.displayInitializations = [];
         window.managerInits = 0; window.managerResizes = []; window.managerStops = 0; window.adClicks = 0; window.contentCompleteCalls = 0; window.videoManagers = []; window.videoLoaders = [];
         window.lastAdTagUrl = null; window.lastRenderingSettings = null;
         window.adRequestHistory = []; window.adStartStates = []; window.adStartedEvents = 0; window.managerVolumeWrites = [];
@@ -180,7 +181,7 @@ async function openPlayer(page, options = {}) {
                     iframe.dataset.testIma = '1'; iframe.addEventListener('load', () => window.imaFrameLoads++);
                     layer.appendChild(iframe); this.frame = iframe;
                 }
-                initialize() {}
+                initialize() { window.displayInitializations.push(navigator.userActivation?.isActive === true); }
                 destroy() { this.frame.remove(); }
             },
             AdsLoader: class {
@@ -2034,4 +2035,19 @@ test('fixed platform requests autoplay with constant plcmt and sound-on without 
         return { plcmt: tag.searchParams.get('plcmt'), vpmute: tag.searchParams.get('vpmute'), vpa: tag.searchParams.get('vpa'),
             imaMuted: window.lastAdPlaybackIntent.muted, muted: document.querySelector('video').muted };
     })).toEqual({ plcmt: '1', vpmute: '0', vpa: 'auto', imaMuted: false, muted: false });
+});
+
+test('fixed sound-on autoplay denial recovers from the existing Play button inside a trusted gesture', async ({ page }) => {
+    await openPlayer(page, { content: true, contentMode: 'instream', startMuted: false, fixedVideo: true,
+        rejectContentAutoplay: true, adStartErrors: [1205],
+        vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&plcmt=2&vpmute=1' });
+    const player = page.locator('#video-runtime');
+    await expect(player).toHaveAttribute('data-hm-video-status', 'content-ready');
+    expect(await page.evaluate(() => window.adRequests)).toBe(1);
+    await page.getByRole('button', { name: 'Play video content', exact: true }).click();
+    await expect(player).toHaveAttribute('data-hm-video-status', 'started');
+    expect(await page.evaluate(() => ({ requests: window.adRequests, gestureInitialized: window.displayInitializations.at(-1),
+        muted: document.querySelector('video').muted, imaMuted: window.lastAdPlaybackIntent.muted,
+        plcmt: new URL(window.lastAdTagUrl).searchParams.get('plcmt'), vpmute: new URL(window.lastAdTagUrl).searchParams.get('vpmute') })))
+        .toEqual({ requests: 2, gestureInitialized: true, muted: false, imaMuted: false, plcmt: '1', vpmute: '0' });
 });

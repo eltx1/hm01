@@ -436,6 +436,7 @@
             adPresentationActive: false,
             adResponseSeen: false,
             adPlaybackStarted: false,
+            adActivationRequired: false,
             audioIntentChanged: false,
             prerollAttempts: 0,
             prerollRetryTimer: null,
@@ -1298,7 +1299,7 @@
         listenContent(player, player.overlayPlay, 'click', function (event) {
             if (event && event.stopPropagation) event.stopPropagation();
             if (player.adMediaActive || player.adBreakPending && !player.nonLinearAdActive || player.destroyed) return;
-            if (!player.preRollRequested && player.startContentFromGesture) {
+            if ((!player.preRollRequested || player.adActivationRequired) && player.startContentFromGesture) {
                 if (event && event.isTrusted) player.startContentFromGesture();
                 return;
             }
@@ -1502,6 +1503,12 @@
         if (position === 'postroll' || player.contentEnded) {
             finishContentPlayer(player, 'completed');
             return;
+        }
+        // An actual SDK autoplay denial alone enables recovery through the
+        // existing Play control, preserving automatic sound-on startup.
+        if (fixedAudibleInventory(player) && !player.adRules
+            && error && typeof error.getErrorCode === 'function' && Number(error.getErrorCode()) === 1205) {
+            player.adActivationRequired = true;
         }
         // A missing/failed ad must never prevent Horus-owned content from playing.
         // Conversely, if the content source itself failed, the already-attempted
@@ -1771,6 +1778,7 @@
                     });
                     player.adsManager.addEventListener(adTypes.STARTED, function (adEvent) {
                         if (currentRequest()) player.adPlaybackStarted = true;
+                        if (currentRequest()) player.adActivationRequired = false;
                         if (currentRequest() && player.audioSync) player.audioSync.restoring = false;
                         if (applyAdMode(adEvent) === false) return;
                         if (!currentRequest()) return;
@@ -1947,7 +1955,7 @@
     }
 
     function initializeContentGesture(player, ima) {
-        if (!player || player.destroyed || player.closing || player.preRollRequested) return false;
+        if (!player || player.destroyed || player.closing || (player.preRollRequested && !player.adActivationRequired)) return false;
         if (player.gestureDisplayContainer) return true;
         try {
             // IMA requires this exact initialization inside the trusted user
@@ -1992,6 +2000,10 @@
                 if (name === 'pointerdown' && event && event.pointerType !== 'mouse') return;
                 if (name === 'pointerup' && event && event.pointerType === 'mouse') return;
                 if (name === 'keydown' && event && (event.key === 'Escape' || event.ctrlKey || event.altKey || event.metaKey)) return;
+                if (event && event.isTrusted && player.adActivationRequired && !player.adBreakPending) {
+                    player.startContentFromGesture();
+                    return;
+                }
                 if (event && event.isTrusted && player.startupPlaybackState === 'gesture') player.contentGesturePending = initializeContentGesture(player, ima);
             });
         });
@@ -2102,6 +2114,14 @@
         }
 
         player.startContentFromGesture = function () {
+            if (player.adActivationRequired) {
+                if (!initializeContentGesture(player, ima)) return;
+                player.adActivationRequired = false;
+                player.contentPausedByUser = false;
+                player.contentAutoPlay = false;
+                requestContentAdBreak(player, ima, vastUrl, player.contentStarted ? 'midroll' : 'preroll');
+                return;
+            }
             if (player.startupPlaybackState === 'checking') {
                 player.startupPlaybackGeneration += 1;
                 window.clearTimeout(player.startupPlaybackTimer);

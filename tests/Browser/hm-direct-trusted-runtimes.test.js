@@ -3231,6 +3231,32 @@ test('fixed instream requests automatically without a content-play probe or a ge
     f.target.__hmDestroy('dismissed');
 });
 
+test('fixed audible denial recovers on Play and reuses the gesture-initialized display through later breaks', async () => {
+    const clock = videoClock();
+    const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, withChrome: true, contentDuration: 100, deferMediaStart: true }), clock };
+    await tick();
+    const player = f.target.__hmVideoPlayer;
+    f.runtime.managers[0].emit('ad-error', autoplayDisallowedEvent()); await tick();
+    assert.equal(player.adActivationRequired, true);
+    assert.equal(f.runtime.requested.length, 1);
+    assert.equal(f.video.muted, false);
+    player.overlayPlay.click(); await tick();
+    assert.equal(f.runtime.requested.length, 2);
+    assertFixedVideoRequest(f.runtime.requested[1]);
+    const display = player.gestureDisplayContainer;
+    assert.ok(display.initialized);
+    assert.equal(player.displayContainer, display);
+    assert.equal(player.adActivationRequired, false);
+    f.runtime.managers[1].emit('all-ads-completed'); await tick();
+    f.video.emit('timeupdate'); advanceRealContent(f, 5);
+    assert.equal(f.runtime.requested.length, 3);
+    assert.equal(player.displayContainer, display);
+    assertFixedVideoRequest(f.runtime.requested[2]);
+    assert.equal(display.destroyed, undefined);
+    f.target.__hmDestroy('dismissed');
+    assert.equal(display.destroyed, true);
+});
+
 test('five-second schedule requests from the start and continues through repeated empty responses', async () => {
     const clock = videoClock();
     const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, deferManagerLoad: true, contentDuration: 100 }), clock };
