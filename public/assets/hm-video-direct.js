@@ -884,7 +884,6 @@
             releasePendingAdStart(player);
         }
         function accept(ratio, data) {
-            if (ratio < 0.5 || document.visibilityState === 'hidden') player.repeatContentSample = null;
             player.visibleRatio = Math.max(0, Math.min(1, ratio));
             if (!player.floating && document.visibilityState !== 'hidden' && player.visibleRatio >= 0.5) player.wasInlineVisible = true;
             // Seeing any part of the original media/anchor grants layout
@@ -899,6 +898,7 @@
                 var floated = geometry(player.container);
                 player.visibleRatio = floated ? floated.ratio : 1;
             }
+            if (!contentBreakRequestEligible(player)) player.repeatContentSample = null;
             notify();
         }
         layout.update = function () {
@@ -1488,7 +1488,7 @@
                 if (player.destroyed || player.closing || generation !== player.adRuntimeGeneration
                     || player.contentEnded || player.contentFailed || player.contentPausedByUser || player.adBreakPending) return;
                 if (player.viewport && player.viewport.update) player.viewport.update();
-                if (document.visibilityState === 'hidden' || Number(player.visibleRatio || 0) < 0.5 || player.motion) return;
+                if (!contentBreakRequestEligible(player)) return;
                 requestContentAdBreak(player, player.contentIma, player.contentVastUrl, 'midroll');
             }, 0);
         }
@@ -1583,6 +1583,16 @@
         return player.container.getAttribute('data-hm-video-break-schedule') === 'interval';
     }
 
+    function contentBreakRequestEligible(player) {
+        // Content stays inline between ads. Once the reader has seen and
+        // scrolled past it, the existing floating surface can present a filled
+        // response. Requiring the empty inline box to remain visible prevents
+        // that response from ever being requested. Playback still uses the
+        // separate, measured 50% viewability gate after the response floats.
+        return document.visibilityState !== 'hidden' && (Number(player.visibleRatio || 0) >= 0.5
+            || intervalContentSchedule(player) && player.viewport && player.viewport.canRequestOffscreen);
+    }
+
     function repeatedMidrollInterval(player) {
         var raw = player.container.getAttribute('data-hm-video-mid-roll-interval-seconds');
         if (raw === null || raw === '') return 60;
@@ -1595,6 +1605,7 @@
     }
 
     function requestRepeatedContentBreak(player, ima, vastUrl) {
+        if (intervalContentSchedule(player) && player.viewport && player.viewport.update) player.viewport.update();
         var interval = repeatedMidrollInterval(player), video = player.video;
         var duration = Number(video.duration), current = Number(video.currentTime);
         var playbackRate = video.playbackRate === undefined ? 1 : Number(video.playbackRate);
@@ -1603,7 +1614,7 @@
             || player.adMediaActive || player.nonLinearAdActive || player.contentPausedByUser
             || (fixedAudibleInventory(player) && adPlaybackIntent(player).muted)
             || player.contentBuffering || video.paused || video.seeking || !Number.isFinite(playbackRate) || playbackRate <= 0 || document.visibilityState === 'hidden'
-            || Number(player.visibleRatio || 0) < 0.5 || (!intervalContentSchedule(player) && !player.midRollRequested && !player.midRollConsumedByOverlay)
+            || !contentBreakRequestEligible(player) || (!intervalContentSchedule(player) && !player.midRollRequested && !player.midRollConsumedByOverlay)
             || !Number.isFinite(duration) || !Number.isFinite(current) || duration <= 0 || current < 0
             // Horus UX choice for additional breaks: retain a short content tail
             // rather than placing another midroll directly before the postroll.
@@ -1626,8 +1637,7 @@
         // The next observer frame can lag a scroll/removal. Re-measure before
         // this additional request; never queue it if eligibility was lost.
         if (player.viewport && player.viewport.update) player.viewport.update();
-        if (player.destroyed || player.closing || player.motion || document.visibilityState === 'hidden'
-            || Number(player.visibleRatio || 0) < 0.5) return;
+        if (player.destroyed || player.closing || !contentBreakRequestEligible(player)) return;
         requestContentAdBreak(player, ima, vastUrl, 'midroll');
     }
 

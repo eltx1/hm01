@@ -182,14 +182,21 @@ be set to 5–600 whole seconds; 0 retains midpoint-only scheduling.
 
 The new interval schedule starts with content playback, rather than waiting for
 the old halfway cue. Following empty responses, content resumes and the next
-opportunity is earned after another interval of visible, actual playback. There
+opportunity is earned after another interval of actual content playback. The
+inline player must be visible or have already been seen and scrolled past with
+its existing floating surface eligible. Content stays inline after no-fill;
+requiring that empty inline box to remain visible would prevent the request
+that supplies its next floating ad. There
 is no fixed retry-count ceiling during the remaining content. After a confirmed
 filled ad completes and IMA ends the whole pod, the next request is scheduled
 immediately. Per-ad COMPLETE alone, skipped creatives, empty generic completion,
 stale callbacks and VMAP-owned pods cannot create overlapping requests.
 
-Pauses, buffering, hidden documents, offscreen players, seeking and dismissal do
-not accrue repeated opportunities. Timer-only or seek jumps cannot manufacture
+Pauses, buffering, hidden documents, offscreen players without an eligible
+floating surface, seeking and dismissal do not accrue repeated opportunities.
+Requests alone never authorize hidden ad playback: a filled response floats and
+IMA starts only after the actual media box meets its measured viewability gate.
+Timer-only or seek jumps cannot manufacture
 watched time. Pending continuation is cancelled at teardown. The final content
 second is left for the single postroll/EOS transition. Legacy published recipes
 retain their earlier midpoint/60-second behavior until refreshed, and existing
