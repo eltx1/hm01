@@ -11,7 +11,7 @@ use App\Services\Settings\GlobalSettingsService;
 
 final class VideoPlayerGlobalSettingsService
 {
-    public const KEYS = ['video_player.content_url'];
+    public const KEYS = ['video_player.content_url', 'video_player.inventory_type', 'video_player.autoplay_audio'];
 
     public function __construct(
         private readonly GlobalSettingsService $settings,

@@ -125,8 +125,10 @@ structural evidence: its unrelated page URL, `npa=0`, `tfcd=0` and test paramete
 are not copied into generated production requests.
 
 For each request, `vpmute` (1/0), `vpa` (auto/click), IMA playback hints and actual
-manager volume use the same playback intent. Automatic content-timeline breaks
-remain auto; click/rewarded requests retain click intent. Page/description,
+manager volume use the same playback intent. A zero-volume slider is muted even
+when the media element's `muted` flag is false; nonzero viewer volume is retained.
+Content-timeline breaks retain the original content start method; click-start
+content and rewarded requests retain click intent. Page/description,
 consent, viewability and break-position signals remain truthful. A returned 303
 is still no-fill, not proof of a broken player or a guaranteed fixable filter.
 The earlier successful manual tag subsequently also returned 303 in the official
@@ -136,3 +138,38 @@ auction fill or prove why any individual request was empty.
 Regression fixtures are deterministic IMA boundary doubles and local content,
 never paid ad requests. Their rendering and event tests verify Horus behavior,
 not Google's live auction eligibility or the exact creative returned in VSI.
+
+## Explicit inventory and autoplay preferences
+
+The Video Player settings expose a fixed `video_player.inventory_type` declaration:
+`accompanying` (the unchanged default, GAM `plcmt=2`) or `instream` (`plcmt=1`).
+This does not vary by visitor, browser capability, mute button, or ad response.
+Use instream only where video content is the focus of the visit or explicitly
+requested by the viewer. Merely adding a video to an editorial page does not
+establish that classification. Ad-only and rewarded inventory are unchanged.
+
+The independent `video_player.autoplay_audio` preference defaults to `muted`.
+`prefer_audible` attempts real sound-on content playback when viewable and waits
+for the browser's play promise before requesting an ad. A browser policy denial
+tries muted playback once. If both fail or a media check stalls, the player shows
+Play and makes no new auction until playback succeeds. The resulting state sets
+the GAM and IMA audio/playback signals together. Dismissal retires pending checks;
+it cannot resurrect the player or produce a late ad request. This is browser
+capability handling, not a bypass or a guarantee that sound will autoplay.
+An audible capability check never starts offscreen. If SDK readiness arrives
+after the inline slot has scrolled away, this opt-in mode waits for the slot to
+be visible again before probing or requesting; the existing muted mode keeps
+its late-response floating behavior. Viewer mute and volume changes while
+waiting are preserved.
+
+As verified on October 9, 2026, Google's accompanying-content definition still
+requires muted-by-default playback. Google's October 8 notification removes two
+layout requirements effective October 22, not that audio default. Choosing
+sound-on accompanying content may therefore restrict demand rather than improve
+fill. The publisher must review the actual viewing experience before selecting
+instream. Neither setting is changed automatically by a deployment or a date.
+
+References: [Google video inventory restrictions](https://support.google.com/publisherpolicies/answer/15208072?hl=en-GB),
+[scope and consequences of inventory restrictions](https://support.google.com/publisherpolicies/answer/10437795?hl=en),
+[IMA autoplay capability checks](https://developers.google.com/interactive-media-ads/docs/sdks/html5/client-side/autoplay),
+and [GAM playback and placement signals](https://support.google.com/admanager/answer/10678356?hl=en).
