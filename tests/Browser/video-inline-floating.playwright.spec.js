@@ -1952,7 +1952,16 @@ test('a second IMA 1205 exhausts the shared preroll budget and leaves content us
         .toEqual({ requests: 2, started: 0, muted: true });
     await expect(page.locator('[data-placement="video"]')).toBeVisible();
     await expect(page.locator('[data-hm-video-content-control="mute"]')).toBeVisible();
-    await expect(page.locator('[data-hm-placement-close]')).toBeVisible();
+    // The loader exposes X only after the placement reports rendered.
+    // After both startup attempts fail, verify the real content controls work
+    // without inventing a rendered ad or requesting a third one.
+    const play = page.locator('[data-hm-video-content-control="play"]');
+    await expect(play).toBeVisible();
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(true);
+    await play.click();
+    await expect.poll(() => page.locator('video').evaluate(video => video.paused)).toBe(false);
+    expect(await page.evaluate(() => window.adRequests)).toBe(2);
 });
 
 for (const cancel of ['unmute', 'partial volume']) {
