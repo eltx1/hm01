@@ -12,21 +12,20 @@ final class VideoAdFormat
 
     public static function inventoryType(?Site $site = null): string
     {
-        // Unconfigured websites always retain plcmt=2. A retired global setting
-        // must never silently opt a website into instream classification.
-        return $site?->siteConfig?->video_inventory_type === 'instream' ? 'instream' : 'accompanying';
+        // Platform-wide inventory declaration, including existing sites.
+        return 'instream';
     }
 
     public static function prefersAudibleAutoplay(): bool
     {
-        return config('horus.video_autoplay_audio') === 'prefer_audible';
+        return true;
     }
 
     public static function midRollIntervalSeconds(): int
     {
-        $value = filter_var(config('horus.video_mid_roll_interval_seconds', 60), FILTER_VALIDATE_INT);
+        $value = filter_var(config('horus.video_mid_roll_interval_seconds', 5), FILTER_VALIDATE_INT);
 
-        return $value === 0 || ($value !== false && $value >= 30 && $value <= 600) ? $value : 60;
+        return $value === 0 || ($value !== false && $value >= 5 && $value <= 600) ? $value : 5;
     }
 
     /** @return array<string, string> */

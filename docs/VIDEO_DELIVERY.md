@@ -62,9 +62,8 @@ existing timeout limits. Independent banner startup remains parallel.
 Ordinary content video permits at most **two total preroll attempts**: the
 initial request and one retry after a 1,000ms delay. All retry causes share this
 single budget. Eligible pre-response loader errors are no-fill codes 303/1009
-and selected transient codes 301/1012. A narrowly qualified initial audible
-autoplay denial (IMA 1205) can instead consume that same retry with muted
-playback. Mixed error causes cannot produce a third request. Known VMAP,
+and selected transient codes 301/1012. Legacy recipes can use a narrowly qualified audible autoplay denial (IMA 1205)
+for one muted retry. Fixed sound-on recipes never switch that declaration. Mixed error causes cannot produce a third request. Known VMAP,
 rewarded/ad-only inventory, a manager/ad/content response that has already
 begun, and unrelated fatal errors do not enter the generic retry path. Each
 actual attempt retains the independent request, viewability and media watchdogs
@@ -158,76 +157,41 @@ Regression fixtures are deterministic IMA boundary doubles and local content,
 never paid ad requests. Their rendering and event tests verify Horus behavior,
 not Google's live auction eligibility or the exact creative returned in VSI.
 
-## Additional mid-roll opportunities
+## Fixed platform video configuration (October 9, 2026)
 
-The global Video Player setting `video_player.mid_roll_interval_seconds` is
-labeled **Additional mid-roll interval (seconds)**. It defaults to 60; 0 disables
-additional mid-rolls, and enabled values must be whole seconds from 30 through
-600. Saving uses the existing permission, audit and active-site publication
-path. Recipes publish `data-hm-video-mid-roll-interval-seconds`; the original
-`data-hm-video-mid-roll-ratio=0.5` remains for the initial midpoint.
+All generated content-video recipes, including refreshed existing sites, use
+`data-hm-video-fixed-instream=1`, `data-hm-video-content-mode=instream`,
+`data-hm-video-muted=0` and autoplay. Google VAST requests have fixed
+`plcmt=1` and `vpmute=0`. No content-play probe or extra click gate precedes
+an automatic IMA request. Browser playback policy can still reject sound-on
+media; Horus does not claim that a successful auction overrides browser policy.
+The native controls remain available. A viewer's later mute suspends new
+sound-on auctions until they unmute, without rewriting either fixed parameter.
 
-Additional breaks are considered only after that first midpoint opportunity,
-after the configured interval of genuine eligible content playback. A wall-clock
-timer alone cannot create an auction. Hidden documents, offscreen players below
-50% visibility, pauses, stalls, seeking, live ad pods and non-linear overlays do
-not accrue eligible playback. VMAP remains exclusively SDK-scheduled. A repeat
-also requires at least 15 seconds of real content remaining; seeking, skipped
-opportunities and resume events cannot cause catch-up or back-to-back requests.
-The current approximately 49.4-second content clip therefore retains its
-midpoint and postroll with no additional break. There is no artificial replay,
-extra content-completion signaling or guarantee of fill.
+The per-site inventory selector and its write route have been removed. Historical
+site and global audio rows remain for rollback/history but do not control current
+recipes. No publisher snippet changes are needed. Rewarded and ad-only placements
+retain their distinct existing lifecycle; external third-party tag URLs retain
+provider-owned parameters.
 
-## Explicit inventory and autoplay preferences
+The content ad interval defaults to **5 seconds** for new and existing websites.
+The deployment migration resets an existing interval override to 5, records the
+previous value in the audit log, and invalidates the settings cache. The normal
+post-deploy Quick Monetize refresh republishes static recipes. The interval may
+be set to 5–600 whole seconds; 0 retains midpoint-only scheduling.
 
-Each website's admin overview and Inventory page expose **Video ad type / نوع إعلان الفيديو**:
-**Accompanying content (2)** (GAM `plcmt=2`) or **Instream (1)** (`plcmt=1`).
-The nullable `site_configs.video_inventory_type` field defaults to accompanying
-for existing and future websites. No global inventory value is inherited: the
-retired `video_player.inventory_type` registry entry, UI control, and config
-fallback are removed. Any historical stored global row is retained for history
-but ignored, including cached values. Content URL, autoplay audio and the
-additional mid-roll interval remain global.
+The new interval schedule starts with content playback, rather than waiting for
+the old halfway cue. Following empty responses, content resumes and the next
+opportunity is earned after another interval of visible, actual playback. There
+is no fixed retry-count ceiling during the remaining content. After a confirmed
+filled ad completes and IMA ends the whole pod, the next request is scheduled
+immediately. Per-ad COMPLETE alone, skipped creatives, empty generic completion,
+stale callbacks and VMAP-owned pods cannot create overlapping requests.
 
-Only Horus admins with `video_player.manage` can save the dedicated field. The
-change is audited, and only the selected active website gets a new static
-production configuration. Inactive websites save the value for activation;
-repeating an unchanged save does not queue another version. Selecting a type
-does not activate a website or placement. Normal runtime refresh during
-deployment regenerates existing static recipes with the site's effective value.
-The recipe emits that value as `data-hm-video-content-mode`; the runtime maps it
-to the fixed `plcmt` without varying by visitor, browser capability, mute button,
-or ad response.
-Use instream only where video content is the focus of the visit or explicitly
-requested by the viewer. Merely adding a video to an editorial page does not
-establish that classification. Ad-only and rewarded inventory are unchanged.
-
-The independent `video_player.autoplay_audio` preference defaults to `muted`.
-`prefer_audible` attempts real sound-on content playback when viewable and waits
-for the browser's play promise before requesting an ad. A browser policy denial
-tries muted playback once. If both fail or a media check stalls, the player shows
-Play and makes no new auction until playback succeeds. The resulting state sets
-the GAM and IMA audio/playback signals together. Dismissal retires pending checks;
-it cannot resurrect the player or produce a late ad request. This is browser
-capability handling, not a bypass or a guarantee that sound will autoplay.
-An audible capability check never starts offscreen. If SDK readiness arrives
-after the inline slot has scrolled away, this opt-in mode waits for the slot to
-be visible again before probing or requesting; the existing muted mode keeps
-its late-response floating behavior. Viewer mute and volume changes while
-waiting are preserved. Successful playback of the current silent content clip
-does not prove that the browser will allow an audible ad. Only the narrowly
-qualified IMA 1205 denial described above enables the one muted fallback; the
-runtime never treats arbitrary VAST errors as autoplay denials or restarts a
-failed manager in place.
-
-As verified on October 9, 2026, Google's accompanying-content definition still
-requires muted-by-default playback. Google's October 8 notification removes two
-layout requirements effective October 22, not that audio default. Choosing
-sound-on accompanying content may therefore restrict demand rather than improve
-fill. The publisher must review the actual viewing experience before selecting
-instream. Neither setting is changed automatically by a deployment or a date.
-
-References: [Google video inventory restrictions](https://support.google.com/publisherpolicies/answer/15208072?hl=en-GB),
-[scope and consequences of inventory restrictions](https://support.google.com/publisherpolicies/answer/10437795?hl=en),
-[IMA autoplay capability checks](https://developers.google.com/interactive-media-ads/docs/sdks/html5/client-side/autoplay),
-and [GAM playback and placement signals](https://support.google.com/admanager/answer/10678356?hl=en).
+Pauses, buffering, hidden documents, offscreen players, seeking and dismissal do
+not accrue repeated opportunities. Timer-only or seek jumps cannot manufacture
+watched time. Pending continuation is cancelled at teardown. The final content
+second is left for the single postroll/EOS transition. Legacy published recipes
+retain their earlier midpoint/60-second behavior until refreshed, and existing
+VMAP schedules remain exclusively IMA-owned. Live fill depends on the ad server;
+deterministic IMA test responses are not evidence of paid demand.

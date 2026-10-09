@@ -25,7 +25,7 @@ final class VideoFloatingRecipeTest extends TestCase
             $attributes = $recipe['container']['attributes'];
             $this->assertSame('1', $attributes['data-hm-video-inline-to-floating']);
             $this->assertSame('https://ads.example/vast', base64_decode($attributes['data-hm-vast-url'], true));
-            $this->assertSame($url ? 'accompanying' : null, $attributes['data-hm-video-content-mode'] ?? null);
+            $this->assertSame($url ? 'instream' : null, $attributes['data-hm-video-content-mode'] ?? null);
             $this->assertSame($url ? 'mixed' : 'video_only', $attributes['data-hm-video-ad-format']);
             $this->assertArrayNotHasKey('data-hm-vast-generated', $attributes);
         }
@@ -69,11 +69,11 @@ final class VideoFloatingRecipeTest extends TestCase
     public function test_additional_midroll_interval_has_a_bounded_default_without_changing_the_initial_midpoint(): void
     {
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
-        $this->assertSame(60, config('horus.video_mid_roll_interval_seconds'));
-        foreach ([0, 30, 60, 600, -1, 1, 29, 601, 'invalid', 60.5] as $value) {
+        $this->assertSame(5, config('horus.video_mid_roll_interval_seconds'));
+        foreach ([0, 5, 30, 60, 600, -1, 1, 4, 601, 'invalid', 60.5] as $value) {
             config(['horus.video_mid_roll_interval_seconds' => $value]);
             $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
-            $this->assertSame(in_array($value, [0, 30, 60, 600], true) ? (string) $value : '60', $attributes['data-hm-video-mid-roll-interval-seconds']);
+            $this->assertSame(in_array($value, [0, 5, 30, 60, 600], true) ? (string) $value : '5', $attributes['data-hm-video-mid-roll-interval-seconds']);
             $this->assertSame('0.5', $attributes['data-hm-video-mid-roll-ratio']);
             $this->assertSame('pre,mid,post', $attributes['data-hm-video-breaks']);
         }
@@ -84,28 +84,28 @@ final class VideoFloatingRecipeTest extends TestCase
         $this->assertArrayNotHasKey('data-hm-video-mid-roll-interval-seconds', $adOnly);
     }
 
-    public function test_inventory_classification_and_audio_preference_are_explicit_and_independent(): void
+    public function test_inventory_and_audio_preferences_cannot_override_the_platform_constants(): void
     {
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
         foreach (['accompanying', 'instream'] as $inventory) {
             foreach (['muted', 'prefer_audible'] as $audio) {
                 config(['horus.video_autoplay_audio' => $audio]);
                 $attributes = $this->recipe(PlacementType::Video, [], $inventory)['attributes'];
-                $this->assertSame($inventory, $attributes['data-hm-video-content-mode']);
-                $this->assertSame($audio === 'prefer_audible' ? '0' : '1', $attributes['data-hm-video-muted']);
+                $this->assertSame('instream', $attributes['data-hm-video-content-mode']);
+                $this->assertSame('0', $attributes['data-hm-video-muted']);
                 $this->assertSame('1', $attributes['data-hm-video-autoplay']);
                 $this->assertSame('mixed', $attributes['data-hm-video-ad-format']);
             }
         }
     }
 
-    public function test_unknown_preferences_preserve_the_existing_accompanying_muted_defaults(): void
+    public function test_unknown_preferences_cannot_override_fixed_instream_sound_on_defaults(): void
     {
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4',
             'horus.video_inventory_type' => 'invalid', 'horus.video_autoplay_audio' => 'invalid']);
         $attributes = $this->recipe(PlacementType::Video, [])['attributes'];
-        $this->assertSame('accompanying', $attributes['data-hm-video-content-mode']);
-        $this->assertSame('1', $attributes['data-hm-video-muted']);
+        $this->assertSame('instream', $attributes['data-hm-video-content-mode']);
+        $this->assertSame('0', $attributes['data-hm-video-muted']);
     }
 
     public function test_instream_and_sound_preferences_do_not_reclassify_ad_only_or_rewarded_inventory(): void

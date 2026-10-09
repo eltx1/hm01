@@ -46,7 +46,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         $this->assertArrayHasKey('video_player.content_url', $registry->all());
         $this->assertSame('url', $registry->get('video_player.content_url')->type);
         $this->assertArrayNotHasKey('video_player.inventory_type', $registry->all());
-        $this->assertSame(['muted', 'prefer_audible'], $registry->get('video_player.autoplay_audio')->allowedValues);
+        $this->assertArrayNotHasKey('video_player.autoplay_audio', $registry->all());
         $this->assertSame('integer', $registry->get('video_player.mid_roll_interval_seconds')->type);
         $this->assertSame('domain', $registry->get('supply_chain.manager_domain')->type);
         $this->assertTrue($registry->get('supply_chain.manager_domain')->highImpact);
@@ -189,7 +189,7 @@ class GlobalSettingsGovernanceTest extends TestCase
             ->assertSee('Platform video content URL')
             ->assertSee('video_player.content_url')
             ->assertDontSee('video_player.inventory_type')
-            ->assertSee('video_player.autoplay_audio')
+            ->assertDontSee('video_player.autoplay_audio')
             ->assertSee('video_player.mid_roll_interval_seconds')
             ->assertSee($videoRoute, false)
             ->assertSee('Save setting');
@@ -212,36 +212,20 @@ class GlobalSettingsGovernanceTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_global_video_audio_preferences_are_explicit_and_validated(): void
+    public function test_retired_audio_setting_cannot_change_fixed_sound_on_inventory(): void
     {
-        $values = ['video_player.autoplay_audio' => ['muted', 'prefer_audible']];
-        $registry = app(TypedSettingsRegistry::class);
-        foreach ($values as $key => $choices) {
-            foreach ($choices as $choice) {
-                $this->assertSame($choice, $registry->normalize($key, $choice));
-                $this->actingAs($this->adOps)
-                    ->withSession(['two_factor_passed_at' => now()->timestamp])
-                    ->put(route('admin.settings.update', ['key' => $key]), ['value' => $choice])
-                    ->assertRedirect()->assertSessionHasNoErrors();
-                $this->assertSame($choice, GlobalSetting::query()->findOrFail($key)->value);
-            }
-            $this->actingAs($this->adOps)
-                ->withSession(['two_factor_passed_at' => now()->timestamp])
-                ->put(route('admin.settings.update', ['key' => $key]), ['value' => 'invented'])
-                ->assertSessionHasErrors('value');
-            $this->actingAs($this->publisher)
-                ->put(route('admin.settings.update', ['key' => $key]), ['value' => $choices[0]])
-                ->assertForbidden();
-        }
-        $this->assertSame('prefer_audible', GlobalSetting::query()->findOrFail('video_player.autoplay_audio')->value);
+        $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->put(route('admin.settings.update', ['key' => 'video_player.autoplay_audio']), ['value' => 'muted'])
+            ->assertSessionHasErrors('key');
+        $this->assertTrue(\App\Services\Inventory\VideoAdFormat::prefersAudibleAutoplay());
     }
 
     public function test_additional_midroll_interval_defaults_bounds_permissions_and_audit(): void
     {
         $key = 'video_player.mid_roll_interval_seconds';
         $registry = app(TypedSettingsRegistry::class);
-        $this->assertSame(60, app(GlobalSettingsService::class)->get($key));
-        foreach ([0, 30, 60, 600] as $value) {
+        $this->assertSame(5, app(GlobalSettingsService::class)->get($key));
+        foreach ([0, 5, 30, 600] as $value) {
             $this->assertSame($value, $registry->normalize($key, (string) $value));
             $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
                 ->put(route('admin.settings.update', ['key' => $key]), ['value' => $value])
@@ -251,11 +235,11 @@ class GlobalSettingsGovernanceTest extends TestCase
         }
         $this->assertSame(600, GlobalSetting::query()->findOrFail($key)->value);
         $this->assertDatabaseHas('audit_logs', ['event' => 'settings.global.updated', 'actor_id' => $this->adOps->id]);
-        $this->assertSame('muted', config('horus.video_autoplay_audio'));
+        $this->assertSame('prefer_audible', config('horus.video_autoplay_audio'));
         $this->actingAs($this->publisher)->put(route('admin.settings.update', ['key' => $key]), ['value' => 0])->assertForbidden();
         $this->actingAs($this->adOps)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->delete(route('admin.settings.reset', ['key' => $key]))->assertRedirect();
-        $this->assertSame(60, app(GlobalSettingsService::class)->get($key));
+        $this->assertSame(5, app(GlobalSettingsService::class)->get($key));
     }
 
     #[DataProvider('invalidAdditionalMidrollIntervals')]
@@ -287,7 +271,7 @@ class GlobalSettingsGovernanceTest extends TestCase
         return [
             'negative integer' => [-1],
             'one is below enabled minimum' => [1],
-            'twenty-nine is below enabled minimum' => [29],
+            'twenty-nine is below enabled minimum' => [4],
             'above maximum' => [601],
             'fractional number' => [60.5],
             'fractional string' => ['60.5'],

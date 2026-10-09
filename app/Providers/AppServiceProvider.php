@@ -36,6 +36,7 @@ use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -72,6 +73,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Paginator::defaultView('pagination.horus');
+        Paginator::defaultSimpleView('pagination.horus-simple');
         $this->configureAuthenticationMail();
 
         PublisherPayment::observe(PublisherPaymentObserver::class);

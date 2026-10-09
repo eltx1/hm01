@@ -7,7 +7,6 @@
     <div class="status-row"><span class="pill">{{ $site->siteConfig?->status ?? 'ACTIVE' }}</span><span class="pill">{{ $site->placements->count() }} placements</span></div>
 </section>
 
-@include('admin.sites.video-inventory')
 
 <x-responsive-bundle-codes :site="$site" />
 

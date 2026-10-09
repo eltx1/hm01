@@ -3205,3 +3205,96 @@ test('native baseline mute chosen before COMPLETE survives even when its event i
     assert.equal(runtime.requested[1].willPlayMuted, true); assert.equal(runtime.managers[1].volume, 0);
     target.__hmDestroy('dismissed');
 });
+
+const fixedVideoAttributes = {
+    'data-hm-video-fixed-instream': '1',
+    'data-hm-video-content-mode': 'instream',
+    'data-hm-video-muted': '0',
+    'data-hm-video-break-schedule': 'interval',
+    'data-hm-video-mid-roll-interval-seconds': '5',
+};
+
+function assertFixedVideoRequest(request) {
+    const url = new URL(request.adTagUrl);
+    assert.equal(url.searchParams.get('plcmt'), '1');
+    assert.equal(url.searchParams.get('vpmute'), '0');
+    assert.equal(request.willPlayMuted, false);
+}
+
+test('fixed instream requests automatically without a content-play probe or a gesture', async () => {
+    const f = mixedContentFixture(fixedVideoAttributes, { deferManagerLoad: true });
+    await tick();
+    assert.equal(f.runtime.requested.length, 1);
+    assert.equal(f.video.muted, false);
+    assertFixedVideoRequest(f.runtime.requested[0]);
+    assert.equal(new URL(f.runtime.requested[0].adTagUrl).searchParams.get('vpa'), 'auto');
+    f.target.__hmDestroy('dismissed');
+});
+
+test('five-second schedule requests from the start and continues through repeated empty responses', async () => {
+    const clock = videoClock();
+    const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, deferManagerLoad: true, contentDuration: 100 }), clock };
+    await tick();
+    emitLoaderError(f.runtime.loaders[0], emptyVastEvent());
+    clock.advance(1000);
+    emitLoaderError(f.runtime.loaders[1], emptyVastEvent());
+    await tick(); f.video.emit('timeupdate');
+    for (let i = 0; i < 4; i++) {
+        const before = f.runtime.requested.length;
+        advanceRealContent(f, 4); assert.equal(f.runtime.requested.length, before);
+        advanceRealContent(f, 1); assert.equal(f.runtime.requested.length, before + 1);
+        assertFixedVideoRequest(f.runtime.requested.at(-1));
+        emitLoaderError(f.runtime.loaders.at(-1), emptyVastEvent());
+        await tick(); f.video.emit('timeupdate');
+    }
+    const count = f.runtime.requested.length;
+    f.target.__hmDestroy('dismissed'); clock.advance(60000);
+    assert.equal(f.runtime.requested.length, count);
+});
+
+test('new interval never overlaps a live ad and resumes opportunities after completion', async () => {
+    const clock = videoClock();
+    const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, contentDuration: 100 }), clock };
+    await tick();
+    advanceRealContent(f, 30); assert.equal(f.runtime.requested.length, 1);
+    f.runtime.managers[0].emit('all-ads-completed'); await tick(); f.video.emit('timeupdate');
+    advanceRealContent(f, 5); assert.equal(f.runtime.requested.length, 2);
+    assertFixedVideoRequest(f.runtime.requested[1]);
+    f.runtime.managers[1].emit('all-ads-completed'); await tick(); f.video.emit('timeupdate');
+    advanceRealContent(f, 5); assert.equal(f.runtime.requested.length, 3);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('hidden, paused and viewer-muted fixed inventory does not spin auctions or rewrite constants', async () => {
+    const clock = videoClock();
+    const f = { ...mixedContentFixture(fixedVideoAttributes, { clock, contentDuration: 100 }), clock };
+    await tick(); f.runtime.managers[0].emit('all-ads-completed'); await tick();
+    for (const mode of ['hidden', 'paused', 'muted']) {
+        f.runtime.sandbox.document.visibilityState = mode === 'hidden' ? 'hidden' : 'visible';
+        f.video.paused = mode === 'paused'; f.video.muted = mode === 'muted';
+        f.video.emit('timeupdate'); advanceRealContent(f, 8);
+        assert.equal(f.runtime.requested.length, 1);
+    }
+    f.video.muted = false; f.video.paused = false;
+    f.video.emit('timeupdate'); advanceRealContent(f, 5);
+    assert.equal(f.runtime.requested.length, 2);
+    assertFixedVideoRequest(f.runtime.requested[1]);
+    f.target.__hmDestroy('dismissed');
+});
+
+test('a completed filled pod requests the next ad immediately, while per-ad completion does not overlap the pod', async () => {
+    const clock = videoClock();
+    const f = mixedContentFixture(fixedVideoAttributes, { clock, contentDuration: 100 });
+    await tick();
+    const oldManager = f.runtime.managers[0];
+    oldManager.emit('complete'); clock.advance(1);
+    assert.equal(f.runtime.requested.length, 1);
+    oldManager.emit('all-ads-completed'); await tick(); clock.advance(1);
+    assert.equal(f.runtime.requested.length, 2);
+    assertFixedVideoRequest(f.runtime.requested[1]);
+    oldManager.emit('all-ads-completed'); clock.advance(1);
+    assert.equal(f.runtime.requested.length, 2, 'stale completion cannot chain another request');
+    f.runtime.managers[1].emit('complete'); f.runtime.managers[1].emit('all-ads-completed');
+    f.target.__hmDestroy('dismissed'); clock.advance(1);
+    assert.equal(f.runtime.requested.length, 2, 'dismissal cancels immediate continuation');
+});
