@@ -2,6 +2,12 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { applyPlacementPresetTransform } from '../../scripts/transform-loader-placement-presets.mjs';
 
+
+const additionalGoogleSizes = '1x1|288x162|300x250|335x200|400x225|400x300|419x236|640x360|640x480|1920x1080|320x480|444x250|480x320|480x360|600x252|600x338|720x405|1024x768|1280x720'.split('|');
+function expectedGoogleSizes(existing) {
+    return [...new Set([...existing.split('|'), ...additionalGoogleSizes])].join('|');
+}
+
 // Generated 12-second, silent H.264 baseline fixture; no third-party media or ads.
 const contentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback.mp4.base64', import.meta.url), 'utf8'), 'base64');
 // Local VP9/Opus fixture with a quiet generated tone for actual sound-capability tests.
@@ -451,7 +457,7 @@ for (const options of [{}, { content: true }, { noObserver: true }, { transforme
 }
 
 test('GAM preserves a manual multi-size target while IMA receives the enlarged actual player size', async ({ page }) => {
-    const original = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/23055873217/video-bluekl.com&env=vp&gdfp_req=1&output=vast&sz=300x250%7C640x480&url=https%3A%2F%2Fold.example%2Fpage&correlator=';
+    const original = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/23055873217/video-bluekl.com&env=vp&gdfp_req=1&output=vast&ad_type=standardvideo&sz=300x250%7C640x480&url=https%3A%2F%2Fold.example%2Fpage&correlator=';
     await openPlayer(page, { content: true, vastUrl: original });
     await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(1);
 
@@ -465,7 +471,9 @@ test('GAM preserves a manual multi-size target while IMA receives the enlarged a
 
     await expectEnlargedInlineGeometry(page, [320, 180]);
     expect(result.requestSize).toEqual(result.measuredSize);
-    expect(tag.searchParams.get('sz')).toBe('300x250|640x480');
+    expect(tag.searchParams.get('sz')).toBe(expectedGoogleSizes('300x250|640x480'));
+    expect(tag.searchParams.get('output')).toBe('xml_vast4');
+    expect(tag.searchParams.get('ad_type')).toBe('video');
     expect(tag.searchParams.get('url')).toBe('https://reader.example/article');
     expect(tag.searchParams.get('description_url')).toBe('https://reader.example/article');
     expect(tag.searchParams.get('plcmt')).toBe('2');
@@ -504,7 +512,7 @@ test('records scroll while SDK is delayed, stays inline without an ad, then floa
     // The response was requested while inline; IMA is resized only after an
     // actual ad is available and the compact surface becomes visible.
     expect(request.size[0]).toBeGreaterThanOrEqual(request.actual[0]);
-    expect(new URL(request.tag).searchParams.get('sz')).toBe('300x250|640x480');
+    expect(new URL(request.tag).searchParams.get('sz')).toBe(expectedGoogleSizes('300x250|640x480'));
     expect(request.actual[0]).toBeLessThanOrEqual(320);
 });
 
@@ -797,7 +805,7 @@ for (const master of [[300,250],[320,180],[336,280],[400,225],[400,300],[640,480
         else expect(box.width).toBeCloseTo(master[0], 2);
         const request = await page.evaluate(() => ({ tag: window.lastAdTagUrl, size: window.lastAdDimensions }));
         expect(request.size).toEqual([Math.round(box.width), Math.round(box.height)]);
-        expect(new URL(request.tag).searchParams.get('sz')).toBe(master.join('x'));
+        expect(new URL(request.tag).searchParams.get('sz')).toBe(expectedGoogleSizes(master.join('x')));
         expect(new URL(request.tag).searchParams.get('vad_type')).toBe('linear');
         await scrollPage(page, 1800);
         await assertFloating(page);
@@ -1014,7 +1022,7 @@ for (const target of [null, '', '%%WIDTH%%x%%HEIGHT%%', 'malformed', '0x0', '1x1
             return { tag: window.lastAdTagUrl, size: window.lastAdDimensions, actual: [Math.round(box.width), Math.round(box.height)] };
         });
         expect(before.size).toEqual(before.actual);
-        expect(new URL(before.tag).searchParams.get('sz')).toBe(['1x1', '640x480'].includes(target) ? target : '400x225');
+        expect(new URL(before.tag).searchParams.get('sz')).toBe(expectedGoogleSizes(['1x1', '640x480'].includes(target) ? target : '400x225'));
         await scrollPage(page, 1800);
         await assertFloating(page);
         await expectCompactFloatingGeometry(page, [400, 225]);

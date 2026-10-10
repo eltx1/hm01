@@ -16,7 +16,8 @@ final class GoogleVideoAdTagTest extends TestCase
         $this->assertSame('/gampad/ads', parse_url($url, PHP_URL_PATH));
         parse_str(parse_url($url, PHP_URL_QUERY), $query);
         $this->assertSame('/123,456/site.net/Article_Video-1', $query['iu']);
-        $this->assertSame('640x480', $query['sz']);
+        $this->assertSame('640x480|1x1|288x162|300x250|335x200|400x225|400x300|419x236|640x360|1920x1080|320x480|444x250|480x320|480x360|600x252|600x338|720x405|1024x768|1280x720', $query['sz']);
+        $this->assertSame('xml_vast4', $query['output']);
         $this->assertSame('linear', $query['vad_type']);
         $this->assertSame('video', $query['ad_type']);
         $this->assertArrayNotHasKey('nofb', $query);
@@ -53,15 +54,33 @@ final class GoogleVideoAdTagTest extends TestCase
         foreach ([
             $template.'&ad_rule=1', $template.'&gdpr=1&gdpr_consent=reviewed',
             $template.'&npa=1', $template.'&custom=preserved',
+            $template.'%7C800x600', $template.'%7C400x225',
             str_replace('vad_type=linear', 'vad_type=nonlinear', $template),
             str_replace('vad_type=linear', 'vad_type=linear_nonlinear', $template),
-            str_replace('output=vast', 'output=vmap', $template),
+            str_replace('output=xml_vast4', 'output=vmap', $template),
             str_replace('pubads.g.doubleclick.net', 'ads.example.com', $template),
         ] as $edited) {
             $this->assertNull($tags->regenerate($edited, '/123/video', [640, 480], 'mixed'));
         }
         $this->assertNull($tags->regenerate($template, '/123/other', [640, 480], 'mixed'));
         $this->assertNull($tags->regenerate($template, '', [640, 480], 'mixed'));
+    }
+
+    public function test_historical_single_size_templates_upgrade_without_losing_the_master(): void
+    {
+        $tags = new GoogleVideoAdTag();
+        foreach (['video_only', 'mixed'] as $format) {
+            $legacy = 'https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Fvideo&env=vp&gdfp_req=1&output=vast&ad_type=video'
+                .($format === 'video_only' ? '&vad_type=linear' : '')
+                .'&unviewed_position_start=1&sz=320x180';
+            $updated = $tags->regenerate($legacy, '/123/video', [320, 180], $format);
+            $this->assertSame($tags->build('/123/video', [320, 180], $format), $updated);
+            parse_str(parse_url($updated, PHP_URL_QUERY), $query);
+            $this->assertSame('xml_vast4', $query['output']);
+            $this->assertStringStartsWith('320x180|1x1|288x162|300x250|', $query['sz']);
+            $this->assertCount(20, explode('|', $query['sz']));
+            $this->assertNull($tags->regenerate($legacy.'&npa=1', '/123/video', [320, 180], $format));
+        }
     }
 
     public function test_unknown_video_ad_format_is_rejected(): void

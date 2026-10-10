@@ -22,7 +22,8 @@ final class VideoMasterSize
     /**
      * The master defines the media ratio and maximum floating size. Inline
      * media fills its container up to the runtime's inline cap. Generated GAM
-     * tags target this master; IMA independently receives actual rendered size.
+     * tags retain this master alongside additional GAM targeting sizes;
+     * IMA independently receives actual rendered size.
      * Omitted input deliberately preserves legacy 16:9 inventory and mappings.
      */
     public static function apply(array $data, ?string $master): array

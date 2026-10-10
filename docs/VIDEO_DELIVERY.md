@@ -8,7 +8,8 @@ Ordinary Video placements with valid HTTPS accompanying content default to
 **Linear video + non-linear overlays** (`format_settings.videoAdFormat=mixed`).
 Quick Monetize also offers `video_only`. Rewarded and ad-only inventory retain
 their linear lifecycle. Generated mixed GAM templates omit `vad_type`; generated
-video-only templates use `vad_type=linear`. Both retain `ad_type=video`.
+video-only templates use `vad_type=linear`. Both use `ad_type=video`, allowing
+skippable and non-skippable video ads, and explicitly request `output=xml_vast4`.
 The complete-tag mode continues accepting third-party VAST URLs.
 Generated tags do not change ad-rule/network settings, disable fallback, impose a maximum ad duration, or assert
 user privacy/consent values. Previously saved publisher constraints are retained.
@@ -27,9 +28,23 @@ Existing saved responsive layouts remain valid. IMA linear slot dimensions
 always describe the actual rendered media box at request time, excluding chrome;
 its manager uses CSS layout pixels for a transformed publisher surface.
 GAM `sz` is separate inventory targeting: valid configured single or pipe-separated
-sizes are preserved, including explicit `1x1`. Generated tags use the selected
-master. Missing, empty, unresolved-placeholder, malformed or non-positive `sz`
-falls back to that selected master, never an invented article-width inventory size.
+sizes are retained in their existing order, including explicit `1x1`, then extended
+with these platform-wide sizes, removing duplicates:
+
+`1x1|288x162|300x250|335x200|400x225|400x300|419x236|640x360|640x480|1920x1080|320x480|444x250|480x320|480x360|600x252|600x338|720x405|1024x768|1280x720`
+
+Generated tags put the selected master first, including existing `320x180` or
+`336x280` masters that are not in the additional list. Missing, empty,
+unresolved-placeholder, malformed or non-positive `sz` uses that master before
+appending the list. This never changes the rendered player or IMA dimensions.
+Both template generation and the shared Google request boundary apply the
+defaults, covering existing and future tags/sites, content breaks and retries,
+ad-only and rewarded requests. Reapplying the defaults is idempotent.
+The runtime fixes `ad_type=video` and `output=xml_vast4` even on older/manual
+Google tags. Existing VMAP outputs instead become `xml_vmap1_vast4` to retain
+SDK-owned scheduling while requesting VAST 4 inside VMAP; `ad_rule` is preserved.
+See Google's [web VAST parameters](https://support.google.com/admanager/answer/10655276)
+and [ad type definitions](https://support.google.com/admanager/answer/10678356#ad_type).
 See the [Google IMA FAQ](https://developers.google.com/interactive-media-ads/docs/sdks/html5/client-side/faq)
 for the distinction between player dimensions and `sz` targeting.
 Additional supported sizes do not guarantee ad availability or increased fill.
@@ -91,7 +106,8 @@ Diagnostics expose the SDK's current linearity and content type, when available.
 
 The non-linear request area is the full usable media area, conservatively capped
 to the future compact area when floating is enabled. Chrome is excluded. IMA,
-not Horus, derives `afvsz`; no arbitrary size list is added. For example, a
+not Horus, derives `afvsz`; the additional `sz` targeting list is never used as
+non-linear rendering dimensions. For example, a
 336×280 compact player can accommodate rectangular image demand, whereas a
 320×180 player fits none of GAM's documented non-linear sizes. This is valid
 reduced eligibility, not a reason to enlarge the compact player or misstate sizes.

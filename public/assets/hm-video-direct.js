@@ -1,6 +1,14 @@
 (function (window, document) {
     'use strict';
 
+    // Keep the PHP GAM template and requests from previously published tags in
+    // agreement. These are inventory sizes, never IMA's rendered dimensions.
+    var googleVideoSizes = [
+        '1x1', '288x162', '300x250', '335x200', '400x225', '400x300',
+        '419x236', '640x360', '640x480', '1920x1080', '320x480', '444x250',
+        '480x320', '480x360', '600x252', '600x338', '720x405', '1024x768', '1280x720'
+    ];
+
     // BEGIN SHARED REWARDED PROMPT
     // Embedded at build time in the independent GPT and VAST runtimes. No extra request.
     function rewardedPromptUi(options) {
@@ -2298,15 +2306,18 @@
         tag.searchParams.set('vpmute', fixedAudibleInventory(player) ? '0' : (intent.muted ? '1' : '0'));
         if (fixedAudibleInventory(player)) tag.searchParams.set('plcmt', '1');
         tag.searchParams.set('vpa', intent.autoPlay ? 'auto' : 'click');
-        // GAM sz is inventory targeting, not the IMA rendering surface. Keep
-        // explicit single/multi-size targeting stable while responsive inline
-        // media grows. AdsRequest separately reports the actual measured area.
-        // Generated tags already target the selected master; incomplete tags
-        // use that same contract rather than inventing article-width inventory.
+        // Apply the platform defaults to old/manual Google tags as well as new
+        // generated templates. VMAP retains its SDK-owned schedule with VAST 4.
+        var vmapOutput = /^(?:xml_)?vmap/i.test(tag.searchParams.get('output') || '');
+        tag.searchParams.set('output', vmapOutput ? 'xml_vmap1_vast4' : 'xml_vast4');
+        tag.searchParams.set('ad_type', 'video');
+        // Preserve existing inventory sizes and append the additional sizes
+        // once. AdsRequest independently reports the actual measured surface.
         var targetingSize = tag.searchParams.get('sz') || '';
         var validTargetingSize = /^[1-9]\d*x[1-9]\d*(?:\|[1-9]\d*x[1-9]\d*)*$/.test(targetingSize)
             && targetingSize.split(/[x|]/).every(function (part) { return Number.isSafeInteger(Number(part)); });
-        if (!validTargetingSize) tag.searchParams.set('sz', player.size[0] + 'x' + player.size[1]);
+        var targetingSizes = validTargetingSize ? targetingSize.split('|') : [player.size[0] + 'x' + player.size[1]];
+        tag.searchParams.set('sz', Array.from(new Set(targetingSizes.concat(googleVideoSizes))).join('|'));
         // Full manual tags retain their explicit format restriction. Generated
         // mixed tags omit vad_type during publication, using saved provenance.
         if (!mixedContentAds(player) && (!player.contentMode || !tag.searchParams.get('vad_type'))) tag.searchParams.set('vad_type', 'linear');
