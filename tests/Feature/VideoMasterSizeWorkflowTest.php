@@ -168,7 +168,7 @@ final class VideoMasterSizeWorkflowTest extends TestCase
         $this->assertSame($path, data_get($widget->configuration, 'gam_ad_unit_path'));
         $this->assertStringStartsWith('https://pubads.g.doubleclick.net/gampad/ads?', $widget->direct_tag_template);
         parse_str(parse_url($widget->direct_tag_template, PHP_URL_QUERY), $query);
-        $this->assertSame(['iu' => $path, 'env' => 'vp', 'gdfp_req' => '1', 'output' => 'vast', 'ad_type' => 'video', 'vad_type' => 'linear', 'unviewed_position_start' => '1', 'sz' => '336x280'], $query);
+        $this->assertSame(['iu' => $path, 'env' => 'vp', 'gdfp_req' => '1', 'output' => 'xml_vast4', 'ad_type' => 'video', 'vad_type' => 'linear', 'unviewed_position_start' => '1', 'sz' => '336x280|1x1|288x162|300x250|335x200|400x225|400x300|419x236|640x360|640x480|1920x1080|320x480|444x250|480x320|480x360|600x252|600x338|720x405|1024x768|1280x720'], $query);
         foreach (['nofb', 'npa', 'gdpr', 'gdpr_consent', 'tfcd', 'url', 'description_url', 'correlator', 'vpa', 'vpmute'] as $dynamic) $this->assertArrayNotHasKey($dynamic, $query);
         $attributes = data_get($this->published()->payload, 'directDemand.placements.quick_video_floating.candidates.0.tag.container.attributes');
         $this->assertSame($widget->direct_tag_template, base64_decode($attributes['data-hm-vast-url']));
@@ -233,10 +233,12 @@ final class VideoMasterSizeWorkflowTest extends TestCase
             'tag_input_type' => 'GAM_AD_UNIT_PATH', 'tag' => '/123/video', 'video_master_size' => '336x280',
         ]))->assertSessionHasNoErrors();
         $widget = DemandWidget::withoutGlobalScopes()->firstOrFail();
-        $legacy = $widget->direct_tag_template;
+        $legacy = 'https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Fvideo&env=vp&gdfp_req=1&output=vast&ad_type=video&vad_type=linear&unviewed_position_start=1&sz=336x280';
+        $widget->update(['direct_tag_template' => $legacy]);
         $version = $this->published();
         $payload = $version->payload;
         $tagPath = 'directDemand.placements.quick_video_floating.candidates.0.tag';
+        data_set($payload, $tagPath.'.container.attributes.data-hm-vast-url', base64_encode($legacy));
         data_set($payload, $tagPath.'.scripts.0.url', 'https://cdn.horusmedia.net/runtime/video/hm-video-direct.0000000000000000.js');
         $version->update(['payload' => $payload, 'checksum' => hash('sha256', app(\App\Services\StaticDelivery\CanonicalJson::class)->encode($payload))]);
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
@@ -261,7 +263,7 @@ final class VideoMasterSizeWorkflowTest extends TestCase
     {
         config(['horus.video_content_url' => 'https://cdn.horusmedia.net/content.mp4']);
         $base = (new GoogleVideoAdTag())->build('/123/video', [400, 225]);
-        foreach ([$base, $base.'&ad_rule=1&npa=1&gdpr=1&gdpr_consent=reviewed', str_replace('output=vast', 'output=vmap', $base).'&ad_rule=1'] as $url) {
+        foreach ([$base, $base.'&ad_rule=1&npa=1&gdpr=1&gdpr_consent=reviewed', str_replace('output=xml_vast4', 'output=vmap', $base).'&ad_rule=1'] as $url) {
             $this->post(route('admin.demand.quick.store'), $this->payload([
                 'tag' => $url, 'video_ad_format' => 'mixed',
             ]))->assertSessionHasNoErrors();

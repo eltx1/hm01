@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+const additionalGoogleSizes = '1x1|288x162|300x250|335x200|400x225|400x300|419x236|640x360|640x480|1920x1080|320x480|444x250|480x320|480x360|600x252|600x338|720x405|1024x768|1280x720'.split('|');
+function expectedGoogleSizes(existing) {
+    return [...new Set([...existing.split('|'), ...additionalGoogleSizes])].join('|');
+}
+
+
 const isolatedSource = await readFile(new URL('../../public/assets/hm-isolated-direct.js', import.meta.url), 'utf8');
 const gptSource = await readFile(new URL('../../public/assets/hm-gpt-direct.js', import.meta.url), 'utf8');
 const videoSource = await readFile(new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
@@ -892,10 +898,50 @@ test('GAM VAST templates resolve page macros and declare actual floating playbac
     assert.equal(url.searchParams.get('vpmute'), '1');
     assert.equal(url.searchParams.get('vpa'), 'auto');
     assert.equal(url.searchParams.get('plcmt'), null);
-    assert.equal(url.searchParams.get('sz'), '400x300');
+    assert.equal(url.searchParams.get('sz'), expectedGoogleSizes('400x300'));
     assert.equal(runtime.requested[0].linearAdSlotWidth, 400);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 225);
 });
+
+for (const host of ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net']) {
+    for (const mode of ['content', 'ad-only', 'rewarded']) {
+        test(`${host} ${mode} upgrades legacy GAM requests and retains every configured size`, async () => {
+            const input = `https://${host}/gampad/ads?iu=/123/video&output=xml_vast2&ad_type=skippablevideo&sz=800x600%7C320x180%7C1x1%7C800x600&npa=1&cust_params=section%3Dnews`;
+            const target = container({ 'data-hm-video-direct': '1', 'data-hm-vast-url': Buffer.from(input).toString('base64'),
+                ...(mode === 'content' ? { 'data-hm-video-content-url': 'https://media.example/content.mp4' } : {}),
+                ...(mode === 'rewarded' ? { 'data-hm-video-rewarded': '1' } : {}),
+            });
+            const runtime = runVideo(target);
+            await tick();
+            if (mode === 'rewarded') runtime.created.find(node => node.tagName === 'BUTTON' && node.textContent === 'Watch ad').click();
+            assert.equal(runtime.requested.length, 1);
+            const tag = new URL(runtime.requested[0].adTagUrl);
+            assert.equal(tag.searchParams.get('output'), 'xml_vast4');
+            assert.equal(tag.searchParams.get('ad_type'), 'video');
+            assert.equal(tag.searchParams.get('sz'), expectedGoogleSizes('800x600|320x180|1x1'));
+            assert.equal(tag.searchParams.get('sz').split('|').length, 21);
+            assert.equal(tag.searchParams.get('npa'), '1');
+            assert.equal(tag.searchParams.get('cust_params'), 'section=news');
+            target.__hmDestroy('dismissed');
+        });
+    }
+}
+
+for (const output of ['vast', 'xml_vast3', 'xml_vast4', 'vmap', 'xml_vmap1', 'xml_vmap1_vast4']) {
+    test(`Google ${output} requests use VAST 4 without changing schedule ownership`, async () => {
+        const vmap = output.includes('vmap');
+        const { target, runtime } = mixedContentFixture({
+            'data-hm-vast-url': Buffer.from(`https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&output=${output}&ad_type=standardvideo&sz=${encodeURIComponent(expectedGoogleSizes('336x280'))}`).toString('base64'),
+        });
+        await tick();
+        const tag = new URL(runtime.requested[0].adTagUrl);
+        assert.equal(tag.searchParams.get('output'), vmap ? 'xml_vmap1_vast4' : 'xml_vast4');
+        assert.equal(tag.searchParams.get('ad_type'), 'video');
+        assert.equal(tag.searchParams.get('sz'), expectedGoogleSizes('336x280'));
+        assert.equal(tag.searchParams.get('vpos'), vmap ? null : 'preroll');
+        target.__hmDestroy('dismissed');
+    });
+}
 
 test('Horus video runtime rejects non-HTTPS VAST URLs before requesting ads', async () => {
     const attributes = {
@@ -1532,7 +1578,7 @@ for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300]
         const runtime = runVideo(target);
         await tick();
         const request = runtime.requested[0], tag = new URL(request.adTagUrl);
-        assert.equal(tag.searchParams.get('sz'), '1x1');
+        assert.equal(tag.searchParams.get('sz'), expectedGoogleSizes('1x1'));
         assert.equal(tag.searchParams.get('vad_type'), 'linear');
         assert.equal(tag.searchParams.get('nofb'), '1');
         assert.equal(tag.searchParams.get('max_ad_duration'), '15000');
@@ -1618,7 +1664,7 @@ test('measured dimensions reflect a constrained player box rather than its maste
     target.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, width: 280, height: 210, right: 280, bottom: 210 });
     const runtime = runVideo(target);
     await tick();
-    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('sz'), '640x480');
+    assert.equal(new URL(runtime.requested[0].adTagUrl).searchParams.get('sz'), expectedGoogleSizes('640x480'));
     assert.equal(runtime.requested[0].linearAdSlotWidth, 280);
     assert.equal(runtime.requested[0].linearAdSlotHeight, 210);
     target.__hmDestroy('dismissed');
@@ -1638,7 +1684,7 @@ for (const [width, height] of [[300,250],[320,180],[336,280],[400,225],[400,300]
             await tick();
             const request = runtime.requested[0], resolved = new URL(request.adTagUrl);
             const valid = configured === `${width}x${height}` || configured === '300x250|640x480' || configured === '1x1';
-            assert.equal(resolved.searchParams.get('sz'), valid ? configured : `${width}x${height}`);
+            assert.equal(resolved.searchParams.get('sz'), expectedGoogleSizes(valid ? configured : `${width}x${height}`));
             assert.equal(resolved.searchParams.get('cust_params'), 'section=news');
             assert.equal(request.linearAdSlotWidth, actualWidth);
             assert.equal(request.linearAdSlotHeight, Math.round(actualHeight));
@@ -1721,7 +1767,7 @@ for (const format of [undefined, 'mixed', 'video_only']) {
         await tick();
         const request = runtime.requested[0], tag = new URL(request.adTagUrl);
         assert.equal(tag.searchParams.get('vad_type'), format === 'video_only' ? 'linear' : null);
-        assert.equal(tag.searchParams.get('sz'), '336x280');
+        assert.equal(tag.searchParams.get('sz'), expectedGoogleSizes('336x280'));
         assert.equal(tag.searchParams.get('cust_params'), 'section=news');
         assert.equal(tag.searchParams.get('gdpr'), '1');
         assert.equal(tag.searchParams.get('gdpr_consent'), 'fixture-consent');
@@ -1886,7 +1932,7 @@ test('an xml_vmap1 request preserves server-owned scheduling even without ad_rul
     const { target, runtime } = mixedContentFixture({ 'data-hm-vast-url': Buffer.from('https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&output=xml_vmap1&vpos=preroll').toString('base64') }, { cuePoints: [0, 20, -1] });
     await tick();
     const tag = new URL(runtime.requested[0].adTagUrl);
-    assert.equal(tag.searchParams.get('output'), 'xml_vmap1');
+    assert.equal(tag.searchParams.get('output'), 'xml_vmap1_vast4');
     assert.equal(tag.searchParams.get('vpos'), null);
     runtime.managers[0].emit('content-resume-requested');
     const video = runtime.created.find(node => node.tagName === 'VIDEO');
@@ -3216,6 +3262,9 @@ const fixedVideoAttributes = {
 
 function assertFixedVideoRequest(request) {
     const url = new URL(request.adTagUrl);
+    assert.equal(url.searchParams.get('output'), 'xml_vast4');
+    assert.equal(url.searchParams.get('ad_type'), 'video');
+    assert.equal(url.searchParams.get('sz'), expectedGoogleSizes('336x280'));
     assert.equal(url.searchParams.get('plcmt'), '1');
     assert.equal(url.searchParams.get('vpmute'), '0');
     assert.equal(request.willPlayMuted, false);
