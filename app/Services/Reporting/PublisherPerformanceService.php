@@ -20,7 +20,7 @@ final class PublisherPerformanceService
             ->where('currency', $currency)
             ->whereDate('report_date', '>=', $from)
             ->whereDate('report_date', '<=', $to)
-            ->with(['dimension.site', 'connection.source'])
+            ->with(['dimension.site', 'dimension.mobileApp', 'connection.source'])
             ->get();
 
         $video = app(VideoPerformanceService::class)->summary($rows, true, $currency, app(VideoPerformanceService::class)->configuration($publisher));
@@ -35,7 +35,9 @@ final class PublisherPerformanceService
             ...$this->totals($rows),
             'days' => $rows->groupBy(fn ($row) => $row->report_date->toDateString())->sortKeys()
                 ->map(fn ($group, $date) => ['label' => $date, ...$this->totals($group)])->values(),
-            'websites' => $rows->groupBy(fn ($row) => $row->dimension?->site_id ?? 'unassigned')
+            'apps' => $rows->filter(fn ($row) => $row->dimension?->mobile_app_id)->groupBy(fn ($row) => $row->dimension->mobile_app_id)
+                ->map(fn ($group) => ['label' => $group->first()->dimension->mobileApp?->name ?? 'Mobile app', ...$this->totals($group)])->values(),
+            'websites' => $rows->reject(fn ($row) => $row->dimension?->mobile_app_id)->groupBy(fn ($row) => $row->dimension?->site_id ?? 'unassigned')
                 ->map(fn ($group) => ['label' => $group->first()->dimension?->site?->display_name ?? 'Unassigned', ...$this->totals($group)])
                 ->sortByDesc('earnings_minor')->values(),
         ];

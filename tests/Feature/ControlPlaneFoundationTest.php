@@ -53,6 +53,7 @@ class ControlPlaneFoundationTest extends TestCase
             ->assertSee('Reports &amp; earnings', false)
             ->assertSee('Statements')
             ->assertSee('Websites')
+            ->assertSee('Mobile apps')
             ->assertSee('Monetization health')
             ->assertSee('Ads.txt &amp; compliance', false)
             ->assertSee('Commercial terms')
@@ -65,7 +66,7 @@ class ControlPlaneFoundationTest extends TestCase
         $this->assertFalse($labels->contains('Notifications'));
         $this->assertFalse($labels->contains('Statements'));
         $this->assertFalse($labels->contains('Payout history'));
-        $this->assertLessThanOrEqual(8, $labels->count());
+        $this->assertLessThanOrEqual(9, $labels->count());
     }
 
     public function test_navigation_uses_fewer_task_based_groups_and_workspace_context(): void

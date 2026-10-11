@@ -92,3 +92,5 @@ Schedule::command('reporting:sync-site-gam')->everyFiveMinutes()->withoutOverlap
 Schedule::command('reporting:sync-site-gam-video')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('reporting:import daily --retry-failed')->dailyAt('04:10')->withoutOverlapping();
 Schedule::command('reporting:close-period --force')->monthlyOn(2, '05:20')->withoutOverlapping();
+
+\Illuminate\Support\Facades\Schedule::command('reporting:sync-mobile-apps')->everyFiveMinutes()->withoutOverlapping(15);

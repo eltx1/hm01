@@ -208,7 +208,7 @@ final class MonetizationFinancialReadinessService
                 && $attestedSiteIds->contains((string) ($blocker['subject_id'] ?? '')))
             ->values();
 
-        return $subjectBlockers->concat($siteBlockers)->values();
+        return $subjectBlockers->concat($siteBlockers)->concat(app(\App\Services\MobileApps\MobileAppFinancialCoverage::class)->blockers($period))->values();
     }
 
     private function hasCompletePeriodImportCoverage(

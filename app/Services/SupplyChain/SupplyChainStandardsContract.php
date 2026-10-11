@@ -54,6 +54,11 @@ final class SupplyChainStandardsContract
         $sellers = $sellers->filter(function (array $seller) use ($findings): bool {
             /** @var SellerDeclaration|null $declaration */
             $declaration = $seller['declaration'] ?? null;
+            if ($declaration?->mobile_app_id) {
+                $app = \App\Models\MobileApp::withoutGlobalScopes()->find($declaration->mobile_app_id);
+                return $app && $app->publisher_id === $declaration->publisher_id && $app->organization_id === $declaration->organization_id
+                    && $app->status !== 'REJECTED' && $this->hasPublisherLevelIdentity($declaration);
+            }
             if (! $declaration?->site_id) {
                 return true;
             }
@@ -100,7 +105,7 @@ final class SupplyChainStandardsContract
 
         // Backward-compatible fallback for pre-Task-39 Sites: use the one legacy/HMP
         // seller identity until a Website HMS identity has been reviewed and activated.
-        $legacy = SellerDeclaration::withoutGlobalScopes()
+        $legacy = SellerDeclaration::withoutGlobalScopes()->whereNull('mobile_app_id')
             ->where('publisher_id', $site->publisher_id)
             ->where('status', 'ACTIVE')
             ->where(function ($query) use ($site): void {
@@ -471,6 +476,11 @@ final class SupplyChainStandardsContract
         if (! $publisher || strtoupper((string) $publisher->getRawOriginal('status')) !== 'ACTIVE') {
             return false;
         }
+        if ($scope === SellerIdentityScope::MobileApp) {
+            return \App\Models\MobileApp::withoutGlobalScopes()->whereKey($declaration->mobile_app_id)
+                ->where('publisher_id', $publisher->id)->where('organization_id', $publisher->organization_id)->where('status', '!=', 'REJECTED')->exists();
+        }
+        if ($scope === SellerIdentityScope::Publisher && \App\Models\MobileApp::withoutGlobalScopes()->where('publisher_id', $publisher->id)->where('status', '!=', 'REJECTED')->exists()) return true;
         $nonTerminalSiteStatuses = ['DRAFT', 'PENDING_VERIFICATION', 'PENDING_REVIEW', 'APPROVED', 'ACTIVE', 'SUSPENDED'];
         if ($scope === SellerIdentityScope::Website) {
             $site = $declaration->site_id

@@ -19,7 +19,7 @@ final class SiteGamUnitClaims
 
     public function reserve(string $key, string $type, string $id): void
     {
-        foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class] as $model) {
+        foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, \App\Models\MobileAppReportBinding::class] as $model) {
             if ($model::withoutGlobalScopes()->where('active_unit_key', $key)->where('id', '!=', $id)->exists()) {
                 $this->conflict();
             }
@@ -40,7 +40,7 @@ final class SiteGamUnitClaims
     public function lastOwnedDay(string $network, string $unit): ?string
     {
         $dates = [];
-        foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class] as $model) {
+        foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, \App\Models\MobileAppReportBinding::class] as $model) {
             $dates[] = $model::withoutGlobalScopes()->where('network_code', $network)->where('ad_unit_id', $unit)
                 ->whereNotNull('ends_on')->max('ends_on');
         }

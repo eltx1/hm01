@@ -46,6 +46,9 @@
         <div class="report-card-heading"><h3 id="website-report-heading">Website breakdown</h3><span class="report-state">{{ $performance['websites']->count() }} {{ $performance['websites']->count() === 1 ? 'website' : 'websites' }}</span></div>
         <x-report-performance-table :rows="$performance['websites']" :metrics="$reportMetrics" :currency="$performance['currency']" label="Website" :mobile-cards="true" caption="Publisher website performance" />
     </section>
+    @if(($performance['apps'] ?? collect())->isNotEmpty())
+    <section class="publisher-report-details" aria-labelledby="app-report-heading"><div class="report-card-heading"><h3 id="app-report-heading">Mobile app breakdown</h3></div><x-report-performance-table :rows="$performance['apps']" :metrics="$reportMetrics" :currency="$performance['currency']" label="Mobile app" :mobile-cards="true" caption="Publisher mobile app performance" /></section>
+    @endif
     @else
         <x-empty-state :title="$hasVideo ? 'No main reports for these dates' : 'No reports for these dates yet'" :description="$hasVideo ? 'Independent Video results appear below.' : 'Try another period.'" />
         <x-publisher-report-columns :metrics="$reportMetrics" />

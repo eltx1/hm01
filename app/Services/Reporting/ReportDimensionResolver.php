@@ -11,7 +11,7 @@ use App\Models\Site;
 final class ReportDimensionResolver
 {
     private const KEYS = [
-        'publisher_id', 'site_id', 'placement_id', 'gam_connection_id',
+        'publisher_id', 'site_id', 'mobile_app_id', 'placement_id', 'gam_connection_id',
         'demand_network_id', 'bidder_id', 'advertiser_id', 'campaign_id',
         'country_code', 'device', 'browser', 'operating_system', 'ad_size',
     ];
@@ -28,6 +28,11 @@ final class ReportDimensionResolver
         }
 
         $organizationId = $row['organization_id'] ?? null;
+        if ($attributes['mobile_app_id']) {
+            $app = \App\Models\MobileApp::withoutGlobalScopes()->findOrFail($attributes['mobile_app_id']);
+            $attributes['publisher_id'] ??= $app->publisher_id;
+            $organizationId ??= $app->organization_id;
+        }
         if ($attributes['site_id']) {
             $site = Site::withoutGlobalScopes()->find($attributes['site_id']);
             $attributes['publisher_id'] ??= $site?->publisher_id;
@@ -62,6 +67,7 @@ final class ReportDimensionResolver
             ->all();
 
         $hashPayload = $attributes;
+        if (! $hashPayload['mobile_app_id']) unset($hashPayload['mobile_app_id']);
         $hashPayload['external_dimensions'] = $external;
         ksort($hashPayload);
         $hash = hash('sha256', json_encode($hashPayload, JSON_THROW_ON_ERROR));

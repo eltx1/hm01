@@ -53,10 +53,15 @@ final class AdsTxtFetcher
     }
 
     /** @return array<string, mixed> */
-    private function fetchInternal(string $primary, Collection $allowedHosts, bool $officialDelegation): array
+    public function fetchAppDomain(string $domain): array
+    {
+        return $this->fetchInternal($domain, collect([$domain]), true, 'app-ads.txt');
+    }
+
+    private function fetchInternal(string $primary, Collection $allowedHosts, bool $officialDelegation, string $filename = 'ads.txt'): array
     {
         $started = hrtime(true);
-        $url = 'https://'.$primary.'/ads.txt';
+        $url = 'https://'.$primary.'/'.$filename;
         $originalUrl = $url;
         $redirects = [];
         $delegatedOutsideRoot = false;

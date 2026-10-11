@@ -26,6 +26,7 @@ final class ReportSourceManager
         $code = $connection->source->code;
 
         return match ($code) {
+            ReportSourceCode::GamMobileApp => app(\App\Services\MobileApps\MobileAppReportConnector::class),
             ReportSourceCode::GamAdUnit, ReportSourceCode::GamVideoAdUnit => $this->gamAdUnit,
             ReportSourceCode::HorusGam,
             ReportSourceCode::McmPartnerGam,

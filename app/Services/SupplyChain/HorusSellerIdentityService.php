@@ -40,7 +40,7 @@ final class HorusSellerIdentityService
         $sellerId = strtoupper(trim($sellerId));
 
         return str_starts_with($sellerId, self::PUBLISHER_ID_PREFIX)
-            || str_starts_with($sellerId, self::WEBSITE_ID_PREFIX);
+            || str_starts_with($sellerId, self::WEBSITE_ID_PREFIX) || str_starts_with($sellerId, 'HMA-');
     }
 
     public function ensureForPublisher(Publisher $publisher, ?User $actor = null): SellerDeclaration
@@ -300,7 +300,7 @@ final class HorusSellerIdentityService
         SellerDeclaration::withoutGlobalScopes()
             ->where('publisher_id', $publisher->id)
             ->where('identity_source', SellerIdentitySource::HorusManaged->value)
-            ->where('identity_scope', SellerIdentityScope::Website->value)
+            ->whereIn('identity_scope', [SellerIdentityScope::Website->value, SellerIdentityScope::MobileApp->value])
             ->update(['status' => SellerDeclarationStatus::Disabled->value]);
         $this->audit->record(
             'supply_chain.horus_seller_identity.disabled', $seller->organization_id, $actor, $seller,
@@ -369,6 +369,14 @@ final class HorusSellerIdentityService
         if ($scope === SellerIdentityScope::Publisher && $declaration->site_id !== null) {
             $errors[] = 'The HMP Publisher identity must remain publisher-level.';
         }
+        if ($scope === SellerIdentityScope::MobileApp) {
+            $app = \App\Models\MobileApp::withoutGlobalScopes()->find($declaration->mobile_app_id);
+            $hmp = $publisher ? $this->managedForPublisher($publisher) : null;
+            if (! $app || $app->publisher_id !== $declaration->publisher_id || $app->organization_id !== $declaration->organization_id || $app->status === 'REJECTED'
+                || ! $hmp || $hmp->status !== SellerDeclarationStatus::Active || $hmp->review_status !== SupplyChainReviewStatus::Verified) {
+                $errors[] = 'An HMA identity requires its canonical app and an active verified publisher HMP identity.';
+            }
+        }
         if ($scope === SellerIdentityScope::Website) {
             $site = $declaration->site_id ? Site::withoutGlobalScopes()->find($declaration->site_id) : null;
             if (! $site || $site->publisher_id !== $declaration->publisher_id) {
@@ -407,6 +415,9 @@ final class HorusSellerIdentityService
         $metadata['review_reopened'] = ['reason' => $reason, 'at' => now()->toIso8601String()];
         $updates['metadata'] = $metadata;
         $seller->update($updates);
+        foreach (SellerDeclaration::withoutGlobalScopes()->where('publisher_id', $publisher->id)->where('identity_scope', SellerIdentityScope::MobileApp->value)->get() as $appSeller) {
+            $appSeller->update($updates);
+        }
         $this->audit->record(
             'supply_chain.horus_seller_identity.review_reopened', $seller->organization_id, $actor, $seller,
             oldValues: $before,
