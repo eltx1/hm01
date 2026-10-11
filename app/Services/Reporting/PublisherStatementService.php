@@ -35,7 +35,7 @@ final class PublisherStatementService
         array $affiliateLineItems = [],
     ): PublisherStatement {
         $rows = MonthlyReport::withoutGlobalScopes()
-            ->with(['dimension.site', 'connection.source'])
+            ->with(['dimension.site', 'dimension.mobileApp', 'connection.source'])
             ->where('financial_period_id', $period->id)
             ->where('settlement_eligible', true)
             ->whereHas('dimension', fn ($query) => $query->where('publisher_id', $publisher->id))
@@ -95,15 +95,16 @@ final class PublisherStatementService
         }
 
         $lineItems = $rows->groupBy(fn ($row) => ($row->connection?->source?->code?->value ?? $row->connection?->source?->code ?? 'UNKNOWN')
-            .'|'.($row->dimension?->site_id ?? 'all')
+            .'|'.($row->dimension?->mobile_app_id ?? $row->dimension?->site_id ?? 'all')
         )->map(function ($group, $key): array {
             [$source, $siteId] = array_pad(explode('|', (string) $key, 2), 2, null);
             $first = $group->first();
 
             return [
                 'source' => $source,
-                'site_id' => $siteId !== 'all' ? $siteId : null,
-                'site' => $first->dimension?->site?->display_name,
+                'site_id' => $first->dimension?->site_id,
+                'mobile_app_id' => $first->dimension?->mobile_app_id,
+                'site' => $first->dimension?->mobileApp?->name ?? $first->dimension?->site?->display_name,
                 'impressions' => (int) $group->sum('impressions'),
                 'gross_revenue_minor' => (int) $group->sum('gross_revenue_minor'),
                 'net_revenue_minor' => (int) $group->sum('net_revenue_minor'),

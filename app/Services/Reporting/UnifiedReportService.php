@@ -31,7 +31,7 @@ final class UnifiedReportService
         [$from, $to] = $this->range($from, $to);
         $currency = $this->currency($currency);
         $query = $this->daily($from, $to, $currency, $includeEstimates);
-        $rows = $query->with(['dimension.publisher', 'dimension.site', 'dimension.campaign', 'connection.source'])->get();
+        $rows = $query->with(['dimension.publisher', 'dimension.site', 'dimension.mobileApp', 'dimension.campaign', 'connection.source'])->get();
 
         $financialRows = $rows;
         $video = app(VideoPerformanceService::class)->summary($rows, false, $currency, app(VideoPerformanceService::class)->configuration());
@@ -77,7 +77,8 @@ final class UnifiedReportService
             'mcm_partner_earnings_minor' => max(0, (int) $rows->sum('mcm_partner_earnings_minor') - $mcmAdjustment),
             'approved_adjustments_minor' => $adjustmentTotal,
             'revenue_by_publisher' => $this->group($rows, fn ($row) => $row->dimension?->publisher_id ?? 'unassigned', fn ($row) => $row->dimension?->publisher?->display_name ?? 'Unassigned'),
-            'revenue_by_website' => $this->group($rows, fn ($row) => $row->dimension?->site_id ?? 'unassigned', fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
+            'revenue_by_app' => $this->group($rows->filter(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension->mobile_app_id, fn ($row) => $row->dimension->mobileApp?->name ?? 'Mobile app'),
+            'revenue_by_website' => $this->group($rows->reject(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension?->site_id ?? 'unassigned', fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'revenue_by_source' => $this->group($rows, fn ($row) => $row->connection?->source?->name ?? 'Unknown'),
             'revenue_by_campaign' => $this->group($rows, fn ($row) => $row->dimension?->campaign_id ?? 'none', fn ($row) => $row->dimension?->campaign?->name ?? 'Non-campaign'),
             'outstanding_publisher_payments_minor' => (int) $this->latestPublisherStatements($currency)->sum('balance_due_minor'),
@@ -102,7 +103,7 @@ final class UnifiedReportService
         $currency = $this->currency($currency);
         $rows = $this->daily($from, $to, $currency)
             ->whereHas('dimension', fn (Builder $query) => $query->where('publisher_id', $publisher->id))
-            ->with(['dimension.site', 'dimension.placement', 'connection.source'])
+            ->with(['dimension.site', 'dimension.mobileApp', 'dimension.placement', 'connection.source'])
             ->get();
         $video = app(VideoPerformanceService::class)->summary($rows, true, $currency, app(VideoPerformanceService::class)->configuration($publisher));
         $rows = $rows->reject(fn ($row) => VideoPerformanceService::isVideo($row));
@@ -116,7 +117,8 @@ final class UnifiedReportService
             'metric_basis_incomplete' => app(ReportMetricBasis::class)->incomplete($rows),
             'revenue_minor' => $revenue,
             'ecpm_micros' => $impressions === null ? null : ($impressions > 0 ? (int) round($revenue * 10000 / $impressions) : 0),
-            'websites' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
+            'apps' => $this->publisherGroup($rows->filter(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension->mobileApp?->name ?? 'Mobile app'),
+            'websites' => $this->publisherGroup($rows->reject(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'placements' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
             'payment_balance_minor' => (int) ($this->latestPublisherStatements($currency, $publisher->id)
                 ->first()?->balance_due_minor ?? 0),

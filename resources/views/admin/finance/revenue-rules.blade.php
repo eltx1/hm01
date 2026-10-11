@@ -27,6 +27,8 @@
         } else {
             $previewPublisherId = trim((string) request('preview_publisher_id'));
             $previewSiteId = trim((string) request('preview_site_id'));
+            $previewAppId = trim((string) request('preview_mobile_app_id'));
+            if ($previewPublisherId === '' && $previewAppId !== '') $previewPublisherId = (string) ($mobileApps->firstWhere('id', $previewAppId)?->publisher_id ?? '');
             $previewDemandId = trim((string) request('preview_demand_id'));
             $previewCampaignId = trim((string) request('preview_campaign_id'));
 
@@ -38,6 +40,7 @@
                 $previewVersion = app(\App\Services\Reporting\RevenueRuleService::class)->resolve($previewDate, array_filter([
                     'publisher_id' => $previewPublisherId,
                     'site_id' => $previewSiteId,
+                    'mobile_app_id' => $previewAppId,
                     'report_source_id' => $previewDemandId,
                     'demand_network_id' => $previewDemandId,
                     'campaign_id' => $previewCampaignId,
@@ -58,10 +61,11 @@
         <div><p class="eyebrow">Share preview</p><h2>Which revenue share will actually apply?</h2><p>Use the same resolver as financial reporting before you activate traffic or change a commercial rule. This preview is read-only and changes nothing.</p></div>
     </div>
     <form method="GET" action="{{ route('admin.finance.revenue-rules.index') }}" class="form-grid">
-        <input type="hidden" name="preview" value="1">
+        <input type="hidden" name="preview" value="1"><label>Mobile app<select class="hm-input" name="preview_mobile_app_id"><option value="">Any app</option>@foreach($mobileApps as $mobileApp)<option value="{{ $mobileApp->id }}" @selected(request('preview_mobile_app_id') === $mobileApp->id)>{{ $mobileApp->name }}</option>@endforeach</select></label>
         <label>Publisher
             <select class="hm-input" name="preview_publisher_id"><option value="">Any / not selected</option>@foreach($publishers as $publisher)<option value="{{ $publisher->id }}" @selected(request('preview_publisher_id') === $publisher->id)>{{ $publisher->display_name }}</option>@endforeach</select>
         </label>
+        <label>Mobile app<select class="hm-input" name="mobile_app_scope_id"><option value="">Not used for this scope</option>@foreach($mobileApps as $mobileApp)<option value="{{ $mobileApp->id }}">{{ $mobileApp->name }}</option>@endforeach</select></label>
         <label>Website
             <select class="hm-input" name="preview_site_id"><option value="">Any / not selected</option>@foreach($sites as $site)<option value="{{ $site->id }}" @selected(request('preview_site_id') === $site->id)>{{ $site->display_name }} · {{ $site->publisher?->display_name }}</option>@endforeach</select>
             <span class="muted">If Publisher is blank, the Website's Publisher is inferred automatically.</span>
@@ -107,6 +111,7 @@
                     \App\Enums\RevenueRuleScope::Global => 'Everyone (global fallback)',
                     \App\Enums\RevenueRuleScope::Publisher => 'One publisher',
                     \App\Enums\RevenueRuleScope::Website => 'One website',
+                    \App\Enums\RevenueRuleScope::MobileApp => 'One mobile app',
                     \App\Enums\RevenueRuleScope::DemandSource => 'One demand source (all publishers)',
                     \App\Enums\RevenueRuleScope::PublisherDemandSource => 'One publisher + one demand source',
                     \App\Enums\RevenueRuleScope::Campaign => 'One direct campaign',
@@ -117,6 +122,7 @@
             <select class="hm-input" name="publisher_scope_id"><option value="">Not used for this scope</option>@foreach($publishers as $publisher)<option value="{{ $publisher->id }}">{{ $publisher->display_name }}</option>@endforeach</select>
             <span class="muted">Choose for Publisher or Publisher + demand.</span>
         </label>
+        <label>Mobile app<select class="hm-input" name="mobile_app_scope_id"><option value="">Not used for this scope</option>@foreach($mobileApps as $mobileApp)<option value="{{ $mobileApp->id }}">{{ $mobileApp->name }}</option>@endforeach</select></label>
         <label>Website
             <select class="hm-input" name="website_scope_id"><option value="">Not used for this scope</option>@foreach($sites as $site)<option value="{{ $site->id }}">{{ $site->display_name }} · {{ $site->publisher?->display_name }}</option>@endforeach</select>
         </label>

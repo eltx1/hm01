@@ -40,6 +40,7 @@ final class ControlPlaneNavigation
             $this->group('Publishers & Sites', [
                 $this->item('Publishers', 'admin.publishers.index', 'publishers.view', ['admin.publishers.*']),
                 $this->item('Websites', 'admin.sites.index', 'sites.view', ['admin.sites.*']),
+                $this->item('Mobile apps', 'admin.mobile-apps.index', 'sites.view', ['admin.mobile-apps.*']),
                 $this->item('Organizations', 'admin.organizations.index', 'organizations.view', ['admin.organizations.*']),
                 $this->item('Publisher affiliates', 'admin.publisher-affiliates.index', 'publishers.view', ['admin.publisher-affiliates.*']),
             ]),
@@ -89,6 +90,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Monetization', [
                 $this->item('Websites', 'publisher.sites.index', 'sites.view', ['publisher.sites.*']),
+                $this->item('Mobile apps', 'publisher.mobile-apps.index', 'sites.view', ['publisher.mobile-apps.*']),
                 $this->item('Monetization health', 'publisher.monetization.index', 'sites.view', ['publisher.monetization.*']),
                 $this->item('Ads.txt & compliance', 'publisher.ads-txt.index', 'publisher.ads_txt.view', ['publisher.ads-txt.*']),
             ]),

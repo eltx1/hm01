@@ -216,3 +216,5 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::put('/admin/organizations/{organization}/branding', [BrandingController::class, 'update'])->middleware('permission:organizations.manage')->name('admin.organizations.branding.update');
     });
 });
+
+require __DIR__.'/mobile-apps.php';

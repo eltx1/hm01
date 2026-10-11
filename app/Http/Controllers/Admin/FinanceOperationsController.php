@@ -327,6 +327,7 @@ final class FinanceOperationsController extends Controller
         return view('admin.finance.revenue-rules', [
             'rules' => $rules,
             'scopeLabels' => $this->scopeLabels($rules),
+            'mobileApps' => \App\Models\MobileApp::withoutGlobalScopes()->orderBy('name')->get(),
             'ruleScopes' => RevenueRuleScope::cases(),
             'publishers' => Publisher::withoutGlobalScopes()->orderBy('display_name')->get(),
             'sites' => Site::withoutGlobalScopes()->with('publisher')->orderBy('display_name')->get(),
@@ -461,6 +462,7 @@ final class FinanceOperationsController extends Controller
             'scope_type' => [$includeScope ? 'required' : 'sometimes', Rule::enum(RevenueRuleScope::class)],
             'scope_id' => ['nullable', 'string', 'max:64'],
             'publisher_scope_id' => ['nullable', 'string', 'max:26'],
+            'mobile_app_scope_id' => ['nullable', 'string', 'max:26'],
             'website_scope_id' => ['nullable', 'string', 'max:26'],
             'demand_scope_id' => ['nullable', 'string', 'max:26'],
             'campaign_scope_id' => ['nullable', 'string', 'max:26'],
@@ -488,6 +490,7 @@ final class FinanceOperationsController extends Controller
             $data['scope_id'] = match ($scope) {
                 RevenueRuleScope::Global => null,
                 RevenueRuleScope::Publisher => $data['publisher_scope_id'] ?? $data['scope_id'] ?? null,
+                RevenueRuleScope::MobileApp => $data['mobile_app_scope_id'] ?? $data['scope_id'] ?? null,
                 RevenueRuleScope::Website => $data['website_scope_id'] ?? $data['scope_id'] ?? null,
                 RevenueRuleScope::DemandSource => $data['demand_scope_id'] ?? $data['scope_id'] ?? null,
                 RevenueRuleScope::Campaign => $data['campaign_scope_id'] ?? $data['scope_id'] ?? null,
@@ -499,7 +502,7 @@ final class FinanceOperationsController extends Controller
         }
 
         return collect($data)->except([
-            'publisher_scope_id', 'website_scope_id', 'demand_scope_id', 'campaign_scope_id',
+            'publisher_scope_id', 'website_scope_id', 'mobile_app_scope_id', 'demand_scope_id', 'campaign_scope_id',
             'publisher_share_percent', 'horus_share_percent', 'mcm_partner_share_percent',
         ])->all();
     }
@@ -517,6 +520,7 @@ final class FinanceOperationsController extends Controller
             $label = match ($rule->scope_type) {
                 RevenueRuleScope::Global => 'All reporting',
                 RevenueRuleScope::Publisher => $publishers[$rule->scope_id] ?? $rule->scope_id,
+                RevenueRuleScope::MobileApp => \App\Models\MobileApp::withoutGlobalScopes()->find($rule->scope_id)?->name ?? $rule->scope_id,
                 RevenueRuleScope::Website => $sites[$rule->scope_id] ?? $rule->scope_id,
                 RevenueRuleScope::Campaign => $campaigns[$rule->scope_id] ?? $rule->scope_id,
                 RevenueRuleScope::DemandSource => $sources[$rule->scope_id] ?? $demandNetworks[$rule->scope_id] ?? $rule->scope_id,

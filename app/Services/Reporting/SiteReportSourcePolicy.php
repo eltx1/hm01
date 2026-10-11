@@ -22,6 +22,8 @@ final class SiteReportSourcePolicy
             $gam = GamConnection::withoutGlobalScopes()->whereKey($gamId)->lockForUpdate()->first();
             if ($gam) app(SiteGamUnitClaims::class)->lockNetwork((string) $gam->network_code);
         }
+        $appDecision = app(\App\Services\MobileApps\MobileAppReportPolicy::class)->accepts($connection, $row, $importType);
+        if ($appDecision !== null) return $appDecision;
         if (! empty($row['site_id'])) {
             Site::withoutGlobalScopes()->whereKey($row['site_id'])->lockForUpdate()->first();
         }

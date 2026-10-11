@@ -7,6 +7,7 @@ enum ReportSourceCode: string
     case HorusGam = 'HORUS_GAM';
     case McmPartnerGam = 'MCM_PARTNER_GAM';
     case PublisherGam = 'PUBLISHER_GAM';
+    case GamMobileApp = 'GAM_MOBILE_APP';
     case GamAdUnit = 'GAM_AD_UNIT';
     case GamVideoAdUnit = 'GAM_VIDEO_AD_UNIT';
     case PrebidEstimates = 'PREBID_ESTIMATES';

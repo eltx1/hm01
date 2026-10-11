@@ -21,7 +21,7 @@ class SellerDeclaration extends Model
     use BelongsToOrganization, HasUlids;
 
     protected $fillable = [
-        'organization_id', 'publisher_id', 'site_id', 'publisher_application_domain_claim_id',
+        'organization_id', 'publisher_id', 'site_id', 'mobile_app_id', 'publisher_application_domain_claim_id',
         'identity_source', 'identity_scope', 'identity_issued_at',
         'seller_id', 'seller_type', 'ads_txt_relationship', 'name', 'domain',
         'is_confidential', 'status', 'review_status', 'last_verified_at',
@@ -48,11 +48,18 @@ class SellerDeclaration extends Model
                     throw new LogicException('A HORUS_MANAGED seller identity must belong to a Publisher.');
                 }
                 if ($scope === SellerIdentityScope::Publisher) {
-                    if ($declaration->site_id !== null || $declaration->publisher_application_domain_claim_id !== null) {
+                    if ($declaration->mobile_app_id !== null || $declaration->site_id !== null || $declaration->publisher_application_domain_claim_id !== null) {
                         throw new LogicException('A Publisher HMP identity must remain publisher-level.');
                     }
                     if (! preg_match('/^HMP-[0-9A-HJKMNP-TV-Z]{26}$/', (string) $declaration->seller_id)) {
                         throw new LogicException('Publisher HORUS_MANAGED seller IDs must use HMP-<ULID>.');
+                    }
+                } elseif ($scope === SellerIdentityScope::MobileApp) {
+                    $app = MobileApp::withoutGlobalScopes()->find($declaration->mobile_app_id);
+                    if (! $app || $app->publisher_id !== $declaration->publisher_id || $app->organization_id !== $declaration->organization_id
+                        || $declaration->site_id || $declaration->publisher_application_domain_claim_id
+                        || ! preg_match('/^HMA-[0-9A-HJKMNP-TV-Z]{26}$/D', (string) $declaration->seller_id)) {
+                        throw new LogicException('An HMA identity requires its canonical app, publisher and organization.');
                     }
                 } else {
                     if (! preg_match('/^HMS-[0-9A-HJKMNP-TV-Z]{26}$/', (string) $declaration->seller_id)) {
@@ -93,7 +100,7 @@ class SellerDeclaration extends Model
                 return;
             }
 
-            if ($declaration->isDirty(['seller_id', 'publisher_id', 'identity_scope', 'publisher_application_domain_claim_id', 'identity_issued_at'])) {
+            if ($declaration->isDirty(['seller_id', 'publisher_id', 'organization_id', 'mobile_app_id', 'identity_scope', 'publisher_application_domain_claim_id', 'identity_issued_at'])) {
                 throw new LogicException('A HORUS_MANAGED public seller identity cannot be reassigned or reissued.');
             }
 
@@ -160,6 +167,7 @@ class SellerDeclaration extends Model
         return Attribute::make(set: fn (?string $value) => app(DomainNormalizer::class)->normalize($value));
     }
 
+    public function mobileApp(): BelongsTo { return $this->belongsTo(MobileApp::class); }
     public function publisher(): BelongsTo { return $this->belongsTo(Publisher::class); }
     public function site(): BelongsTo { return $this->belongsTo(Site::class); }
     public function applicationDomainClaim(): BelongsTo { return $this->belongsTo(PublisherApplicationDomainClaim::class, 'publisher_application_domain_claim_id'); }

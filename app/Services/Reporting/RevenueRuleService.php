@@ -386,6 +386,7 @@ final class RevenueRuleService
         return match ($rule->scope_type) {
             RevenueRuleScope::Global => true,
             RevenueRuleScope::Publisher => (string) ($context['publisher_id'] ?? '') === (string) $rule->scope_id,
+            RevenueRuleScope::MobileApp => (string) ($context['mobile_app_id'] ?? '') === (string) $rule->scope_id,
             RevenueRuleScope::Website => (string) ($context['site_id'] ?? '') === (string) $rule->scope_id,
             RevenueRuleScope::DemandSource => in_array((string) $rule->scope_id, array_filter([
                 (string) ($context['report_source_id'] ?? ''),
@@ -524,6 +525,7 @@ final class RevenueRuleService
 
         return match ($scope) {
             RevenueRuleScope::Publisher => Publisher::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
+            RevenueRuleScope::MobileApp => \App\Models\MobileApp::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
             RevenueRuleScope::Website => Site::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
             RevenueRuleScope::Campaign => Campaign::withoutGlobalScopes()->findOrFail($scopeId)->organization_id,
             RevenueRuleScope::DemandSource => ReportSource::query()->whereKey($scopeId)->exists()
