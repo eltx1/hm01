@@ -455,7 +455,12 @@ for (const verifiedAt of [12000, 15000]) {
         selected.prebid.enabled = false;
         let verifications = 0;
         const unexpected = [];
-        await page.clock.install({ time: new Date('2026-10-08T12:00:00Z') });
+        const clockStart = new Date('2026-10-08T12:00:00Z');
+        // install() keeps time running. Pause before navigation so network and
+        // iframe startup cannot consume the verification window or shift timer
+        // registration past the exact boundary this test asserts.
+        await page.clock.install({ time: new Date(clockStart.getTime() - 60000) });
+        await page.clock.pauseAt(clockStart);
         await page.route('**/*', async route => {
             const request = route.request();
             const url = new URL(request.url());
@@ -481,24 +486,29 @@ for (const verifiedAt of [12000, 15000]) {
             return route.abort('blockedbyclient');
         });
         await page.goto(PUBLISHER + '/');
-        const frame = page.frames().find(candidate => candidate.url().startsWith(GATE));
-        expect(frame).toBeTruthy();
-        await expect.poll(() => frame.evaluate(() => typeof window.deliverToken)).toBe('function');
+        const gateFrame = page.frameLocator('iframe[data-hm-traffic-gate="1"]');
+        await expect.poll(() => gateFrame.locator('html').evaluate(() => typeof window.deliverToken)).toBe('function');
         const startedAt = await page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.trafficGate.startedAt);
-        await page.clock.pauseAt(new Date(startedAt + 10001));
+        expect(startedAt).toBe(clockStart.getTime());
+        await page.clock.runFor(10001);
         expect(await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PENDING');
         expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
         expect(verifications).toBe(0);
         await page.evaluate(() => { history.pushState({}, '', '/next'); window.HorusMediaLoader.boot(); });
-        await page.clock.runFor(verifiedAt - 10001);
+        expect(await page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.trafficGate.startedAt)).toBe(startedAt);
         if (verifiedAt < 15000) {
-            await frame.evaluate(() => window.deliverToken());
+            await page.clock.runFor(verifiedAt - 10001);
+            await gateFrame.locator('html').evaluate(() => window.deliverToken());
             await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
             await expect.poll(() => page.evaluate(() => window.__task52Engines?.gamRequests)).toBe(1);
             await page.evaluate(() => window.HorusMediaLoader.boot());
             expect(verifications).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines.gamRequests)).toBe(1);
         } else {
+            await page.clock.runFor(14999 - 10001);
+            expect(await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PENDING');
+            expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
+            await page.clock.runFor(1);
             await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('TIMEOUT');
             await page.evaluate(() => window.HorusMediaLoader.boot());
             expect(verifications).toBe(0);

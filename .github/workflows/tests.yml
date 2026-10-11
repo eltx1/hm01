@@ -118,6 +118,12 @@ jobs:
         run: bash scripts/install-playwright-ci.sh
       - name: Build current minified Loader for distribution-level startup checks
         run: npm run build:loader
+      - name: Repeat Traffic Gate deadline boundaries across all four browsers
+        run: >-
+          npx playwright test --config=playwright.traffic-gate.config.js
+          traffic-gate-loader.playwright.spec.js
+          --grep='production bundle enforces the 15 second verification window'
+          --repeat-each=10
       - name: Execute deterministic Traffic Gate real-browser matrix
         run: npx playwright test --config=playwright.traffic-gate.config.js
       - name: Verify Responsive viewport requests and actual creative geometry
