@@ -25,7 +25,7 @@ final class SiteGamUnitClaims
         $ownedKey = null;
         foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, MobileAppReportBinding::class] as $model) {
             foreach ($model::withoutGlobalScopes()->where('network_code', $network)->where('ad_unit_id', $unit)
-                ->whereNotNull('active_unit_key')->with('connection')->get() as $binding) {
+                ->whereNotNull('active_unit_key')->with('connection')->lockForUpdate()->get() as $binding) {
                 if ($binding->id === $id && $binding->connectionType() === $type) {
                     $ownedKey = $binding->active_unit_key;
                 } elseif (! $site || ! $from || ! $this->disjoint($binding, $site, max($from, $binding->starts_on->toDateString()))) {
@@ -38,7 +38,7 @@ final class SiteGamUnitClaims
         // index width and cannot collide across credentials or reporting purpose.
         $claimKey = $site ? 'site:'.hash('sha256', $key.'|'.app(SiteGamReportScope::class)->hostname($site->primary_domain)) : $key;
         if ($ownedKey && ! str_starts_with($ownedKey, 'site:')) $claimKey = $ownedKey;
-        $legacy = DB::table('site_gam_reporting_unit_claims')->where('unit_key', $key)->first();
+        $legacy = DB::table('site_gam_reporting_unit_claims')->where('unit_key', $key)->lockForUpdate()->first();
         if ($legacy && ! $ownedKey) {
             $model = match ($legacy->binding_type) {
                 'SITE_GAM_AD_UNIT' => SiteGamReportBinding::class,
@@ -49,7 +49,7 @@ final class SiteGamUnitClaims
             if (! $owner || ! $site || ! $from || ! $this->disjoint($owner, $site, max($from, $owner->starts_on->toDateString()))) $this->conflict();
         }
         if ($ownedKey && $ownedKey !== $claimKey) {
-            if (DB::table('site_gam_reporting_unit_claims')->where('unit_key', $claimKey)->exists()) $this->conflict();
+            if (DB::table('site_gam_reporting_unit_claims')->where('unit_key', $claimKey)->lockForUpdate()->first()) $this->conflict();
             DB::table('site_gam_reporting_unit_claims')->where('unit_key', $ownedKey)
                 ->where('binding_type', $type)->where('binding_id', $id)
                 ->update(['unit_key' => $claimKey, 'updated_at' => now()]);
@@ -62,14 +62,14 @@ final class SiteGamUnitClaims
         return $claimKey;
     }
 
-    /** Called under the network mutex at import and historical-range admission. */
+    /** Under the network mutex: locking reads avoid stale MySQL REPEATABLE READ ownership snapshots. */
     public function assertWindow(SiteGamReportBinding $owner, string $from, string $to): void
     {
         foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, MobileAppReportBinding::class] as $model) {
             $query = $model::withoutGlobalScopes()->where('network_code', $owner->network_code)->where('ad_unit_id', $owner->ad_unit_id)
                 ->whereDate('starts_on', '<=', $to)->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $from));
             if ($model === SiteGamVideoReportBinding::class) $query->whereNull('cancelled_at');
-            foreach ($query->with('connection')->get() as $binding) {
+            foreach ($query->with('connection')->lockForUpdate()->get() as $binding) {
                 if ($binding->id === $owner->id && $binding->connectionType() === $owner->connectionType()) continue;
                 if (! $this->disjoint($binding, $owner->site, max($from, $binding->starts_on->toDateString()))) $this->conflict();
             }
@@ -82,7 +82,7 @@ final class SiteGamUnitClaims
         $scope = data_get($binding->connection?->configuration, 'site_report_scope');
         if (! is_array($scope) || ($scope['effective_from'] ?? '9999') > $from) return false;
         try {
-            app(SiteGamReportScope::class)->assertCurrent($binding, $scope);
+            app(SiteGamReportScope::class)->assertCurrent($binding, $scope, lock: true);
             return $scope['hostname'] !== app(SiteGamReportScope::class)->hostname($site->primary_domain);
         } catch (\RuntimeException) {
             // Missing, legacy, or changed scope remains exclusive until reviewed.
