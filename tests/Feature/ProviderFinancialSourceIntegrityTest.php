@@ -794,11 +794,17 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertSame(['/123/unit'], horusFinanceTagMetadata($google)['paths']);
         $this->assertSame('GOOGLE_VAST', horusFinanceTagMetadata($google)['kind']);
         $shape = horusFinanceUrlShape('https://user:DO_NOT_KEEP@other.example/DO_NOT_KEEP?iu=/123/unit&token=DO_NOT_KEEP#DO_NOT_KEEP');
-        $this->assertSame(['kind' => 'URL', 'scheme' => 'https', 'host' => 'other.example', 'google_ads_endpoint' => false, 'unit_path' => '/123/unit'], $shape);
+        $this->assertSame(['kind' => 'URL', 'scheme' => 'https', 'host' => 'other.example', 'google_ads_endpoint' => false, 'adsense_video_endpoint' => false, 'public_adsense_client' => null, 'public_adsense_slot' => null, 'unit_path' => '/123/unit'], $shape);
         $this->assertStringNotContainsString('DO_NOT_KEEP', json_encode($shape));
         $this->assertNull(horusFinanceUrlShape('https://other.example/?iu[]=DO_NOT_KEEP')['unit_path']);
         $this->assertNull(horusFinanceUrlShape('https://other.example/?iu=DO_NOT_KEEP')['unit_path']);
         $this->assertSame('UNKNOWN', horusFinanceTagMetadata('https://pubads.g.doubleclick.net.attacker.example/gampad/ads?iu=/123/unit')['kind']);
+        $adsense = horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=ca-video-pub-1234567890123456&slotname=123456&token=DO_NOT_KEEP');
+        $this->assertSame('ca-video-pub-1234567890123456', $adsense['public_adsense_client']);
+        $this->assertSame('123456', $adsense['public_adsense_slot']);
+        $this->assertStringNotContainsString('DO_NOT_KEEP', json_encode($adsense));
+        $this->assertNull(horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=DO_NOT_KEEP&slotname[]=123')['public_adsense_client']);
+        $this->assertNull(horusFinanceUrlShape('https://other.example/pagead/ads?client=ca-video-pub-1234567890123456')['public_adsense_client']);
     }
 
     public function test_video_preview_allows_api_audit_but_rejects_financial_and_configuration_writes(): void
