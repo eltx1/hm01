@@ -204,3 +204,32 @@ and forward reporting unchanged. The normal scheduler/Google importer performs
 source verification, dated revenue allocation, duplicate checks and reconciliation.
 Creating the request does not import money or close a period. Repeated identical
 requests reuse the historical binding. Closed history cannot be backfilled.
+
+
+### Exact-hostname sharing and ongoing coverage reviews
+
+Website primary and Video reporting can share a physical network/ad unit only
+across different verified exact hostnames. Network-level transaction locks serialize
+claims across duplicate GAM credentials and both reporting purposes. Each import
+rechecks effective ownership and the exact Google Site scope before writing money.
+Same-hostname, mobile-app and legacy/unscoped owners remain exclusive. Historical
+Video recovery uses the same disjoint-scope checks, retains closed-period protection,
+and never rewrites previous financial facts. Releasing one website claim cannot
+release another website's claim.
+
+New or re-saved ongoing Site GAM declarations record a server-owned fingerprint of
+the reviewed published revenue sources and mapped websites. Changing an ad source,
+bidder parameters, delivery mode or adding a mapped website requires an explicit
+coverage review before month close (`SITE_GAM_SOURCE_CHANGED`). Changing a source
+and then reverting it still requires review because it may have generated revenue.
+Pure ordering, candidate priority and container ID changes do not require review.
+The fingerprint stores no raw ad recipes or credentials. Month-specific declarations
+remain limited to their chosen month; existing declarations retain their original
+semantics until an administrator explicitly reviews and saves them again. None of
+these reporting controls changes ad serving or creates publisher invoices/payments.
+
+A reviewed Video gap before a future activation may include the current network
+day. The existing scheduler imports that day as an estimate and finalizes it only
+after network midnight. Future dates and dates overlapping active/history bindings
+remain rejected. This closes cutover gaps without moving the active binding,
+overwriting primary reports or making today's estimates payable.

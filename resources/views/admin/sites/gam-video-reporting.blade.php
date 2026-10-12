@@ -48,7 +48,7 @@
     @else<p class="muted">Connect an Ad Manager account above to enable optional Video reports.</p>@endif
     @if($videoBinding && auth()->user()->hasPermission('finance.periods.close'))
     <details class="domain-card"><summary>Recover missing historical Video reports</summary>
-        <p>Import an uncovered date range before {{ $videoBinding->starts_on->toDateString() }} using this verified network and Video unit. The current reporting connection stays unchanged. Google results are allocated using the original dated revenue rules. Closed months and overlapping history cannot be changed.</p>
+        <p>Import an uncovered date range before {{ $videoBinding->starts_on->toDateString() }} using this verified network and Video unit. The current reporting connection stays unchanged. Google results are allocated using the original dated revenue rules. Closed months and overlapping history cannot be changed. You may include today when activation starts later; today remains estimated and finalizes automatically after network midnight. Future dates are not accepted.</p>
         <form method="POST" action="{{ route('admin.sites.reporting.video.backfill', $site) }}" class="form-stack">
             @csrf<input type="hidden" name="video_binding_id" value="{{ $videoBinding->id }}">
             <label>Historical Video from<input class="hm-input" type="date" name="video_history_from" required></label>

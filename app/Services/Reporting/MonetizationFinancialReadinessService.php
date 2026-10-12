@@ -140,6 +140,15 @@ final class MonetizationFinancialReadinessService
                 (array) $subject->financialBinding?->configuration, $period->starts_on, $period->ends_on,
             );
             if ($siteGamDeclared) {
+                if (app(SiteGamCoverageReview::class)->changed($subject, $period)) {
+                    return [
+                        'subject_type' => $subject instanceof DemandAccount ? 'DEMAND_ACCOUNT' : 'BIDDER_ACCOUNT',
+                        'subject_id' => $subject->id, 'subject_name' => $subject->name,
+                        'status' => FinancialReadinessStatus::ReconciliationRequired->value,
+                        'reasons' => [['code' => 'SITE_GAM_SOURCE_CHANGED',
+                            'message' => 'Published ad sources or mapped websites changed after the Site GAM coverage review. Verify all current sources and re-save the financial coverage declaration before closing this month.']],
+                    ];
+                }
                 $siteGamComplete = $subject->financialBinding?->is_enabled
                     && $siteIds->isNotEmpty()
                     && $siteIds->every(fn ($id) => $this->siteReports->coversSite($id, $period));

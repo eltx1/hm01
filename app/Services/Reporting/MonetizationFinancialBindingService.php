@@ -44,6 +44,8 @@ final class MonetizationFinancialBindingService
             throw ValidationException::withMessages(['configuration' => 'Financial binding configuration must contain non-secret metadata only.']);
         }
         SiteGamRevenueDeclaration::validate($configuration);
+        // A client cannot forge the server's reviewed source snapshot.
+        unset($configuration['site_gam_coverage_review']);
         $siteGamIncluded = (bool) data_get($configuration, 'site_gam_included', false);
         if ($siteGamIncluded && mb_strlen(trim((string) data_get($configuration, 'site_gam_inclusion_reason', ''))) < 12) {
             throw ValidationException::withMessages([
@@ -66,6 +68,9 @@ final class MonetizationFinancialBindingService
             $subject, $source, $method, $currency, $timezone, $actor, $configuration,
             $enabled, $type, $finalizedCapable, $siteGamIncluded
         ): MonetizationFinancialBinding {
+            if ($siteGamIncluded && blank($configuration['site_gam_included_period'] ?? null)) {
+                $configuration['site_gam_coverage_review'] = app(SiteGamCoverageReview::class)->capture($subject);
+            }
             if ($siteGamIncluded && filled($configuration['site_gam_included_period'] ?? null)) {
                 $month = $configuration['site_gam_included_period'];
                 $period = \App\Models\FinancialPeriod::query()->where('period_key', $month)->where('currency', $currency)->lockForUpdate()->first();

@@ -600,11 +600,12 @@ class SiteGamReportingTest extends TestCase
         $this->assertDatabaseCount('site_gam_report_bindings', 0);
     }
 
-    public function test_same_physical_unit_cannot_be_assigned_to_two_websites_even_with_duplicate_connections(): void
+    public function test_same_hostname_cannot_be_assigned_twice_even_with_duplicate_connections(): void
     {
         [$admin, $publisher, $user, , $gam] = $context = $this->context();
         $this->bind($context);
-        $second = $this->makeSiteFor($publisher, $user);
+        $otherUser = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Second publisher'), RoleName::PublisherAdmin);
+        $second = $this->makeSiteFor($this->makePublisherFor($otherUser), $otherUser, ['primary_domain' => $context[3]->primary_domain]);
         $duplicate = $this->makeGamConnection($admin->organization, $admin, ['network_code' => $gam->network_code]);
         $this->expectException(ValidationException::class);
         app(SiteGamReportingService::class)->bind($second, $duplicate->id, '12345', $admin);

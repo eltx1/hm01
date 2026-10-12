@@ -6,7 +6,6 @@ use App\Models\FinancialPeriod;
 use App\Models\GamConnection;
 use App\Models\ReportSourceConnection;
 use App\Models\Site;
-use App\Models\SiteGamReportBinding;
 use App\Models\SiteGamVideoReportBinding;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
@@ -28,7 +27,7 @@ final class SiteGamVideoBackfillService
         if (CarbonImmutable::parse($from)->toDateString() !== $from || CarbonImmutable::parse($to)->toDateString() !== $to) $this->invalid();
         $original = SiteGamVideoReportBinding::withoutGlobalScopes()->with('connection.source', 'gamConnection')
             ->where('site_id', $site->id)->where('active_site_id', $site->id)->findOrFail($bindingId);
-        if ($to >= $original->starts_on->toDateString() || $to >= CarbonImmutable::now($original->connection->timezone)->toDateString()) $this->invalid();
+        if ($to >= $original->starts_on->toDateString() || $to > CarbonImmutable::now($original->connection->timezone)->toDateString()) $this->invalid();
 
         return DB::transaction(function () use ($site, $original, $from, $to, $reason, $actor) {
             // Same network/site/period lock order as normal imports and month close.
@@ -44,7 +43,7 @@ final class SiteGamVideoBackfillService
                 || $current->connection->organization_id !== $site->organization_id
                 || ! $current->connection->is_enabled || ! $current->connection->source->is_enabled
                 || $to >= $current->starts_on->toDateString() || $current->ends_on !== null) $this->invalid();
-            if (! DB::table('site_gam_reporting_unit_claims')->where('unit_key', $current->network_code.':'.$current->ad_unit_id)
+            if (! DB::table('site_gam_reporting_unit_claims')->where('unit_key', $current->active_unit_key)
                 ->where('binding_type', $current->connectionType())->where('binding_id', $current->id)->exists()) $this->invalid();
             $period = app(FinancialPeriodService::class)->periodFor(CarbonImmutable::parse($from), $current->connection->currency);
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($period->id);
@@ -54,14 +53,10 @@ final class SiteGamVideoBackfillService
                 ->whereDate('starts_on', $from)->whereDate('ends_on', $to)->whereNull('cancelled_at')
                 ->whereHas('connection', fn ($q) => $q->where('configuration->historical_backfill_of', $current->id))->first();
             if ($same) return $same;
-            foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, \App\Models\MobileAppReportBinding::class] as $model) {
-                $query = $model::withoutGlobalScopes()->whereDate('starts_on', '<=', $to)
-                    ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $from))
-                    ->where(fn ($q) => $q->where(fn ($q) => $q->where('network_code', $current->network_code)->where('ad_unit_id', $current->ad_unit_id))
-                        ->when($model === SiteGamVideoReportBinding::class, fn ($q) => $q->orWhere('site_id', $site->id)));
-                if ($model === SiteGamVideoReportBinding::class) $query->whereNull('cancelled_at');
-                if ($query->exists()) $this->invalid();
-            }
+            app(SiteGamUnitClaims::class)->assertWindow($current, $from, $to);
+            if (SiteGamVideoReportBinding::withoutGlobalScopes()->where('site_id', $site->id)->whereNull('cancelled_at')
+                ->whereDate('starts_on', '<=', $to)
+                ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $from))->exists()) $this->invalid();
             $id = (string) Str::ulid();
             $connection = ReportSourceConnection::withoutGlobalScopes()->create([
                 'organization_id' => $site->organization_id, 'report_source_id' => $current->connection->report_source_id,

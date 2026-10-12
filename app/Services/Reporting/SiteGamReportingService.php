@@ -72,8 +72,8 @@ final class SiteGamReportingService
             $current = SiteGamReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']
                 && $current->connection->timezone === $network['timeZone']) {
-                app(SiteGamUnitClaims::class)->reserve($gam->network_code.':'.$unit['id'], $current->connectionType(), $current->id);
-                $current->update(['ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
+                $claimKey = app(SiteGamUnitClaims::class)->reserve($gam->network_code.':'.$unit['id'], $current->connectionType(), $current->id, $site, CarbonImmutable::now($network['timeZone'])->toDateString());
+                $current->update(['active_unit_key' => $claimKey, 'ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
                 $this->normalizeConnectionCurrency($current, $networkCurrency, $reportCurrency, $actor);
                 if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);
@@ -84,9 +84,6 @@ final class SiteGamReportingService
                 return $current->fresh(['connection']);
             }
             $key = $gam->network_code.':'.$unit['id'];
-            if (SiteGamReportBinding::withoutGlobalScopes()->where('active_unit_key', $key)->where('site_id', '!=', $site->id)->exists()) {
-                throw ValidationException::withMessages(['ad_unit' => 'This ad unit already supplies reports for another website.']);
-            }
             $today = CarbonImmutable::now($network['timeZone'])->startOfDay();
             $starts = $today->startOfMonth();
             // Serialize the cutover with financial closing as well as report imports.
@@ -122,7 +119,7 @@ final class SiteGamReportingService
                 'capabilities' => ['API', 'DAILY', 'FINALIZED_API'],
             ]);
             $id = (string) Str::ulid();
-            app(SiteGamUnitClaims::class)->reserve($key, 'SITE_GAM_AD_UNIT', $id);
+            $claimKey = app(SiteGamUnitClaims::class)->reserve($key, 'SITE_GAM_AD_UNIT', $id, $site, $starts->toDateString());
             $connection = ReportSourceConnection::withoutGlobalScopes()->create([
                 'organization_id' => $site->organization_id, 'report_source_id' => $source->id,
                 'name' => Str::limit($site->display_name, 220, '').' — GAM ad unit', 'connection_type' => 'SITE_GAM_AD_UNIT',
@@ -138,7 +135,7 @@ final class SiteGamReportingService
             $binding = SiteGamReportBinding::withoutGlobalScopes()->create([
                 'id' => $id, 'organization_id' => $site->organization_id, 'site_id' => $site->id,
                 'gam_connection_id' => $gam->id, 'report_source_connection_id' => $connection->id,
-                'active_site_id' => $site->id, 'active_unit_key' => $key,
+                'active_site_id' => $site->id, 'active_unit_key' => $claimKey,
                 'network_code' => (string) $gam->network_code, 'ad_unit_id' => (string) $unit['id'],
                 'ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode'],
                 'starts_on' => $starts->toDateString(), 'created_by' => $actor->id,

@@ -50,6 +50,7 @@ final class SiteReportSourcePolicy
                 throw ValidationException::withMessages(['source' => 'The Google report must prove the exact website hostname and current effective scope.']);
             }
             app(SiteGamReportScope::class)->assertNoConflictingFacts($connection, $row['date'], $scope['fingerprint']);
+            app(SiteGamUnitClaims::class)->assertWindow($binding, $row['date'], $row['date']);
 
             if ($binding instanceof SiteGamVideoReportBinding) $this->assertNoAmbiguousVideoFacts($binding, $row['date']);
 
@@ -111,6 +112,7 @@ final class SiteReportSourcePolicy
                 ->with('dimension', 'connection')->lockForUpdate()->get();
             foreach ($facts as $fact) {
                 if (in_array($fact->connection?->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true)) continue;
+                if (app(SiteGamUnitClaims::class)->hasDisjointFact($fact, $binding->site, $date)) continue;
                 $external = $fact->dimension?->external_dimensions ?? [];
                 $unit = $external['gam_ad_unit_id'] ?? $external['ad_unit_id'] ?? $external['dimension.ad_unit_id'] ?? null;
                 $gam = $fact->dimension?->gam_connection_id
