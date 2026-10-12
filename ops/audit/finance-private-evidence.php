@@ -36,8 +36,13 @@ function horusFinancePrivateSourceEvidence(\App\Models\DemandAccount $account, \
                     if (($candidate['network'] ?? '') !== $account->network->code->value) continue;
                     $attributes = $candidate['tag']['container']['attributes'] ?? [];
                     $path = $attributes['data-hm-gpt-ad-unit-path'] ?? '';
-                    $raw = $path ?: (horusFinanceDecodePayload($attributes, 'data-hm-isolated-html') ?: horusFinanceDecodePayload($attributes, 'data-hm-vast-url'));
-                    $candidates[] = ['container' => $candidate['tag']['container']['id'] ?? null, 'source' => horusFinanceTagMetadata($raw)];
+                    $raw = $path ?: (horusFinanceDecodePayload($attributes, 'data-hm-isolated-html') ?: horusFinanceDecodePayload($attributes, 'data-hm-vast-url'))
+                        ?: (string) ($candidate['tag']['isolation']['html'] ?? '');
+                    $metadata = horusFinanceTagMetadata($raw);
+                    $candidates[] = ['container' => $candidate['tag']['container']['id'] ?? null, 'source' => $metadata,
+                        'gam_managed' => (bool) ($candidate['gamManaged'] ?? false),
+                        ...($metadata['kind'] === 'UNKNOWN' ? ['tag_fields' => array_keys($candidate['tag'] ?? []),
+                            'attribute_fields' => array_keys($attributes)] : [])];
                 }
             }
             $data['history'][] = ['published_at' => $version->published_at->toIso8601String(), 'candidates' => $candidates];
