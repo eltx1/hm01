@@ -368,6 +368,10 @@ class SiteGamVideoReportingTest extends TestCase
     {
         $context = $this->context();
         $first = $this->video($context);
+        // Existing production bindings keep their original physical claim.
+        DB::table('site_gam_reporting_unit_claims')->where('binding_id', $first->id)
+            ->update(['unit_key' => $first->network_code.':'.$first->ad_unit_id]);
+        $first->update(['active_unit_key' => $first->network_code.':'.$first->ad_unit_id]);
         $other = $context;
         $other[3] = $this->otherPublisherSite();
         $other[4] = $this->makeGamConnection($context[0]->organization, $context[0], ['network_code' => $context[4]->network_code]);
@@ -387,6 +391,25 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertSame(300, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
         $this->assertSame(95, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $first->report_source_connection_id)->firstOrFail()->impressions);
         $this->assertSame(190, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $second->report_source_connection_id)->firstOrFail()->impressions);
+    }
+
+    public function test_primary_and_video_can_share_a_unit_only_on_distinct_publisher_hostnames(): void
+    {
+        $context = $this->context();
+        $primary = $this->bind($context);
+        $other = $context;
+        $other[3] = $this->otherPublisherSite();
+        $video = $this->video($other, '12345');
+        $this->assertNotSame($primary->active_unit_key, $video->active_unit_key);
+        $this->finalizeClock();
+        $a = $this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000']], hostname: $context[3]->primary_domain);
+        $b = $this->csv([['2026-09-21', '12345', 240, 200, 190, 6, 'US$ 2000000']], hostname: $other[3]->primary_domain);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($a.explode("\n", $b, 2)[1])]);
+        $day = CarbonImmutable::parse('2026-09-21');
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($primary->connection, $day, $day, ReportGranularity::Daily, ReportFinality::Finalized));
+        $this->assertCompleted($this->import($video));
+        $this->assertSame(2, DailyReport::withoutGlobalScopes()->count());
+        $this->assertSame(300, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
     }
 
     public function test_shared_hostname_scopes_allow_bounded_history_and_release_only_the_selected_owner(): void
