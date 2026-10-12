@@ -57,8 +57,14 @@ try {
         $ready = $period->isClosed() ? ['ready' => true, 'blockers' => [], 'counts' => []]
             : app(App\Services\Reporting\FinancialPeriodService::class)->readiness($period);
         $reasons = [];
+        $demandEvidence = [];
         foreach ($ready['blockers'] as $blocker) {
             foreach ($blocker['subjects'] ?? [] as $subject) {
+                if ($subject['subject_type'] === 'DEMAND_ACCOUNT') {
+                    $account = App\Models\DemandAccount::withoutGlobalScopes()->with('network')->findOrFail($subject['subject_id']);
+                    if (count($demandEvidence) >= 100) throw new RuntimeException('Evidence limit exceeded');
+                    $demandEvidence[] = horusFinanceDemandEvidence($account, $period);
+                }
                 foreach ($subject['reasons'] ?? [] as $reason) {
                     $key = $subject['subject_type'].':'.$reason['code'];
                     $reasons[$key] = ($reasons[$key] ?? 0) + 1;
@@ -76,10 +82,11 @@ try {
             'ready' => $ready['ready'], 'counts' => $ready['counts'],
             'blockers' => array_column($ready['blockers'], 'code'), 'subject_reasons' => $reasons,
             'statement_count' => $period->statements()->count(), 'fact_groups' => $groups->all(),
+            'demand_evidence' => $demandEvidence,
         ];
     }
     $db->rollBack();
-    echo json_encode(['schema_version' => 1, 'release' => $release, 'periods' => $rows], JSON_THROW_ON_ERROR);
+    echo json_encode(['schema_version' => 2, 'release' => $release, 'periods' => $rows], JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
     if (isset($db) && $db && $db->transactionLevel() > 0) $db->rollBack();
     fwrite(STDERR, "Read-only finance diagnosis unavailable.\n");

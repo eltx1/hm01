@@ -649,6 +649,46 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/prebid\/(raw-?bid|auction|impression|telemetry)/i', $uris);
     }
 
+    public function test_finance_source_probe_distinguishes_future_mappings_and_reads_only_published_month_history(): void
+    {
+        require_once base_path('ops/audit/finance-source-evidence.php');
+        $account = $this->demandAccount('CUSTOM_THIRD_PARTY_TAG', ['quick_monetize_managed' => true]);
+        $period = new FinancialPeriod(['starts_on' => '2026-09-01', 'ends_on' => '2026-09-30', 'currency' => 'USD']);
+        $mapping = $account->sites()->withoutGlobalScopes()->firstOrFail();
+        $mapping->forceFill(['created_at' => '2026-10-01'])->save();
+        $config = \App\Models\SiteConfig::withoutGlobalScopes()->firstOrCreate(
+            ['site_id' => $this->site->id], ['organization_id' => $this->site->organization_id],
+        );
+        foreach (['2026-08-01', '2026-08-31', '2026-09-15', '2026-10-01', null] as $i => $published) {
+            \App\Models\ConfigVersion::withoutGlobalScopes()->create([
+                'organization_id' => $this->site->organization_id, 'site_id' => $this->site->id,
+                'site_config_id' => $config->id, 'environment' => 'PRODUCTION', 'version' => $i + 1,
+                'status' => $published ? 'PUBLISHED' : 'DRAFT', 'checksum' => str_repeat('a', 64),
+                'file_path' => 'test.json', 'published_at' => $published,
+                'payload' => ['directDemand' => ['enabled' => true, 'placements' => [
+                    ['enabled' => true, 'candidates' => [
+                        ['network' => 'CUSTOM_THIRD_PARTY_TAG', 'tag' => ['container' => ['attributes' => ['data-hm-gpt-ad-unit-path' => '/123/private_unit']]]],
+                        ['network' => 'MGID', 'tag' => []],
+                    ]],
+                ]]],
+            ]);
+        }
+        $queries = [];
+        \Illuminate\Support\Facades\DB::listen(function ($event) use (&$queries) { $queries[] = $event->sql; });
+        $evidence = horusFinanceDemandEvidence($account, $period);
+        $this->assertSame(0, $evidence['mappings_before_end']);
+        $this->assertSame(1, $evidence['mappings_after_end']);
+        $this->assertSame('UNVERIFIED', $evidence['historical_account_attribution']);
+        $this->assertSame(2, $evidence['site_provider_snapshots']);
+        $this->assertSame(2, $evidence['site_provider_candidates']);
+        $this->assertSame(2, $evidence['site_provider_google_paths']);
+        $this->assertSame(0, $evidence['site_provider_exact_report_matches']);
+        $this->assertStringNotContainsString('private_unit', json_encode($evidence));
+        $this->assertStringNotContainsString($account->id, json_encode($evidence));
+        foreach ($queries as $sql) $this->assertMatchesRegularExpression('/^select/i', $sql);
+        $this->assertNull($account->fresh()->financialBinding);
+    }
+
     private function demandAccount(string $networkCode, array $configuration): DemandAccount
     {
         $network = DemandNetwork::query()->where('code', $networkCode)->firstOrFail();

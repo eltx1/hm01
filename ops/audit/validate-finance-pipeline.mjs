@@ -4,14 +4,14 @@ export function validate(report) {
     const keys = (value, expected) => assert.deepEqual(Object.keys(value).sort(), expected.sort());
     const integer = value => assert.ok(Number.isSafeInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1e9);
     keys(report, ['schema_version', 'release', 'periods']);
-    assert.equal(report.schema_version, 1);
+    assert.equal(report.schema_version, 2);
     assert.match(report.release, /^[a-f0-9]{40}$/);
     assert.ok(Array.isArray(report.periods) && report.periods.length <= 24);
     const blockers = ['PERIOD_NOT_ENDED','MISSING_FINALIZED_DATA','NON_FINAL_REPORTING','SETTLEMENT_INELIGIBLE_FINALIZED_ROWS','MONETIZATION_SOURCE_COVERAGE','FAILED_IMPORTS','IMPORTS_IN_PROGRESS','RECONCILIATION_ISSUES','PENDING_ADJUSTMENTS','CURRENCY_MISMATCH'];
     const countKeys = ['finalizedRows','ineligibleFinalizedRows','nonFinalRows','failedImports','activeImports','reconciliationIssues','pendingAdjustments','currencyMismatchRows','currencyMismatchAdjustments','monetizationCoverageBlockers'];
     const types = ['GAM_CONNECTION','SITE_GAM_AD_UNIT','SITE_GAM_VIDEO_AD_UNIT','MOBILE_APP_GAM','DEMAND_ACCOUNT','BIDDER_ACCOUNT'];
     for (const period of report.periods) {
-        keys(period, ['period','currency','status','ready','counts','blockers','subject_reasons','statement_count','fact_groups']);
+        keys(period, ['period','currency','status','ready','counts','blockers','subject_reasons','statement_count','fact_groups','demand_evidence']);
         assert.match(period.period, /^20\d{2}-(0[1-9]|1[0-2])$/);
         assert.match(period.currency, /^[A-Z]{3}$/);
         assert.ok(['OPEN','CLOSING','CLOSED'].includes(period.status));
@@ -21,6 +21,17 @@ export function validate(report) {
         period.blockers.forEach(code => assert.ok(blockers.includes(code)));
         for (const [key, count] of Object.entries(period.subject_reasons)) { assert.match(key, /^[A-Z_]{1,40}:[A-Z_]{1,100}$/); integer(count); }
         integer(period.statement_count);
+        assert.ok(Array.isArray(period.demand_evidence) && period.demand_evidence.length <= 100);
+        const evidenceCounts = ['mappings_before_end','mappings_after_end','widgets_before_end','widgets_changed_after_end','current_google_paths','current_exact_report_matches','current_other_or_unparseable','site_provider_snapshots','site_provider_candidates','site_provider_google_paths','site_provider_exact_report_matches'];
+        for (const evidence of period.demand_evidence) {
+            keys(evidence, ['provider','mode','quick_managed','created_month','historical_account_attribution', ...evidenceCounts]);
+            assert.ok(['MGID','TABOOLA','SPEAKOL','OUTBRAIN','EXOCLICK','CUSTOM_NATIVE','CUSTOM_DISPLAY','CUSTOM_THIRD_PARTY_TAG'].includes(evidence.provider));
+            assert.ok(['DIRECT_JS','GAM_THIRD_PARTY_CREATIVE','GAM_LINE_ITEM','MANUAL_TAG','API_INTEGRATION'].includes(evidence.mode));
+            assert.equal(typeof evidence.quick_managed, 'boolean');
+            assert.equal(evidence.historical_account_attribution, 'UNVERIFIED');
+            assert.match(evidence.created_month, /^20\d{2}-(0[1-9]|1[0-2])$/);
+            evidenceCounts.forEach(key => integer(evidence[key]));
+        }
         assert.ok(Array.isArray(period.fact_groups) && period.fact_groups.length <= 100);
         for (const group of period.fact_groups) {
             keys(group, ['connection_type','finality','settlement_eligible','rows_count','publisher_rows','first_date','last_date']);

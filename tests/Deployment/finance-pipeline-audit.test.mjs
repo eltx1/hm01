@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {validate} from '../../ops/audit/validate-finance-pipeline.mjs';
-const fixture = () => ({schema_version:1, release:'a'.repeat(40), periods:[{period:'2026-09', currency:'USD', status:'OPEN', ready:false, counts:{nonFinalRows:2}, blockers:['NON_FINAL_REPORTING'], subject_reasons:{}, statement_count:0, fact_groups:[{connection_type:'SITE_GAM_AD_UNIT', finality:'ESTIMATED', settlement_eligible:0, rows_count:2, publisher_rows:2, first_date:'2026-09-01', last_date:'2026-09-02'}]}]});
+const fixture = () => ({schema_version:2, release:'a'.repeat(40), periods:[{period:'2026-09', currency:'USD', status:'OPEN', ready:false, counts:{nonFinalRows:2}, blockers:['NON_FINAL_REPORTING'], subject_reasons:{}, statement_count:0, demand_evidence:[], fact_groups:[{connection_type:'SITE_GAM_AD_UNIT', finality:'ESTIMATED', settlement_eligible:0, rows_count:2, publisher_rows:2, first_date:'2026-09-01', last_date:'2026-09-02'}]}]});
 test('accepts bounded aggregate finance evidence', () => assert.deepEqual(validate(fixture()), fixture()));
 test('rejects private identities, amounts, names and unexpected diagnostic output', () => {
     for (const key of ['publisher_id','subject_name','publisher_earnings_minor','payment_profile','error']) {
@@ -17,4 +17,13 @@ test('diagnostic retains read-only transaction and exact release boundary', () =
     assert.ok(source.includes('$db->rollBack()'));
     assert.doesNotMatch(source,/->(?:update|delete|insert|create|close)\(/);
     assert.doesNotMatch(source,/gross_revenue_minor|publisher_earnings_minor|subject_name|account_reference/);
+});
+
+test('source evidence cannot expose tags, IDs or arbitrary provider strings', () => {
+    const evidence = {provider:'CUSTOM_THIRD_PARTY_TAG',mode:'MANUAL_TAG',quick_managed:true,created_month:'2026-09',historical_account_attribution:'UNVERIFIED',mappings_before_end:1,mappings_after_end:0,widgets_before_end:1,widgets_changed_after_end:0,current_google_paths:1,current_exact_report_matches:0,current_other_or_unparseable:0,site_provider_snapshots:1,site_provider_candidates:1,site_provider_google_paths:1,site_provider_exact_report_matches:0};
+    const report=fixture(); report.periods[0].demand_evidence=[evidence]; validate(report);
+    for (const key of ['tag','account_id','ad_unit_path','name']) {
+        assert.throws(()=>validate({...report,periods:[{...report.periods[0],demand_evidence:[{...evidence,[key]:'PRIVATE'}]}]}));
+    }
+    evidence.provider='PRIVATE ACCOUNT'; assert.throws(()=>validate(report));
 });
