@@ -1,0 +1,39 @@
+name: Native Video interval regression
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/video-native-interval-regression.yml
+      - tests/Browser/video-inline-floating.playwright.spec.js
+      - tests/Browser/fixtures/content-playback-long.mp4.base64
+      - public/assets/hm-video-direct.js
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/video-native-interval-regression.yml
+      - tests/Browser/video-inline-floating.playwright.spec.js
+      - tests/Browser/fixtures/content-playback-long.mp4.base64
+      - public/assets/hm-video-direct.js
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-video-interval-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-interval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - run: bash scripts/install-playwright-ci.sh
+      - name: Repeat native playback and exact interval boundaries on all four browsers
+        run: npx playwright test --config=playwright.traffic-gate.config.js --grep='native content playback produces successive|five-second midrolls continue after scroll' --repeat-each=3
