@@ -46,4 +46,17 @@
         <button class="hm-button-primary">{{ $videoBinding ? 'Update Video connection' : 'Enable Video reporting' }}</button>
     </form>
     @else<p class="muted">Connect an Ad Manager account above to enable optional Video reports.</p>@endif
+    @if($videoBinding && auth()->user()->hasPermission('finance.periods.close'))
+    <details class="domain-card"><summary>Recover missing historical Video reports</summary>
+        <p>Import an uncovered date range before {{ $videoBinding->starts_on->toDateString() }} using this verified network and Video unit. The current reporting connection stays unchanged. Google results are allocated using the original dated revenue rules. Closed months and overlapping history cannot be changed.</p>
+        <form method="POST" action="{{ route('admin.sites.reporting.video.backfill', $site) }}" class="form-stack">
+            @csrf<input type="hidden" name="video_binding_id" value="{{ $videoBinding->id }}">
+            <label>Historical Video from<input class="hm-input" type="date" name="video_history_from" required></label>
+            <label>Historical Video to<input class="hm-input" type="date" name="video_history_to" required></label>
+            <label>Historical Video evidence / reason<textarea class="hm-input" name="video_history_reason" minlength="12" maxlength="1000" required></textarea></label>
+            <label><input type="checkbox" name="confirm_video_history" value="1" required> I reviewed this missing range and authorize importing its Google earnings.</label>
+            <button class="hm-button-secondary">Schedule historical Video import</button>
+        </form>
+    </details>
+    @endif
 </article>

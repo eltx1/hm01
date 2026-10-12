@@ -101,6 +101,7 @@ class PrebidController extends Controller
             'is_enabled' => ['required', 'boolean'],
             'configuration_json' => ['nullable', 'json'],
             'site_gam_included' => ['sometimes', 'boolean'],
+            'site_gam_included_period' => ['nullable', 'date_format:Y-m'],
             'site_gam_inclusion_reason' => ['nullable', 'string', 'min:12', 'max:1000', 'required_if:site_gam_included,1'],
         ]);
         $configuration = isset($data['configuration_json'])
@@ -109,6 +110,7 @@ class PrebidController extends Controller
         $configuration['site_gam_included'] = $request->boolean('site_gam_included');
         if ($configuration['site_gam_included']) {
             $configuration['site_gam_inclusion_reason'] = trim((string) $data['site_gam_inclusion_reason']);
+            $configuration['site_gam_included_period'] = $data['site_gam_included_period'] ?? null;
         } else {
             unset($configuration['site_gam_inclusion_reason']);
         }

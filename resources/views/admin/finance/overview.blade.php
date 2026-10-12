@@ -9,7 +9,7 @@
 <article class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Currency boundaries</p><h2>Publisher liability and payout state</h2></div></div>
     @if(count($currency_totals) === 0)
-        <x-empty-state title="No financial balances yet" description="Currency liabilities and payout readiness will appear after finalized Publisher earnings are available." />
+        <x-empty-state title="No financial balances yet" description="Statement balances appear after monthly close. Earnings awaiting close are shown above." />
     @else
     <div class="table-wrap" role="region" aria-label="Publisher liability and payout totals by currency" tabindex="0"><table>
         <thead><tr><th scope="col">Currency</th><th scope="col" class="numeric">Outstanding liability</th><th scope="col" class="numeric">Ready for payout</th><th scope="col" class="numeric">Below threshold</th><th scope="col" class="numeric">Awaiting invoice</th><th scope="col" class="numeric">Pending approval</th><th scope="col" class="numeric">Approved</th><th scope="col" class="numeric">Scheduled</th><th scope="col" class="numeric">Paid this month</th><th scope="col" class="numeric">Partial remainder</th><th scope="col" class="numeric">Failed / held</th></tr></thead>
@@ -47,7 +47,7 @@
 
 <article class="workspace-section"><div class="workspace-heading"><div><p class="eyebrow">Close readiness</p><h2>Recent financial periods</h2></div><a class="text-link" href="{{ route('admin.finance.periods.index') }}">Open workbench</a></div>
     @forelse($periods->take(6) as $row)
-        <div class="compact-row"><div><strong>{{ $row['period']->period_key }} · {{ $row['period']->currency }}</strong><p>{{ collect($row['readiness']['blockers'] ?? [])->pluck('message')->join(' · ') ?: 'All readiness gates pass.' }}</p></div><x-status-badge :status="$row['period']->isClosed() ? $row['period']->status : ($row['readiness']['ready'] ? 'READY' : 'BLOCKED')" /></div>
+        <div class="compact-row"><div><strong>{{ $row['period']->period_key }} · {{ $row['period']->currency }}</strong><p>{{ collect($row['readiness']['blockers'] ?? [])->pluck('message')->join(' · ') ?: 'All readiness gates pass.' }}</p></div><x-status-badge :status="$row['workflow_status']" /></div>
     @empty<x-empty-state title="No financial periods yet" description="Period close readiness appears after reporting creates the first finance period." />@endforelse
 </article>
 @endsection

@@ -481,6 +481,20 @@ class AdminFinanceOperationsTest extends TestCase
         $this->assertSame(300, $overview['statement_balance_due_minor']);
     }
 
+    public function test_current_and_empty_periods_are_not_counted_as_failed_monthly_closes(): void
+    {
+        $this->context();
+        $service = app(\App\Services\Reporting\FinancialPeriodService::class);
+        $service->periodFor(now()->startOfMonth(), 'USD');
+        $service->periodFor(now()->subMonthsNoOverflow(2)->startOfMonth(), 'AED');
+        $overview = app(\App\Services\Reporting\AdminFinanceService::class)->overview();
+        $rows = $overview['periods'];
+        $this->assertSame('IN_PROGRESS', $rows->first(fn ($row) => $row['period']->period_key === now()->format('Y-m'))['workflow_status']);
+        $this->assertSame('EMPTY', $rows->first(fn ($row) => $row['period']->currency === 'AED')['workflow_status']);
+        $this->assertSame(0, $overview['counts']['periods_blocked']);
+        $this->assertFalse($rows->first(fn ($row) => $row['period']->currency === 'AED')['readiness']['ready']);
+    }
+
     private function context(): array
     {
         $this->seedIdentity();

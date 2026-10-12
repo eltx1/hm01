@@ -94,7 +94,7 @@ final class AdminFinanceService
                 'held_payouts' => $payments->where('status', PublisherPaymentStatus::Held)->count(),
                 'open_periods' => $openPeriodRows->count(),
                 'periods_ready' => $openPeriodRows->filter(fn (array $row): bool => (bool) $row['readiness']['ready'])->count(),
-                'periods_blocked' => $openPeriodRows->filter(fn (array $row): bool => ! (bool) $row['readiness']['ready'])->count(),
+                'periods_blocked' => $openPeriodRows->where('workflow_status', 'BLOCKED')->count(),
                 'reconciliation_discrepancies' => ReconciliationRun::withoutGlobalScopes()
                     ->whereIn('status', [ReconciliationStatus::Warning->value, ReconciliationStatus::Failed->value])->count(),
             ],
@@ -106,12 +106,21 @@ final class AdminFinanceService
     public function periodRows(int $limit = 24): Collection
     {
         return FinancialPeriod::query()->latest('starts_on')->limit($limit)->get()
-            ->map(fn (FinancialPeriod $period): array => [
-                'period' => $period,
-                'readiness' => $period->isClosed()
+            ->map(function (FinancialPeriod $period): array {
+                $readiness = $period->isClosed()
                     ? ($period->readiness_snapshot ?? ['ready' => true, 'blockers' => [], 'counts' => []])
-                    : $this->periods->readiness($period),
-            ]);
+                    : $this->periods->readiness($period);
+                $codes = array_column($readiness['blockers'] ?? [], 'code');
+                $status = match (true) {
+                    $period->isClosed() => 'CLOSED',
+                    $period->status !== FinancialPeriodStatus::Open => $period->status->value,
+                    $period->ends_on->gte(today()) => 'IN_PROGRESS',
+                    $codes === ['MISSING_FINALIZED_DATA'] => 'EMPTY',
+                    (bool) $readiness['ready'] => 'READY',
+                    default => 'BLOCKED',
+                };
+                return ['period' => $period, 'readiness' => $readiness, 'workflow_status' => $status];
+            });
     }
 
     public function isEligible(PublisherStatement $statement): bool

@@ -106,6 +106,7 @@
                     <strong>Site GAM revenue coverage attestation</strong>
                     <p class="muted">Do not enable this for standalone Prebid unless its revenue is explicitly present in every mapped website's bound GAM ad-unit reporting.</p>
                     <label><input type="hidden" name="site_gam_included" value="0"><input type="checkbox" name="site_gam_included" value="1" @checked((bool) data_get($binding?->configuration, 'site_gam_included', false))> This bidder revenue is included in Site GAM reporting</label>
+                    <label>Coverage month (optional)<input class="hm-input" type="month" name="site_gam_included_period" value="{{ old('site_gam_included_period', data_get($binding?->configuration, 'site_gam_included_period')) }}"><span class="muted">Choose one reviewed month. Leave empty only for ongoing coverage.</span></label>
                     <label>Evidence / reason<textarea class="hm-input" rows="2" name="site_gam_inclusion_reason" minlength="12" maxlength="1000" placeholder="Why is Site GAM financially complete for this bidder?">{{ data_get($binding?->configuration, 'site_gam_inclusion_reason') }}</textarea></label>
                 </div>
                 <label><input type="hidden" name="is_enabled" value="0"><input type="checkbox" name="is_enabled" value="1" @checked($binding?->is_enabled ?? true)> Financial binding enabled</label>

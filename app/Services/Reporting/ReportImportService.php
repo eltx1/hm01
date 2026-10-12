@@ -50,7 +50,7 @@ final class ReportImportService
         array $options = [],
     ): ReportImportJob {
         $connection->loadMissing('source');
-        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection);
+        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection, $from, $to);
         // GAM financial sources need all request metrics and total revenue
         // (including CPD). Google rejects that combination with HOUR. Refresh
         // a daily estimated snapshot on the hourly cadence instead; never
@@ -185,7 +185,7 @@ final class ReportImportService
         ?string $manualReason = null,
     ): ReportImportJob {
         $connection->loadMissing('source');
-        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection);
+        $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection, $from, $to);
         if ((\App\Models\SiteGamReportBinding::isSiteConnection($connection) || $connection->connection_type === 'MOBILE_APP_GAM') && $importType !== 'API') {
             throw ValidationException::withMessages(['source' => 'This website connection imports directly from Google. CSV and manual imports must use their own sources.']);
         }
@@ -484,15 +484,15 @@ final class ReportImportService
         );
     }
 
-    private function assertNoParallelProviderImportWhenSiteGamIsCanonical(ReportSourceConnection $connection): void
+    private function assertNoParallelProviderImportWhenSiteGamIsCanonical(ReportSourceConnection $connection, CarbonInterface $from, CarbonInterface $to): void
     {
         if (! in_array($connection->connection_type, ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'], true)
-            || ! (bool) data_get($connection->configuration, 'site_gam_included', false)) {
+            || ! SiteGamRevenueDeclaration::overlaps((array) $connection->configuration, $from, $to)) {
             return;
         }
 
         throw ValidationException::withMessages([
-            'source' => 'Provider-specific financial imports are disabled because this monetization account explicitly declares Site GAM as its canonical revenue coverage. Disable that attestation before importing provider revenue separately.',
+            'source' => 'Provider-specific financial imports are disabled because this monetization account explicitly declares Site GAM as its canonical revenue coverage. Choose dates outside the declared coverage, or review the declaration before importing provider revenue separately.',
         ]);
     }
 

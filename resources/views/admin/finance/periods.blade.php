@@ -13,7 +13,7 @@
         <tr>
             <td><strong>{{ $period->period_key }} · {{ $period->currency }}</strong><span class="table-note">{{ $period->starts_on->toDateString() }} — {{ $period->ends_on->toDateString() }}</span></td>
             <td><x-status-badge :status="$period->status" /></td>
-            <td><x-status-badge :status="$period->isClosed() ? 'CLOSED' : ($readiness['ready'] ? 'READY' : 'BLOCKED')" />
+            <td><x-status-badge :status="$row['workflow_status']" />
                 @foreach($readiness['blockers'] ?? [] as $blocker)
                     <span class="table-note"><strong>{{ $blocker['code'] }} ({{ $blocker['count'] }})</strong> — {{ $blocker['message'] }}</span>
                     @foreach($blocker['subjects'] ?? [] as $subject)
@@ -29,6 +29,8 @@
                 @if(!$period->isClosed() && auth()->user()->hasPermission('finance.periods.close'))
                     @if($readiness['ready'])
                         <form method="post" action="{{ route('admin.finance.periods.close', $period) }}" class="inline-form">@csrf<input type="hidden" name="confirm_close" value="1"><button class="hm-button-primary">Close ready period</button></form>
+                    @elseif($row['workflow_status'] === 'IN_PROGRESS')<span class="muted">Reporting month still in progress.</span>
+                    @elseif($row['workflow_status'] === 'EMPTY')<span class="muted">No source activity to close.</span>
                     @elseif(auth()->user()->hasPermission('finance.periods.override'))
                         <details><summary class="text-link">Privileged override</summary><form method="post" action="{{ route('admin.finance.periods.close', $period) }}" class="form-stack">@csrf<input type="hidden" name="confirm_close" value="1"><input type="hidden" name="override_close" value="1"><label>Required reason<textarea class="hm-input" name="override_reason" required minlength="12" maxlength="2000"></textarea></label><button class="hm-button-danger">Override blockers and close</button></form></details>
                     @else<span class="muted">Resolve blockers before close.</span>@endif
