@@ -120,8 +120,7 @@ final class UnifiedReportService
             'apps' => $this->publisherGroup($rows->filter(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension->mobileApp?->name ?? 'Mobile app'),
             'websites' => $this->publisherGroup($rows->reject(fn ($row) => $row->dimension?->mobile_app_id), fn ($row) => $row->dimension?->site?->display_name ?? 'Unassigned'),
             'placements' => $this->publisherGroup($rows, fn ($row) => $row->dimension?->placement?->name ?? 'Unassigned'),
-            'payment_balance_minor' => (int) ($this->latestPublisherStatements($currency, $publisher->id)
-                ->first()?->balance_due_minor ?? 0),
+            'payment_balance_minor' => (int) $this->latestPublisherStatements($currency, $publisher->id)->sum('balance_due_minor'),
             'statements' => PublisherStatement::withoutGlobalScopes()
                 ->where('publisher_id', $publisher->id)->with('period')->latest()->limit(24)->get(),
         ];
@@ -250,7 +249,7 @@ final class UnifiedReportService
     private function latestPublisherStatements(string $currency, ?string $publisherId = null): Collection
     {
         return PublisherStatement::withoutGlobalScopes()
-            ->latestPerPublisherCurrency()
+            ->outstandingBalances()
             ->where('currency', $currency)
             ->when($publisherId, fn (Builder $query) => $query->where('publisher_id', $publisherId))
             ->with('period')

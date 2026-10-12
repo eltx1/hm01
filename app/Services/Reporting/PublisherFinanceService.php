@@ -51,6 +51,9 @@ final class PublisherFinanceService
             });
             $currencyStatements = $statementModels->where('currency', $currency);
             $latest = $currencyStatements->first();
+            $outstanding = $currencyStatements->filter(fn (PublisherStatement $statement): bool => $statement->finalized_at !== null
+                && $statement->status !== PublisherStatementStatus::Draft
+                && ($statement->is($latest) || ! in_array($statement->status, [PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward], true)));
             $currencyPayments = $payments->where('currency', $currency);
             $pendingStatuses = [
                 PublisherPaymentStatus::Pending,
@@ -64,7 +67,7 @@ final class PublisherFinanceService
             $threshold = $latest
                 ? (int) $latest->payment_threshold_minor
                 : $this->contractThreshold($contract, $currency);
-            $readiness = $this->readiness($profile, $currency, $latest, $pending->isNotEmpty());
+            $readiness = $this->readiness($profile, $currency, $outstanding->first(fn ($statement) => $this->isPayable($statement)) ?? $latest, $pending->isNotEmpty());
 
             return [
                 'currency' => $currency,
@@ -81,9 +84,8 @@ final class PublisherFinanceService
                     ->where('finality', ReportFinality::Finalized)
                     ->sum('publisher_earnings_minor'),
                 'affiliate_earnings_minor' => (int) ($latest?->affiliate_earnings_minor ?? 0),
-                'current_payable_minor' => $latest && $this->isPayable($latest)
-                    ? (int) $latest->balance_due_minor
-                    : 0,
+                'current_payable_minor' => (int) $outstanding->filter(fn ($statement) => $this->isPayable($statement))->sum('balance_due_minor'),
+                'outstanding_balance_minor' => (int) $outstanding->sum('balance_due_minor'),
                 'below_threshold_minor' => $latest && in_array($latest->status, [
                     PublisherStatementStatus::BelowThreshold,
                     PublisherStatementStatus::CarriedForward,
@@ -112,6 +114,7 @@ final class PublisherFinanceService
 
         return [
             'publisher' => $publisher,
+            'unclosed_earnings' => app(UnclosedPublisherEarnings::class)->periods($publisher),
             'profile' => $profile,
             'currencies' => $publisherCurrencies,
             'statements' => $statementModels->map(fn (PublisherStatement $statement): array => $this->publisherStatementSummary($statement))->values(),

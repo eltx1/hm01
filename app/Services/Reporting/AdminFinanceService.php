@@ -25,7 +25,7 @@ final class AdminFinanceService
     public function overview(): array
     {
         $statements = PublisherStatement::withoutGlobalScopes()
-            ->latestPerPublisherCurrency()
+            ->outstandingBalances()
             ->with(['publisher.paymentProfile', 'payments', 'period'])
             ->get();
         $liabilityStatements = $statements;
@@ -82,6 +82,7 @@ final class AdminFinanceService
             ->whereDoesntHave('paymentProfile')->count();
 
         return [
+            'unclosed_earnings' => app(UnclosedPublisherEarnings::class)->periods(),
             'currency_totals' => $currencyTotals,
             'counts' => [
                 'profiles_incomplete' => $publishersWithoutProfile + (int) ($profileCounts[PublisherPaymentProfileStatus::Incomplete->value] ?? 0),

@@ -45,7 +45,7 @@ class SchedulerHeartbeatRecoveryTest extends TestCase
             ['reporting:sync-site-gam', 10],
             ['reporting:sync-site-gam-video', 1440],
             ['reporting:import daily --retry-failed', 1440],
-            ['reporting:close-period --force', 1440],
+            ['reporting:close-ready-periods --force', 1440],
         ] as [$command, $expiresAt]) {
             $event = $this->scheduled($command);
             $this->assertTrue($event->withoutOverlapping, $command);

@@ -3,6 +3,7 @@
 @section('heading', 'Finance Operations')
 @section('content')
 @include('admin.finance._tabs')
+<x-unclosed-earnings :periods="$unclosed_earnings" />
 <section class="hero"><div><p class="eyebrow">Monthly Publisher finance</p><h2>Liability, readiness, payouts, and reconciliation</h2><p>Operational totals remain separated by currency. A payout record is never treated as money moved until an immutable settlement is recorded.</p></div></section>
 
 <article class="workspace-section">

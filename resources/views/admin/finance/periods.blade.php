@@ -14,7 +14,12 @@
             <td><strong>{{ $period->period_key }} · {{ $period->currency }}</strong><span class="table-note">{{ $period->starts_on->toDateString() }} — {{ $period->ends_on->toDateString() }}</span></td>
             <td><x-status-badge :status="$period->status" /></td>
             <td><x-status-badge :status="$period->isClosed() ? 'CLOSED' : ($readiness['ready'] ? 'READY' : 'BLOCKED')" />
-                @foreach($readiness['blockers'] ?? [] as $blocker)<span class="table-note">{{ $blocker['code'] }} ({{ $blocker['count'] }})</span>@endforeach
+                @foreach($readiness['blockers'] ?? [] as $blocker)
+                    <span class="table-note"><strong>{{ $blocker['code'] }} ({{ $blocker['count'] }})</strong> — {{ $blocker['message'] }}</span>
+                    @foreach($blocker['subjects'] ?? [] as $subject)
+                        <span class="table-note">{{ $subject['subject_name'] }}: {{ collect($subject['reasons'] ?? [])->pluck('message')->join(' · ') }}</span>
+                    @endforeach
+                @endforeach
             </td>
             <td>
                 @foreach(($readiness['counts'] ?? []) as $label => $count)<span class="table-note">{{ str($label)->headline() }}: {{ number_format($count) }}</span>@endforeach

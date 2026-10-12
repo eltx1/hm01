@@ -97,4 +97,15 @@ class PublisherStatement extends Model
             )
             SQL);
     }
+
+    public function scopeOutstandingBalances(Builder $query): Builder
+    {
+        // Payable statements remain independent debts. Only below-threshold
+        // balances roll into the next statement and must not be counted twice.
+        return $query->whereNotNull('finalized_at')->where('status', '!=', PublisherStatementStatus::Draft->value)
+            ->where(function (Builder $balances): void {
+                $balances->whereNotIn('status', [PublisherStatementStatus::BelowThreshold->value, PublisherStatementStatus::CarriedForward->value])
+                    ->orWhere(fn (Builder $carry) => $carry->latestPerPublisherCurrency());
+            });
+    }
 }

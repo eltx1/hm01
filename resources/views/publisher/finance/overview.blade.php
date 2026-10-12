@@ -3,6 +3,7 @@
 @section('heading', 'Reports & earnings')
 @section('content')
 @include('publisher.finance._tabs')
+<x-unclosed-earnings :periods="$unclosed_earnings" />
 
 @php
     $canonicalCurrency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
@@ -60,6 +61,7 @@
 <section class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Finance · separate from your selected report dates</p><h2>Your statement and payouts</h2></div><span class="pill">{{ $primary['readiness']['label'] }}</span></div>
     <div class="report-metrics">
+        <article><p class="eyebrow">Outstanding across statements</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['outstanding_balance_minor']) }}</strong><span class="muted">Includes unpaid earlier months; carried balances counted once</span></article>
         <article><p class="eyebrow">Latest statement balance</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['statement_balance_due_minor']) }}</strong><span class="muted">{{ $primary['last_finalized_period'] ?: 'No finalized statement yet' }} · includes carry-forward</span>@if($primary['latest_statement_id'])<a class="section-anchor" href="{{ route('publisher.finance.statements.show', $primary['latest_statement_id']) }}">View statement →</a>@endif</article>
         <article><p class="eyebrow">Pending payout</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['pending_payout_minor']) }}</strong><span class="muted">Includes scheduled and held amounts</span></article>
         <article><p class="eyebrow">Paid to date</p><strong class="metric">{{ $canonicalCurrency }} {{ \App\Support\Money::formatMinor((int) $primary['paid_minor']) }}</strong><span class="muted">Settled payments across all periods</span></article>
