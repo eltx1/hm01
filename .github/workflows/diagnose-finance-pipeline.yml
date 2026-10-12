@@ -1,16 +1,17 @@
 name: Diagnose finance pipeline
 on:
   pull_request:
-    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
   push:
     branches: [main]
-    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
   workflow_run:
     workflows: [Verify production live]
     types: [completed]
     branches: [main]
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: horus-readonly-finance-pipeline
   cancel-in-progress: false
@@ -53,11 +54,43 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      - name: Resolve latest successful production verification
+        id: verified
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { validateVerificationRun } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'verify-production-live.yml', branch: 'main', status: 'success', per_page: 1,
+            });
+            if (data.workflow_runs.length !== 1) throw new Error('No successful production verification');
+            const run = validateVerificationRun(data.workflow_runs[0]);
+            core.setOutput('run_id', String(run.id));
+            core.setOutput('attempt', String(run.attempt));
+      - name: Download immutable live release proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/finance-live-proof
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bind diagnosis to verified release
+        id: release
+        uses: actions/github-script@v8
+        env:
+          VERIFY_RUN_ID: ${{ steps.verified.outputs.run_id }}
+          VERIFY_RUN_ATTEMPT: ${{ steps.verified.outputs.attempt }}
+        with:
+          script: |
+            const { verifiedRelease } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const fs = await import('node:fs');
+            const proof = fs.readFileSync(`${process.env.RUNNER_TEMP}/finance-live-proof/live-proof.env`, 'utf8');
+            core.setOutput('sha', verifiedRelease(proof, process.env.VERIFY_RUN_ID, process.env.VERIFY_RUN_ATTEMPT));
       - name: Diagnose monthly close in a read-only transaction
         shell: bash
         env:
-          EXPECTED_SHA: ${{ github.sha }}
-          ALLOWED_PREVIOUS_SHA: ${{ github.event.before || github.sha }}
+          EXPECTED_SHA: ${{ steps.release.outputs.sha }}
           SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
           REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
@@ -71,7 +104,6 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
           [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$ALLOWED_PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]]
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
           work="$RUNNER_TEMP/finance-diagnosis"
           install -d -m 700 "$work"
@@ -83,7 +115,7 @@ jobs:
           if ! timeout 120 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
             -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_ALLOWED_PREVIOUS_SHA='$ALLOWED_PREVIOUS_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
             < "$work/probe.php" > "$work/raw.json" 2> "$work/error.txt"; then
             echo 'Read-only finance diagnosis unavailable. Raw output withheld.' >&2
             exit 1

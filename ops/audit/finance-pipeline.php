@@ -6,10 +6,8 @@ try {
     $expected = (string) getenv('HM_EXPECTED_SHA');
     $marker = (string) @file_get_contents('.horus-release');
     preg_match('/^release_id=([a-f0-9]{40})$/m', $marker, $match);
-    $previous = (string) getenv('HM_ALLOWED_PREVIOUS_SHA');
     $release = $match[1] ?? '';
-    if (!preg_match('/^[a-f0-9]{40}$/D', $expected) || !preg_match('/^[a-f0-9]{40}$/D', $previous)
-        || !in_array($release, [$expected, $previous], true)) {
+    if (!preg_match('/^[a-f0-9]{40}$/D', $expected) || !hash_equals($expected, $release)) {
         throw new RuntimeException('Release mismatch');
     }
     require 'vendor/autoload.php';
