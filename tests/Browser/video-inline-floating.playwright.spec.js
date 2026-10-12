@@ -10,6 +10,9 @@ function expectedGoogleSizes(existing) {
 
 // Generated 12-second, silent H.264 baseline fixture; no third-party media or ads.
 const contentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback.mp4.base64', import.meta.url), 'utf8'), 'base64');
+// Three copies of the same local fixture, remuxed with ffmpeg -stream_loop 2 -c copy.
+// Native interval tests need room beyond startup, two five-second intervals and the EOS tail guard.
+const longContentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback-long.mp4.base64', import.meta.url), 'utf8'), 'base64');
 // Local VP9/Opus fixture with a quiet generated tone for actual sound-capability tests.
 const audioContentBytes = Buffer.from(await readFile(new URL('./fixtures/content-playback-audio.webm.base64', import.meta.url), 'utf8'), 'base64');
 const runtime = await readFile(process.env.HORUS_VIDEO_RUNTIME_PATH || new URL('../../public/assets/hm-video-direct.js', import.meta.url), 'utf8');
@@ -29,7 +32,7 @@ async function openPlayer(page, options = {}) {
         if (path === '/content.mp4' || path === '/content.webm') {
             resourceRequests.content++;
             if (!options.content) return route.fulfill({ status: 404, body: '' });
-            const bytes = options.audibleContent ? audioContentBytes : contentBytes;
+            const bytes = options.audibleContent ? audioContentBytes : options.longContent ? longContentBytes : contentBytes;
             const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
             const start = range ? Number(range[1]) : 0;
             const end = Math.min(bytes.length - 1, range && range[2] ? Number(range[2]) : bytes.length - 1);
@@ -600,12 +603,13 @@ test('sticky clearance is removed inline and recalculated on every later float',
 
 test('native content playback produces successive five-second midrolls after no-fill', async ({ page, browserName }) => {
     await page.route('**/*', route => route.abort());
-    await openPlayer(page, { content: true, realContent: true, fixedVideo: true, startMuted: false,
+    await openPlayer(page, { content: true, realContent: true, longContent: true, fixedVideo: true, startMuted: false,
         primeUserActivation: true, noFillAtRequest: true,
         vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video' });
     // Chromium continues decoded content after scroll; WebKit may suspend it.
     // Keep WebKit visible to test actual playback, not fabricated time updates.
     if (browserName === 'chromium') await scrollPage(page, 1800);
+    await expect.poll(() => page.locator('video').evaluate(video => video.duration)).toBeGreaterThan(30);
     await expect.poll(() => page.evaluate(() => window.adRequestHistory.length), { timeout: 15000 }).toBeGreaterThanOrEqual(4);
     // Read immutable submission evidence. A slow CI observer may run after EOS;
     // a subsequent postroll must not replace the midroll being asserted.
