@@ -91,8 +91,9 @@ function horusFinanceDemandEvidence(\App\Models\DemandAccount $account, \App\Mod
 function horusFinanceOtherTagKind(string $tag, array $reportPaths): string
 {
     if ($tag === '' || strlen($tag) > 100000) return 'UNREADABLE';
+    $tag = trim(html_entity_decode($tag, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     $url = parse_url($tag);
-    if (($url['scheme'] ?? '') === 'https' && ($url['host'] ?? '') === 'pubads.g.doubleclick.net'
+    if (strtolower($url['scheme'] ?? '') === 'https' && in_array(strtolower($url['host'] ?? ''), ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net'], true)
         && ($url['path'] ?? '') === '/gampad/ads') {
         parse_str($url['query'] ?? '', $query);
         return is_string($query['iu'] ?? null) && in_array($query['iu'], $reportPaths, true)
