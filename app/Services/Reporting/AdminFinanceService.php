@@ -113,6 +113,7 @@ final class AdminFinanceService
                 $codes = array_column($readiness['blockers'] ?? [], 'code');
                 $status = match (true) {
                     $period->isClosed() => 'CLOSED',
+                    $period->status !== FinancialPeriodStatus::Open => $period->status->value,
                     $period->ends_on->gte(today()) => 'IN_PROGRESS',
                     $codes === ['MISSING_FINALIZED_DATA'] => 'EMPTY',
                     (bool) $readiness['ready'] => 'READY',

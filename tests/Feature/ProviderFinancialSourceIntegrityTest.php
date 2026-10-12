@@ -109,9 +109,18 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
             'period_start' => $from, 'period_end' => $to, 'idempotency_key' => hash('sha256', 'month-retry-'.$index), 'attempt_count' => 1]);
         $configuration = ['site_gam_included' => true, 'site_gam_included_period' => $start->format('Y-m'),
             'site_gam_inclusion_reason' => 'Exact reviewed revenue coverage for this month only.'];
+        try {
+            $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+            $this->fail('A straddling failed job must retain a usable retry path before declaration.');
+        } catch (ValidationException $e) { $this->assertArrayHasKey('site_gam_included_period', $e->errors()); }
+        $this->assertFalse((bool) data_get($binding->fresh()->configuration, 'site_gam_included', false));
+        $this->assertSame(ReportImportStatus::Failed, $jobs[0]->fresh()->status);
+        $this->assertFalse(\App\Services\Reporting\SiteGamRevenueDeclaration::overlaps((array) $binding->connection->fresh()->configuration, $jobs[1]->period_start, $jobs[1]->period_end));
+        // A completed retry is terminal and no longer needs the mixed window.
+        $jobs[1]->update(['status' => ReportImportStatus::Completed]);
         $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
         $this->assertSame(ReportImportStatus::Duplicate, $jobs[0]->fresh()->status);
-        $this->assertSame(ReportImportStatus::Failed, $jobs[1]->fresh()->status);
+        $this->assertSame(ReportImportStatus::Completed, $jobs[1]->fresh()->status);
         $this->assertSame(ReportImportStatus::Failed, $jobs[2]->fresh()->status);
         $period = app(FinancialPeriodService::class)->periodFor($start, 'USD');
         $period->update(['status' => 'CLOSED']);

@@ -190,7 +190,8 @@ reconciliation, audit, masking, safe CSV, and cross-organization denial.
 A Site GAM financial declaration may now specify one `YYYY-MM` coverage month.
 Readiness applies it only to that month. Provider imports that overlap the
 month remain blocked to prevent duplicate revenue, while imports and readiness
-for other months retain their independent source requirements. Separate provider
+for other months retain their independent source requirements. In-flight imports and unresolved imports crossing the month boundary retain
+their original retry path and must finish before a scoped declaration. Separate provider
 facts and closed periods must be reconciled before making a scoped declaration.
 The declaration and its evidence reason are audited; it never supplies missing
 Google report rows by itself.

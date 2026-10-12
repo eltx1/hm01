@@ -74,6 +74,13 @@ final class MonetizationFinancialBindingService
                 }
                 $start = \Carbon\CarbonImmutable::parse($month.'-01', $timezone);
                 $providerConnections = ReportSourceConnection::withoutGlobalScopes()->where('connection_type', $type->value)->where('connection_id', $subject->id)->pluck('id');
+                $overlappingJobs = ReportImportJob::withoutGlobalScopes()->whereIn('report_source_connection_id', $providerConnections)
+                    ->whereDate('period_start', '<=', $start->endOfMonth())->whereDate('period_end', '>=', $start);
+                if ((clone $overlappingJobs)->where('status', ReportImportStatus::Processing->value)->exists()
+                    || (clone $overlappingJobs)->whereIn('status', [ReportImportStatus::Pending->value, ReportImportStatus::Failed->value])
+                        ->where(fn ($q) => $q->whereDate('period_start', '<', $start)->orWhereDate('period_end', '>', $start->endOfMonth()))->exists()) {
+                    throw ValidationException::withMessages(['site_gam_included_period' => 'Finish in-flight imports and resolve pending or failed imports crossing the month boundary before making this declaration. Their original retry path remains available.']);
+                }
                 foreach ([\App\Models\DailyReport::class, \App\Models\HourlyReport::class] as $model) {
                     if ($model::withoutGlobalScopes()->whereIn('report_source_connection_id', $providerConnections)
                         ->whereDate('report_date', '>=', $start)->whereDate('report_date', '<=', $start->endOfMonth())->exists()) {
