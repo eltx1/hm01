@@ -43,6 +43,7 @@ final class MonetizationFinancialBindingService
         if ($this->containsSensitiveKey($configuration)) {
             throw ValidationException::withMessages(['configuration' => 'Financial binding configuration must contain non-secret metadata only.']);
         }
+        SiteGamRevenueDeclaration::validate($configuration);
         $siteGamIncluded = (bool) data_get($configuration, 'site_gam_included', false);
         if ($siteGamIncluded && mb_strlen(trim((string) data_get($configuration, 'site_gam_inclusion_reason', ''))) < 12) {
             throw ValidationException::withMessages([
@@ -50,7 +51,7 @@ final class MonetizationFinancialBindingService
             ]);
         }
         if (! $siteGamIncluded) {
-            unset($configuration['site_gam_inclusion_reason']);
+            unset($configuration['site_gam_inclusion_reason'], $configuration['site_gam_included_period']);
         }
 
         $this->assertSourceMatchesSubject($subject, $source);
@@ -65,6 +66,21 @@ final class MonetizationFinancialBindingService
             $subject, $source, $method, $currency, $timezone, $actor, $configuration,
             $enabled, $type, $finalizedCapable, $siteGamIncluded
         ): MonetizationFinancialBinding {
+            if ($siteGamIncluded && filled($configuration['site_gam_included_period'] ?? null)) {
+                $month = $configuration['site_gam_included_period'];
+                $period = \App\Models\FinancialPeriod::query()->where('period_key', $month)->where('currency', $currency)->lockForUpdate()->first();
+                if ($period && $period->status->value !== 'OPEN') {
+                    throw ValidationException::withMessages(['site_gam_included_period' => 'The selected month is already closing or closed.']);
+                }
+                $start = \Carbon\CarbonImmutable::parse($month.'-01', $timezone);
+                $providerConnections = ReportSourceConnection::withoutGlobalScopes()->where('connection_type', $type->value)->where('connection_id', $subject->id)->pluck('id');
+                foreach ([\App\Models\DailyReport::class, \App\Models\HourlyReport::class] as $model) {
+                    if ($model::withoutGlobalScopes()->whereIn('report_source_connection_id', $providerConnections)
+                        ->whereDate('report_date', '>=', $start)->whereDate('report_date', '<=', $start->endOfMonth())->exists()) {
+                        throw ValidationException::withMessages(['site_gam_included_period' => 'Separate provider facts already exist for this month. Reconcile them before declaring Site GAM exclusive.']);
+                    }
+                }
+            }
             $previousBinding = MonetizationFinancialBinding::withoutGlobalScopes()
                 ->where('subject_type', $type->value)
                 ->where('subject_id', $subject->id)
@@ -152,6 +168,10 @@ final class MonetizationFinancialBindingService
             if ($siteGamIncluded) {
                 $supersededImports = ReportImportJob::withoutGlobalScopes()
                     ->where('report_source_connection_id', $connection->id)
+                    ->when(filled($configuration['site_gam_included_period'] ?? null), function ($query) use ($configuration): void {
+                        $start = \Carbon\CarbonImmutable::parse($configuration['site_gam_included_period'].'-01');
+                        $query->whereDate('period_start', '>=', $start)->whereDate('period_end', '<=', $start->endOfMonth());
+                    })
                     ->whereIn('status', [
                         ReportImportStatus::Pending->value,
                         ReportImportStatus::Failed->value,
@@ -174,6 +194,7 @@ final class MonetizationFinancialBindingService
                 'is_enabled' => $enabled,
                 'is_finalized_capable' => $finalizedCapable,
                 'site_gam_included' => $siteGamIncluded,
+                'site_gam_included_period' => $configuration['site_gam_included_period'] ?? null,
                 'site_gam_inclusion_reason' => $siteGamIncluded ? data_get($configuration, 'site_gam_inclusion_reason') : null,
                 'superseded_provider_imports' => $supersededImports,
                 'retired_connection_id' => $retiredConnectionId,

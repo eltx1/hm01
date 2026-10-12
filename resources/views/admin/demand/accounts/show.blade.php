@@ -132,6 +132,7 @@
                 <strong>Site GAM revenue coverage attestation</strong>
                 <p class="muted">Leave this off unless the provider's revenue is explicitly included in every mapped website's bound GAM ad-unit report. Direct JS, VAST and standalone provider delivery are not assumed to be covered.</p>
                 <label><input type="hidden" name="site_gam_included" value="0"><input type="checkbox" name="site_gam_included" value="1" @checked((bool) data_get($binding?->configuration, 'site_gam_included', false))> This provider revenue is included in Site GAM reporting</label>
+                <label>Coverage month (optional)<input class="hm-input" type="month" name="site_gam_included_period" value="{{ old('site_gam_included_period', data_get($binding?->configuration, 'site_gam_included_period')) }}"><span class="muted">Choose one reviewed month. Leave empty only for ongoing coverage.</span></label>
                 <label>Evidence / reason<textarea class="hm-input" name="site_gam_inclusion_reason" rows="2" minlength="12" maxlength="1000" placeholder="Why is Site GAM financially complete for this provider?">{{ data_get($binding?->configuration, 'site_gam_inclusion_reason') }}</textarea></label>
             </div>
             <label><input type="hidden" name="is_enabled" value="0"><input type="checkbox" name="is_enabled" value="1" @checked($binding?->is_enabled ?? true)> Financial binding enabled</label>

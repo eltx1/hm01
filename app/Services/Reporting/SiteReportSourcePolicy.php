@@ -66,7 +66,7 @@ final class SiteReportSourcePolicy
             // financial source for this provider. Never admit the provider's
             // own financial rows into the ledger as well, or the same realized
             // revenue could be counted twice.
-            if ((bool) data_get($financialBinding?->configuration, 'site_gam_included', false)) {
+            if (SiteGamRevenueDeclaration::covers((array) $financialBinding?->configuration, \Carbon\CarbonImmutable::parse($row['date']), \Carbon\CarbonImmutable::parse($row['date']))) {
                 return false;
             }
         } elseif (! empty($row['site_id'])

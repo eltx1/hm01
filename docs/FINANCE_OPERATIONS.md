@@ -184,3 +184,22 @@ isolation, thresholds, eligibility, maker-checker permissions, double-payout
 prevention, repeated settlement, partial settlement, holds/failures, balance
 reconciliation, rollback, close readiness/override, adjustments, rule versions,
 reconciliation, audit, masking, safe CSV, and cross-organization denial.
+
+## Reviewed historical coverage
+
+A Site GAM financial declaration may now specify one `YYYY-MM` coverage month.
+Readiness applies it only to that month. Provider imports that overlap the
+month remain blocked to prevent duplicate revenue, while imports and readiness
+for other months retain their independent source requirements. Separate provider
+facts and closed periods must be reconciled before making a scoped declaration.
+The declaration and its evidence reason are audited; it never supplies missing
+Google report rows by itself.
+
+Authorized staff can request missing Video history from the website workspace.
+The request names the existing verified Video binding and a non-overlapping
+range in one open month before that binding starts. It creates a separate,
+ended historical binding and exact-hostname scope, leaving active unit claims
+and forward reporting unchanged. The normal scheduler/Google importer performs
+source verification, dated revenue allocation, duplicate checks and reconciliation.
+Creating the request does not import money or close a period. Repeated identical
+requests reuse the historical binding. Closed history cannot be backfilled.

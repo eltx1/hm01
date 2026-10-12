@@ -68,6 +68,57 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->site = $this->makeSiteFor($this->publisher, $this->publisherUser, ['display_name' => 'Financial Source Site']);
     }
 
+    public function test_one_month_site_gam_declaration_prevents_duplicates_without_attesting_other_months(): void
+    {
+        $account = $this->oneTagAccount('Scoped Site GAM declaration');
+        $source = ReportSource::query()->where('code', ReportSourceCode::OneTag->value)->firstOrFail();
+        $date = now()->subMonthNoOverflow()->startOfMonth()->addDay()->toImmutable();
+        $configuration = ['site_gam_included' => true, 'site_gam_included_period' => $date->format('Y-m'),
+            'site_gam_inclusion_reason' => 'Reviewed exact Site GAM units for this completed month only.'];
+        $binding = app(MonetizationFinancialBindingService::class)->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+        $this->assertTrue(\App\Services\Reporting\SiteGamRevenueDeclaration::covers($configuration, $date->startOfMonth(), $date->endOfMonth()));
+        $this->assertFalse(\App\Services\Reporting\SiteGamRevenueDeclaration::covers($configuration, $date->addMonth(), $date->addMonth()));
+        foreach ([[$date, $date], [$date->subMonth(), $date], [$date, $date->addMonth()]] as [$from, $to]) {
+            try { app(ReportImportService::class)->importRows($binding->connection->fresh(), [$this->row($date)], ReportGranularity::Daily, ReportFinality::Finalized, $from, $to, $this->admin, importType: 'CSV'); $this->fail('Overlapping provider import must fail.'); }
+            catch (ValidationException $e) { $this->assertArrayHasKey('source', $e->errors()); }
+        }
+        $next = $date->addMonth();
+        $job = app(ReportImportService::class)->importRows($binding->connection->fresh(), [$this->row($next)], ReportGranularity::Daily, ReportFinality::Finalized, $next, $next, $this->admin, importType: 'CSV');
+        $this->assertSame(ReportImportStatus::Completed, $job->status);
+        $this->assertDatabaseCount('daily_reports', 1);
+        $this->assertSame($next->toDateString(), DailyReport::withoutGlobalScopes()->first()->report_date->toDateString());
+        try {
+            app(MonetizationFinancialBindingService::class)->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin,
+                array_replace($configuration, ['site_gam_included_period' => $next->format('Y-m')]));
+            $this->fail('Existing provider money must not be re-declared as Site GAM.');
+        } catch (ValidationException $e) { $this->assertArrayHasKey('site_gam_included_period', $e->errors()); }
+    }
+
+    public function test_scoped_declaration_retires_only_fully_covered_jobs_and_rejects_closed_months(): void
+    {
+        $account = $this->oneTagAccount('Scoped retries');
+        $source = ReportSource::query()->where('code', ReportSourceCode::OneTag->value)->firstOrFail();
+        $service = app(MonetizationFinancialBindingService::class);
+        $binding = $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin);
+        $start = now()->subMonthNoOverflow()->startOfMonth()->toImmutable();
+        $windows = [[$start, $start], [$start->endOfMonth(), $start->addMonth()->startOfMonth()], [$start->addMonth(), $start->addMonth()]];
+        $jobs = [];
+        foreach ($windows as $index => [$from, $to]) $jobs[] = ReportImportJob::withoutGlobalScopes()->create([
+            'report_source_connection_id' => $binding->connection->id, 'import_type' => 'CSV', 'granularity' => ReportGranularity::Daily,
+            'finality' => ReportFinality::Finalized, 'settlement_eligible' => true, 'status' => ReportImportStatus::Failed,
+            'period_start' => $from, 'period_end' => $to, 'idempotency_key' => hash('sha256', 'month-retry-'.$index), 'attempt_count' => 1]);
+        $configuration = ['site_gam_included' => true, 'site_gam_included_period' => $start->format('Y-m'),
+            'site_gam_inclusion_reason' => 'Exact reviewed revenue coverage for this month only.'];
+        $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+        $this->assertSame(ReportImportStatus::Duplicate, $jobs[0]->fresh()->status);
+        $this->assertSame(ReportImportStatus::Failed, $jobs[1]->fresh()->status);
+        $this->assertSame(ReportImportStatus::Failed, $jobs[2]->fresh()->status);
+        $period = app(FinancialPeriodService::class)->periodFor($start, 'USD');
+        $period->update(['status' => 'CLOSED']);
+        $this->expectException(ValidationException::class);
+        $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+    }
+
     public function test_exoclick_and_onetag_are_first_class_canonical_sources_and_api_is_not_invented(): void
     {
         $this->assertDatabaseHas('report_sources', ['code' => 'EXOCLICK', 'name' => 'ExoClick']);

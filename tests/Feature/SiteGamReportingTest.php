@@ -1148,6 +1148,12 @@ class SiteGamReportingTest extends TestCase
             ],
         );
         $this->assertCount(0, $readiness->blockersForPeriod($period));
+        $configuration = $financialBinding->configuration + ['site_gam_included_period' => '2026-09'];
+        $financialBinding = app(MonetizationFinancialBindingService::class)->bind($account, $financialBinding->source,
+            FinancialReportingMethod::Csv, 'USD', 'UTC', $admin, $configuration);
+        $this->assertCount(0, $readiness->blockersForPeriod($period));
+        $october = app(FinancialPeriodService::class)->periodFor('2026-10-01', 'USD');
+        $this->assertTrue($readiness->blockersForPeriod($october)->contains('subject_id', $account->id), 'September approval must not cover October.');
 
         try {
             app(ReportImportService::class)->importRows(

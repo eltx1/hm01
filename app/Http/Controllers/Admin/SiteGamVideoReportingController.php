@@ -28,6 +28,18 @@ class SiteGamVideoReportingController extends Controller
             ->with('status', 'Independent Video reports connected from '.$binding->starts_on->toDateString().'.');
     }
 
+    public function backfill(Request $request, Site $site, \App\Services\Reporting\SiteGamVideoBackfillService $backfill): RedirectResponse
+    {
+        $data = $request->validate(['video_binding_id' => ['required', 'ulid'],
+            'video_history_from' => ['required', 'date_format:Y-m-d'],
+            'video_history_to' => ['required', 'date_format:Y-m-d', 'after_or_equal:video_history_from'],
+            'video_history_reason' => ['required', 'string', 'min:12', 'max:1000'],
+            'confirm_video_history' => ['accepted']]);
+        $binding = $backfill->create($site, $data['video_binding_id'], $data['video_history_from'], $data['video_history_to'], $data['video_history_reason'], $request->user());
+        return redirect()->route('admin.sites.show', $site)->withFragment('video-reporting')
+            ->with('status', 'Video history scheduled for '.$binding->starts_on->toDateString().' to '.$binding->ends_on->toDateString().'. Earnings appear only after verified Google import.');
+    }
+
     public function destroy(Request $request, Site $site, SiteGamVideoReportingService $reporting): RedirectResponse
     {
         $reporting->disable($site, $request->user());

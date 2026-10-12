@@ -136,10 +136,8 @@ final class MonetizationFinancialReadinessService
             // financial source only after an explicit finance attestation on the
             // subject's binding. Presence of a Site GAM report alone never proves
             // that Direct JS, VAST or standalone Prebid revenue is included there.
-            $siteGamDeclared = (bool) data_get(
-                $subject->financialBinding?->configuration,
-                'site_gam_included',
-                false,
+            $siteGamDeclared = SiteGamRevenueDeclaration::covers(
+                (array) $subject->financialBinding?->configuration, $period->starts_on, $period->ends_on,
             );
             if ($siteGamDeclared) {
                 $siteGamComplete = $subject->financialBinding?->is_enabled
@@ -192,7 +190,7 @@ final class MonetizationFinancialReadinessService
         $attestedSiteIds = $subjects->filter(function (DemandAccount|BidderAccount $subject) use ($period): bool {
             $binding = $subject->financialBinding;
             if (! $binding?->is_enabled
-                || ! (bool) data_get($binding->configuration, 'site_gam_included', false)
+                || ! SiteGamRevenueDeclaration::covers((array) $binding->configuration, $period->starts_on, $period->ends_on)
                 || strtoupper((string) $binding->currency) !== strtoupper((string) $period->currency)) {
                 return false;
             }

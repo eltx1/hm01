@@ -42,7 +42,10 @@ function horusFinancePrivateSourceEvidence(\App\Models\DemandAccount $account, \
                     $candidates[] = ['container' => $candidate['tag']['container']['id'] ?? null, 'source' => $metadata,
                         'gam_managed' => (bool) ($candidate['gamManaged'] ?? false),
                         ...($metadata['kind'] === 'UNKNOWN' ? ['tag_fields' => array_keys($candidate['tag'] ?? []),
-                            'attribute_fields' => array_keys($attributes)] : [])];
+                            'attribute_fields' => array_keys($attributes),
+                            'vast_payload_length' => strlen((string) ($attributes['data-hm-vast-url'] ?? '')),
+                            'vast_decoded_length' => strlen(horusFinanceDecodePayload($attributes, 'data-hm-vast-url')),
+                            'literal_vast_metadata' => horusFinanceTagMetadata((string) ($attributes['data-hm-vast-url'] ?? ''))] : [])];
                 }
             }
             $data['history'][] = ['published_at' => $version->published_at->toIso8601String(), 'candidates' => $candidates];

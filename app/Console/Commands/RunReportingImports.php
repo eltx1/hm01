@@ -70,13 +70,12 @@ class RunReportingImports extends Command
                     ->where(function ($connectionQuery): void {
                         $connectionQuery->whereNotIn('connection_type', ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'])
                             ->orWhereHas('financialBindings', fn ($binding) => $binding->where('is_enabled', true));
-                    })
-                    ->whereDoesntHave('financialBindings', fn ($binding) => $binding
-                        ->where('is_enabled', true)
-                        ->where('configuration->site_gam_included', true)))
+                    }))
                 ->where(fn ($query) => $query->whereNull('next_retry_at')->orWhere('next_retry_at', '<=', now()))
                 ->with('connection.source')
-                ->each(fn (ReportImportJob $job) => $imports->retry($job));
+                ->each(function (ReportImportJob $job) use ($imports): void {
+                    if (! \App\Services\Reporting\SiteGamRevenueDeclaration::overlaps((array) $job->connection->configuration, $job->period_start, $job->period_end)) $imports->retry($job);
+                });
         }
 
         $date = CarbonImmutable::parse($this->option('date') ?: now());
@@ -101,9 +100,6 @@ class RunReportingImports extends Command
                 $query->whereNotIn('connection_type', ['DEMAND_ACCOUNT', 'BIDDER_ACCOUNT'])
                     ->orWhereHas('financialBindings', fn ($binding) => $binding->where('is_enabled', true));
             })
-            ->whereDoesntHave('financialBindings', fn ($binding) => $binding
-                ->where('is_enabled', true)
-                ->where('configuration->site_gam_included', true))
             ->where('status', '!=', 'DISABLED')
             ->where(function ($query): void {
                 $query->whereDoesntHave('financialBindings')
@@ -117,6 +113,7 @@ class RunReportingImports extends Command
 
         $failed = 0;
         foreach ($connections as $connection) {
+            if (\App\Services\Reporting\SiteGamRevenueDeclaration::overlaps((array) $connection->configuration, $from, $to)) continue;
             if ($connection->connection_type === 'GAM_CONNECTION'
                 && (bool) data_get($connection->configuration, 'canonical_currency_rebackfill_required', false)) {
                 $timezone = trim((string) ($connection->timezone ?: config('reporting.default_timezone', 'UTC')));

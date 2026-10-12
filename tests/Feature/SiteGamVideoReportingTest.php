@@ -72,6 +72,80 @@ class SiteGamVideoReportingTest extends TestCase
     private object $google;
     private string $reportHostname;
 
+    public function test_explicit_video_history_imports_once_using_dated_split_without_changing_active_binding(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $site->forceFill(['created_at' => '2026-09-01'])->save();
+        $current = $this->video($context);
+        $original = $current->getAttributes();
+        $originalScope = $current->connection->configuration;
+        app(RevenueRuleService::class)->createRule(['name' => 'Historical Video share', 'scope_type' => 'WEBSITE', 'scope_id' => $site->id,
+            'effective_from' => '2026-09-01', 'publisher_share_bp' => 8000, 'horus_share_bp' => 2000, 'mcm_partner_share_bp' => 0], $admin);
+        $service = app(\App\Services\Reporting\SiteGamVideoBackfillService::class);
+        $history = $service->create($site, $current->id, '2026-09-20', '2026-09-20', 'Verified missing separate Video unit day.', $admin);
+        $repeat = $service->create($site, $current->id, '2026-09-20', '2026-09-20', 'Verified missing separate Video unit day.', $admin);
+        $this->assertSame($history->id, $repeat->id);
+        $this->assertNull($history->active_site_id);
+        $this->assertNull($history->active_unit_key);
+        $this->assertSame($original, $current->fresh()->getAttributes());
+        $this->assertSame($originalScope, $current->connection->fresh()->configuration);
+        $this->assertDatabaseCount('site_gam_reporting_unit_claims', 1);
+        $this->assertDatabaseCount('daily_reports', 0);
+        $this->finalizeClock();
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv([['2026-09-20', '67890', 2483, 120, 93, 0, 'US$ 70179']]))]);
+        $this->assertCompleted($this->import($history, '2026-09-20', '2026-09-20'));
+        $this->assertCompleted($this->import($history, '2026-09-20', '2026-09-20'));
+        $this->assertDatabaseCount('daily_reports', 1);
+        $fact = DailyReport::withoutGlobalScopes()->firstOrFail();
+        $this->assertSame(7, $fact->gross_revenue_minor);
+        $this->assertSame(5, $fact->publisher_earnings_minor);
+        $this->assertSame(2, $fact->horus_earnings_minor);
+        $this->assertTrue($fact->settlement_eligible);
+        $this->assertSame('SITE_GAM_VIDEO_AD_UNIT', $fact->connection->connection_type);
+        $this->assertDatabaseHas('audit_logs', ['event' => 'reporting.site_gam_video.historical_backfill_requested', 'auditable_id' => $history->id]);
+        $this->assertDatabaseCount('publisher_payments', 0);
+    }
+
+    public function test_video_history_rejects_unauthorized_closed_overlapping_or_cross_month_requests(): void
+    {
+        [$admin, , $publisherUser, $site] = $context = $this->context();
+        $site->forceFill(['created_at' => '2026-08-01'])->save();
+        $current = $this->video($context);
+        $service = app(\App\Services\Reporting\SiteGamVideoBackfillService::class);
+        try { $service->create($site, $current->id, '2026-09-20', '2026-09-20', 'Missing Video source day.', $publisherUser); $this->fail('Publisher cannot opt into historical credits.'); }
+        catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) { $this->assertSame(403, $e->getStatusCode()); }
+        foreach ([['2026-09-20', '2026-09-21'], ['2026-08-31', '2026-09-01']] as [$from, $to]) {
+            try { $service->create($site, $current->id, $from, $to, 'Missing Video source day.', $admin); $this->fail('Invalid window must fail.'); }
+            catch (ValidationException) { $this->addToAssertionCount(1); }
+        }
+        $service->create($site, $current->id, '2026-09-19', '2026-09-20', 'Missing Video source days.', $admin);
+        try { $service->create($site, $current->id, '2026-09-20', '2026-09-20', 'Overlaps already requested history.', $admin); $this->fail('Overlapping history must fail.'); }
+        catch (ValidationException) { $this->addToAssertionCount(1); }
+        $period = app(FinancialPeriodService::class)->periodFor(CarbonImmutable::parse('2026-09-01'), 'USD');
+        $period->update(['status' => 'CLOSED']);
+        try { $service->create($site, $current->id, '2026-09-18', '2026-09-18', 'Closed period must remain immutable.', $admin); $this->fail('Closed accounting must fail.'); }
+        catch (ValidationException) { $this->addToAssertionCount(1); }
+        $this->assertDatabaseCount('site_gam_video_report_bindings', 2);
+        $this->assertDatabaseCount('daily_reports', 0);
+    }
+
+    public function test_video_history_form_requires_confirmation_and_preserves_current_connection(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $site->forceFill(['created_at' => '2026-09-01'])->save();
+        $current = $this->video($context);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Recover missing historical Video reports');
+        $payload = ['video_binding_id' => $current->id, 'video_history_from' => '2026-09-20', 'video_history_to' => '2026-09-20',
+            'video_history_reason' => 'Verified missing separate Video unit day.'];
+        $this->post(route('admin.sites.reporting.video.backfill', $site), $payload)->assertSessionHasErrors('confirm_video_history');
+        $this->assertDatabaseCount('site_gam_video_report_bindings', 1);
+        $this->post(route('admin.sites.reporting.video.backfill', $site), $payload + ['confirm_video_history' => '1'])->assertRedirect();
+        $this->assertDatabaseCount('site_gam_video_report_bindings', 2);
+        $this->assertSame($site->id, $current->fresh()->active_site_id);
+        $this->assertDatabaseCount('daily_reports', 0);
+    }
+
     private function context(): array
     {
         $this->travelTo(CarbonImmutable::parse('2026-09-21 10:00:00', 'UTC'));
