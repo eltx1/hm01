@@ -1,0 +1,94 @@
+name: Diagnose finance pipeline
+on:
+  pull_request:
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+  push:
+    branches: [main]
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+  workflow_run:
+    workflows: [Verify production live]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: horus-readonly-finance-pipeline
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: |
+          php -l ops/audit/finance-pipeline.php
+          node --test tests/Deployment/finance-pipeline-audit.test.mjs
+          if php ops/audit/finance-pipeline.php > "$RUNNER_TEMP/invalid.json" 2> "$RUNNER_TEMP/invalid.err"; then exit 1; fi
+          test ! -s "$RUNNER_TEMP/invalid.json"
+          grep -Fxq 'Read-only finance diagnosis unavailable.' "$RUNNER_TEMP/invalid.err"
+  diagnose:
+    if: >-
+      github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'eltx1/hm01'))
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Diagnose monthly close in a read-only transaction
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          ALLOWED_PREVIOUS_SHA: ${{ github.event.before || github.sha }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ALLOWED_PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          work="$RUNNER_TEMP/finance-diagnosis"
+          install -d -m 700 "$work"
+          printf '%s\n' "$SSH_KEY" > "$work/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          trap 'rm -f "$work/key" "$work/known_hosts" "$work/raw.json" "$work/error.txt"' EXIT
+          unset SSH_KEY KNOWN_HOSTS
+          if ! timeout 120 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_ALLOWED_PREVIOUS_SHA='$ALLOWED_PREVIOUS_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < ops/audit/finance-pipeline.php > "$work/raw.json" 2> "$work/error.txt"; then
+            echo 'Read-only finance diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          node ops/audit/validate-finance-pipeline.mjs "$work/raw.json" "$RUNNER_TEMP/finance-pipeline.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: finance-pipeline-${{ github.sha }}
+          path: ${{ runner.temp }}/finance-pipeline.json
+          retention-days: 3

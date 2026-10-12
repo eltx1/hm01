@@ -69,7 +69,7 @@ class PublisherStatement extends Model
     {
         return $this->finalized_at !== null
             && (int) $this->balance_due_minor > 0
-            && (int) $this->balance_due_minor >= (int) $this->payment_threshold_minor
+            && (int) $this->balance_due_minor + (int) $this->paid_minor >= (int) $this->payment_threshold_minor
             && ! in_array($this->status, [
                 PublisherStatementStatus::Draft, PublisherStatementStatus::Paid,
                 PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward,
@@ -92,9 +92,22 @@ class PublisherStatement extends Model
                     ON latest_periods.id = latest_statements.financial_period_id
                 WHERE latest_statements.publisher_id = publisher_statements.publisher_id
                     AND latest_statements.currency = publisher_statements.currency
+                    AND latest_statements.finalized_at IS NOT NULL
+                    AND latest_statements.status != 'DRAFT'
                 ORDER BY latest_periods.ends_on DESC, latest_statements.created_at DESC, latest_statements.id DESC
                 LIMIT 1
             )
             SQL);
+    }
+
+    public function scopeOutstandingBalances(Builder $query): Builder
+    {
+        // Payable statements remain independent debts. Only below-threshold
+        // balances roll into the next statement and must not be counted twice.
+        return $query->whereNotNull('finalized_at')->where('status', '!=', PublisherStatementStatus::Draft->value)
+            ->where(function (Builder $balances): void {
+                $balances->whereNotIn('status', [PublisherStatementStatus::BelowThreshold->value, PublisherStatementStatus::CarriedForward->value])
+                    ->orWhere(fn (Builder $carry) => $carry->latestPerPublisherCurrency());
+            });
     }
 }

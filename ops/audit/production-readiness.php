@@ -280,6 +280,7 @@ $add('Finance', 'commercial_terms_and_revenue_rules', $commercialReady ? 'PASS' 
 
 $statementCount = $count('publisher_statements');
 $metrics['finance'] = ['financial_period_statuses' => $groups('financial_periods', 'status'), 'statements' => $statementCount, 'payment_profiles' => $count('publisher_payment_profiles'), 'payments' => $count('publisher_payments')];
+$metrics['finance']['period_pipeline'] = app(\App\Services\Reporting\FinancePipelineDiagnostics::class)->snapshot();
 $add('Finance', 'statement_pipeline', $statementCount > 0 ? 'PASS' : 'NOT_CONFIGURED', 'P2', $statementCount > 0 ? 'At least one Publisher statement exists.' : 'No Publisher statement has been produced yet; this remains part of the first real revenue pilot.', ['statement_count' => $statementCount]);
 
 // Advertiser scope is not a Publisher-pilot blocker when no approved/scheduled/active campaigns exist.

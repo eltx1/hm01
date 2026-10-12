@@ -358,6 +358,129 @@ class AdminFinanceOperationsTest extends TestCase
         $this->assertStringNotContainsString("\n=CMD|formula", $csv);
     }
 
+    public function test_backlogged_earnings_remain_visible_and_ready_close_is_dry_run_safe_and_idempotent(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
+        [$admin, , , $publisher, $user, $site] = $this->context();
+        $connection = $this->connection($admin->organization_id, 'USD', 'finance-catch-up');
+        $day = \Carbon\CarbonImmutable::parse('2026-09-15');
+        app(ReportImportService::class)->importRows($connection, [[
+            'date' => $day, 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+            'impressions' => 100, 'gross_revenue_minor' => 10000, 'currency' => 'USD',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $day, $day, $admin, 'catch-up');
+        $fact = DailyReport::withoutGlobalScopes()->firstOrFail();
+        $expected = (int) $fact->publisher_earnings_minor;
+        $this->assertGreaterThan(0, $expected);
+        $this->assertLessThan(10000, $expected);
+        $service = app(\App\Services\Reporting\PublisherFinanceService::class);
+        $pending = $service->overview($publisher)['unclosed_earnings']->first();
+        $this->assertSame('2026-09', $pending['period_key']);
+        $this->assertSame($expected, $pending['finalized_earnings_minor']);
+        $this->assertSame(0, $pending['estimated_earnings_minor']);
+        $this->actingAs($user)->get(route('publisher.finance.overview'))->assertOk()->assertSee('2026-09')->assertSee('Earnings awaiting monthly close');
+        $this->artisan('reporting:close-ready-periods --dry-run')->assertSuccessful();
+        $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-01 12:00:00'));
+        $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
+        $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
+        $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
+        $statement = PublisherStatement::withoutGlobalScopes()->sole();
+        $this->assertSame($expected, (int) $statement->publisher_earnings_minor);
+        $this->assertSame($expected, (int) $statement->balance_due_minor);
+        $hash = $statement->snapshot_hash;
+        $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
+        $this->assertSame(1, PublisherStatement::withoutGlobalScopes()->count());
+        $this->assertSame($hash, $statement->fresh()->snapshot_hash);
+        $this->assertCount(0, $service->overview($publisher)['unclosed_earnings']);
+        $this->assertSame(0, PublisherPayment::withoutGlobalScopes()->count());
+    }
+
+    public function test_catch_up_preserves_blockers_and_diagnostics_do_not_expose_private_data(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
+        [$admin, , , $publisher, , $site, $other] = $this->context();
+        $connection = $this->connection($admin->organization_id, 'USD', 'finance-blocked');
+        foreach (['2026-08-15' => ReportFinality::Estimated, '2026-09-15' => ReportFinality::Finalized] as $date => $finality) {
+            $day = \Carbon\CarbonImmutable::parse($date);
+            app(ReportImportService::class)->importRows($connection, [[
+                'date' => $day, 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+                'impressions' => 100, 'gross_revenue_minor' => 10000, 'currency' => 'USD',
+            ]], ReportGranularity::Daily, $finality, $day, $day, $admin, 'blocked-'.$date);
+        }
+        $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
+        $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
+        $this->assertCount(0, app(\App\Services\Reporting\UnclosedPublisherEarnings::class)->periods($other));
+        $hydratedFacts = 0;
+        DailyReport::retrieved(function () use (&$hydratedFacts): void { $hydratedFacts++; });
+        $diagnostics = app(\App\Services\Reporting\FinancePipelineDiagnostics::class)->snapshot();
+        $this->assertSame(0, $hydratedFacts, 'The production audit must aggregate facts without hydrating daily report history.');
+        $this->assertCount(2, $diagnostics);
+        $json = json_encode($diagnostics);
+        foreach ([$publisher->id, $publisher->display_name, $site->id, $connection->id, 'gross_revenue_minor', 'publisher_earnings_minor'] as $private) {
+            $this->assertStringNotContainsString($private, $json);
+        }
+        $this->assertStringContainsString('NON_FINAL_REPORTING', $json);
+        $this->assertStringContainsString('FINALIZED|ELIGIBLE', $json);
+    }
+
+    public function test_unpaid_earlier_statements_are_included_but_old_carried_balances_are_not_counted_twice(): void
+    {
+        [$admin, $reviewer, , $publisher, $user] = $this->context();
+        $this->verifiedProfile($publisher, $user, $reviewer, 'USD');
+        $this->statement($publisher, 'NEWEST-FINANCE', 'USD', 9000, 1000, PublisherStatementStatus::Payable, PublisherInvoiceStatus::NotRequired);
+        $this->statement($publisher, 'OLDER-UNPAID-FINANCE', 'USD', 5000, 1000, PublisherStatementStatus::Payable, PublisherInvoiceStatus::NotRequired);
+        $this->statement($publisher, 'OLDER-CARRIED-FINANCE', 'USD', 300, 1000, PublisherStatementStatus::BelowThreshold, PublisherInvoiceStatus::NotRequired);
+        $totals = app(AdminFinanceService::class)->overview()['currency_totals']['USD'];
+        $this->assertSame(14000, $totals['outstanding_liability_minor']);
+        $this->assertSame(14000, $totals['ready_for_payout_minor']);
+        $this->assertSame(0, $totals['below_threshold_minor']);
+        $overview = app(\App\Services\Reporting\PublisherFinanceService::class)->overview($publisher)['currencies']->firstWhere('currency', 'USD');
+        $this->assertSame(14000, $overview['outstanding_balance_minor']);
+        $this->assertSame(14000, $overview['current_payable_minor']);
+        $this->assertSame(14000, app(UnifiedReportService::class)->publisherSummary($publisher, currency: 'USD')['payment_balance_minor']);
+    }
+
+    public function test_partial_payment_preserves_affiliate_income_and_never_rolls_payable_debt_into_next_month(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
+        [$creator, $approver, , $publisher, $user] = $this->context();
+        $this->verifiedProfile($publisher, $user, $approver, 'USD');
+        $statement = $this->statement($publisher, 'PARTIAL-AFFILIATE', 'USD', 15000, 10000, PublisherStatementStatus::Payable, PublisherInvoiceStatus::NotRequired);
+        $statement->update(['publisher_earnings_minor' => 12000, 'affiliate_earnings_minor' => 3000]);
+        $payments = app(PublisherPaymentService::class);
+        $payment = $payments->create($statement->fresh(), 11000, ['idempotency_key' => 'partial-affiliate-1'], $creator);
+        $payments->approve($payment, $approver);
+        $payments->recordSettlement($payment->fresh(), 'PARTIAL-AFFILIATE-1', 11000, now(), $creator);
+        $statement->refresh();
+        $this->assertSame(4000, (int) $statement->balance_due_minor);
+        $this->assertSame(0, (int) $statement->carry_forward_minor);
+        $this->assertTrue($statement->hasPayableBalance());
+        $this->assertTrue(app(AdminFinanceService::class)->isEligible($statement));
+        $next = app(FinancialPeriodService::class)->periodFor('2026-10-01', 'USD');
+        $nextStatement = app(PublisherStatementService::class)->generate($next, $publisher, $creator);
+        $this->assertSame(0, (int) $nextStatement->opening_balance_minor);
+        $this->assertSame(4000, app(AdminFinanceService::class)->overview()['currency_totals']['USD']['outstanding_liability_minor']);
+        $remainder = $payments->create($statement, 4000, ['idempotency_key' => 'partial-affiliate-2'], $creator);
+        $payments->approve($remainder, $approver);
+        $payments->recordSettlement($remainder->fresh(), 'PARTIAL-AFFILIATE-2', 4000, now(), $creator);
+        $this->assertSame(0, (int) $statement->fresh()->balance_due_minor);
+        $this->assertSame(15000, (int) $statement->fresh()->paid_minor);
+        $this->assertSame(PublisherStatementStatus::Paid, $statement->fresh()->status);
+    }
+
+    public function test_newer_draft_does_not_hide_an_existing_carried_balance(): void
+    {
+        [, , , $publisher] = $this->context();
+        $draft = $this->statement($publisher, 'NEW-DRAFT', 'USD', 0, 1000, PublisherStatementStatus::Draft, PublisherInvoiceStatus::NotRequired);
+        $draft->update(['finalized_at' => null]);
+        $this->statement($publisher, 'OLDER-BELOW', 'USD', 300, 1000, PublisherStatementStatus::BelowThreshold, PublisherInvoiceStatus::NotRequired);
+        $this->assertSame(300, app(AdminFinanceService::class)->overview()['currency_totals']['USD']['outstanding_liability_minor']);
+        $overview = app(\App\Services\Reporting\PublisherFinanceService::class)->overview($publisher)['currencies']->firstWhere('currency', 'USD');
+        $this->assertSame(300, $overview['outstanding_balance_minor']);
+        $this->assertSame(300, $overview['statement_balance_due_minor']);
+    }
+
     private function context(): array
     {
         $this->seedIdentity();

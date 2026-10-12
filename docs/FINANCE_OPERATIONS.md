@@ -21,7 +21,7 @@ operations live under `/admin/finance`.
 
 The workspace contains:
 
-- **Overview**: latest Publisher liability per Publisher/currency, unreserved
+- **Overview**: unpaid Publisher statement liabilities per Publisher/currency, unreserved
   payout readiness, threshold/invoice blockers, payout states, settlements this
   month, profile queues, period readiness, and reconciliation discrepancies.
 - **Financial Periods**: readiness evidence, normal close, and exceptional
@@ -109,6 +109,18 @@ The close override remains permissioned, reasoned, and audited. It may allow an 
 Readiness evidence is persisted. Override requires
 `finance.periods.override`, a specific reason, and audit. The cron command's
 `--force` confirms the close request; it does not bypass readiness.
+
+The scheduler runs `reporting:close-ready-periods --force` hourly. It retains
+second-day earliest closing, retries late-ready months, and processes each
+organization/currency chronologically. A blocked earlier period with ledger
+rows prevents later automatic closes in that scope. `--dry-run` only reports
+readiness. Neither option overrides financial gates or records payments.
+
+Previous-month net publisher earnings remain visible while awaiting close.
+Outstanding totals include older unpaid statements. Only below-threshold
+balances roll forward; payable and partially paid debts stay on their original
+statement. Settlements preserve both publishing and affiliate earnings, and
+partial payment does not reapply the threshold to the smaller remainder.
 
 ## Reconciliation and correction
 
