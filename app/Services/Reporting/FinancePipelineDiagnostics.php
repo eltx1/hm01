@@ -2,7 +2,7 @@
 
 namespace App\Services\Reporting;
 
-use App\Models\DailyReport;
+use Illuminate\Support\Facades\DB;
 use App\Models\FinancialPeriod;
 
 /** Aggregate-only production evidence: never emit identities or monetary values. */
@@ -14,8 +14,14 @@ final class FinancePipelineDiagnostics
             ->map(function (FinancialPeriod $period): array {
                 $readiness = $period->isClosed() ? ['ready' => true, 'blockers' => [], 'counts' => []]
                     : app(FinancialPeriodService::class)->readiness($period);
-                $facts = DailyReport::withoutGlobalScopes()->where('financial_period_id', $period->id)
-                    ->with(['connection', 'dimension'])->get();
+                $groups = DB::table('daily_reports as d')
+                    ->leftJoin('report_source_connections as c', 'c.id', '=', 'd.report_source_connection_id')
+                    ->leftJoin('report_dimensions as dim', 'dim.id', '=', 'd.report_dimension_id')
+                    ->where('d.financial_period_id', $period->id)
+                    ->selectRaw('c.connection_type, d.finality, d.settlement_eligible, COUNT(*) AS rows_count,
+                        SUM(CASE WHEN dim.publisher_id IS NOT NULL THEN 1 ELSE 0 END) AS publisher_rows,
+                        MIN(d.report_date) AS first_date, MAX(d.report_date) AS last_date')
+                    ->groupBy('c.connection_type', 'd.finality', 'd.settlement_eligible')->get();
 
                 return [
                     'period' => $period->period_key,
@@ -31,14 +37,14 @@ final class FinancePipelineDiagnostics
                             collect($subject['reasons'] ?? [])->map(fn (array $reason) =>
                                 ($subject['subject_type'] ?? 'UNKNOWN').':'.$reason['code']))->countBy()->all(),
                     ])->all(),
-                    'fact_groups' => $facts->groupBy(fn ($fact) => ($fact->connection?->connection_type ?? 'UNKNOWN')
-                        .'|'.$fact->finality->value.'|'.($fact->settlement_eligible ? 'ELIGIBLE' : 'INELIGIBLE'))
-                        ->map(fn ($group) => [
-                            'rows' => $group->count(),
-                            'publisher_rows' => $group->filter(fn ($fact) => $fact->dimension?->publisher_id !== null)->count(),
-                            'first_date' => $group->min('report_date')?->toDateString(),
-                            'last_date' => $group->max('report_date')?->toDateString(),
-                        ])->all(),
+                    'fact_groups' => $groups->mapWithKeys(fn ($group) => [
+                        ($group->connection_type ?? 'UNKNOWN').'|'.$group->finality.'|'.($group->settlement_eligible ? 'ELIGIBLE' : 'INELIGIBLE') => [
+                            'rows' => (int) $group->rows_count,
+                            'publisher_rows' => (int) $group->publisher_rows,
+                            'first_date' => $group->first_date,
+                            'last_date' => $group->last_date,
+                        ],
+                    ])->all(),
                 ];
             })->all();
     }

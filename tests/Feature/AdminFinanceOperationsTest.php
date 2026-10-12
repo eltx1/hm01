@@ -411,7 +411,10 @@ class AdminFinanceOperationsTest extends TestCase
         $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
         $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
         $this->assertCount(0, app(\App\Services\Reporting\UnclosedPublisherEarnings::class)->periods($other));
+        $hydratedFacts = 0;
+        DailyReport::retrieved(function () use (&$hydratedFacts): void { $hydratedFacts++; });
         $diagnostics = app(\App\Services\Reporting\FinancePipelineDiagnostics::class)->snapshot();
+        $this->assertSame(0, $hydratedFacts, 'The production audit must aggregate facts without hydrating daily report history.');
         $this->assertCount(2, $diagnostics);
         $json = json_encode($diagnostics);
         foreach ([$publisher->id, $publisher->display_name, $site->id, $connection->id, 'gross_revenue_minor', 'publisher_earnings_minor'] as $private) {
