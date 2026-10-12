@@ -6,7 +6,6 @@ use App\Models\FinancialPeriod;
 use App\Models\GamConnection;
 use App\Models\ReportSourceConnection;
 use App\Models\Site;
-use App\Models\SiteGamReportBinding;
 use App\Models\SiteGamVideoReportBinding;
 use App\Models\User;
 use App\Services\Audit\AuditRecorder;
@@ -28,7 +27,7 @@ final class SiteGamVideoBackfillService
         if (CarbonImmutable::parse($from)->toDateString() !== $from || CarbonImmutable::parse($to)->toDateString() !== $to) $this->invalid();
         $original = SiteGamVideoReportBinding::withoutGlobalScopes()->with('connection.source', 'gamConnection')
             ->where('site_id', $site->id)->where('active_site_id', $site->id)->findOrFail($bindingId);
-        if ($to >= $original->starts_on->toDateString() || $to >= CarbonImmutable::now($original->connection->timezone)->toDateString()) $this->invalid();
+        if ($to >= $original->starts_on->toDateString() || $to > CarbonImmutable::now($original->connection->timezone)->toDateString()) $this->invalid();
 
         return DB::transaction(function () use ($site, $original, $from, $to, $reason, $actor) {
             // Same network/site/period lock order as normal imports and month close.

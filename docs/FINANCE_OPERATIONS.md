@@ -227,3 +227,9 @@ The fingerprint stores no raw ad recipes or credentials. Month-specific declarat
 remain limited to their chosen month; existing declarations retain their original
 semantics until an administrator explicitly reviews and saves them again. None of
 these reporting controls changes ad serving or creates publisher invoices/payments.
+
+A reviewed Video gap before a future activation may include the current network
+day. The existing scheduler imports that day as an estimate and finalizes it only
+after network midnight. Future dates and dates overlapping active/history bindings
+remain rejected. This closes cutover gaps without moving the active binding,
+overwriting primary reports or making today's estimates payable.

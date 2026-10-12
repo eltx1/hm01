@@ -129,6 +129,33 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertDatabaseCount('daily_reports', 0);
     }
 
+    public function test_reviewed_gap_before_future_activation_includes_today_only_as_an_estimate_until_midnight(): void
+    {
+        $context = $this->context();
+        $primary = $this->bind($context);
+        $csv = $this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000']]);
+        Http::fake(['storage.googleapis.com/*' => function () use (&$csv) { return Http::response($csv); }]);
+        $day = CarbonImmutable::parse('2026-09-21');
+        $this->assertCompleted(app(ReportImportService::class)->runConnection($primary->connection, $day, $day, ReportGranularity::Daily, ReportFinality::Estimated));
+        $current = $this->video($context);
+        $this->assertSame('2026-09-22', $current->starts_on->toDateString());
+        $service = app(\App\Services\Reporting\SiteGamVideoBackfillService::class);
+        $gap = $service->create($context[3], $current->id, '2026-09-21', '2026-09-21', 'Reviewed the independent Video source for this cutover gap.', $context[0]);
+        $csv = $this->csv([['2026-09-21', '67890', 120, 100, 95, 3, 'US$ 1000000']]);
+        $jobs = app(\App\Services\Reporting\SiteGamReportSynchronizer::class)->sync($gap);
+        foreach ($jobs as $job) $this->assertCompleted($job);
+        $this->assertNotEmpty($jobs);
+        $fact = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $gap->report_source_connection_id)->firstOrFail();
+        $this->assertSame(ReportFinality::Estimated, $fact->finality);
+        $this->assertFalse($fact->settlement_eligible);
+        $this->finalizeClock();
+        app(\App\Services\Reporting\SiteGamReportSynchronizer::class)->sync($gap->fresh());
+        $this->assertSame(ReportFinality::Finalized, $fact->fresh()->finality);
+        $this->assertTrue($fact->fresh()->settlement_eligible);
+        $this->assertSame(1, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $gap->report_source_connection_id)->count());
+        $this->assertSame('2026-09-22', $current->fresh()->starts_on->toDateString());
+    }
+
     public function test_video_history_rejects_a_missing_current_unit_claim(): void
     {
         [$admin, , , $site] = $context = $this->context();
