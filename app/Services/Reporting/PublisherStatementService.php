@@ -49,7 +49,8 @@ final class PublisherStatementService
                 ->whereColumn('financial_periods.id', 'publisher_statements.financial_period_id'))
             ->orderByDesc('created_at')
             ->first();
-        $opening = max(0, (int) ($previous?->carry_forward_minor ?? 0));
+        $opening = $previous && in_array($previous->status, [PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward], true)
+            ? max(0, (int) $previous->carry_forward_minor) : 0;
 
         $gross = (int) $rows->sum('gross_revenue_minor');
         $baseDeductions = (int) $rows->sum(fn ($row) => (int) $row->demand_partner_deductions_minor

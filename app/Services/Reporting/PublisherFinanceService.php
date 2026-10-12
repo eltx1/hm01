@@ -50,7 +50,8 @@ final class PublisherFinanceService
                 return $row->report_date->toDateString() === now($timezone)->toDateString();
             });
             $currencyStatements = $statementModels->where('currency', $currency);
-            $latest = $currencyStatements->first();
+            $latest = $currencyStatements->first(fn ($statement) => $statement->finalized_at !== null
+                && $statement->status !== PublisherStatementStatus::Draft);
             $outstanding = $currencyStatements->filter(fn (PublisherStatement $statement): bool => $statement->finalized_at !== null
                 && $statement->status !== PublisherStatementStatus::Draft
                 && ($statement->is($latest) || ! in_array($statement->status, [PublisherStatementStatus::BelowThreshold, PublisherStatementStatus::CarriedForward], true)));
@@ -331,7 +332,7 @@ final class PublisherFinanceService
         if ($statement->status === PublisherStatementStatus::Draft || ! $statement->finalized_at) {
             return ['ready' => false, 'code' => 'NO_FINALIZED_STATEMENT', 'label' => 'Awaiting a finalized statement'];
         }
-        if ((int) $statement->balance_due_minor < (int) $statement->payment_threshold_minor) {
+        if ((int) $statement->balance_due_minor + (int) $statement->paid_minor < (int) $statement->payment_threshold_minor) {
             return ['ready' => false, 'code' => 'BELOW_THRESHOLD', 'label' => 'Balance remains below the payment threshold'];
         }
         if (! $statement->hasPayableBalance()) {

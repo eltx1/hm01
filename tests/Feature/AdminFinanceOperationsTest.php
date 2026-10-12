@@ -438,6 +438,46 @@ class AdminFinanceOperationsTest extends TestCase
         $this->assertSame(14000, app(UnifiedReportService::class)->publisherSummary($publisher, currency: 'USD')['payment_balance_minor']);
     }
 
+    public function test_partial_payment_preserves_affiliate_income_and_never_rolls_payable_debt_into_next_month(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
+        [$creator, $approver, , $publisher, $user] = $this->context();
+        $this->verifiedProfile($publisher, $user, $approver, 'USD');
+        $statement = $this->statement($publisher, 'PARTIAL-AFFILIATE', 'USD', 15000, 10000, PublisherStatementStatus::Payable, PublisherInvoiceStatus::NotRequired);
+        $statement->update(['publisher_earnings_minor' => 12000, 'affiliate_earnings_minor' => 3000]);
+        $payments = app(PublisherPaymentService::class);
+        $payment = $payments->create($statement->fresh(), 11000, ['idempotency_key' => 'partial-affiliate-1'], $creator);
+        $payments->approve($payment, $approver);
+        $payments->recordSettlement($payment->fresh(), 'PARTIAL-AFFILIATE-1', 11000, now(), $creator);
+        $statement->refresh();
+        $this->assertSame(4000, (int) $statement->balance_due_minor);
+        $this->assertSame(0, (int) $statement->carry_forward_minor);
+        $this->assertTrue($statement->hasPayableBalance());
+        $this->assertTrue(app(AdminFinanceService::class)->isEligible($statement));
+        $next = app(FinancialPeriodService::class)->periodFor('2026-10-01', 'USD');
+        $nextStatement = app(PublisherStatementService::class)->generate($next, $publisher, $creator);
+        $this->assertSame(0, (int) $nextStatement->opening_balance_minor);
+        $this->assertSame(4000, app(AdminFinanceService::class)->overview()['currency_totals']['USD']['outstanding_liability_minor']);
+        $remainder = $payments->create($statement, 4000, ['idempotency_key' => 'partial-affiliate-2'], $creator);
+        $payments->approve($remainder, $approver);
+        $payments->recordSettlement($remainder->fresh(), 'PARTIAL-AFFILIATE-2', 4000, now(), $creator);
+        $this->assertSame(0, (int) $statement->fresh()->balance_due_minor);
+        $this->assertSame(15000, (int) $statement->fresh()->paid_minor);
+        $this->assertSame(PublisherStatementStatus::Paid, $statement->fresh()->status);
+    }
+
+    public function test_newer_draft_does_not_hide_an_existing_carried_balance(): void
+    {
+        [, , , $publisher] = $this->context();
+        $draft = $this->statement($publisher, 'NEW-DRAFT', 'USD', 0, 1000, PublisherStatementStatus::Draft, PublisherInvoiceStatus::NotRequired);
+        $draft->update(['finalized_at' => null]);
+        $this->statement($publisher, 'OLDER-BELOW', 'USD', 300, 1000, PublisherStatementStatus::BelowThreshold, PublisherInvoiceStatus::NotRequired);
+        $this->assertSame(300, app(AdminFinanceService::class)->overview()['currency_totals']['USD']['outstanding_liability_minor']);
+        $overview = app(\App\Services\Reporting\PublisherFinanceService::class)->overview($publisher)['currencies']->firstWhere('currency', 'USD');
+        $this->assertSame(300, $overview['outstanding_balance_minor']);
+        $this->assertSame(300, $overview['statement_balance_due_minor']);
+    }
+
     private function context(): array
     {
         $this->seedIdentity();

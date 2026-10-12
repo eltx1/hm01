@@ -271,11 +271,14 @@ final class PublisherPaymentService
                 $statementPaid = (int) PublisherPaymentSettlement::withoutGlobalScopes()
                     ->whereIn('publisher_payment_id', $paymentIds)
                     ->sum('amount_minor');
-                $balance = max(0, (int) $statement->opening_balance_minor + (int) $statement->publisher_earnings_minor - $statementPaid);
+                $balance = max(0, (int) $statement->opening_balance_minor + (int) $statement->publisher_earnings_minor
+                    + (int) $statement->affiliate_earnings_minor - $statementPaid);
                 $statement->update([
                     'paid_minor' => $statementPaid,
                     'balance_due_minor' => $balance,
-                    'carry_forward_minor' => $balance > 0 ? $balance : 0,
+                    // This debt remains payable on its original statement.
+                    // Rolling it into another statement would duplicate it.
+                    'carry_forward_minor' => 0,
                     'status' => $balance === 0
                         ? PublisherStatementStatus::Paid
                         : PublisherStatementStatus::PartiallyPaid,
@@ -398,7 +401,8 @@ final class PublisherPaymentService
 
     private function assertStatementEligible(PublisherStatement $statement): void
     {
-        if (! in_array($statement->status, [PublisherStatementStatus::Payable, PublisherStatementStatus::PartiallyPaid], true)) {
+        if (! $statement->hasPayableBalance()
+            || ! in_array($statement->status, [PublisherStatementStatus::Payable, PublisherStatementStatus::PartiallyPaid], true)) {
             throw ValidationException::withMessages(['statement' => 'Only a payable or partially paid statement is payout eligible.']);
         }
         if ($statement->invoiceRequired() && $statement->publisher_invoice_status !== PublisherInvoiceStatus::Accepted) {
