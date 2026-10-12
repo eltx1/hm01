@@ -24,13 +24,19 @@ export function validate(report) {
         assert.ok(Array.isArray(period.demand_evidence) && period.demand_evidence.length <= 100);
         const evidenceCounts = ['mappings_before_end','mappings_after_end','widgets_before_end','widgets_changed_after_end','current_google_paths','current_exact_report_matches','current_other_or_unparseable','site_provider_snapshots','site_provider_candidates','site_provider_google_paths','site_provider_exact_report_matches'];
         for (const evidence of period.demand_evidence) {
-            keys(evidence, ['provider','mode','quick_managed','created_month','historical_account_attribution', ...evidenceCounts]);
+            keys(evidence, ['provider','mode','quick_managed','created_month','historical_account_attribution','current_other_kinds','site_provider_other_kinds', ...evidenceCounts]);
             assert.ok(['MGID','TABOOLA','SPEAKOL','OUTBRAIN','EXOCLICK','CUSTOM_NATIVE','CUSTOM_DISPLAY','CUSTOM_THIRD_PARTY_TAG'].includes(evidence.provider));
             assert.ok(['DIRECT_JS','GAM_THIRD_PARTY_CREATIVE','GAM_LINE_ITEM','MANUAL_TAG','API_INTEGRATION'].includes(evidence.mode));
             assert.equal(typeof evidence.quick_managed, 'boolean');
             assert.equal(evidence.historical_account_attribution, 'UNVERIFIED');
             assert.match(evidence.created_month, /^20\d{2}-(0[1-9]|1[0-2])$/);
             evidenceCounts.forEach(key => integer(evidence[key]));
+            for (const kinds of [evidence.current_other_kinds, evidence.site_provider_other_kinds]) {
+                for (const [kind, count] of Object.entries(kinds)) {
+                    assert.ok(['UNREADABLE','GOOGLE_VAST_EXACT_PATH','GOOGLE_VAST_OTHER_PATH','GOOGLE_OUT_OF_PAGE_EXACT_PATH','GOOGLE_OUT_OF_PAGE_OTHER_PATH','GOOGLE_MARKUP_UNVERIFIED','OTHER_OR_MIXED_MARKUP'].includes(kind));
+                    integer(count);
+                }
+            }
         }
         assert.ok(Array.isArray(period.fact_groups) && period.fact_groups.length <= 100);
         for (const group of period.fact_groups) {
