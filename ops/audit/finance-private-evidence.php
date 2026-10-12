@@ -38,9 +38,11 @@ function horusFinancePrivateSourceEvidence(\App\Models\DemandAccount $account, \
                     $path = $attributes['data-hm-gpt-ad-unit-path'] ?? '';
                     $raw = $path ?: (horusFinanceDecodePayload($attributes, 'data-hm-isolated-html') ?: horusFinanceDecodePayload($attributes, 'data-hm-vast-url'))
                         ?: (string) ($candidate['tag']['isolation']['html'] ?? '');
-                    $candidates[] = ['container' => $candidate['tag']['container']['id'] ?? null, 'source' => horusFinanceTagMetadata($raw),
+                    $metadata = horusFinanceTagMetadata($raw);
+                    $candidates[] = ['container' => $candidate['tag']['container']['id'] ?? null, 'source' => $metadata,
                         'gam_managed' => (bool) ($candidate['gamManaged'] ?? false),
-                        'tag_fields' => array_keys($candidate['tag'] ?? []), 'attribute_fields' => array_keys($attributes)];
+                        ...($metadata['kind'] === 'UNKNOWN' ? ['tag_fields' => array_keys($candidate['tag'] ?? []),
+                            'attribute_fields' => array_keys($attributes)] : [])];
                 }
             }
             $data['history'][] = ['published_at' => $version->published_at->toIso8601String(), 'candidates' => $candidates];
