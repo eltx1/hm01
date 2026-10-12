@@ -14,7 +14,7 @@ function horusFinancePreviewSqlAllowed(string $sql, string $prefix = ''): bool
     return (bool) preg_match('/^\s*(?:insert\s+into|update)\s+`?'.preg_quote($prefix, '/').'(?:gam_api_operations|gam_errors)`?\s+(?:\(|set\b)/i', $sql);
 }
 
-function horusFinanceVideoPreviewContext(\App\Models\SiteGamVideoReportBinding $binding, string $expectedIdentity): array
+function horusFinanceVideoPreviewContext(\App\Models\SiteGamVideoReportBinding $binding, string $expectedIdentity, ?array $expectedContext = null): array
 {
     $binding->loadMissing(['site', 'connection', 'gamConnection']);
     if (!hash_equals($expectedIdentity, horusFinancePreviewIdentity($binding))
@@ -23,16 +23,19 @@ function horusFinanceVideoPreviewContext(\App\Models\SiteGamVideoReportBinding $
         || $binding->connection->currency !== 'USD'
         || $binding->network_code !== (string) $binding->gamConnection->network_code
         || $binding->organization_id !== $binding->site->organization_id) throw new \RuntimeException('Preview source changed');
-    return ['metric_basis' => \App\Services\Reporting\SiteGamReportMetrics::BASIS, 'currency' => 'USD',
+    $context = ['metric_basis' => \App\Services\Reporting\SiteGamReportMetrics::BASIS, 'currency' => 'USD',
         'from' => '2026-09-30', 'to' => '2026-09-30', 'hostname' => strtolower($binding->site->primary_domain),
         'ad_unit_id' => $binding->ad_unit_id, 'network_code' => $binding->network_code,
         'timezone' => $binding->connection->timezone];
+    if ($expectedContext !== null && $context !== $expectedContext) throw new \RuntimeException('Preview scope changed');
+    return $context;
 }
 
 /** Collect evidence only. No imports, source cutovers, statements or payment operations. */
 function horusFinanceVideoPreview(\App\Models\SiteGamVideoReportBinding $binding, string $identity): array
 {
     $context = horusFinanceVideoPreviewContext($binding, $identity);
+    $originalScope = $context;
     if (!app(\App\Services\Reporting\SiteGamVideoReportingService::class)->availableConnections($binding->site)
         ->whereKey($binding->gam_connection_id)->exists()) throw new \RuntimeException('Preview connection unavailable');
     $google = app(\App\Services\Reporting\GamAdUnitReportClient::class);
@@ -52,7 +55,7 @@ function horusFinanceVideoPreview(\App\Models\SiteGamVideoReportBinding $binding
         if ($status === 'COMPLETED') {
             $csv = $google->download($binding->gamConnection, $jobId);
             $evidence = $report->parse($csv, $context, $currency);
-            horusFinanceVideoPreviewContext($binding->fresh(['site', 'connection', 'gamConnection']), $identity);
+            horusFinanceVideoPreviewContext($binding->fresh(['site', 'connection', 'gamConnection']), $identity, $originalScope);
             return ['scope' => $context, 'query_sha256' => $report->queryHash($context), 'evidence' => $evidence,
                 'financial_records_changed' => false];
         }

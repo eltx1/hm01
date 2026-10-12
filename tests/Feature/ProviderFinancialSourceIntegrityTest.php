@@ -736,12 +736,7 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         foreach (['update `daily_reports` set `gross_revenue_minor` = ?', 'delete from `gam_api_operations`', 'insert into `publisher_statements` (`id`) values (?)', 'update `site_gam_video_report_bindings` set `starts_on` = ?', 'update `gam_api_operations_backup` set `value` = ?', 'alter table `daily_reports` add x int'] as $sql) {
             $this->assertFalse(horusFinancePreviewSqlAllowed($sql));
         }
-        $binding = new \App\Models\SiteGamVideoReportBinding(['id' => 'binding', 'site_id' => 'site', 'active_site_id' => 'site',
-            'organization_id' => 'org', 'gam_connection_id' => 'gam', 'network_code' => '123', 'ad_unit_id' => '456',
-            'ad_unit_code' => 'video', 'starts_on' => '2026-10-06', 'ends_on' => null]);
-        $binding->setRelation('site', new \App\Models\Site(['organization_id' => 'org', 'primary_domain' => 'site.example']));
-        $binding->setRelation('connection', new ReportSourceConnection(['is_enabled' => true, 'currency' => 'USD', 'timezone' => 'UTC']));
-        $binding->setRelation('gamConnection', new \App\Models\GamConnection(['is_enabled' => true, 'network_code' => '123']));
+        $binding = $this->financePreviewBinding();
         $identity = horusFinancePreviewIdentity($binding);
         $context = horusFinanceVideoPreviewContext($binding, $identity);
         $query = app(\App\Services\Reporting\GamHistoricalCorrectionReport::class)->query($context);
@@ -751,6 +746,34 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $binding->ad_unit_id = '789';
         $this->expectException(\RuntimeException::class);
         horusFinanceVideoPreviewContext($binding, $identity);
+    }
+
+    public function test_video_preview_rejects_changed_hostname_or_timezone_with_unchanged_ids(): void
+    {
+        require_once base_path('ops/audit/finance-video-preview-helper.php');
+        foreach (['hostname', 'timezone'] as $change) {
+            $binding = $this->financePreviewBinding();
+            $identity = horusFinancePreviewIdentity($binding);
+            $scope = horusFinanceVideoPreviewContext($binding, $identity);
+            if ($change === 'hostname') $binding->site->primary_domain = 'other.example';
+            else $binding->connection->timezone = 'Asia/Dubai';
+            $this->assertSame($identity, horusFinancePreviewIdentity($binding));
+            $rejected = false;
+            try { horusFinanceVideoPreviewContext($binding, $identity, $scope); }
+            catch (\RuntimeException $exception) { $rejected = $exception->getMessage() === 'Preview scope changed'; }
+            $this->assertTrue($rejected);
+        }
+    }
+
+    private function financePreviewBinding(): \App\Models\SiteGamVideoReportBinding
+    {
+        $binding = new \App\Models\SiteGamVideoReportBinding(['id' => 'binding', 'site_id' => 'site', 'active_site_id' => 'site',
+            'organization_id' => 'org', 'gam_connection_id' => 'gam', 'network_code' => '123', 'ad_unit_id' => '456',
+            'ad_unit_code' => 'video', 'starts_on' => '2026-10-06', 'ends_on' => null]);
+        $binding->setRelation('site', new \App\Models\Site(['organization_id' => 'org', 'primary_domain' => 'site.example']));
+        $binding->setRelation('connection', new ReportSourceConnection(['is_enabled' => true, 'currency' => 'USD', 'timezone' => 'UTC']));
+        $binding->setRelation('gamConnection', new \App\Models\GamConnection(['is_enabled' => true, 'network_code' => '123']));
+        return $binding;
     }
 
     private function demandAccount(string $networkCode, array $configuration): DemandAccount
