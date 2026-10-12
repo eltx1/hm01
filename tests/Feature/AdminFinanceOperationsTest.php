@@ -380,6 +380,10 @@ class AdminFinanceOperationsTest extends TestCase
         $this->actingAs($user)->get(route('publisher.finance.overview'))->assertOk()->assertSee('2026-09')->assertSee('Earnings awaiting monthly close');
         $this->artisan('reporting:close-ready-periods --dry-run')->assertSuccessful();
         $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-01 12:00:00'));
+        $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
+        $this->assertSame(0, PublisherStatement::withoutGlobalScopes()->count());
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-12 12:00:00'));
         $this->artisan('reporting:close-ready-periods --force')->assertSuccessful();
         $statement = PublisherStatement::withoutGlobalScopes()->sole();
         $this->assertSame($expected, (int) $statement->publisher_earnings_minor);

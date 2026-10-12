@@ -23,7 +23,8 @@ class CloseReadyFinancialPeriods extends Command
 
         $blocked = [];
         $failed = false;
-        foreach (FinancialPeriod::query()->where('status', 'OPEN')->whereDate('ends_on', '<', today())
+        // Preserve the existing second-day earliest close; retry thereafter.
+        foreach (FinancialPeriod::query()->where('status', 'OPEN')->whereDate('ends_on', '<', today()->subDay())
             ->orderBy('starts_on')->orderBy('id')->get() as $period) {
             // An empty placeholder is not an accounting period to settle.
             if (! DailyReport::withoutGlobalScopes()->where('financial_period_id', $period->id)->exists()) {

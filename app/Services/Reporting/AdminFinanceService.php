@@ -116,7 +116,8 @@ final class AdminFinanceService
 
     public function isEligible(PublisherStatement $statement): bool
     {
-        if (! in_array($statement->status, [PublisherStatementStatus::Payable, PublisherStatementStatus::PartiallyPaid], true)) {
+        if (! $statement->hasPayableBalance()
+            || ! in_array($statement->status, [PublisherStatementStatus::Payable, PublisherStatementStatus::PartiallyPaid], true)) {
             return false;
         }
         if ($statement->invoiceRequired() && $statement->publisher_invoice_status !== PublisherInvoiceStatus::Accepted) {
