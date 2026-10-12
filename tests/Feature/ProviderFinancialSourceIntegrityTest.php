@@ -68,6 +68,81 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->site = $this->makeSiteFor($this->publisher, $this->publisherUser, ['display_name' => 'Financial Source Site']);
     }
 
+    public function test_ongoing_site_gam_review_tracks_real_source_changes_and_requires_explicit_review(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-02 10:00:00'));
+        $account = $this->demandAccount('CUSTOM_THIRD_PARTY_TAG', []);
+        $this->site->forceFill(['created_at' => '2026-09-01'])->save();
+        $payload = ['directDemand' => ['enabled' => true, 'placements' => [[
+            'enabled' => true, 'candidates' => [['network' => 'CUSTOM_THIRD_PARTY_TAG', 'mode' => 'DIRECT_JS',
+                'tag' => ['container' => ['id' => 'old', 'attributes' => ['data-hm-gpt-ad-unit-path' => '/123/first']]]]],
+        ]]]];
+        $publish = function (array $data) {
+            $config = \App\Models\SiteConfig::withoutGlobalScopes()->firstOrCreate(
+                ['site_id' => $this->site->id], ['organization_id' => $this->site->organization_id]);
+            return \App\Models\ConfigVersion::withoutGlobalScopes()->create([
+                'organization_id' => $this->site->organization_id, 'site_id' => $this->site->id,
+                'site_config_id' => $config->id, 'environment' => 'PRODUCTION',
+                'version' => \App\Models\ConfigVersion::withoutGlobalScopes()->count() + 1,
+                'status' => 'PUBLISHED', 'checksum' => hash('sha256', json_encode($data)),
+                'file_path' => 'test.json', 'published_at' => now(), 'payload' => $data,
+            ]);
+        };
+        $publish($payload);
+        $this->travel(1)->minutes();
+        $source = ReportSource::query()->where('code', ReportSourceCode::CustomCsv->value)->firstOrFail();
+        $configuration = ['site_gam_included' => true, 'site_gam_inclusion_reason' => 'All published sources reviewed against exact Site GAM coverage.',
+            'site_gam_coverage_review' => ['sites' => ['forged' => 'client supplied']]];
+        $service = app(MonetizationFinancialBindingService::class);
+        $binding = $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+        $review = app(\App\Services\Reporting\SiteGamCoverageReview::class);
+        $period = app(FinancialPeriodService::class)->periodFor(now()->toImmutable(), 'USD');
+        $this->assertSame([$this->site->id], array_keys($binding->configuration['site_gam_coverage_review']['sites']));
+        $this->assertFalse($review->changed($account->fresh(), $period));
+        $this->travel(1)->minutes();
+        $cosmetic = $payload;
+        $cosmetic['directDemand']['placements'][0]['candidates'][0]['priority'] = 99;
+        $cosmetic['directDemand']['placements'][0]['candidates'][0]['tag']['container']['id'] = 'new';
+        $publish($cosmetic);
+        $this->assertFalse($review->changed($account->fresh(), $period));
+        $this->travel(1)->minutes();
+        $changed = $payload;
+        $changed['directDemand']['placements'][0]['candidates'][0]['tag']['container']['attributes']['data-hm-gpt-ad-unit-path'] = '/123/second';
+        $publish($changed);
+        $this->assertTrue($review->changed($account->fresh(), $period));
+        $this->travel(1)->minutes();
+        $publish($payload); // A reverted source may still have generated revenue.
+        $this->assertTrue($review->changed($account->fresh(), $period));
+        $blocker = app(MonetizationFinancialReadinessService::class)->blockersForPeriod($period)->firstWhere('subject_id', $account->id);
+        $this->assertSame('SITE_GAM_SOURCE_CHANGED', $blocker['reasons'][0]['code']);
+        $this->travel(1)->minutes();
+        $service->bind($account, $source, FinancialReportingMethod::Csv, 'USD', 'UTC', $this->admin, $configuration);
+        $this->assertFalse($review->changed($account->fresh(), $period));
+        $other = $this->makeSiteFor($this->publisher, $this->publisherUser);
+        $account->sites()->create(['organization_id' => $other->organization_id, 'site_id' => $other->id,
+            'approval_status' => 'APPROVED', 'is_enabled' => true, 'integration_mode' => 'DIRECT_JS', 'sync_status' => 'IN_SYNC']);
+        $this->assertTrue($review->changed($account->fresh(), $period));
+        $other->forceFill(['created_at' => '2026-10-01'])->save();
+        $this->assertFalse($review->changed($account->fresh(), $period));
+    }
+
+    public function test_bidder_source_fingerprint_detects_parameters_and_delivery_changes(): void
+    {
+        $account = $this->oneTagAccount();
+        $review = app(\App\Services\Reporting\SiteGamCoverageReview::class);
+        $payload = ['prebid' => ['enabled' => true, 'delivery' => ['mode' => 'GAM'],
+            'adUnits' => [['bids' => [['bidder' => 'onetag', 'params' => ['pubId' => 'first']]]]]]];
+        $first = $review->fingerprint($account, $this->site, $payload);
+        $payload['prebid']['adUnits'][0]['bids'][0]['params']['pubId'] = 'second';
+        $this->assertNotSame($first, $review->fingerprint($account, $this->site, $payload));
+        $payload['prebid']['adUnits'][0]['bids'][0]['params']['pubId'] = 'first';
+        $payload['prebid']['delivery']['mode'] = 'STANDALONE';
+        $this->assertNotSame($first, $review->fingerprint($account, $this->site, $payload));
+        $payload['prebid']['delivery']['mode'] = 'GAM';
+        $payload['prebid']['adUnits'][0]['bids'][] = ['bidder' => 'unrelated', 'params' => ['pubId' => 'other']];
+        $this->assertSame($first, $review->fingerprint($account, $this->site, $payload));
+    }
+
     public function test_one_month_site_gam_declaration_prevents_duplicates_without_attesting_other_months(): void
     {
         $account = $this->oneTagAccount('Scoped Site GAM declaration');

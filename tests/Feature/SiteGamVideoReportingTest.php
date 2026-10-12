@@ -271,6 +271,12 @@ class SiteGamVideoReportingTest extends TestCase
         }
     }
 
+    private function otherPublisherSite(?string $hostname = null): \App\Models\Site
+    {
+        $user = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Second publisher'), RoleName::PublisherAdmin);
+        return $this->makeSiteFor($this->makePublisherFor($user), $user, $hostname ? ['primary_domain' => $hostname] : []);
+    }
+
     private function finalizeClock(): void
     {
         $this->travelTo(CarbonImmutable::parse('2026-09-23 12:00:00', 'UTC'));
@@ -315,7 +321,7 @@ class SiteGamVideoReportingTest extends TestCase
         } catch (ValidationException) { $this->addToAssertionCount(1); }
         $video = $this->video($context);
         $other = $context;
-        $other[3] = $this->makeSiteFor($context[1], $context[2]);
+        $other[3] = $this->otherPublisherSite($context[3]->primary_domain);
         $other[4] = $this->makeGamConnection($context[0]->organization, $context[0], ['network_code' => $context[4]->network_code]);
         try {
             $this->video($other);
@@ -329,6 +335,77 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertSame('12345', $primary->fresh()->ad_unit_id);
         $this->assertSame('67890', $video->fresh()->ad_unit_id);
         $this->assertDatabaseCount('site_gam_reporting_unit_claims', 2);
+    }
+
+    public function test_shared_video_unit_imports_only_each_exact_hostname_and_never_double_credits(): void
+    {
+        $context = $this->context();
+        $first = $this->video($context);
+        $other = $context;
+        $other[3] = $this->otherPublisherSite();
+        $other[4] = $this->makeGamConnection($context[0]->organization, $context[0], ['network_code' => $context[4]->network_code]);
+        $second = $this->video($other);
+        $this->assertNotSame($first->active_unit_key, $second->active_unit_key);
+        $this->assertSame($first->id, $this->video($context)->id);
+        $this->assertSame($second->id, $this->video($other)->id);
+        $this->finalizeClock();
+        $a = $this->csv([['2026-09-21', '67890', 120, 100, 95, 3, 'US$ 1000000']], hostname: $context[3]->primary_domain);
+        $b = $this->csv([['2026-09-21', '67890', 240, 200, 190, 6, 'US$ 2000000']], hostname: $other[3]->primary_domain);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($a.explode("\n", $b, 2)[1])]);
+        $this->assertCompleted($this->import($first));
+        $this->assertCompleted($this->import($second));
+        $this->assertCompleted($this->import($first));
+        $this->assertCompleted($this->import($second));
+        $this->assertSame(2, DailyReport::withoutGlobalScopes()->count());
+        $this->assertSame(300, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        $this->assertSame(95, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $first->report_source_connection_id)->firstOrFail()->impressions);
+        $this->assertSame(190, DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $second->report_source_connection_id)->firstOrFail()->impressions);
+    }
+
+    public function test_shared_hostname_scopes_allow_bounded_history_and_release_only_the_selected_owner(): void
+    {
+        $context = $this->context();
+        $context[3]->forceFill(['created_at' => '2026-09-01'])->save();
+        $first = $this->video($context);
+        $other = $context;
+        $other[3] = $this->otherPublisherSite();
+        $other[3]->forceFill(['created_at' => '2026-09-01'])->save();
+        $second = $this->video($other);
+        $service = app(\App\Services\Reporting\SiteGamVideoBackfillService::class);
+        $a = $service->create($context[3], $first->id, '2026-09-20', '2026-09-20', 'Reviewed first exact-hostname Video source.', $context[0]);
+        $b = $service->create($other[3], $second->id, '2026-09-20', '2026-09-20', 'Reviewed second exact-hostname Video source.', $context[0]);
+        $this->assertNotSame($a->id, $b->id);
+        $this->finalizeClock();
+        $csvA = $this->csv([['2026-09-20', '67890', 120, 100, 95, 3, 'US$ 1000000']], hostname: $context[3]->primary_domain);
+        $csvB = $this->csv([['2026-09-20', '67890', 240, 200, 190, 6, 'US$ 2000000']], hostname: $other[3]->primary_domain);
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($csvA.explode("\n", $csvB, 2)[1])]);
+        $this->assertCompleted($this->import($a, '2026-09-20', '2026-09-20'));
+        $this->assertCompleted($this->import($b, '2026-09-20', '2026-09-20'));
+        $this->assertSame(300, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+        app(SiteGamVideoReportingService::class)->disable($context[3], $context[0]);
+        $this->assertDatabaseMissing('site_gam_reporting_unit_claims', ['binding_id' => $first->id]);
+        $this->assertDatabaseHas('site_gam_reporting_unit_claims', ['binding_id' => $second->id]);
+        $this->assertNotNull($second->fresh()->active_unit_key);
+    }
+
+    public function test_unscoped_owner_stays_exclusive_and_hostname_changes_cannot_duplicate_money(): void
+    {
+        $context = $this->context();
+        $first = $this->video($context);
+        $other = $context;
+        $other[3] = $this->otherPublisherSite();
+        $configuration = $first->connection->configuration;
+        $first->connection->update(['configuration' => []]);
+        try { $this->video($other); $this->fail('Legacy whole-unit owner must stay exclusive.'); }
+        catch (ValidationException) { $this->addToAssertionCount(1); }
+        $first->connection->update(['configuration' => $configuration]);
+        $second = $this->video($other);
+        $other[3]->update(['primary_domain' => 'https://'.$context[3]->primary_domain.'/']);
+        $this->finalizeClock();
+        Http::fake(['storage.googleapis.com/*' => fn () => Http::response($this->csv())]);
+        $job = $this->import($second);
+        $this->assertSame(ReportImportStatus::Failed, $job->status);
+        $this->assertDatabaseCount('daily_reports', 0);
     }
 
     public function test_exact_hostname_adx_usd_and_date_effective_website_share_use_the_normal_financial_pipeline(): void
