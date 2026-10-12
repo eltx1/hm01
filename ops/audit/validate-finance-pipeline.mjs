@@ -3,9 +3,20 @@ import assert from 'node:assert/strict';
 export function validate(report) {
     const keys = (value, expected) => assert.deepEqual(Object.keys(value).sort(), expected.sort());
     const integer = value => assert.ok(Number.isSafeInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 1e9);
-    keys(report, ['schema_version', 'release', 'periods']);
-    assert.equal(report.schema_version, 2);
+    keys(report, ['schema_version', 'release', 'periods', 'private_evidence']);
+    assert.equal(report.schema_version, 3);
     assert.match(report.release, /^[a-f0-9]{40}$/);
+    if (report.private_evidence !== null) {
+        const box=report.private_evidence;
+        keys(box, ['algorithm','key_fingerprint','wrapped_key','iv','tag','ciphertext']);
+        assert.equal(box.algorithm, 'RSA-OAEP+A256GCM');
+        assert.match(box.key_fingerprint, /^[a-f0-9]{64}$/);
+        for (const key of ['wrapped_key','iv','tag','ciphertext']) assert.match(box[key], /^[A-Za-z0-9+/]+={0,2}$/);
+        assert.equal(Buffer.from(box.wrapped_key,'base64').length,384);
+        assert.equal(Buffer.from(box.iv,'base64').length,12);
+        assert.equal(Buffer.from(box.tag,'base64').length,16);
+        assert.ok(Buffer.from(box.ciphertext,'base64').length<=524288);
+    }
     assert.ok(Array.isArray(report.periods) && report.periods.length <= 24);
     const blockers = ['PERIOD_NOT_ENDED','MISSING_FINALIZED_DATA','NON_FINAL_REPORTING','SETTLEMENT_INELIGIBLE_FINALIZED_ROWS','MONETIZATION_SOURCE_COVERAGE','FAILED_IMPORTS','IMPORTS_IN_PROGRESS','RECONCILIATION_ISSUES','PENDING_ADJUSTMENTS','CURRENCY_MISMATCH'];
     const countKeys = ['finalizedRows','ineligibleFinalizedRows','nonFinalRows','failedImports','activeImports','reconciliationIssues','pendingAdjustments','currencyMismatchRows','currencyMismatchAdjustments','monetizationCoverageBlockers'];

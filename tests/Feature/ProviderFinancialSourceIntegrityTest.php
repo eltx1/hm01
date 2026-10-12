@@ -676,6 +676,11 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $queries = [];
         \Illuminate\Support\Facades\DB::listen(function ($event) use (&$queries) { $queries[] = $event->sql; });
         $evidence = horusFinanceDemandEvidence($account, $period);
+        require_once base_path('ops/audit/finance-private-evidence.php');
+        $privateEvidence = horusFinancePrivateSourceEvidence($account, $period);
+        $this->assertSame($account->id, $privateEvidence['account_id']);
+        $this->assertCount(2, $privateEvidence['sites'][0]['history']);
+        $this->assertSame(['/123/private_unit'], $privateEvidence['sites'][0]['history'][0]['candidates'][0]['source']['paths']);
         $this->assertSame(0, $evidence['mappings_before_end']);
         $this->assertSame(1, $evidence['mappings_after_end']);
         $this->assertSame('UNVERIFIED', $evidence['historical_account_attribution']);
@@ -703,6 +708,23 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertSame($tag, horusFinanceDecodePayload(['html-parts' => '2', 'html-0' => substr($encoded, 0, 30), 'html-1' => substr($encoded, 30)], 'html'));
         $this->assertSame('', horusFinanceDecodePayload(['html-parts' => '65'], 'html'));
         $this->assertSame('', horusFinanceDecodePayload(['html-parts' => '2', 'html-0' => 'abc'], 'html'));
+    }
+
+    public function test_private_finance_evidence_is_minimized_and_authenticated_encrypted(): void
+    {
+        require_once base_path('ops/audit/finance-private-evidence.php');
+        $metadata = horusFinanceTagMetadata('https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Funit&private_token=DO_NOT_KEEP');
+        $this->assertSame(['/123/unit'], $metadata['paths']);
+        $this->assertStringNotContainsString('DO_NOT_KEEP', json_encode($metadata));
+        $private = openssl_pkey_new(['private_key_bits' => 3072, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        $public = openssl_pkey_get_details($private)['key'];
+        $evidence = ['account_id' => 'PRIVATE_TEST_IDENTIFIER', 'source' => $metadata];
+        $box = horusFinanceSealEvidence($evidence, $public);
+        $this->assertStringNotContainsString('PRIVATE_TEST_IDENTIFIER', json_encode($box));
+        $this->assertTrue(openssl_private_decrypt(base64_decode($box['wrapped_key']), $secret, $private, OPENSSL_PKCS1_OAEP_PADDING));
+        $decoded = openssl_decrypt(base64_decode($box['ciphertext']), 'aes-256-gcm', $secret, OPENSSL_RAW_DATA, base64_decode($box['iv']), base64_decode($box['tag']), 'horus-finance-evidence-v1');
+        $this->assertSame($evidence, json_decode($decoded, true));
+        $this->assertFalse(openssl_decrypt(base64_decode($box['ciphertext']), 'aes-256-gcm', $secret, OPENSSL_RAW_DATA, base64_decode($box['iv']), str_repeat('x', 16), 'horus-finance-evidence-v1'));
     }
 
     private function demandAccount(string $networkCode, array $configuration): DemandAccount
