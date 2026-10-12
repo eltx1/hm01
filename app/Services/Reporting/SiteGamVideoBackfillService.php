@@ -40,8 +40,12 @@ final class SiteGamVideoBackfillService
             if ($current->organization_id !== $site->organization_id || $current->gam_connection_id !== $gam->id
                 || (string) $gam->network_code !== $current->network_code || ! $gam->is_enabled
                 || ! app(SiteGamVideoReportingService::class)->availableConnections($site)->whereKey($gam->id)->exists()
+                || $current->connection->connection_type !== $current->connectionType() || $current->connection->connection_id !== $current->id
+                || $current->connection->organization_id !== $site->organization_id
                 || ! $current->connection->is_enabled || ! $current->connection->source->is_enabled
                 || $to >= $current->starts_on->toDateString() || $current->ends_on !== null) $this->invalid();
+            if (! DB::table('site_gam_reporting_unit_claims')->where('unit_key', $current->network_code.':'.$current->ad_unit_id)
+                ->where('binding_type', $current->connectionType())->where('binding_id', $current->id)->exists()) $this->invalid();
             $period = app(FinancialPeriodService::class)->periodFor(CarbonImmutable::parse($from), $current->connection->currency);
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($period->id);
             if ($from < $site->created_at->toDateString() || $period->status->value !== 'OPEN') $this->invalid();
@@ -50,7 +54,7 @@ final class SiteGamVideoBackfillService
                 ->whereDate('starts_on', $from)->whereDate('ends_on', $to)->whereNull('cancelled_at')
                 ->whereHas('connection', fn ($q) => $q->where('configuration->historical_backfill_of', $current->id))->first();
             if ($same) return $same;
-            foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class] as $model) {
+            foreach ([SiteGamReportBinding::class, SiteGamVideoReportBinding::class, \App\Models\MobileAppReportBinding::class] as $model) {
                 $query = $model::withoutGlobalScopes()->whereDate('starts_on', '<=', $to)
                     ->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $from))
                     ->where(fn ($q) => $q->where(fn ($q) => $q->where('network_code', $current->network_code)->where('ad_unit_id', $current->ad_unit_id))

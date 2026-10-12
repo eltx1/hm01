@@ -129,6 +129,17 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertDatabaseCount('daily_reports', 0);
     }
 
+    public function test_video_history_rejects_a_missing_current_unit_claim(): void
+    {
+        [$admin, , , $site] = $context = $this->context();
+        $site->forceFill(['created_at' => '2026-09-01'])->save();
+        $current = $this->video($context);
+        DB::table('site_gam_reporting_unit_claims')->where('binding_id', $current->id)->delete();
+        $this->expectException(ValidationException::class);
+        app(\App\Services\Reporting\SiteGamVideoBackfillService::class)->create($site, $current->id,
+            '2026-09-20', '2026-09-20', 'Verified missing separate Video unit day.', $admin);
+    }
+
     public function test_video_history_form_requires_confirmation_and_preserves_current_connection(): void
     {
         [$admin, , , $site] = $context = $this->context();
