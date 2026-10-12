@@ -96,13 +96,13 @@ function horusFinanceUrlShape(string $value): array
     $scheme = $url['scheme'] ?? '';
     parse_str($url['query'] ?? '', $query);
     $unit = $query['iu'] ?? null;
-    $adsenseEndpoint = $host === 'googleads.g.doubleclick.net' && ($url['path'] ?? '') === '/pagead/ads';
+    $adsenseEndpoint = $scheme === 'https' && $host === 'googleads.g.doubleclick.net' && ($url['path'] ?? '') === '/pagead/ads';
     $client = $query['client'] ?? null;
     $slot = $query['slotname'] ?? null;
     return ['kind' => $host !== '' ? 'URL' : (str_starts_with($value, '<') ? 'MARKUP' : 'OTHER'),
         'scheme' => in_array($scheme, ['http', 'https'], true) ? $scheme : 'OTHER',
         'host' => is_string($host) && preg_match('/^[a-zA-Z0-9.-]{1,253}$/D', $host) ? strtolower($host) : null,
-        'google_ads_endpoint' => ($url['path'] ?? '') === '/gampad/ads',
+        'google_ads_endpoint' => $scheme === 'https' && in_array($host, ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net'], true) && ($url['path'] ?? '') === '/gampad/ads',
         'adsense_video_endpoint' => $adsenseEndpoint,
         'public_adsense_client' => $adsenseEndpoint && is_string($client) && (preg_match('/^ca-(?:video-)?pub-[0-9]{16}$/D', $client) || $client === 'ca-video-afvtest') ? $client : null,
         'public_adsense_slot' => $adsenseEndpoint && is_string($slot) && preg_match('/^[0-9]{1,20}$/D', $slot) ? $slot : null,

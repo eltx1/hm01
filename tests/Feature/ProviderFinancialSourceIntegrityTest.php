@@ -805,6 +805,11 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertStringNotContainsString('DO_NOT_KEEP', json_encode($adsense));
         $this->assertNull(horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=DO_NOT_KEEP&slotname[]=123')['public_adsense_client']);
         $this->assertNull(horusFinanceUrlShape('https://other.example/pagead/ads?client=ca-video-pub-1234567890123456')['public_adsense_client']);
+        $this->assertFalse(horusFinanceUrlShape('https://other.example/gampad/ads')['google_ads_endpoint']);
+        $this->assertFalse(horusFinanceUrlShape('http://pubads.g.doubleclick.net/gampad/ads')['google_ads_endpoint']);
+        $this->assertTrue(horusFinanceUrlShape('https://securepubads.g.doubleclick.net/gampad/ads')['google_ads_endpoint']);
+        $this->assertFalse(horusFinanceUrlShape('http://googleads.g.doubleclick.net/pagead/ads')['adsense_video_endpoint']);
+        $this->assertSame('ca-video-afvtest', horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=ca-video-afvtest')['public_adsense_client']);
     }
 
     public function test_video_preview_allows_api_audit_but_rejects_financial_and_configuration_writes(): void
