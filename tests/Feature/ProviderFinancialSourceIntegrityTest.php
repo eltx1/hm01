@@ -810,6 +810,9 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertTrue(horusFinanceUrlShape('https://securepubads.g.doubleclick.net/gampad/ads')['google_ads_endpoint']);
         $this->assertFalse(horusFinanceUrlShape('http://googleads.g.doubleclick.net/pagead/ads')['adsense_video_endpoint']);
         $this->assertSame('ca-video-afvtest', horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=ca-video-afvtest')['public_adsense_client']);
+        $this->assertSame(horusFinanceUrlShape('https://googleads.g.doubleclick.net/pagead/ads?client=ca-video-afvtest'), horusFinanceUrlShape('HTTPS://GOOGLEADS.G.DOUBLECLICK.NET/pagead/ads?client=ca-video-afvtest'));
+        $this->assertTrue(horusFinanceUrlShape('HTTPS://PuBads.G.DoubleClick.NET/gampad/ads')['google_ads_endpoint']);
+        $this->assertSame(['/123/unit'], horusFinanceTagMetadata('HTTPS://PUBADS.G.DOUBLECLICK.NET/gampad/ads?iu=/123/unit')['paths']);
     }
 
     public function test_video_preview_allows_api_audit_but_rejects_financial_and_configuration_writes(): void

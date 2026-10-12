@@ -63,7 +63,7 @@ function horusFinanceTagMetadata(string $tag): array
     if (strlen($tag) > 100000) return $result;
     $tag = trim(html_entity_decode($tag, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     $url = parse_url($tag);
-    if (($url['scheme'] ?? '') === 'https' && in_array($url['host'] ?? '', ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net'], true) && ($url['path'] ?? '') === '/gampad/ads') {
+    if (strtolower($url['scheme'] ?? '') === 'https' && in_array(strtolower($url['host'] ?? ''), ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net'], true) && ($url['path'] ?? '') === '/gampad/ads') {
         parse_str($url['query'] ?? '', $query);
         $paths = [$query['iu'] ?? '']; $result['kind'] = 'GOOGLE_VAST';
     } else {
@@ -92,8 +92,8 @@ function horusFinanceUrlShape(string $value): array
     if (strlen($value) > 100000) return ['kind' => 'OVERSIZED'];
     $value = trim(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     $url = parse_url($value);
-    $host = $url['host'] ?? '';
-    $scheme = $url['scheme'] ?? '';
+    $host = strtolower($url['host'] ?? '');
+    $scheme = strtolower($url['scheme'] ?? '');
     parse_str($url['query'] ?? '', $query);
     $unit = $query['iu'] ?? null;
     $adsenseEndpoint = $scheme === 'https' && $host === 'googleads.g.doubleclick.net' && ($url['path'] ?? '') === '/pagead/ads';
