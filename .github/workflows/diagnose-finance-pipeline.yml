@@ -1,10 +1,10 @@
 name: Diagnose finance pipeline
 on:
   pull_request:
-    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-private-evidence.php, ops/audit/finance-diagnostic-public.pem, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
   push:
     branches: [main]
-    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
+    paths: [.github/workflows/diagnose-finance-pipeline.yml, ops/audit/finance-pipeline.php, ops/audit/finance-source-evidence.php, ops/audit/finance-private-evidence.php, ops/audit/finance-diagnostic-public.pem, ops/audit/finance-release-proof.mjs, ops/audit/validate-finance-pipeline.mjs, tests/Deployment/finance-pipeline-audit.test.mjs]
   workflow_run:
     workflows: [Verify production live]
     types: [completed]
@@ -31,6 +31,7 @@ jobs:
         with:
           node-version: '22'
       - run: |
+          php -l ops/audit/finance-private-evidence.php
           php -l ops/audit/finance-source-evidence.php
           php -l ops/audit/finance-pipeline.php
           node --test tests/Deployment/finance-pipeline-audit.test.mjs
@@ -111,11 +112,13 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
           trap 'rm -f "$work/key" "$work/known_hosts" "$work/raw.json" "$work/error.txt"' EXIT
           unset SSH_KEY KNOWN_HOSTS
-          { cat ops/audit/finance-source-evidence.php; tail -n +2 ops/audit/finance-pipeline.php; } > "$work/probe.php"
+          { cat ops/audit/finance-source-evidence.php; tail -n +2 ops/audit/finance-private-evidence.php; tail -n +2 ops/audit/finance-pipeline.php; } > "$work/probe.php"
+          diagnostic_key="$(base64 -w0 ops/audit/finance-diagnostic-public.pem)"
+          [[ "$diagnostic_key" =~ ^[A-Za-z0-9+/=]+$ ]]
           if ! timeout 120 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
             -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_FINANCE_DIAGNOSTIC_PUBLIC_KEY='$diagnostic_key' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
             < "$work/probe.php" > "$work/raw.json" 2> "$work/error.txt"; then
             echo 'Read-only finance diagnosis unavailable. Raw output withheld.' >&2
             exit 1

@@ -1,5 +1,5 @@
 <?php
-// Aggregate-only, read-only monthly-close diagnosis. No money or identities are selected.
+// Read-only monthly-close diagnosis; private incident metadata is encrypted before output.
 ini_set('display_errors', '0');
 ini_set('log_errors', '0');
 try {
@@ -51,6 +51,7 @@ try {
     $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
     if (!$db) throw new RuntimeException('Read-only bootstrap guard was not applied');
     $rows = [];
+    $privateEvidence = [];
     foreach (App\Models\FinancialPeriod::query()->orderByDesc('starts_on')->limit(24)->get() as $period) {
         $ready = $period->isClosed() ? ['ready' => true, 'blockers' => [], 'counts' => []]
             : app(App\Services\Reporting\FinancialPeriodService::class)->readiness($period);
@@ -62,6 +63,10 @@ try {
                     $account = App\Models\DemandAccount::withoutGlobalScopes()->with('network')->findOrFail($subject['subject_id']);
                     if (count($demandEvidence) >= 100) throw new RuntimeException('Evidence limit exceeded');
                     $demandEvidence[] = horusFinanceDemandEvidence($account, $period);
+                    // Narrow, time-bounded incident scope; never emitted in cleartext.
+                    if ($period->period_key === '2026-09' && $period->currency === 'USD' && now()->utc()->lt('2026-10-15')) {
+                        $privateEvidence[] = horusFinancePrivateSourceEvidence($account, $period);
+                    }
                 }
                 foreach ($subject['reasons'] ?? [] as $reason) {
                     $key = $subject['subject_type'].':'.$reason['code'];
@@ -84,7 +89,8 @@ try {
         ];
     }
     $db->rollBack();
-    echo json_encode(['schema_version' => 2, 'release' => $release, 'periods' => $rows], JSON_THROW_ON_ERROR);
+    $sealed = $privateEvidence === [] ? null : horusFinanceSealEvidence($privateEvidence, base64_decode((string) getenv('HM_FINANCE_DIAGNOSTIC_PUBLIC_KEY'), true) ?: '');
+    echo json_encode(['schema_version' => 3, 'release' => $release, 'periods' => $rows, 'private_evidence' => $sealed], JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
     if (isset($db) && $db && $db->transactionLevel() > 0) $db->rollBack();
     fwrite(STDERR, "Read-only finance diagnosis unavailable.\n");

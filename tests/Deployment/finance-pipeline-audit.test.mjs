@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {validate} from '../../ops/audit/validate-finance-pipeline.mjs';
-const fixture = () => ({schema_version:2, release:'a'.repeat(40), periods:[{period:'2026-09', currency:'USD', status:'OPEN', ready:false, counts:{nonFinalRows:2}, blockers:['NON_FINAL_REPORTING'], subject_reasons:{}, statement_count:0, demand_evidence:[], fact_groups:[{connection_type:'SITE_GAM_AD_UNIT', finality:'ESTIMATED', settlement_eligible:0, rows_count:2, publisher_rows:2, first_date:'2026-09-01', last_date:'2026-09-02'}]}]});
+const fixture = () => ({schema_version:3, private_evidence:null, release:'a'.repeat(40), periods:[{period:'2026-09', currency:'USD', status:'OPEN', ready:false, counts:{nonFinalRows:2}, blockers:['NON_FINAL_REPORTING'], subject_reasons:{}, statement_count:0, demand_evidence:[], fact_groups:[{connection_type:'SITE_GAM_AD_UNIT', finality:'ESTIMATED', settlement_eligible:0, rows_count:2, publisher_rows:2, first_date:'2026-09-01', last_date:'2026-09-02'}]}]});
 test('accepts bounded aggregate finance evidence', () => assert.deepEqual(validate(fixture()), fixture()));
 test('rejects private identities, amounts, names and unexpected diagnostic output', () => {
     for (const key of ['publisher_id','subject_name','publisher_earnings_minor','payment_profile','error']) {
@@ -43,4 +43,11 @@ test('accepts only immutable proof from a trusted successful production verifica
     assert.throws(()=>verifiedRelease(proof(),123,3));
     assert.throws(()=>verifiedRelease(proof()+'release_sha='+'a'.repeat(40),123,2));
     assert.throws(()=>verifiedRelease(proof().replace('b'.repeat(40),'unknown'),123,2));
+});
+
+test('rejects plaintext private metadata and malformed encryption envelopes', () => {
+    const report=fixture(); report.private_evidence={account_id:'PRIVATE'}; assert.throws(()=>validate(report));
+    report.private_evidence={algorithm:'RSA-OAEP+A256GCM',key_fingerprint:'a'.repeat(64),wrapped_key:Buffer.alloc(384).toString('base64'),iv:Buffer.alloc(12).toString('base64'),tag:Buffer.alloc(16).toString('base64'),ciphertext:Buffer.from('encrypted').toString('base64')};
+    validate(report);
+    report.private_evidence.account_id='PRIVATE'; assert.throws(()=>validate(report));
 });
