@@ -763,6 +763,12 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertSame('OTHER_OR_MIXED_MARKUP', horusFinanceOtherTagKind($tag.'<script src="https://other.example/ad.js"></script>', ['/123/unit']));
         $this->assertSame('GOOGLE_VAST_EXACT_PATH', horusFinanceOtherTagKind('https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Funit', ['/123/unit']));
         $this->assertSame('GOOGLE_VAST_OTHER_PATH', horusFinanceOtherTagKind('https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Fother', ['/123/unit']));
+        require_once base_path('ops/audit/finance-private-evidence.php');
+        foreach (['HTTPS://PUBADS.G.DOUBLECLICK.NET/gampad/ads?iu=/123/unit', ' \nhttps://securepubads.g.doubleclick.net/gampad/ads?iu=/123/unit&amp;output=vast'] as $url) {
+            $url = str_replace('\\n', "\n", $url);
+            $this->assertSame('GOOGLE_VAST_EXACT_PATH', horusFinanceOtherTagKind($url, ['/123/unit']));
+            $this->assertSame('GOOGLE_VAST', horusFinanceTagMetadata($url)['kind']);
+        }
         $encoded = base64_encode($tag);
         $this->assertSame($tag, horusFinanceDecodePayload(['html' => $encoded], 'html'));
         $this->assertSame($tag, horusFinanceDecodePayload(['html-parts' => '2', 'html-0' => substr($encoded, 0, 30), 'html-1' => substr($encoded, 30)], 'html'));
