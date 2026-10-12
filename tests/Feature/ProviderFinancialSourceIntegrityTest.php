@@ -727,6 +727,32 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertFalse(openssl_decrypt(base64_decode($box['ciphertext']), 'aes-256-gcm', $secret, OPENSSL_RAW_DATA, base64_decode($box['iv']), str_repeat('x', 16), 'horus-finance-evidence-v1'));
     }
 
+    public function test_video_preview_allows_api_audit_but_rejects_financial_and_configuration_writes(): void
+    {
+        require_once base_path('ops/audit/finance-video-preview-helper.php');
+        foreach (['select * from `site_gam_video_report_bindings`', 'insert into `gam_api_operations` (`operation`) values (?)', 'update `gam_api_operations` set `status` = ?', 'insert into `gam_errors` (`message`) values (?)'] as $sql) {
+            $this->assertTrue(horusFinancePreviewSqlAllowed($sql));
+        }
+        foreach (['update `daily_reports` set `gross_revenue_minor` = ?', 'delete from `gam_api_operations`', 'insert into `publisher_statements` (`id`) values (?)', 'update `site_gam_video_report_bindings` set `starts_on` = ?', 'update `gam_api_operations_backup` set `value` = ?', 'alter table `daily_reports` add x int'] as $sql) {
+            $this->assertFalse(horusFinancePreviewSqlAllowed($sql));
+        }
+        $binding = new \App\Models\SiteGamVideoReportBinding(['id' => 'binding', 'site_id' => 'site', 'active_site_id' => 'site',
+            'organization_id' => 'org', 'gam_connection_id' => 'gam', 'network_code' => '123', 'ad_unit_id' => '456',
+            'ad_unit_code' => 'video', 'starts_on' => '2026-10-06', 'ends_on' => null]);
+        $binding->setRelation('site', new \App\Models\Site(['organization_id' => 'org', 'primary_domain' => 'site.example']));
+        $binding->setRelation('connection', new ReportSourceConnection(['is_enabled' => true, 'currency' => 'USD', 'timezone' => 'UTC']));
+        $binding->setRelation('gamConnection', new \App\Models\GamConnection(['is_enabled' => true, 'network_code' => '123']));
+        $identity = horusFinancePreviewIdentity($binding);
+        $context = horusFinanceVideoPreviewContext($binding, $identity);
+        $query = app(\App\Services\Reporting\GamHistoricalCorrectionReport::class)->query($context);
+        $this->assertSame(['year' => 2026, 'month' => 9, 'day' => 30], $query['startDate']);
+        $this->assertSame($query['startDate'], $query['endDate']);
+        $this->assertSame('456', $query['statement']['values'][0]['value']['value']);
+        $binding->ad_unit_id = '789';
+        $this->expectException(\RuntimeException::class);
+        horusFinanceVideoPreviewContext($binding, $identity);
+    }
+
     private function demandAccount(string $networkCode, array $configuration): DemandAccount
     {
         $network = DemandNetwork::query()->where('code', $networkCode)->firstOrFail();

@@ -1,0 +1,126 @@
+name: Preview missing September video coverage
+on:
+  pull_request:
+    paths: [.github/workflows/diagnose-finance-video-coverage.yml, ops/audit/finance-video-preview.php, ops/audit/finance-video-preview-helper.php]
+  push:
+    branches: [main]
+    paths: [.github/workflows/diagnose-finance-video-coverage.yml, ops/audit/finance-video-preview.php, ops/audit/finance-video-preview-helper.php]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: horus-finance-video-preview
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: |
+          php -l ops/audit/finance-video-preview-helper.php
+          php -l ops/audit/finance-video-preview.php
+          php -l ops/audit/finance-private-evidence.php
+          php -l ops/audit/finance-source-evidence.php
+          php -l ops/audit/finance-pipeline.php
+          node --test tests/Deployment/finance-pipeline-audit.test.mjs
+          if php ops/audit/finance-video-preview.php > "$RUNNER_TEMP/invalid.json" 2> "$RUNNER_TEMP/invalid.err"; then exit 1; fi
+          test ! -s "$RUNNER_TEMP/invalid.json"
+          grep -Fxq 'Read-only finance diagnosis unavailable.' "$RUNNER_TEMP/invalid.err"
+  diagnose:
+    if: github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Resolve latest successful production verification
+        id: verified
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { validateVerificationRun } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'verify-production-live.yml', branch: 'main', status: 'success', per_page: 1,
+            });
+            if (data.workflow_runs.length !== 1) throw new Error('No successful production verification');
+            const run = validateVerificationRun(data.workflow_runs[0]);
+            core.setOutput('run_id', String(run.id));
+            core.setOutput('attempt', String(run.attempt));
+      - name: Download immutable live release proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/finance-live-proof
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bind diagnosis to verified release
+        id: release
+        uses: actions/github-script@v8
+        env:
+          VERIFY_RUN_ID: ${{ steps.verified.outputs.run_id }}
+          VERIFY_RUN_ATTEMPT: ${{ steps.verified.outputs.attempt }}
+        with:
+          script: |
+            const { verifiedRelease } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const fs = await import('node:fs');
+            const proof = fs.readFileSync(`${process.env.RUNNER_TEMP}/finance-live-proof/live-proof.env`, 'utf8');
+            core.setOutput('sha', verifiedRelease(proof, process.env.VERIFY_RUN_ID, process.env.VERIFY_RUN_ATTEMPT));
+      - name: Preview September video through audited Google reads
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.release.outputs.sha }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          work="$RUNNER_TEMP/finance-diagnosis"
+          install -d -m 700 "$work"
+          printf '%s\n' "$SSH_KEY" > "$work/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          trap 'rm -f "$work/key" "$work/known_hosts" "$work/raw.json" "$work/error.txt"' EXIT
+          unset SSH_KEY KNOWN_HOSTS
+          { cat ops/audit/finance-source-evidence.php; tail -n +2 ops/audit/finance-private-evidence.php; tail -n +2 ops/audit/finance-video-preview-helper.php; tail -n +2 ops/audit/finance-video-preview.php; } > "$work/probe.php"
+          diagnostic_key="$(base64 -w0 ops/audit/finance-diagnostic-public.pem)"
+          [[ "$diagnostic_key" =~ ^[A-Za-z0-9+/=]+$ ]]
+          if ! timeout 180 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_FINANCE_DIAGNOSTIC_PUBLIC_KEY='$diagnostic_key' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < "$work/probe.php" > "$work/raw.json" 2> "$work/error.txt"; then
+            echo 'Read-only finance diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          node ops/audit/validate-finance-pipeline.mjs "$work/raw.json" "$RUNNER_TEMP/finance-pipeline.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: finance-video-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/finance-pipeline.json
+          retention-days: 3
