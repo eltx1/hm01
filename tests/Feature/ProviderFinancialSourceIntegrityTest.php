@@ -689,6 +689,22 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertNull($account->fresh()->financialBinding);
     }
 
+    public function test_finance_probe_classifies_unparsed_google_patterns_without_executing_or_attesting_them(): void
+    {
+        require_once base_path('ops/audit/finance-source-evidence.php');
+        $tag = '<script src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script><script>googletag.defineOutOfPageSlot("/123/unit", googletag.enums.OutOfPageFormat.INTERSTITIAL);</script>';
+        $this->assertSame('GOOGLE_OUT_OF_PAGE_EXACT_PATH', horusFinanceOtherTagKind($tag, ['/123/unit']));
+        $this->assertSame('GOOGLE_OUT_OF_PAGE_OTHER_PATH', horusFinanceOtherTagKind($tag, ['/123/other']));
+        $this->assertSame('OTHER_OR_MIXED_MARKUP', horusFinanceOtherTagKind($tag.'<script src="https://other.example/ad.js"></script>', ['/123/unit']));
+        $this->assertSame('GOOGLE_VAST_EXACT_PATH', horusFinanceOtherTagKind('https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Funit', ['/123/unit']));
+        $this->assertSame('GOOGLE_VAST_OTHER_PATH', horusFinanceOtherTagKind('https://pubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Fother', ['/123/unit']));
+        $encoded = base64_encode($tag);
+        $this->assertSame($tag, horusFinanceDecodePayload(['html' => $encoded], 'html'));
+        $this->assertSame($tag, horusFinanceDecodePayload(['html-parts' => '2', 'html-0' => substr($encoded, 0, 30), 'html-1' => substr($encoded, 30)], 'html'));
+        $this->assertSame('', horusFinanceDecodePayload(['html-parts' => '65'], 'html'));
+        $this->assertSame('', horusFinanceDecodePayload(['html-parts' => '2', 'html-0' => 'abc'], 'html'));
+    }
+
     private function demandAccount(string $networkCode, array $configuration): DemandAccount
     {
         $network = DemandNetwork::query()->where('code', $networkCode)->firstOrFail();
