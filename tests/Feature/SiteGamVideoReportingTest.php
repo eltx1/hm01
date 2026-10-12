@@ -412,6 +412,25 @@ class SiteGamVideoReportingTest extends TestCase
         $this->assertSame(300, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
     }
 
+    public function test_revalidating_a_changed_hostname_rekeys_only_its_claim_and_frees_the_previous_hostname(): void
+    {
+        $context = $this->context();
+        $first = $this->video($context);
+        $originalKey = $first->active_unit_key;
+        $oldHostname = $context[3]->primary_domain;
+        $context[3]->update(['primary_domain' => 'renamed.example.com']);
+        $revalidated = $this->video($context);
+        $this->assertSame($first->id, $revalidated->id);
+        $this->assertNotSame($originalKey, $revalidated->active_unit_key);
+        $this->assertDatabaseMissing('site_gam_reporting_unit_claims', ['unit_key' => $originalKey]);
+        $other = $context;
+        $other[3] = $this->otherPublisherSite($oldHostname);
+        $second = $this->video($other);
+        $this->assertSame($originalKey, $second->active_unit_key);
+        $this->assertDatabaseCount('site_gam_reporting_unit_claims', 2);
+        $this->assertSame($revalidated->active_unit_key, $this->video($context)->active_unit_key);
+    }
+
     public function test_shared_hostname_scopes_allow_bounded_history_and_release_only_the_selected_owner(): void
     {
         $context = $this->context();

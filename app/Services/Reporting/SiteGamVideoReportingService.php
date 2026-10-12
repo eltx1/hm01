@@ -72,8 +72,8 @@ final class SiteGamVideoReportingService
             $current = SiteGamVideoReportBinding::withoutGlobalScopes()->where('active_site_id', $site->id)->first();
             if ($current && $current->gam_connection_id === $gam->id && $current->ad_unit_id === (string) $unit['id']
                 && $current->connection->timezone === $network['timeZone']) {
-                app(SiteGamUnitClaims::class)->reserve($gam->network_code.':'.$unit['id'], $current->connectionType(), $current->id, $site, CarbonImmutable::now($network['timeZone'])->toDateString());
-                $current->update(['ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
+                $claimKey = app(SiteGamUnitClaims::class)->reserve($gam->network_code.':'.$unit['id'], $current->connectionType(), $current->id, $site, CarbonImmutable::now($network['timeZone'])->toDateString());
+                $current->update(['active_unit_key' => $claimKey, 'ad_unit_name' => $unit['name'], 'ad_unit_code' => $unit['adUnitCode']]);
                 $this->normalizeConnectionCurrency($current, $networkCurrency, $reportCurrency, $actor);
                 if (! $current->connection->is_enabled || $current->connection->status->value === 'DISABLED') {
                     $current->connection->update(['is_enabled' => true, 'status' => 'ACTIVE', 'updated_by' => $actor->id]);

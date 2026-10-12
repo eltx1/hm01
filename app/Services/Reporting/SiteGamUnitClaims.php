@@ -33,9 +33,11 @@ final class SiteGamUnitClaims
                 }
             }
         }
-        // Preserve existing claims. New exact-hostname claims fit the original
+        // Preserve legacy physical claims; migrate hostname claims on revalidation.
+        // New exact-hostname claims fit the original
         // index width and cannot collide across credentials or reporting purpose.
-        $claimKey = $ownedKey ?? ($site ? 'site:'.hash('sha256', $key.'|'.app(SiteGamReportScope::class)->hostname($site->primary_domain)) : $key);
+        $claimKey = $site ? 'site:'.hash('sha256', $key.'|'.app(SiteGamReportScope::class)->hostname($site->primary_domain)) : $key;
+        if ($ownedKey && ! str_starts_with($ownedKey, 'site:')) $claimKey = $ownedKey;
         $legacy = DB::table('site_gam_reporting_unit_claims')->where('unit_key', $key)->first();
         if ($legacy && ! $ownedKey) {
             $model = match ($legacy->binding_type) {
@@ -45,6 +47,12 @@ final class SiteGamUnitClaims
             };
             $owner = $model ? $model::withoutGlobalScopes()->find($legacy->binding_id) : null;
             if (! $owner || ! $site || ! $from || ! $this->disjoint($owner, $site, max($from, $owner->starts_on->toDateString()))) $this->conflict();
+        }
+        if ($ownedKey && $ownedKey !== $claimKey) {
+            if (DB::table('site_gam_reporting_unit_claims')->where('unit_key', $claimKey)->exists()) $this->conflict();
+            DB::table('site_gam_reporting_unit_claims')->where('unit_key', $ownedKey)
+                ->where('binding_type', $type)->where('binding_id', $id)
+                ->update(['unit_key' => $claimKey, 'updated_at' => now()]);
         }
         DB::table('site_gam_reporting_unit_claims')->insertOrIgnore([
             'unit_key' => $claimKey, 'binding_type' => $type, 'binding_id' => $id, 'created_at' => now(), 'updated_at' => now(),
