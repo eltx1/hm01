@@ -45,6 +45,7 @@ function horusFinancePrivateSourceEvidence(\App\Models\DemandAccount $account, \
                             'attribute_fields' => array_keys($attributes),
                             'vast_payload_length' => strlen((string) ($attributes['data-hm-vast-url'] ?? '')),
                             'vast_decoded_length' => strlen(horusFinanceDecodePayload($attributes, 'data-hm-vast-url')),
+                            'decoded_vast_shape' => horusFinanceUrlShape(horusFinanceDecodePayload($attributes, 'data-hm-vast-url')),
                             'literal_vast_metadata' => horusFinanceTagMetadata((string) ($attributes['data-hm-vast-url'] ?? ''))] : [])];
                 }
             }
@@ -60,8 +61,9 @@ function horusFinanceTagMetadata(string $tag): array
 {
     $result = ['paths' => [], 'script_hosts' => [], 'kind' => 'UNKNOWN'];
     if (strlen($tag) > 100000) return $result;
+    $tag = trim(html_entity_decode($tag, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     $url = parse_url($tag);
-    if (($url['scheme'] ?? '') === 'https' && ($url['host'] ?? '') === 'pubads.g.doubleclick.net' && ($url['path'] ?? '') === '/gampad/ads') {
+    if (($url['scheme'] ?? '') === 'https' && in_array($url['host'] ?? '', ['pubads.g.doubleclick.net', 'securepubads.g.doubleclick.net'], true) && ($url['path'] ?? '') === '/gampad/ads') {
         parse_str($url['query'] ?? '', $query);
         $paths = [$query['iu'] ?? '']; $result['kind'] = 'GOOGLE_VAST';
     } else {
@@ -82,6 +84,23 @@ function horusFinanceTagMetadata(string $tag): array
     $result['paths'] = array_values(array_unique($result['paths']));
     $result['script_hosts'] = array_values(array_unique($result['script_hosts']));
     return $result;
+}
+
+/** Unknown recipes expose only shape and a validated public inventory path, never URL/query values. */
+function horusFinanceUrlShape(string $value): array
+{
+    if (strlen($value) > 100000) return ['kind' => 'OVERSIZED'];
+    $value = trim(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    $url = parse_url($value);
+    $host = $url['host'] ?? '';
+    $scheme = $url['scheme'] ?? '';
+    parse_str($url['query'] ?? '', $query);
+    $unit = $query['iu'] ?? null;
+    return ['kind' => $host !== '' ? 'URL' : (str_starts_with($value, '<') ? 'MARKUP' : 'OTHER'),
+        'scheme' => in_array($scheme, ['http', 'https'], true) ? $scheme : 'OTHER',
+        'host' => is_string($host) && preg_match('/^[a-zA-Z0-9.-]{1,253}$/D', $host) ? strtolower($host) : null,
+        'google_ads_endpoint' => ($url['path'] ?? '') === '/gampad/ads',
+        'unit_path' => is_string($unit) && preg_match('#^/[0-9]{1,20}(?:,[0-9]{1,20})?/[A-Za-z0-9_./-]{1,240}$#D', $unit) ? $unit : null];
 }
 
 function horusFinanceSealEvidence(array $evidence, string $publicKey): array

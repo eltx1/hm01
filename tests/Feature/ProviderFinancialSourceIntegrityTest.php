@@ -787,6 +787,20 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $this->assertFalse(openssl_decrypt(base64_decode($box['ciphertext']), 'aes-256-gcm', $secret, OPENSSL_RAW_DATA, base64_decode($box['iv']), str_repeat('x', 16), 'horus-finance-evidence-v1'));
     }
 
+    public function test_private_finance_url_shape_never_retains_credentials_queries_or_arbitrary_paths(): void
+    {
+        require_once base_path('ops/audit/finance-private-evidence.php');
+        $google = " \nhttps://securepubads.g.doubleclick.net/gampad/ads?iu=%2F123%2Funit&amp;token=DO_NOT_KEEP\n";
+        $this->assertSame(['/123/unit'], horusFinanceTagMetadata($google)['paths']);
+        $this->assertSame('GOOGLE_VAST', horusFinanceTagMetadata($google)['kind']);
+        $shape = horusFinanceUrlShape('https://user:DO_NOT_KEEP@other.example/DO_NOT_KEEP?iu=/123/unit&token=DO_NOT_KEEP#DO_NOT_KEEP');
+        $this->assertSame(['kind' => 'URL', 'scheme' => 'https', 'host' => 'other.example', 'google_ads_endpoint' => false, 'unit_path' => '/123/unit'], $shape);
+        $this->assertStringNotContainsString('DO_NOT_KEEP', json_encode($shape));
+        $this->assertNull(horusFinanceUrlShape('https://other.example/?iu[]=DO_NOT_KEEP')['unit_path']);
+        $this->assertNull(horusFinanceUrlShape('https://other.example/?iu=DO_NOT_KEEP')['unit_path']);
+        $this->assertSame('UNKNOWN', horusFinanceTagMetadata('https://pubads.g.doubleclick.net.attacker.example/gampad/ads?iu=/123/unit')['kind']);
+    }
+
     public function test_video_preview_allows_api_audit_but_rejects_financial_and_configuration_writes(): void
     {
         require_once base_path('ops/audit/finance-video-preview-helper.php');
