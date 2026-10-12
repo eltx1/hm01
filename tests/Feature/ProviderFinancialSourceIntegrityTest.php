@@ -678,10 +678,11 @@ final class ProviderFinancialSourceIntegrityTest extends TestCase
         $evidence = horusFinanceDemandEvidence($account, $period);
         $this->assertSame(0, $evidence['mappings_before_end']);
         $this->assertSame(1, $evidence['mappings_after_end']);
-        $this->assertSame(2, $evidence['historical_snapshots']);
-        $this->assertSame(2, $evidence['historical_candidates']);
-        $this->assertSame(2, $evidence['historical_google_paths']);
-        $this->assertSame(0, $evidence['historical_exact_report_matches']);
+        $this->assertSame('UNVERIFIED', $evidence['historical_account_attribution']);
+        $this->assertSame(2, $evidence['site_provider_snapshots']);
+        $this->assertSame(2, $evidence['site_provider_candidates']);
+        $this->assertSame(2, $evidence['site_provider_google_paths']);
+        $this->assertSame(0, $evidence['site_provider_exact_report_matches']);
         $this->assertStringNotContainsString('private_unit', json_encode($evidence));
         $this->assertStringNotContainsString($account->id, json_encode($evidence));
         foreach ($queries as $sql) $this->assertMatchesRegularExpression('/^select/i', $sql);

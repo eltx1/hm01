@@ -22,12 +22,13 @@ export function validate(report) {
         for (const [key, count] of Object.entries(period.subject_reasons)) { assert.match(key, /^[A-Z_]{1,40}:[A-Z_]{1,100}$/); integer(count); }
         integer(period.statement_count);
         assert.ok(Array.isArray(period.demand_evidence) && period.demand_evidence.length <= 100);
-        const evidenceCounts = ['mappings_before_end','mappings_after_end','widgets_before_end','widgets_changed_after_end','current_google_paths','current_exact_report_matches','current_other_or_unparseable','historical_snapshots','historical_candidates','historical_google_paths','historical_exact_report_matches'];
+        const evidenceCounts = ['mappings_before_end','mappings_after_end','widgets_before_end','widgets_changed_after_end','current_google_paths','current_exact_report_matches','current_other_or_unparseable','site_provider_snapshots','site_provider_candidates','site_provider_google_paths','site_provider_exact_report_matches'];
         for (const evidence of period.demand_evidence) {
-            keys(evidence, ['provider','mode','quick_managed','created_month', ...evidenceCounts]);
+            keys(evidence, ['provider','mode','quick_managed','created_month','historical_account_attribution', ...evidenceCounts]);
             assert.ok(['MGID','TABOOLA','SPEAKOL','OUTBRAIN','EXOCLICK','CUSTOM_NATIVE','CUSTOM_DISPLAY','CUSTOM_THIRD_PARTY_TAG'].includes(evidence.provider));
             assert.ok(['DIRECT_JS','GAM_THIRD_PARTY_CREATIVE','GAM_LINE_ITEM','MANUAL_TAG','API_INTEGRATION'].includes(evidence.mode));
             assert.equal(typeof evidence.quick_managed, 'boolean');
+            assert.equal(evidence.historical_account_attribution, 'UNVERIFIED');
             assert.match(evidence.created_month, /^20\d{2}-(0[1-9]|1[0-2])$/);
             evidenceCounts.forEach(key => integer(evidence[key]));
         }

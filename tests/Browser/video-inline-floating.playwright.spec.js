@@ -201,7 +201,8 @@ async function openPlayer(page, options = {}) {
                     // Snapshot what was actually submitted; later mute changes
                     // must not rewrite an earlier request's signaling history.
                     window.adRequestHistory.push({ tag: request.adTagUrl, autoPlay: request.willAutoPlay, muted: request.willPlayMuted,
-                        mediaMuted: video.muted, mediaVolume: video.volume, readyState: video.readyState });
+                        mediaMuted: video.muted, mediaVolume: video.volume, readyState: video.readyState,
+                        contentTime: video.currentTime, starts: window.adStarts });
                     window.lastAdDimensions = [request.linearAdSlotWidth, request.linearAdSlotHeight];
                     window.lastNonlinearDimensions = [request.nonLinearAdSlotWidth, request.nonLinearAdSlotHeight];
                     this.resolve = () => this.events.manager({ getAdsManager: (_video, settings) => {
@@ -212,7 +213,11 @@ async function openPlayer(page, options = {}) {
                         };
                         return new Manager();
                     } });
-                    if (!options.deferResponse) this.resolve();
+                    if (options.noFillAtRequest) {
+                        // Respond at the IMA boundary, independent of how quickly
+                        // Playwright observes a naturally advancing media clock.
+                        queueMicrotask(() => this.events['ad-error']({ getError: () => ({ getErrorCode: () => 1009, getVastErrorCode: () => 303 }) }));
+                    } else if (!options.deferResponse) this.resolve();
                 }
                 destroy() {}
                 contentComplete() { window.contentCompleteCalls++; }
@@ -596,28 +601,23 @@ test('sticky clearance is removed inline and recalculated on every later float',
 test('native content playback produces successive five-second midrolls after no-fill', async ({ page, browserName }) => {
     await page.route('**/*', route => route.abort());
     await openPlayer(page, { content: true, realContent: true, fixedVideo: true, startMuted: false,
-        primeUserActivation: true, deferResponse: true,
+        primeUserActivation: true, noFillAtRequest: true,
         vastUrl: 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video' });
     // Chromium continues decoded content after scroll; WebKit may suspend it.
     // Keep WebKit visible to test actual playback, not fabricated time updates.
     if (browserName === 'chromium') await scrollPage(page, 1800);
-    await page.evaluate(() => {
-        window.emptyAd = () => ({ getError: () => ({ getErrorCode: () => 1009, getVastErrorCode: () => 303 }) });
-        window.videoLoaders[0].events['ad-error'](window.emptyAd());
-    });
-    await expect.poll(() => page.evaluate(() => window.adRequests)).toBe(2);
-    await page.evaluate(() => window.videoLoaders[1].events['ad-error'](window.emptyAd()));
+    await expect.poll(() => page.evaluate(() => window.adRequestHistory.length), { timeout: 15000 }).toBeGreaterThanOrEqual(4);
+    // Read immutable submission evidence. A slow CI observer may run after EOS;
+    // a subsequent postroll must not replace the midroll being asserted.
+    const requests = await page.evaluate(() => window.adRequestHistory.slice(0, 4));
+    expect(requests.slice(0, 2).map(request => new URL(request.tag).searchParams.get('vpos'))).toEqual(['preroll', 'preroll']);
     let previousTime = 0;
-    for (const count of [3, 4]) {
-        await expect.poll(() => page.evaluate(() => window.adRequests), { timeout: 8000 }).toBe(count);
-        const state = await page.evaluate(() => ({ time: document.querySelector('video').currentTime,
-            position: new URL(window.lastAdTagUrl).searchParams.get('vpos'), starts: window.adStarts }));
-        expect(state.position).toBe('midroll');
-        expect(state.starts).toBe(0);
-        expect(state.time - previousTime).toBeGreaterThanOrEqual(4.9);
-        expect(state.time - previousTime).toBeLessThan(6.5);
-        previousTime = state.time;
-        await page.evaluate(() => window.videoLoaders.at(-1).events['ad-error'](window.emptyAd()));
+    for (const request of requests.slice(2)) {
+        expect(new URL(request.tag).searchParams.get('vpos')).toBe('midroll');
+        expect(request.starts).toBe(0);
+        expect(request.contentTime - previousTime).toBeGreaterThanOrEqual(4.9);
+        expect(request.contentTime - previousTime).toBeLessThan(6.5);
+        previousTime = request.contentTime;
     }
 });
 

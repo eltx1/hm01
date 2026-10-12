@@ -11,12 +11,13 @@ function horusFinanceDemandEvidence(\App\Models\DemandAccount $account, \App\Mod
         'mode' => $account->integration_mode->value,
         'quick_managed' => (bool) data_get($account->configuration, 'quick_monetize_managed', false),
         'created_month' => $account->created_at->format('Y-m'),
+        'historical_account_attribution' => 'UNVERIFIED',
         'mappings_before_end' => 0, 'mappings_after_end' => 0,
         'widgets_before_end' => 0, 'widgets_changed_after_end' => 0,
         'current_google_paths' => 0, 'current_exact_report_matches' => 0,
         'current_other_or_unparseable' => 0,
-        'historical_snapshots' => 0, 'historical_candidates' => 0,
-        'historical_google_paths' => 0, 'historical_exact_report_matches' => 0,
+        'site_provider_snapshots' => 0, 'site_provider_candidates' => 0,
+        'site_provider_google_paths' => 0, 'site_provider_exact_report_matches' => 0,
     ];
     foreach ($account->sites()->withoutGlobalScopes()->where('is_enabled', true)->cursor() as $mapping) {
         $before = $mapping->created_at->lte($period->ends_on->endOfDay());
@@ -42,6 +43,8 @@ function horusFinanceDemandEvidence(\App\Models\DemandAccount $account, \App\Mod
                 } else { $result['current_other_or_unparseable']++; }
             }
         }
+        // Public snapshots omit account identity. These are SITE/PROVIDER
+        // observations only, not evidence that this account was deployed.
         // Include the last published snapshot before the month plus publications
         // in the month. Never hydrate the full version history at once.
         $versions = \App\Models\ConfigVersion::withoutGlobalScopes()
@@ -52,18 +55,18 @@ function horusFinanceDemandEvidence(\App\Models\DemandAccount $account, \App\Mod
         foreach ($versions->where('published_at', '<=', $period->ends_on->endOfDay())
             ->where(fn ($q) => $q->where('published_at', '>=', $period->starts_on->startOfDay())->orWhere('id', $prior))
             ->select(['id', 'payload'])->cursor() as $version) {
-            $result['historical_snapshots']++;
+            $result['site_provider_snapshots']++;
             $demand = $version->payload['directDemand'] ?? $version->payload['nativeDemand'] ?? [];
             if (! ($demand['enabled'] ?? false)) continue;
             foreach ($demand['placements'] ?? [] as $slot) {
                 if (! ($slot['enabled'] ?? false)) continue;
                 foreach ($slot['candidates'] ?? [] as $candidate) {
                     if (($candidate['network'] ?? '') !== $result['provider']) continue;
-                    $result['historical_candidates']++;
+                    $result['site_provider_candidates']++;
                     $path = $candidate['tag']['container']['attributes']['data-hm-gpt-ad-unit-path'] ?? null;
                     if (is_string($path) && $path !== '') {
-                        $result['historical_google_paths']++;
-                        if (in_array($path, $paths, true)) $result['historical_exact_report_matches']++;
+                        $result['site_provider_google_paths']++;
+                        if (in_array($path, $paths, true)) $result['site_provider_exact_report_matches']++;
                     }
                 }
             }

@@ -20,7 +20,7 @@ test('diagnostic retains read-only transaction and exact release boundary', () =
 });
 
 test('source evidence cannot expose tags, IDs or arbitrary provider strings', () => {
-    const evidence = {provider:'CUSTOM_THIRD_PARTY_TAG',mode:'MANUAL_TAG',quick_managed:true,created_month:'2026-09',mappings_before_end:1,mappings_after_end:0,widgets_before_end:1,widgets_changed_after_end:0,current_google_paths:1,current_exact_report_matches:0,current_other_or_unparseable:0,historical_snapshots:1,historical_candidates:1,historical_google_paths:1,historical_exact_report_matches:0};
+    const evidence = {provider:'CUSTOM_THIRD_PARTY_TAG',mode:'MANUAL_TAG',quick_managed:true,created_month:'2026-09',historical_account_attribution:'UNVERIFIED',mappings_before_end:1,mappings_after_end:0,widgets_before_end:1,widgets_changed_after_end:0,current_google_paths:1,current_exact_report_matches:0,current_other_or_unparseable:0,site_provider_snapshots:1,site_provider_candidates:1,site_provider_google_paths:1,site_provider_exact_report_matches:0};
     const report=fixture(); report.periods[0].demand_evidence=[evidence]; validate(report);
     for (const key of ['tag','account_id','ad_unit_path','name']) {
         assert.throws(()=>validate({...report,periods:[{...report.periods[0],demand_evidence:[{...evidence,[key]:'PRIVATE'}]}]}));
