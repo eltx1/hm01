@@ -101,6 +101,26 @@ class VideoReportStatesTest extends TestCase
         $this->assertSame('2026-10-04 11:30:00', $ready['last_successful_import_at']->format('Y-m-d H:i:s'));
     }
 
+    public function test_future_activation_is_not_reported_as_a_missing_or_failed_import(): void
+    {
+        $context = [, $user, $publisher] = $this->context();
+        $this->binding($context, ['starts_on' => '2026-10-05'], ['timezone' => 'Asia/Dubai']);
+        $this->actingAs($user);
+        $service = app(VideoPerformanceService::class);
+        $future = $service->configuration($publisher);
+        $this->assertTrue($future['configured']);
+        $this->assertSame('scheduled', $future['source_health']);
+        $this->assertSame(0, $future['pending_source_count']);
+        $this->assertSame(0, $future['failed_source_count']);
+        $this->assertSame(1, $future['source_count']);
+
+        // The source day starts before UTC midnight.
+        $this->travelTo(CarbonImmutable::parse('2026-10-04 20:01:00', 'UTC'));
+        $started = $service->configuration($publisher);
+        $this->assertSame('pending', $started['source_health']);
+        $this->assertSame(1, $started['pending_source_count']);
+    }
+
     public function test_disabled_history_remains_distinct_from_an_unconfigured_source(): void
     {
         $context = [, $user, $publisher] = $this->context();
