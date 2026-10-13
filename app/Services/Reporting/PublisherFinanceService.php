@@ -79,10 +79,11 @@ final class PublisherFinanceService
                 'today_estimated_earnings_minor' => (int) $todayRows->sum('publisher_earnings_minor'),
                 'today_updated_at' => $todayRows->sortByDesc('updated_at')->first()?->updated_at,
                 'estimated_earnings_minor' => (int) $currentRows
-                    ->where('finality', ReportFinality::Estimated)
+                    ->filter(fn (DailyReport $row) => $row->finality !== ReportFinality::Finalized || ! $row->settlement_eligible)
                     ->sum('publisher_earnings_minor'),
                 'finalized_earnings_minor' => (int) $currentRows
                     ->where('finality', ReportFinality::Finalized)
+                    ->where('settlement_eligible', true)
                     ->sum('publisher_earnings_minor'),
                 'affiliate_earnings_minor' => (int) ($latest?->affiliate_earnings_minor ?? 0),
                 'current_payable_minor' => (int) $outstanding->filter(fn ($statement) => $this->isPayable($statement))->sum('balance_due_minor'),
@@ -148,6 +149,7 @@ final class PublisherFinanceService
             ->join('report_dimensions', 'report_dimensions.id', '=', 'daily_reports.report_dimension_id')
             ->where('daily_reports.currency', $canonicalCurrency)
             ->where('daily_reports.finality', ReportFinality::Finalized->value)
+            ->where('daily_reports.settlement_eligible', true)
             ->whereDate('daily_reports.report_date', '>=', now()->startOfMonth()->toDateString())
             ->whereDate('daily_reports.report_date', '<=', now()->toDateString())
             ->selectRaw('COUNT(*) as metric_fact_count');

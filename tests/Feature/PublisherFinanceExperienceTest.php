@@ -154,6 +154,30 @@ class PublisherFinanceExperienceTest extends TestCase
         $this->get(route('publisher.reporting.index'))->assertOk();
     }
 
+    public function test_finance_does_not_promote_ineligible_finalized_rows_to_contractual_earnings(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10));
+        [$admin, $publisher, $publisherAdmin, , $site] = $this->context();
+        $connection = $this->connection($admin->organization_id);
+        foreach ([1 => 10000, 2 => 5000] as $day => $gross) {
+            $date = now()->startOfMonth()->addDays($day)->toImmutable();
+            app(ReportImportService::class)->importRows($connection, [[
+                'date' => $date->toDateString(), 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+                'impressions' => 100, 'gross_revenue_minor' => $gross, 'currency' => 'USD',
+            ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $admin, 'eligibility-'.$day);
+        }
+        // Legacy/corrected data can retain FINALIZED while settlement is withheld.
+        \App\Models\DailyReport::withoutGlobalScopes()
+            ->whereDate('report_date', now()->startOfMonth()->addDays(2)->toDateString())
+            ->update(['settlement_eligible' => false]);
+        $this->actingAs($publisherAdmin);
+        $summary = app(PublisherFinanceService::class)->dashboard($publisher);
+        $this->assertSame(7000, $summary['primary']['finalized_earnings_minor']);
+        $this->assertSame(3500, $summary['primary']['estimated_earnings_minor']);
+        $this->assertSame(100, $summary['impressions']);
+        $this->assertSame(0, $summary['primary']['current_payable_minor']);
+    }
+
     public function test_publisher_today_so_far_exposes_only_estimated_contractual_earnings(): void
     {
         [$admin, $publisher, $publisherAdmin, , $site] = $this->context();

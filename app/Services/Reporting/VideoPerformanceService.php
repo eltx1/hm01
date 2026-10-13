@@ -46,8 +46,18 @@ final class VideoPerformanceService
         $bindings = $query->get();
         $enabled = $bindings->filter(fn ($binding) => $binding->active_site_id !== null && $binding->connection?->is_enabled);
         $connections = $enabled->pluck('connection')->filter();
+        // A future activation has nothing to import yet. Use each source clock.
+        $startedConnections = $enabled->filter(function ($binding): bool {
+            try {
+                $today = \Carbon\CarbonImmutable::now(new \DateTimeZone($binding->connection->timezone))->toDateString();
+                return $binding->starts_on->toDateString() <= $today;
+            } catch (\Exception) {
+                // Invalid source configuration must not suppress its health warning.
+                return true;
+            }
+        })->pluck('connection');
         $failed = $connections->filter(fn ($connection) => $this->sourceFailed($connection))->count();
-        $pending = $connections->filter(fn ($connection) => $connection->last_successful_import_at === null
+        $pending = $startedConnections->filter(fn ($connection) => $connection->last_successful_import_at === null
             && ! $this->sourceFailed($connection))->count();
         // Retired bindings can still finalize their last owned day. They are history,
         // not an enabled Video connection or a failure of the current connection.
@@ -60,7 +70,7 @@ final class VideoPerformanceService
             'starts_on' => $bindings->map(fn ($binding) => $binding->starts_on->toDateString())->min(),
             'ends_on' => $enabled->isEmpty() && $bindings->isNotEmpty() && $bindings->every(fn ($binding) => $binding->ends_on !== null)
                 ? $bindings->map(fn ($binding) => $binding->ends_on->toDateString())->max() : null,
-            'source_health' => $enabled->isNotEmpty() ? ($failed > 0 ? 'failed' : ($pending > 0 ? 'pending' : 'ready'))
+            'source_health' => $enabled->isNotEmpty() ? ($failed > 0 ? 'failed' : ($startedConnections->isEmpty() ? 'scheduled' : ($pending > 0 ? 'pending' : 'ready')))
                 : ($bindings->isNotEmpty() ? 'disabled' : 'unconfigured'),
             'source_count' => $visibleConnections->count(),
             'pending_source_count' => $pending, 'failed_source_count' => $failed,
