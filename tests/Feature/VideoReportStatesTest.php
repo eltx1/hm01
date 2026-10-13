@@ -121,6 +121,28 @@ class VideoReportStatesTest extends TestCase
         $this->assertSame(1, $started['pending_source_count']);
     }
 
+    public function test_scheduled_video_message_uses_the_network_day_after_utc_midnight(): void
+    {
+        $context = [, $user, $publisher] = $this->context();
+        $this->binding($context, ['starts_on' => '2026-10-05'], ['timezone' => 'America/Los_Angeles']);
+        $this->actingAs($user);
+        $this->travelTo(CarbonImmutable::parse('2026-10-05 00:10:00', 'UTC'));
+        $service = app(VideoPerformanceService::class);
+        $video = $service->summary(collect(), true, 'USD', $service->configuration($publisher));
+        $this->assertSame('scheduled', $video['source_health']);
+        $this->blade('<x-video-performance :video="$video" :publisher="true" from="2026-10-05" to="2026-10-05" />', compact('video'))
+            ->assertSee('Video reporting is scheduled to start on 5 Oct 2026')
+            ->assertSee('Reporting starts')
+            ->assertDontSee('Reporting began')
+            ->assertDontSee('Awaiting Video data for these dates.');
+        $this->travelTo(CarbonImmutable::parse('2026-10-05 07:01:00', 'UTC'));
+        $video = $service->summary(collect(), true, 'USD', $service->configuration($publisher));
+        $this->assertSame('pending', $video['source_health']);
+        $this->blade('<x-video-performance :video="$video" :publisher="true" from="2026-10-05" to="2026-10-05" />', compact('video'))
+            ->assertSee('Awaiting Video data for these dates.')
+            ->assertDontSee('Video reporting is scheduled');
+    }
+
     public function test_disabled_history_remains_distinct_from_an_unconfigured_source(): void
     {
         $context = [, $user, $publisher] = $this->context();

@@ -74,6 +74,8 @@ final class VideoPerformanceService
                 : ($bindings->isNotEmpty() ? 'disabled' : 'unconfigured'),
             'source_count' => $visibleConnections->count(),
             'pending_source_count' => $pending, 'failed_source_count' => $failed,
+            'scheduled_starts_on' => $enabled->isNotEmpty() && $startedConnections->isEmpty()
+                ? $enabled->map(fn ($binding) => $binding->starts_on->toDateString())->min() : null,
             'last_successful_import_at' => $visibleConnections->max('last_successful_import_at'),
             'timezones' => $visibleConnections->pluck('timezone')->filter()->unique()->sort()->values()->all(),
         ];
@@ -115,7 +117,7 @@ final class VideoPerformanceService
     {
         return [
             'configured' => false, 'has_configuration' => false, 'configuration_state' => 'unconfigured',
-            'starts_on' => null, 'ends_on' => null, 'source_health' => 'unconfigured',
+            'starts_on' => null, 'ends_on' => null, 'scheduled_starts_on' => null, 'source_health' => 'unconfigured',
             'source_count' => 0, 'pending_source_count' => 0, 'failed_source_count' => 0,
             'last_successful_import_at' => null, 'timezones' => [],
         ];
