@@ -19,6 +19,8 @@
     <aside class="video-source-notice"><p>{{ $publisher ? 'Video reporting is disabled.' : 'Video reporting is disabled. Historical results remain available for their original dates.' }}</p></aside>
     @elseif(($video['source_health'] ?? '') === 'failed')
     <aside class="video-source-notice"><p>{{ $publisher ? 'Recent Video data is temporarily delayed.' : 'The latest Video refresh did not complete. Previously imported results are preserved; recent dates may be missing.' }}</p></aside>
+    @elseif(($video['source_health'] ?? '') === 'scheduled' && ($video['scheduled_starts_on'] ?? null))
+    <aside class="video-source-notice"><p>Video reporting is scheduled to start on {{ \Carbon\CarbonImmutable::parse($video['scheduled_starts_on'])->format('j M Y') }} in the reporting network's timezone. Previously imported results remain available.</p></aside>
     @elseif($video['available'] && ($video['source_health'] ?? '') === 'pending')
     <aside class="video-source-notice"><p>{{ $publisher ? 'Recent Video data is still updating.' : 'Some Video sources are still awaiting their first import. These totals reflect the data received so far.' }}</p></aside>
     @endif
@@ -57,6 +59,8 @@
             <p>No historical Video results were imported for these dates.</p>
         @elseif(($video['source_health'] ?? '') === 'failed')
             <p>{{ $publisher ? 'Please check again later.' : 'Results will appear after a successful Video refresh.' }}</p>
+        @elseif(($video['source_health'] ?? '') === 'scheduled')
+            <p>The next reporting connection has not reached its activation day in the network timezone.</p>
         @elseif(($video['source_health'] ?? '') === 'pending' || ($video['configured'] ?? false) && !($video['last_successful_import_at'] ?? null))
             <p>{{ $publisher ? 'Awaiting Video data for these dates.' : 'Video reporting is enabled. Awaiting imported statistics for these dates.' }}</p>
         @else
@@ -64,7 +68,7 @@
         @endif
         @unless($publisher)<p class="muted">Missing data does not mean zero earnings.@if($video['includes_estimates'] ?? false) This report includes imported estimates awaiting finalization.@else This view includes finalized data only.@endif</p>@endunless</div>
     @endif
-    @if($video['starts_on'] ?? null)<p class="report-footnote muted">{{ $video['starts_on'] > now()->toDateString() ? 'Reporting starts' : 'Reporting began' }} {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
+    @if($video['starts_on'] ?? null)<p class="report-footnote muted">{{ ($video['starts_on'] > now()->toDateString() || (($video['source_health'] ?? '') === 'scheduled' && $video['starts_on'] === ($video['scheduled_starts_on'] ?? null))) ? 'Reporting starts' : 'Reporting began' }} {{ \Carbon\CarbonImmutable::parse($video['starts_on'])->format('j M Y') }}.@if($video['ends_on'] ?? null) Last owned reporting day: {{ \Carbon\CarbonImmutable::parse($video['ends_on'])->format('j M Y') }}.@endif</p>@endif
     <details class="report-data-details video-report-basis">
         <summary>How to read Video metrics</summary>
         <p>Impressions and revenue use the matched website. Unfilled is Google's original selected-unit total across all sites, not exact-hostname requests. These scopes differ; Unfilled is not a website fill rate.</p>
