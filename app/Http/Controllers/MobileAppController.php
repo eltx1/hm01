@@ -118,8 +118,9 @@ class MobileAppController extends Controller
             if (! $app->gamConnection || ! str_starts_with($data['ad_unit_path'], '/'.$app->gamConnection->network_code.'/')) {
                 throw ValidationException::withMessages(['ad_unit_path' => 'Save the serving GAM network first and use an SDK ad unit path from that network.']);
             }
-            if ($app->adUnits()->where('ad_unit_path', $data['ad_unit_path'])->when(! empty($data['id']), fn ($q) => $q->where('id', '!=', $data['id']))->exists()) {
-                throw ValidationException::withMessages(['ad_unit_path' => 'This SDK path already exists on the app. Edit its existing unit.']);
+            if ($app->adUnits()->where('ad_unit_path', $data['ad_unit_path'])->where('format', $data['format'])
+                ->when(! empty($data['id']), fn ($q) => $q->where('id', '!=', $data['id']))->exists()) {
+                throw ValidationException::withMessages(['ad_unit_path' => 'This SDK path already exists for the selected format on this app. Edit its existing unit or choose another format.']);
             }
             $unit = ! empty($data['id']) ? $app->adUnits()->findOrFail($data['id']) : new MobileAppAdUnit;
             $unit->fill(['organization_id' => $app->organization_id, 'mobile_app_id' => $app->id,

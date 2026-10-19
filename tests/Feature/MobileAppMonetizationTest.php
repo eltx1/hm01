@@ -264,6 +264,88 @@ class MobileAppMonetizationTest extends TestCase
         $this->actingAs($user)->get(route('publisher.mobile-apps.show', $app))->assertOk()->assertSee($settings['sdk_app_id'])->assertSee('Rewarded interstitial');
     }
 
+    public function test_one_sdk_path_supports_all_formats_without_duplicating_reports(): void
+    {
+        [$admin, $publisher, $user, $app, $gam] = $this->context();
+        $app->update(['gam_connection_id' => $gam->id, 'status' => 'ACTIVE', 'sdk_app_id' => 'ca-app-pub-1234567890123456~1234567890']);
+        $path = '/'.$gam->network_code.'/app_banner';
+        $this->actingAs($admin);
+        foreach (array_keys(config('mobile-apps.formats')) as $format) {
+            $this->post(route('admin.mobile-apps.units', $app), [
+                'name' => $format, 'format' => $format, 'ad_unit_path' => $path, 'is_enabled' => 1,
+            ])->assertRedirect()->assertSessionHasNoErrors();
+        }
+        $this->assertSame(6, $app->adUnits()->where('ad_unit_path', $path)->count());
+        $page = $this->actingAs($user)->get(route('publisher.mobile-apps.show', $app))->assertOk();
+        foreach (config('mobile-apps.formats') as $label) $page->assertSee($label);
+
+        $this->actingAs($admin);
+        $binding = app(MobileAppReporting::class)->bind($app, $gam->id, '12345', $admin);
+        $this->assertSame($binding->id, app(MobileAppReporting::class)->bind($app, $gam->id, '12345', $admin)->id);
+        $this->assertSame(1, $app->reportBindings()->count());
+        Http::fake(fn () => Http::response($this->csv()));
+        $firstImport = $this->import($binding);
+        $this->assertSame('COMPLETED', $firstImport->status->value, $firstImport->error_message ?? '');
+        $secondImport = $this->import($binding);
+        $this->assertSame('COMPLETED', $secondImport->status->value, $secondImport->error_message ?? '');
+        $this->assertSame(1, DailyReport::withoutGlobalScopes()->count());
+        $this->assertSame(10000, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    public function test_sdk_path_duplicates_are_scoped_to_the_format_on_create_and_edit(): void
+    {
+        [$admin, $publisher, $user, $app, $gam] = $this->context();
+        $app->update(['gam_connection_id' => $gam->id]);
+        $this->actingAs($admin);
+        $input = ['name' => 'Banner', 'format' => 'banner', 'ad_unit_path' => '/'.$gam->network_code.'/shared', 'is_enabled' => 1];
+        $this->post(route('admin.mobile-apps.units', $app), $input)->assertSessionHasNoErrors();
+        $banner = $app->adUnits()->firstOrFail();
+        $this->post(route('admin.mobile-apps.units', $app), $input)->assertSessionHasErrors('ad_unit_path');
+        $this->assertSame(1, $app->adUnits()->count());
+        $this->post(route('admin.mobile-apps.units', $app), array_replace($input, [
+            'id' => $banner->id, 'name' => 'Renamed banner', 'is_enabled' => 0,
+        ]))->assertSessionHasNoErrors();
+        $this->assertSame('Renamed banner', $banner->fresh()->name);
+        $this->assertFalse($banner->fresh()->is_enabled);
+
+        $interstitialInput = array_replace($input, ['name' => 'Interstitial', 'format' => 'interstitial']);
+        $this->post(route('admin.mobile-apps.units', $app), $interstitialInput)->assertSessionHasNoErrors();
+        $interstitial = $app->adUnits()->where('format', 'interstitial')->firstOrFail();
+        $this->post(route('admin.mobile-apps.units', $app), $input + ['id' => $interstitial->id])->assertSessionHasErrors('ad_unit_path');
+        $this->assertSame('interstitial', $interstitial->fresh()->format);
+
+        $otherInput = array_replace($input, ['ad_unit_path' => '/'.$gam->network_code.'/other']);
+        $this->post(route('admin.mobile-apps.units', $app), $otherInput)->assertSessionHasNoErrors();
+        $other = $app->adUnits()->where('ad_unit_path', $otherInput['ad_unit_path'])->firstOrFail();
+        $this->post(route('admin.mobile-apps.units', $app), $input + ['id' => $other->id])->assertSessionHasErrors('ad_unit_path');
+        $this->assertSame($otherInput['ad_unit_path'], $other->fresh()->ad_unit_path);
+        $this->assertSame(3, $app->adUnits()->count());
+    }
+
+    public function test_sdk_path_reuse_preserves_network_and_app_boundaries(): void
+    {
+        [$admin, $publisher, $user, $app, $gam] = $this->context();
+        $app->update(['gam_connection_id' => $gam->id]);
+        $this->actingAs($admin);
+        $input = ['name' => 'Shared banner', 'format' => 'banner', 'ad_unit_path' => '/'.$gam->network_code.'/shared', 'is_enabled' => 1];
+        $this->post(route('admin.mobile-apps.units', $app), $input)->assertSessionHasNoErrors();
+        $unit = $app->adUnits()->firstOrFail();
+        $this->post(route('admin.mobile-apps.units', $app), array_replace($input, [
+            'format' => 'native', 'ad_unit_path' => '/'.$gam->network_code.'0/shared',
+        ]))->assertSessionHasErrors('ad_unit_path');
+        $other = app(MobileAppService::class)->create($publisher, array_replace($this->input(), [
+            'store_url' => 'https://play.google.com/store/apps/details?id=com.horus.other',
+        ]), $user);
+        $other->update(['gam_connection_id' => $gam->id]);
+        $this->post(route('admin.mobile-apps.units', $other), $input + ['id' => $unit->id])->assertNotFound();
+        $this->assertSame($app->id, $unit->fresh()->mobile_app_id);
+        $this->assertSame(0, $other->adUnits()->count());
+        $this->post(route('admin.mobile-apps.units', $other), $input)->assertSessionHasNoErrors();
+        $this->assertSame(1, $other->adUnits()->count());
+        $this->actingAs($user)->post(route('admin.mobile-apps.units', $app), array_replace($input, ['format' => 'native']))->assertForbidden();
+        $this->assertSame(1, $app->adUnits()->count());
+    }
+
     public function test_scheduler_backoff_and_finalized_coverage_include_zero_days(): void
     {
         [$admin, $publisher, $user, $app, $gam] = $this->context();
