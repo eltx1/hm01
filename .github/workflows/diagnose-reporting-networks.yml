@@ -1,0 +1,118 @@
+name: Diagnose reporting networks
+on:
+  pull_request:
+    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
+  push:
+    branches: [main]
+    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
+  workflow_run:
+    workflows: [Verify production live]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: horus-readonly-reporting-networks
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: |
+          php -l ops/audit/reporting-network-health.php
+          node --test tests/Deployment/reporting-networks-audit.test.mjs
+  diagnose:
+    if: >-
+      github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'eltx1/hm01'))
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Resolve latest successful production verification
+        id: verified
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { validateVerificationRun } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'verify-production-live.yml', branch: 'main', status: 'success', per_page: 1,
+            });
+            if (data.workflow_runs.length !== 1) throw new Error('No successful production verification');
+            const run = validateVerificationRun(data.workflow_runs[0]);
+            core.setOutput('run_id', String(run.id));
+            core.setOutput('attempt', String(run.attempt));
+      - name: Download immutable live release proof
+        uses: actions/download-artifact@v8
+        with:
+          name: horus-production-live-proof
+          path: ${{ runner.temp }}/finance-live-proof
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bind diagnosis to verified release
+        id: release
+        uses: actions/github-script@v8
+        env:
+          VERIFY_RUN_ID: ${{ steps.verified.outputs.run_id }}
+          VERIFY_RUN_ATTEMPT: ${{ steps.verified.outputs.attempt }}
+        with:
+          script: |
+            const { verifiedRelease } = await import(`${process.env.GITHUB_WORKSPACE}/ops/audit/finance-release-proof.mjs`);
+            const fs = await import('node:fs');
+            const proof = fs.readFileSync(`${process.env.RUNNER_TEMP}/finance-live-proof/live-proof.env`, 'utf8');
+            core.setOutput('sha', verifiedRelease(proof, process.env.VERIFY_RUN_ID, process.env.VERIFY_RUN_ATTEMPT));
+      - name: Diagnose reporting sources in a read-only transaction
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.release.outputs.sha }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          work="$RUNNER_TEMP/finance-diagnosis"
+          install -d -m 700 "$work"
+          printf '%s\n' "$SSH_KEY" > "$work/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          trap 'rm -f "$work/key" "$work/known_hosts" "$work/raw.json" "$work/error.txt"' EXIT
+          unset SSH_KEY KNOWN_HOSTS
+          if ! timeout 120 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < ops/audit/reporting-network-health.php > "$work/raw.json" 2> "$work/error.txt"; then
+            echo 'Read-only reporting diagnosis unavailable. Raw output withheld.' >&2
+            exit 1
+          fi
+          node ops/audit/validate-reporting-networks.mjs "$work/raw.json"
