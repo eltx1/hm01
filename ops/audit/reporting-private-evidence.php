@@ -7,6 +7,19 @@ function horusReportingPrivateEvidence(): array
     $site = App\Models\Site::withoutGlobalScopes()->whereNull('deleted_at')->where('primary_domain', 'natega.bluekl.com')->first();
     if (!$site) return ['site_found' => false];
     $evidence = ['site_found' => true, 'site_id' => $site->id, 'reporting' => [], 'inventory_paths' => [], 'accounts' => []];
+    // Compare the actual read models used by both screens with stored facts.
+    try {
+        $publisher = App\Models\Publisher::withoutGlobalScopes()->where('organization_id', $site->organization_id)->find($site->publisher_id);
+        foreach ([now()->subDay()->toDateString(), now()->toDateString()] as $day) {
+            $admin = app(App\Services\Reporting\AdminWebsitePerformanceService::class)->summary($site, $day, $day, true);
+            $evidence['screen_models'][$day]['admin'] = Illuminate\Support\Arr::only($admin, ['available', 'updated_at', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'has_estimates']);
+            if ($publisher) {
+                $projection = app(App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, $day, $day);
+                $evidence['screen_models'][$day]['publisher'] = Illuminate\Support\Arr::only($projection, ['available', 'updated_at', 'impressions', 'earnings_minor', 'has_estimates']);
+            }
+        }
+        $evidence['today_model'] = app(App\Services\Reporting\SiteGamTodayReport::class)->forSite($site);
+    } catch (Throwable $exception) { $evidence['projection_error'] = horusReportErrorClass($exception->getMessage()); }
     foreach (App\Models\GamConnection::withoutGlobalScopes()->whereNull('deleted_at')->where('is_enabled', true)->with('networks')->limit(30)->get() as $gam) {
         $evidence['accounts'][] = ['id' => $gam->id, 'network' => $gam->network_code, 'reporting_only' => $gam->is_reporting_only,
             'metadata' => $gam->networks->map(fn ($network) => $network->only(['currency_code', 'time_zone']))->all()];
@@ -34,10 +47,16 @@ function horusReportingPrivateEvidence(): array
                 'starts_on' => $binding->starts_on->toDateString(), 'ends_on' => $binding->ends_on?->toDateString(),
                 'currency' => $connection->currency, 'source_currency' => data_get($connection->configuration, 'source_network_currency'),
                 'timezone' => $connection->timezone, 'scope' => data_get($connection->configuration, 'site_report_scope'),
+                'source_status' => $connection->status, 'last_successful_import_at' => $connection->last_successful_import_at,
+                'last_attempted_at' => $connection->last_attempted_at,
+                'sync_due' => data_get($connection->configuration, 'sync_due'),
                 'error_class' => horusReportErrorClass((string) $connection->last_error),
                 'recent_facts' => App\Models\DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
                     ->where('report_date', '>=', now()->subDays(7)->toDateString())->orderBy('report_date')
-                    ->get(['report_date', 'finality', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'currency'])->toArray(),
+                    ->get(['report_date', 'finality', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'currency', 'updated_at'])->toArray(),
+                'recent_imports' => App\Models\ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+                    ->latest('created_at')->limit(8)->get()->map(fn ($job) => $job->only(['period_start', 'period_end', 'finality', 'status', 'created_at', 'completed_at', 'next_retry_at'])
+                        + ['error_class' => horusReportErrorClass((string) $job->error_message)])->all(),
             ];
             if ($binding->active_site_id && $binding->gamConnection?->is_enabled) {
                 try {
@@ -45,7 +64,8 @@ function horusReportingPrivateEvidence(): array
                     $network = $transport->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
                     $entry['live_network'] = array_intersect_key($network, array_flip(['networkCode', 'currencyCode', 'timeZone']));
                     $job = App\Models\ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
-                        ->where('status', 'COMPLETED')->whereNotNull('external_report_id')->latest('completed_at')->first();
+                        ->where('status', 'COMPLETED')->whereNotNull('external_report_id')
+                        ->orderByDesc('period_end')->latest('completed_at')->first();
                     if ($job && preg_match('/^gam-unit:(\d+):/', $job->external_report_id, $match)) {
                         $entry['report_period'] = [$job->period_start->toDateString(), $job->period_end->toDateString()];
                         $download = $transport->call($binding->gamConnection, 'ReportService', 'getReportDownloadUrlWithOptions', [

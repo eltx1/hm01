@@ -94,6 +94,8 @@ class SiteGamReportingTest extends TestCase
 
             public string $currency = 'USD';
 
+            public array $networks = [];
+
             public int $jobs = 0;
 
             public ?string $reportCurrency = null;
@@ -102,7 +104,7 @@ class SiteGamReportingTest extends TestCase
 
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
             {
-                $this->calls[] = compact('service', 'method', 'payload');
+                $this->calls[] = compact('service', 'method', 'payload') + ['connection_id' => $connection->id];
                 // Exercise the generated SDK objects too, not just our fake responses.
                 $versions = app(GamSoapVersionResolver::class);
                 $namespace = $versions->namespaceFor($versions->resolve());
@@ -125,7 +127,7 @@ class SiteGamReportingTest extends TestCase
                 if ($method === 'getReportJobStatus' && $this->failStatus) throw new \RuntimeException('Transient transport unavailable');
 
                 return match ($method) {
-                    'getCurrentNetwork' => ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
+                    'getCurrentNetwork' => $this->networks[$connection->id] ?? ['networkCode' => $connection->network_code, 'currencyCode' => $this->currency, 'timeZone' => $this->timezone],
                     'getAdUnitsByStatement' => ['results' => $this->units],
                     'runReportJob' => ['id' => (string) ++$this->jobs, 'reportQuery' => ['reportCurrency' => $this->reportCurrency]],
                     'getReportJobStatus' => ['value' => $this->status],
@@ -957,6 +959,66 @@ class SiteGamReportingTest extends TestCase
         $blocked = $this->import($binding);
         $this->assertSame(ReportImportStatus::BlockedClosedPeriod, $blocked->status, $blocked->error_message ?? '');
         $this->assertSame(12345, (int) DailyReport::withoutGlobalScopes()->sum('gross_revenue_minor'));
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('multiNetworkClocks')]
+    public function test_london_and_dubai_sources_keep_independent_days_currency_and_publisher_totals(string $instant, string $londonDay, string $dubaiDay): void
+    {
+        [$admin, $publisher, $user, $londonSite, $londonGam] = $this->context();
+        $this->travelTo(CarbonImmutable::parse($instant, 'UTC'));
+        $dubaiSite = $this->makeSiteFor($publisher, $user);
+        $dubaiGam = $this->makeGamConnection($admin->organization, $admin);
+        $this->google->reportCurrency = 'USD';
+        $this->google->networks = [
+            $londonGam->id => ['networkCode' => $londonGam->network_code, 'currencyCode' => 'GBP', 'timeZone' => 'Europe/London'],
+            $dubaiGam->id => ['networkCode' => $dubaiGam->network_code, 'currencyCode' => 'AED', 'timeZone' => 'Asia/Dubai'],
+        ];
+        $london = app(SiteGamReportingService::class)->bind($londonSite, $londonGam->id, '12345', $admin);
+        $dubai = app(SiteGamReportingService::class)->bind($dubaiSite, $dubaiGam->id, '12345', $admin);
+        $byConnection = [$londonGam->id => [$londonSite, 1000000, 95], $dubaiGam->id => [$dubaiSite, 2000000, 190]];
+        Http::fake(['storage.googleapis.com/*' => function () use ($byConnection) {
+            $call = collect($this->google->calls)->last(fn ($call) => $call['method'] === 'runReportJob');
+            [$site, $micros, $impressions] = $byConnection[$call['connection_id']];
+            $end = $call['payload']['reportJob']['reportQuery']['endDate'];
+            $date = sprintf('%04d-%02d-%02d', $end['year'], $end['month'], $end['day']);
+            return Http::response($this->csv([[$date, '12345', 240, 200, $impressions, 3, $micros]], hostname: $site->primary_domain));
+        }]);
+        foreach ([$london, $dubai] as $binding) {
+            $jobs = app(SiteGamReportSynchronizer::class)->sync($binding);
+            $this->assertCount(2, $jobs);
+            foreach ($jobs as $job) $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        }
+        foreach ([[$london, $londonDay, 'GBP', 100, 95], [$dubai, $dubaiDay, 'AED', 200, 190]] as [$binding, $day, $sourceCurrency, $gross, $impressions]) {
+            $source = $binding->connection->fresh();
+            $this->assertSame('USD', $source->currency);
+            $this->assertSame($sourceCurrency, data_get($source->configuration, 'source_network_currency'));
+            $fact = DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $source->id)->where('finality', ReportFinality::Estimated)->sole();
+            $this->assertSame($day, $fact->report_date->toDateString());
+            $this->assertSame($gross, (int) $fact->gross_revenue_minor);
+            $this->assertSame($impressions, (int) $fact->impressions);
+            $this->assertSame($binding->gam_connection_id, $fact->dimension->gam_connection_id);
+            $this->assertSame($binding->site_id, $fact->dimension->site_id);
+            $this->assertSame($binding->site->primary_domain, data_get($fact->dimension->external_dimensions, 'gam_report_site'));
+            $this->assertSame($day, app(SiteGamTodayReport::class)->forSite($binding->site)['date']);
+        }
+        $publisherSummary = app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, '2026-10-01', '2026-10-31');
+        $this->assertSame(570, $publisherSummary['impressions']);
+        $this->assertSame((int) DailyReport::withoutGlobalScopes()->sum('publisher_earnings_minor'), $publisherSummary['earnings_minor']);
+        $this->assertArrayNotHasKey('gross_revenue_minor', $publisherSummary);
+        $this->assertCount(2, $publisherSummary['websites']);
+        foreach (collect($this->google->calls)->where('method', 'runReportJob') as $call) {
+            $query = $call['payload']['reportJob']['reportQuery'];
+            $this->assertSame('USD', $query['reportCurrency']);
+            $this->assertSame('PUBLISHER', $query['timeZoneType']);
+        }
+    }
+
+    public static function multiNetworkClocks(): array
+    {
+        return [
+            'before UK daylight saving ends' => ['2026-10-24 23:30:00', '2026-10-25', '2026-10-25'],
+            'after UK daylight saving ends' => ['2026-10-25 23:30:00', '2026-10-25', '2026-10-26'],
+        ];
     }
 
     public function test_scheduler_refreshes_daily_estimates_hourly_without_incompatible_hour_dimensions(): void
