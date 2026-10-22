@@ -26,7 +26,10 @@ test('classifies failures without disclosing the provider message', () => {
 });
 
 test('rejects extra fields, raw messages, identifiers and unbounded counts', () => {
-    const good = () => ({schema_version: 1, release: 'a'.repeat(40), groups: {'MAIN|GBP|ACTIVE|CURRENT|CURRENCY_PROOF|OLDER': 1}});
+    const good = () => ({schema_version: 1, release: 'a'.repeat(40), groups: {'MAIN|GBP|ACTIVE|CURRENT|CURRENCY_PROOF|OLDER': 1},
+        private_evidence: {algorithm: 'RSA-OAEP+A256GCM', key_fingerprint: 'b'.repeat(64),
+            wrapped_key: Buffer.alloc(384).toString('base64'), iv: Buffer.alloc(12).toString('base64'),
+            tag: Buffer.alloc(16).toString('base64'), ciphertext: Buffer.alloc(30).toString('base64')}});
     assert.deepEqual(validate(good()), good());
     for (const bad of [
         {...good(), raw_error: 'secret'},
@@ -34,7 +37,43 @@ test('rejects extra fields, raw messages, identifiers and unbounded counts', () 
         {...good(), groups: {'MAIN|GBP|ACTIVE|CURRENT|private error|TODAY': 1}},
         {...good(), groups: {'MAIN|GBP|ACTIVE|CURRENT|NONE|TODAY': 2001}},
         {...good(), groups: []},
+        {...good(), private_evidence: {plaintext: 'financial data'}},
+        {...good(), private_evidence: {...good().private_evidence, algorithm: 'NONE'}},
     ]) assert.throws(() => validate(bad));
+});
+
+test('existing report CSV distinguishes the exact host from parent and www without exposing other sites', () => {
+    const code = 'require "ops/audit/reporting-private-evidence.php"; echo json_encode(horusReportingCsvShape(stream_get_contents(STDIN), "sub.example.test"));';
+    const csv = 'Dimension.SITE_NAME,Column.AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS,Column.AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE\n'
+        + 'sub.example.test,0,USD 0\nexample.test,5,USD 10000\nwww.sub.example.test,3,USD 20000\nprivate.example.org,2,USD 50000\n';
+    const result = spawnSync(process.env.PHP_BINARY || 'php', ['-r', code], {input: csv, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+        EXACT: {rows: 1, nonzero_impressions: false, nonzero_revenue: false},
+        PARENT: {rows: 1, nonzero_impressions: true, nonzero_revenue: true},
+        WWW: {rows: 1, nonzero_impressions: true, nonzero_revenue: true},
+        OTHER: {rows: 1, nonzero_impressions: true, nonzero_revenue: true},
+    });
+    assert.ok(!result.stdout.includes('private.example.org'));
+});
+
+test('private evidence is incident scoped, bounded, encrypted and reads only existing Google reports', () => {
+    const privateSource = readFileSync('ops/audit/reporting-private-evidence.php', 'utf8');
+    assert.ok(privateSource.includes("now()->utc()->gte('2026-10-26')"));
+    assert.ok(privateSource.includes("where('primary_domain', 'natega.bluekl.com')"));
+    assert.ok(privateSource.includes("where('organization_id', $site->organization_id)"));
+    assert.ok(privateSource.includes("'allow_redirects' => false"));
+    assert.ok(privateSource.includes('5 * 1024 * 1024'));
+    assert.ok(!privateSource.includes('runReportJob'));
+    assert.ok(!privateSource.includes('->update('));
+    assert.ok(!privateSource.includes('->save('));
+    assert.ok(source.includes('horusFinanceSealEvidence($private,'));
+    assert.ok(!source.includes("'private_evidence' => $private"));
+    const result = spawnSync(process.env.PHP_BINARY || 'php', ['-r',
+        'require "ops/audit/finance-private-evidence.php"; echo json_encode(horusFinanceSealEvidence(["private"=>"sentinel-value"], file_get_contents("ops/audit/reporting-diagnostic-public.pem")));'], {encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(!result.stdout.includes('sentinel-value'));
+    assert.equal(JSON.parse(result.stdout).algorithm, 'RSA-OAEP+A256GCM');
 });
 
 test('probe refuses an unverified release before application bootstrap', () => {

@@ -1,10 +1,10 @@
 name: Diagnose reporting networks
 on:
   pull_request:
-    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
+    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/reporting-private-evidence.php, ops/audit/reporting-diagnostic-public.pem, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
   push:
     branches: [main]
-    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
+    paths: [.github/workflows/diagnose-reporting-networks.yml, ops/audit/reporting-network-health.php, ops/audit/reporting-private-evidence.php, ops/audit/reporting-diagnostic-public.pem, ops/audit/validate-reporting-networks.mjs, tests/Deployment/reporting-networks-audit.test.mjs]
   workflow_run:
     workflows: [Verify production live]
     types: [completed]
@@ -32,6 +32,7 @@ jobs:
           node-version: '22'
       - run: |
           php -l ops/audit/reporting-network-health.php
+          php -l ops/audit/reporting-private-evidence.php
           node --test tests/Deployment/reporting-networks-audit.test.mjs
   diagnose:
     if: >-
@@ -107,11 +108,14 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
           trap 'rm -f "$work/key" "$work/known_hosts" "$work/raw.json" "$work/error.txt"' EXIT
           unset SSH_KEY KNOWN_HOSTS
+          { cat ops/audit/finance-private-evidence.php; tail -n +2 ops/audit/reporting-private-evidence.php; tail -n +2 ops/audit/reporting-network-health.php; } > "$work/probe.php"
+          diagnostic_key="$(base64 -w0 ops/audit/reporting-diagnostic-public.pem)"
+          [[ "$diagnostic_key" =~ ^[A-Za-z0-9+/=]+$ ]]
           if ! timeout 120 ssh -F /dev/null -T -i "$work/key" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile="$work/known_hosts" \
             -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 -p "$SSH_PORT" "$USER@$HOST" \
-            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
-            < ops/audit/reporting-network-health.php > "$work/raw.json" 2> "$work/error.txt"; then
+            "cd '$REMOTE_HOME/htdocs/app.horusmedia.net' && HM_EXPECTED_SHA='$EXPECTED_SHA' HM_REPORT_DIAGNOSTIC_PUBLIC_KEY='$diagnostic_key' /usr/bin/php8.4 -d display_errors=0 -d log_errors=0" \
+            < "$work/probe.php" > "$work/raw.json" 2> "$work/error.txt"; then
             echo 'Read-only reporting diagnosis unavailable. Raw output withheld.' >&2
             exit 1
           fi
