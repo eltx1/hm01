@@ -107,7 +107,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             throw new GamReportPending('Google is preparing the ad-unit report; synchronization will resume automatically.');
         }
         try {
-            $rows = $this->parse(
+            $parsed = $this->parse(
                 $this->google->download($binding->gamConnection, (string) $jobId),
                 $binding,
                 $connection,
@@ -125,9 +125,11 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             throw $exception;
         }
         $this->scopes->assertCurrent($binding, $scope);
+        $rows = $parsed['rows'];
 
         return [
             'rows' => $rows, 'external_report_id' => 'gam-unit:'.$jobId.':'.hash('sha256', json_encode($rows, JSON_THROW_ON_ERROR)),
+            'warnings' => $parsed['warnings'],
             'totals' => collect(array_values(self::COLUMNS))->reject(fn ($column) => $column === 'revenue_micros')
                 ->push('gross_revenue_minor')
                 ->filter(fn ($column) => collect($rows)->every(fn ($row) => array_key_exists($column, $row) && $row[$column] !== null))
@@ -157,6 +159,7 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
             }
             $buckets = [];
             $seen = [];
+            $unavailableViewabilityDates = [];
             while (($values = fgetcsv($stream, escape: '')) !== false) {
                 if ($values === [null]) {
                     continue;
@@ -211,6 +214,17 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 $lastHour = $granularity === ReportGranularity::Hourly ? ($day->isSameDay($now) ? $now->hour : 23) : 0;
                 for ($hour = 0; $hour <= $lastHour; $hour++) {
                     $metrics = $buckets[$day->toDateString().':'.$hour] ?? collect(self::COLUMNS)->mapWithKeys(fn ($field, $column) => [$field => in_array('Column.'.$column, $headers, true) ? 0 : null])->all();
+                    $viewable = $metrics['active_view_viewable_impressions'];
+                    $measurable = $metrics['active_view_measurable_impressions'];
+                    if (($viewable === null) !== ($measurable === null)
+                        || ($viewable !== null && $viewable > $measurable)) {
+                        // Optional counters can be inconsistent in a Google
+                        // snapshot. Keep proven core delivery/revenue and mark
+                        // this ratio unavailable; never clamp or invent counts.
+                        $metrics['active_view_viewable_impressions'] = null;
+                        $metrics['active_view_measurable_impressions'] = null;
+                        $unavailableViewabilityDates[$day->toDateString()] = true;
+                    }
                     $micros = $metrics['revenue_micros'];
                     unset($metrics['revenue_micros']);
                     $rows[] = $metrics + [
@@ -229,7 +243,10 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 }
             }
 
-            return $rows;
+            return ['rows' => $rows, 'warnings' => $unavailableViewabilityDates === [] ? [] : [[
+                'code' => 'GAM_OPTIONAL_ACTIVE_VIEW_UNAVAILABLE',
+                'dates' => array_keys($unavailableViewabilityDates),
+            ]]];
         } finally {
             fclose($stream);
         }

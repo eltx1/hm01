@@ -72,7 +72,8 @@ final class ReportImportService
                 fn () => $this->runConnection($connection->refresh(), $from, $to, $granularity, $finality, $actor, array_replace($options, ['_site_lock' => true])));
         }
         try {
-            $connection->update(['last_attempted_at' => now(), 'last_error' => null]);
+            // Beginning another attempt does not resolve the preceding failure.
+            $connection->update(['last_attempted_at' => now()]);
             $payload = $this->sources->for($connection)->fetch(
                 $connection,
                 $from,
@@ -94,6 +95,7 @@ final class ReportImportService
                 null,
                 'API',
                 (array) ($payload['totals'] ?? []),
+                sourceWarnings: (array) ($payload['warnings'] ?? []),
             );
             if ((\App\Models\SiteGamReportBinding::isSiteConnection($connection) || $connection->connection_type === 'MOBILE_APP_GAM') && $job->status === ReportImportStatus::Completed) {
                 $obsolete = ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
@@ -108,6 +110,18 @@ final class ReportImportService
                 $connection->update(['configuration' => $configuration, 'status' => ReportConnectionStatus::Active, 'last_error' => null]);
                 $obsolete->whereIn('granularity', [$granularity->value, ReportGranularity::Hourly->value])
                     ->update(['status' => ReportImportStatus::Duplicate->value, 'error_message' => null, 'next_retry_at' => null, 'completed_at' => now()]);
+            } elseif ((\App\Models\SiteGamReportBinding::isSiteConnection($connection) || $connection->connection_type === 'MOBILE_APP_GAM')
+                && in_array($job->status, [ReportImportStatus::Failed, ReportImportStatus::BlockedClosedPeriod], true)) {
+                // Google finished successfully, but local validation/storage did
+                // not. A retry must fetch a fresh snapshot, not replay this CSV
+                // indefinitely (for example, inconsistent intraday counters).
+                $configuration = $connection->fresh()->configuration ?? [];
+                unset($configuration['google_jobs'][$payload['pending_key'] ?? '']);
+                $connection->update(['configuration' => $configuration]);
+                ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
+                    ->where('status', ReportImportStatus::Pending->value)
+                    ->whereDate('period_start', $from->toDateString())->whereDate('period_end', $to->toDateString())
+                    ->update(['status' => ReportImportStatus::Duplicate->value, 'next_retry_at' => null, 'completed_at' => now()]);
             }
 
             return $job;
@@ -183,6 +197,7 @@ final class ReportImportService
         string $importType = 'SYSTEM',
         array $sourceTotals = [],
         ?string $manualReason = null,
+        array $sourceWarnings = [],
     ): ReportImportJob {
         $connection->loadMissing('source');
         $this->assertNoParallelProviderImportWhenSiteGamIsCanonical($connection, $from, $to);
@@ -240,7 +255,7 @@ final class ReportImportService
 
         try {
             $result = DB::transaction(function () use (
-                $connection, $rows, $granularity, $finality, $effectiveFinality, $job, $actor, $sourceTotals, $importType, $settlement, $manualReason
+                $connection, $rows, $granularity, $finality, $effectiveFinality, $job, $actor, $sourceTotals, $importType, $settlement, $manualReason, $sourceWarnings
             ): array {
                 $inserted = 0;
                 $updated = 0;
@@ -337,7 +352,7 @@ final class ReportImportService
                     }
                 }
 
-                $warnings = $this->discrepancyWarnings($sourceTotals, $totals);
+                $warnings = array_merge($sourceWarnings, $this->discrepancyWarnings($sourceTotals, $totals));
                 if ($excluded) {
                     $warnings[] = ['code' => 'SITE_REPORTING_SOURCE_EXCLUDED_ROWS', 'count' => $excluded];
                 }
@@ -399,8 +414,12 @@ final class ReportImportService
                 'settlement_eligible' => false,
                 'settlement_ineligibility_reason' => $closed ? 'CLOSED_PERIOD' : 'IMPORT_VALIDATION_FAILED',
                 'error_message' => $exception->getMessage(),
+                'next_retry_at' => $closed ? null : now()->addMinutes((int) config('reporting.retry_delay_minutes', 30)),
                 'completed_at' => now(),
             ]);
+            if (! $closed) {
+                $connection->update(['status' => ReportConnectionStatus::Error, 'last_error' => $exception->getMessage()]);
+            }
             $this->recordError($connection, $job, 'VALIDATION', $closed ? 'CLOSED_PERIOD' : 'INVALID_REPORT', $exception->getMessage(), false);
 
             return $job->refresh();
