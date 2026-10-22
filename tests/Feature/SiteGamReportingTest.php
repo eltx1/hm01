@@ -220,6 +220,87 @@ class SiteGamReportingTest extends TestCase
         $this->assertNull($row->unfilled_impressions);
     }
 
+    public function test_import_validation_failure_marks_source_unhealthy_and_releases_completed_google_job(): void
+    {
+        $context = $this->context();
+        $binding = $this->bind($context);
+        $day = CarbonImmutable::parse('2026-09-21', $binding->connection->timezone);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '12345', 0, 0, 0, 0, 0, 0, 0]]))
+            ->push($this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000', 40, 80]]))
+            ->push($this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000', 40, 80]]))]);
+        $run = fn () => app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $run()->status);
+        // Exercise a local validator after Google has completed its report.
+        $rejectUpdate = true;
+        DailyReport::updating(function () use (&$rejectUpdate): void {
+            if ($rejectUpdate) throw ValidationException::withMessages(['report' => 'Temporary report validation failure.']);
+        });
+        $this->google->status = 'IN_PROGRESS';
+        $pending = $run();
+        $this->assertSame(ReportImportStatus::Pending, $pending->status);
+        $this->google->status = 'COMPLETED';
+        $failed = $run();
+        $this->assertSame(ReportImportStatus::Failed, $failed->status);
+        $source = $binding->connection->fresh();
+        $this->assertSame('ERROR', $source->status->value);
+        $this->assertStringContainsString('Temporary report validation failure', $source->last_error);
+        $this->assertEmpty(data_get($source->configuration, 'google_jobs'));
+        $this->assertSame(ReportImportStatus::Duplicate, $pending->fresh()->status);
+        $this->assertTrue($failed->next_retry_at->gt(now()));
+        $this->assertSame(0, (int) DailyReport::withoutGlobalScopes()->sole()->impressions);
+        $rejectUpdate = false;
+        $this->assertSame(ReportImportStatus::Completed, $run()->status);
+        $this->assertSame(3, $this->google->jobs);
+        $source = $source->fresh();
+        $this->assertSame('ACTIVE', $source->status->value);
+        $this->assertNull($source->last_error);
+        $this->assertSame(95, (int) DailyReport::withoutGlobalScopes()->sole()->impressions);
+        $this->assertSame(100, (int) DailyReport::withoutGlobalScopes()->sole()->gross_revenue_minor);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('inconsistentGoogleViewability')]
+    public function test_inconsistent_optional_active_view_keeps_exact_site_revenue_and_recovers_without_duplicate_facts(int $viewable, int $measurable, bool $missingHeader): void
+    {
+        [$admin, $publisher, $user, $site] = $context = $this->context();
+        $binding = $this->bind($context);
+        $day = CarbonImmutable::parse('2026-09-21', $binding->connection->timezone);
+        $inconsistent = $this->csv([['2026-09-21', '12345', 120, 100, 95, 3, 'US$ 1000000', $viewable, $measurable]]);
+        if ($missingHeader) $inconsistent = str_replace('Column.AD_EXCHANGE_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', 'Column.IGNORED_OPTIONAL_METRIC', $inconsistent);
+        Http::fake(['storage.googleapis.com/*' => Http::sequence()
+            ->push($this->csv([['2026-09-21', '12345', 0, 0, 0, 0, 0, 0, 0]]))
+            ->push($inconsistent)
+            ->push($this->csv([['2026-09-21', '12345', 240, 200, 190, 6, 'US$ 2000000', 80, 160]]))]);
+        $run = fn () => app(ReportImportService::class)->runConnection($binding->connection->fresh(), $day, $day->endOfDay(), ReportGranularity::Daily, ReportFinality::Estimated);
+        $this->assertSame(ReportImportStatus::Completed, $run()->status);
+        $job = $run();
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $this->assertContains(['code' => 'GAM_OPTIONAL_ACTIVE_VIEW_UNAVAILABLE', 'dates' => ['2026-09-21']], $job->warnings);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(100, (int) $row->gross_revenue_minor);
+        $this->assertSame(95, (int) $row->impressions);
+        $this->assertNull($row->active_view_viewable_impressions);
+        $this->assertNull($row->active_view_measurable_impressions);
+        $this->assertNull($row->viewability_bp);
+        $this->assertEmpty(data_get($binding->connection->fresh()->configuration, 'google_jobs'));
+        $this->actingAs($user)->get(route('publisher.reporting.index', ['from' => '2026-09-21', 'to' => '2026-09-21']))
+            ->assertOk()->assertSee('Unavailable')->assertDontSee('Gross revenue')
+            ->assertViewHas('performance', fn ($summary) => $summary['impressions'] === 95 && $summary['earnings_minor'] === 70 && $summary['viewability_bp'] === null);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-21', 'to' => '2026-09-21']))->assertOk()->assertSee('Unavailable');
+        $this->assertSame(ReportImportStatus::Completed, $run()->status);
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(200, (int) $row->gross_revenue_minor);
+        $this->assertSame(190, (int) $row->impressions);
+        $this->assertSame(5000, (int) $row->viewability_bp);
+        $this->assertSame(3, $this->google->jobs);
+    }
+
+    public static function inconsistentGoogleViewability(): array
+    {
+        return ['viewable exceeds measurable' => [50, 40, false], 'zero measurable' => [5, 0, false], 'missing paired column' => [40, 80, true]];
+    }
+
     public function test_unscoped_google_csv_and_unsupported_site_query_cannot_import_or_fallback(): void
     {
         $binding = $this->bind($this->context());

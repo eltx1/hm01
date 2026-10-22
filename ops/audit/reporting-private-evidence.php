@@ -53,9 +53,10 @@ function horusReportingPrivateEvidence(): array
                 'error_class' => horusReportErrorClass((string) $connection->last_error),
                 'recent_facts' => App\Models\DailyReport::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
                     ->where('report_date', '>=', now()->subDays(7)->toDateString())->orderBy('report_date')
-                    ->get(['report_date', 'finality', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'currency', 'updated_at'])->toArray(),
+                    ->get(['report_date', 'finality', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'currency', 'updated_at',
+                        'active_view_viewable_impressions', 'active_view_measurable_impressions', 'viewability_bp'])->toArray(),
                 'recent_imports' => App\Models\ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
-                    ->latest('created_at')->limit(8)->get()->map(fn ($job) => $job->only(['period_start', 'period_end', 'finality', 'status', 'created_at', 'completed_at', 'next_retry_at'])
+                    ->latest('created_at')->limit(8)->get()->map(fn ($job) => $job->only(['period_start', 'period_end', 'finality', 'status', 'created_at', 'completed_at', 'next_retry_at', 'warnings'])
                         + ['error_class' => horusReportErrorClass((string) $job->error_message),
                             'private_error' => mb_substr((string) $job->error_message, 0, 1000)])->all(),
             ];
