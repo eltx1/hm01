@@ -92,9 +92,11 @@ try {
             $groups[$key] = ($groups[$key] ?? 0) + 1;
         }
     }
+    $private = horusReportingPrivateEvidence();
     $db->rollBack();
+    $sealed = horusFinanceSealEvidence($private, base64_decode((string) getenv('HM_REPORT_DIAGNOSTIC_PUBLIC_KEY'), true) ?: '');
     ksort($groups);
-    echo json_encode(['schema_version' => 1, 'release' => $release, 'groups' => (object) $groups], JSON_THROW_ON_ERROR);
+    echo json_encode(['schema_version' => 1, 'release' => $release, 'groups' => (object) $groups, 'private_evidence' => $sealed], JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
     if (isset($db) && $db && $db->transactionLevel() > 0) $db->rollBack();
     fwrite(STDERR, "Read-only reporting diagnosis unavailable.\n");

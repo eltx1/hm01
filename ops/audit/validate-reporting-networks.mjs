@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 export function validate(report) {
-    assert.deepEqual(Object.keys(report).sort(), ['groups', 'release', 'schema_version']);
+    assert.deepEqual(Object.keys(report).sort(), ['groups', 'private_evidence', 'release', 'schema_version']);
     assert.equal(report.schema_version, 1);
     assert.match(report.release, /^[a-f0-9]{40}$/);
     assert.ok(report.groups && !Array.isArray(report.groups) && typeof report.groups === 'object');
@@ -21,6 +21,15 @@ export function validate(report) {
         parts.forEach((part, i) => assert.ok(columns[i].includes(part)));
         assert.ok(Number.isSafeInteger(count) && count > 0 && count <= 2000);
     }
+    const box = report.private_evidence;
+    assert.deepEqual(Object.keys(box).sort(), ['algorithm', 'ciphertext', 'iv', 'key_fingerprint', 'tag', 'wrapped_key']);
+    assert.equal(box.algorithm, 'RSA-OAEP+A256GCM');
+    assert.match(box.key_fingerprint, /^[a-f0-9]{64}$/);
+    for (const key of ['wrapped_key', 'iv', 'tag', 'ciphertext']) assert.match(box[key], /^[A-Za-z0-9+/]+={0,2}$/);
+    assert.equal(Buffer.from(box.wrapped_key, 'base64').length, 384);
+    assert.equal(Buffer.from(box.iv, 'base64').length, 12);
+    assert.equal(Buffer.from(box.tag, 'base64').length, 16);
+    assert.ok(Buffer.from(box.ciphertext, 'base64').length <= 524288);
     return report;
 }
 
