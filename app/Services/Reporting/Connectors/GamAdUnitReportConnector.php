@@ -206,7 +206,14 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                 // registered hostname. Do not include siblings, www, parents,
                 // unknown/not-applicable sites or other units. No PQL Site
                 // filterability is assumed; SITE_NAME must exist in the CSV.
-                if ($siteName === $scope['hostname']) {
+                if ($siteName === $scope['hostname']) $buckets[$key] = $metrics;
+            }
+            $rows = [];
+            $now = CarbonImmutable::now($connection->timezone);
+            for ($day = CarbonImmutable::parse($from->toDateString(), $connection->timezone); $day->toDateString() <= $to->toDateString(); $day = $day->addDay()) {
+                $lastHour = $granularity === ReportGranularity::Hourly ? ($day->isSameDay($now) ? $now->hour : 23) : 0;
+                for ($hour = 0; $hour <= $lastHour; $hour++) {
+                    $metrics = $buckets[$day->toDateString().':'.$hour] ?? collect(self::COLUMNS)->mapWithKeys(fn ($field, $column) => [$field => in_array('Column.'.$column, $headers, true) ? 0 : null])->all();
                     $viewable = $metrics['active_view_viewable_impressions'];
                     $measurable = $metrics['active_view_measurable_impressions'];
                     if (($viewable === null) !== ($measurable === null)
@@ -216,17 +223,8 @@ final class GamAdUnitReportConnector implements ReportSourceConnectorInterface
                         // this ratio unavailable; never clamp or invent counts.
                         $metrics['active_view_viewable_impressions'] = null;
                         $metrics['active_view_measurable_impressions'] = null;
-                        $unavailableViewabilityDates[$day] = true;
+                        $unavailableViewabilityDates[$day->toDateString()] = true;
                     }
-                    $buckets[$key] = $metrics;
-                }
-            }
-            $rows = [];
-            $now = CarbonImmutable::now($connection->timezone);
-            for ($day = CarbonImmutable::parse($from->toDateString(), $connection->timezone); $day->toDateString() <= $to->toDateString(); $day = $day->addDay()) {
-                $lastHour = $granularity === ReportGranularity::Hourly ? ($day->isSameDay($now) ? $now->hour : 23) : 0;
-                for ($hour = 0; $hour <= $lastHour; $hour++) {
-                    $metrics = $buckets[$day->toDateString().':'.$hour] ?? collect(self::COLUMNS)->mapWithKeys(fn ($field, $column) => [$field => in_array('Column.'.$column, $headers, true) ? 0 : null])->all();
                     $micros = $metrics['revenue_micros'];
                     unset($metrics['revenue_micros']);
                     $rows[] = $metrics + [

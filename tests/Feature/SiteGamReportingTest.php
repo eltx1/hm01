@@ -301,6 +301,21 @@ class SiteGamReportingTest extends TestCase
         return ['viewable exceeds measurable' => [50, 40, false], 'zero measurable' => [5, 0, false], 'missing paired column' => [40, 80, true]];
     }
 
+    public function test_missing_optional_pair_does_not_block_days_without_an_exact_site_row(): void
+    {
+        $binding = $this->bind($this->context());
+        $csv = str_replace('Column.AD_EXCHANGE_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', 'Column.IGNORED_OPTIONAL_METRIC', $this->csv(rows: []));
+        Http::fake(['storage.googleapis.com/*' => Http::response($csv)]);
+        $job = $this->import($binding);
+        $this->assertSame(ReportImportStatus::Completed, $job->status, $job->error_message ?? '');
+        $row = DailyReport::withoutGlobalScopes()->sole();
+        $this->assertSame(0, (int) $row->impressions);
+        $this->assertSame(0, (int) $row->gross_revenue_minor);
+        $this->assertNull($row->active_view_viewable_impressions);
+        $this->assertNull($row->active_view_measurable_impressions);
+        $this->assertNull($row->viewability_bp);
+    }
+
     public function test_unscoped_google_csv_and_unsupported_site_query_cannot_import_or_fallback(): void
     {
         $binding = $this->bind($this->context());
