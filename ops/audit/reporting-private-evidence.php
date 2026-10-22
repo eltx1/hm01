@@ -56,7 +56,8 @@ function horusReportingPrivateEvidence(): array
                     ->get(['report_date', 'finality', 'impressions', 'gross_revenue_minor', 'publisher_earnings_minor', 'currency', 'updated_at'])->toArray(),
                 'recent_imports' => App\Models\ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
                     ->latest('created_at')->limit(8)->get()->map(fn ($job) => $job->only(['period_start', 'period_end', 'finality', 'status', 'created_at', 'completed_at', 'next_retry_at'])
-                        + ['error_class' => horusReportErrorClass((string) $job->error_message)])->all(),
+                        + ['error_class' => horusReportErrorClass((string) $job->error_message),
+                            'private_error' => mb_substr((string) $job->error_message, 0, 1000)])->all(),
             ];
             if ($binding->active_site_id && $binding->gamConnection?->is_enabled) {
                 try {
@@ -64,7 +65,7 @@ function horusReportingPrivateEvidence(): array
                     $network = $transport->call($binding->gamConnection, 'NetworkService', 'getCurrentNetwork');
                     $entry['live_network'] = array_intersect_key($network, array_flip(['networkCode', 'currencyCode', 'timeZone']));
                     $job = App\Models\ReportImportJob::withoutGlobalScopes()->where('report_source_connection_id', $connection->id)
-                        ->where('status', 'COMPLETED')->whereNotNull('external_report_id')
+                        ->whereIn('status', ['COMPLETED', 'FAILED'])->whereNotNull('external_report_id')
                         ->orderByDesc('period_end')->latest('completed_at')->first();
                     if ($job && preg_match('/^gam-unit:(\d+):/', $job->external_report_id, $match)) {
                         $entry['report_period'] = [$job->period_start->toDateString(), $job->period_end->toDateString()];
