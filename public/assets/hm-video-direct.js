@@ -1873,7 +1873,8 @@
                             if (!currentRequest() || !player.adsManager || player.closing) return;
                             if (player.audioSync) player.audioSync.restoreBaseline = mediaAudioState(player);
                             if (!player.nonLinearAdActive) armStartupPhase('media-start');
-                            player.adsManager.start();
+                            if (!servingContextAllowed(player.container)) { destroyPlayer(player, 'ineligible'); return; }
+                        player.adsManager.start();
                         }
                     });
                     if (!currentRequest() || !player.adsManager) return;
@@ -1908,6 +1909,7 @@
             if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.adRequestIntent.muted);
             if (request.setContinuousPlayback) request.setContinuousPlayback(false);
             tracePhase('VAST call', player.container, { position: player.currentBreak });
+            if (!servingContextAllowed(player.container)) { destroyPlayer(player, 'ineligible'); return; }
             player.adsLoader.requestAds(request);
         } catch (error) {
             if (currentRequest()) failContentAdBreak(player, error, 'initialization-' + position, position);
@@ -2246,6 +2248,7 @@
                         syncManagerAudio(player);
                         if (player.destroyed || player.closing || !player.adsManager) return;
                         armStartupPhase('media-start');
+                        if (!servingContextAllowed(player.container)) { destroyPlayer(player, 'ineligible'); return; }
                         player.adsManager.start();
                     }
                 });
@@ -2272,6 +2275,7 @@
             if (request.setAdWillAutoPlay) request.setAdWillAutoPlay(player.adRequestIntent.autoPlay);
             if (request.setAdWillPlayMuted) request.setAdWillPlayMuted(player.adRequestIntent.muted);
             tracePhase('VAST call', player.container, { position: player.currentBreak });
+            if (!servingContextAllowed(player.container)) { destroyPlayer(player, 'ineligible'); return; }
             player.adsLoader.requestAds(request);
             if (player.rewarded) rewardEvent(player.container, 'horus:rewarded-opened', {});
         } catch (error) {
@@ -2457,7 +2461,16 @@
         });
     }
 
+    function servingContextAllowed(container) {
+        if (!container || container.getAttribute('data-hm-serving-context') !== '1'
+            && typeof container.__hmCanRequestAds !== 'function') return true;
+        try {
+            return typeof container.__hmCanRequestAds === 'function' && container.__hmCanRequestAds() === true;
+        } catch (error) { return false; }
+    }
+
     function render(container) {
+        if (!servingContextAllowed(container)) return;
         if (!container || container.getAttribute('data-hm-video-runtime-state')) return;
         var vastUrl = vastUrlAttribute(container);
         if (!vastUrl || !/^https:\/\//i.test(vastUrl)) {

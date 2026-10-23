@@ -492,6 +492,11 @@
     function canRequestAds(config) {
         if (!config || config.status !== 'active' || config.immediatePause || servingDisabled(config)) return false;
         if (window.__HM_RELEASE_HANDOFF_FAILED__) return false;
+        if (!hostAllowed(currentHostname(), config.allowedHostnames)) return false;
+        // Retain same-version refreshes, but retire callbacks from another site
+        // or a superseded configuration before any engine can request an ad.
+        if (!state.config || state.config.siteKey !== config.siteKey
+            || state.config.configVersion !== config.configVersion) return false;
         if (state.privacyDecision && state.privacyDecision.blocked) return false;
         return !clickGuardBlocked(config);
     }
@@ -1376,7 +1381,7 @@ function nativeDefinition(config, code) {
         });
     }
 
-    function directContainer(entry, candidate) {
+    function directContainer(entry, candidate, config) {
         var tag = candidate.tag || {};
         var recipe = tag.container || {};
         var elementName = String(recipe.element || 'div').toLowerCase();
@@ -1386,6 +1391,23 @@ function nativeDefinition(config, code) {
         container.className = String(recipe.class || tag.containerClass || 'hm-direct-demand-container');
         container.setAttribute('data-hm-direct-network', String(candidate.network || 'CUSTOM'));
         container.setAttribute('data-hm-native-network', String(candidate.network || 'CUSTOM'));
+        if (config && (directGptRecipe(tag) || directVideoRecipe(tag))) {
+            // Bind the actual DOM instance before insertion. Copied markup cannot
+            // inherit this callback; queued runtimes recheck all existing gates.
+            var identity = {};
+            ['data-hm-gpt-ad-unit-path', 'data-hm-vast-url', 'data-hm-vast-url-parts',
+                'data-hm-vast-url-0', 'data-hm-vast-url-1', 'data-hm-vast-url-2', 'data-hm-vast-url-3',
+                'data-hm-vast-url-4', 'data-hm-vast-url-5', 'data-hm-vast-url-6', 'data-hm-vast-url-7'].forEach(function (name) {
+                var value = (recipe.attributes || tag.attributes || {})[name];
+                identity[name] = value == null ? null : String(value);
+            });
+            container.setAttribute('data-hm-serving-context', '1');
+            container.__hmCanRequestAds = function () {
+                return directJsServingAllowed(config) && Object.keys(identity).every(function (name) {
+                    return container.getAttribute(name) === identity[name];
+                });
+            };
+        }
         setCandidateAttributes(container, recipe.attributes || tag.attributes || {});
         if (entry.element.appendChild) entry.element.appendChild(container);
         return container;
@@ -1694,7 +1716,7 @@ function nativeDefinition(config, code) {
                     return;
                 }
 
-                container = directContainer(entry, candidate);
+                container = directContainer(entry, candidate, config);
                 loadDirectScripts(config, candidate).then(function () {
                     if (!directJsServingAllowed(config)) { failed('blocked'); return; }
                     if (!runDirectInitialization(config, candidate, container)) { failed('initialization-failed'); return; }

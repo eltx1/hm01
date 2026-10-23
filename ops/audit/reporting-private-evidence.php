@@ -5,8 +5,8 @@ function horusReportingPrivateEvidence(): array
     // Temporary incident scope, evaluated in UTC and disabled after this investigation.
     if (now()->utc()->gte('2026-10-26')) return [];
     $site = App\Models\Site::withoutGlobalScopes()->whereNull('deleted_at')->where('primary_domain', 'natega.bluekl.com')->first();
-    if (!$site) return ['site_found' => false];
-    $evidence = ['site_found' => true, 'site_id' => $site->id, 'reporting' => [], 'inventory_paths' => [], 'accounts' => []];
+    if (!$site) return ['site_found' => false, 'serving_inventory' => horusServingInventoryEvidence()];
+    $evidence = ['serving_inventory' => horusServingInventoryEvidence(), 'site_found' => true, 'site_id' => $site->id, 'reporting' => [], 'inventory_paths' => [], 'accounts' => []];
     // Compare the actual read models used by both screens with stored facts.
     try {
         $publisher = App\Models\Publisher::withoutGlobalScopes()->where('organization_id', $site->organization_id)->find($site->publisher_id);
@@ -119,4 +119,76 @@ function horusReportingCsvShape(string $csv, string $hostname): array
         }
         return $groups;
     } finally { fclose($stream); }
+}
+
+/** Bounded platform inventory audit, encrypted by the caller; no serving or ledger writes. */
+function horusServingInventoryEvidence(): array
+{
+    $result = ['sites' => [], 'truncated' => false];
+    $sites = App\Models\Site::withoutGlobalScopes()->whereNull('deleted_at')->orderBy('id')->limit(101)->get();
+    $result['truncated'] = $sites->count() > 100;
+    foreach ($sites->take(100) as $site) {
+        $item = ['domain' => $site->primary_domain, 'site_key' => $site->public_key, 'versions' => [], 'bindings' => []];
+        $versions = App\Models\ConfigVersion::withoutGlobalScopes()
+            ->where('organization_id', $site->organization_id)->where('site_id', $site->id)
+            ->where('environment', 'PRODUCTION')->whereNotNull('published_at')
+            ->orderByDesc('published_at')->limit(2)->get();
+        foreach ($versions as $version) {
+            $payload = $version->payload ?? [];
+            $paths = horusServingConfigPaths($payload);
+            $item['versions'][] = ['version' => $version->version, 'published_at' => $version->published_at->toIso8601String(),
+                'site_key' => $payload['siteKey'] ?? null, 'hosts' => $payload['allowedHostnames'] ?? [],
+                'paths' => array_slice(array_values(array_unique($paths)), 0, 100)];
+        }
+        foreach ([App\Models\SiteGamReportBinding::class, App\Models\SiteGamVideoReportBinding::class] as $model) {
+            foreach ($model::withoutGlobalScopes()->where('organization_id', $site->organization_id)->where('site_id', $site->id)
+                ->whereNotNull('active_site_id')->limit(10)->get() as $binding) {
+                $item['bindings'][] = ['channel' => $binding->connectionType(), 'network' => $binding->network_code,
+                    'unit_id' => $binding->ad_unit_id, 'unit_code' => $binding->ad_unit_code];
+            }
+        }
+        if (strlen(json_encode($result, JSON_THROW_ON_ERROR)) + strlen(json_encode($item, JSON_THROW_ON_ERROR)) > 150000) {
+            $result['truncated'] = true;
+            break;
+        }
+        $result['sites'][] = $item;
+    }
+    return $result;
+}
+
+function horusServingConfigPaths(array $payload): array
+{
+    $paths = [];
+    foreach ($payload['placements'] ?? [] as $placement) {
+        if (!empty($placement['adUnitPath'])) $paths[] = $placement['adUnitPath'];
+    }
+    foreach (['directDemand', 'nativeDemand'] as $engine) {
+        foreach ($payload[$engine]['placements'] ?? [] as $placement) {
+            foreach ($placement['candidates'] ?? [] as $candidate) {
+                $attrs = $candidate['tag']['container']['attributes'] ?? [];
+                if (!empty($attrs['data-hm-gpt-ad-unit-path'])) $paths[] = $attrs['data-hm-gpt-ad-unit-path'];
+                $raw = horusServingDecodeVast($attrs);
+                $path = horusFinanceUrlShape($raw)['unit_path'];
+                if ($path) $paths[] = $path;
+            }
+        }
+    }
+    return array_values(array_unique(array_filter($paths, fn ($path) => is_string($path) && preg_match('#^/[0-9]{1,20}(?:,[0-9]{1,20})?/[A-Za-z0-9_./-]{1,240}$#D', $path))));
+}
+
+function horusServingDecodeVast(array $attributes): string
+{
+    $key = 'data-hm-vast-url';
+    $encoded = $attributes[$key] ?? '';
+    if ($encoded === '' && isset($attributes[$key.'-parts'])) {
+        $count = filter_var($attributes[$key.'-parts'], FILTER_VALIDATE_INT);
+        if ($count === false || $count < 1 || $count > 8) return '';
+        for ($i = 0; $i < $count; $i++) {
+            if (!isset($attributes[$key.'-'.$i]) || !is_string($attributes[$key.'-'.$i])) return '';
+            $encoded .= $attributes[$key.'-'.$i];
+            if (strlen($encoded) > 140000) return '';
+        }
+    }
+    if (!is_string($encoded) || strlen($encoded) > 140000) return '';
+    return base64_decode($encoded, true) ?: '';
 }
