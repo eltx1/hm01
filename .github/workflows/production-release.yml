@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/workflows/diagnose-shared-server-20261023.yml'
 
 permissions:
   contents: read
