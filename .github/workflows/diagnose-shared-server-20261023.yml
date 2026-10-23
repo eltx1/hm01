@@ -139,3 +139,4 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/result.jsonl"
+# Execute authorized read-only incident snapshot, 2026-10-23.
