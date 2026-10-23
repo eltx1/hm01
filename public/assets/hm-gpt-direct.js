@@ -359,8 +359,9 @@
 
     // Called only AFTER the existing render decision rejects a response. Never
     // change that decision, coerce objects, or retain arbitrary provider strings.
-    function rejectedResponseContext(size, allowedSizes, flexible) {
+    function rejectedResponseContext(event, allowedSizes, flexible) {
         try {
+            var size = event.size;
             function dimension(value) {
                 if (value === null) return 'null';
                 var type = typeof value;
@@ -506,7 +507,7 @@
                 return;
             }
             if (!renderedSize && !fluidRendered) {
-                reportFailure(container, 'render', 'response-rejected', rejectedResponseContext(event.size, allowedSizes, flexibleSize));
+                reportFailure(container, 'render', 'response-rejected', rejectedResponseContext(event, allowedSizes, flexibleSize));
                 destroySlot(slot);
                 return;
             }

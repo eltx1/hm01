@@ -87,6 +87,7 @@ function harness(fault = '', options = {}) {
     return {
         attributes, requests, traces, destroyed, root, scripts,
         emit(event) { for (const fn of handlers.slice()) fn({slot,isEmpty:false,size:[300,250],...event}); },
+        emitRaw(event) { event.slot=slot; for (const fn of handlers.slice()) fn(event); },
     };
 }
 
@@ -272,5 +273,17 @@ test('a broken trace dependency cannot stop the original rejection or destroySlo
     assert.equal(r.attributes['data-hm-gpt-failure-detail'],'dimension-non-positive');
     assert.equal(r.requests.length,1);
     assert.equal(r.destroyed.length,1);
+});
+
+test('a response getter failing only during optional inspection cannot interrupt terminal cleanup',()=>{
+    let reads=0;
+    const r=harness();
+    const event={isEmpty:false,get size(){if(++reads>3)throw new Error('private-response');return [0,0];}};
+    assert.doesNotThrow(()=>r.emitRaw(event));
+    assert.equal(r.attributes['data-hm-gpt-runtime-state'],'failed');
+    assert.equal(r.attributes['data-hm-gpt-failure-detail'],undefined);
+    assert.equal(r.requests.length,1);
+    assert.equal(r.destroyed.length,1);
+    assertFailure(r,'render','response-rejected');
 });
 
