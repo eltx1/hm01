@@ -69,3 +69,25 @@ test('transport diagnostics allow only fixed reason/mode values and identify the
     assert.equal(snapshot.events[2].reason, 'pending_deadline');
     assert.equal(JSON.stringify(snapshot).includes('private'), false);
 });
+
+test('GPT failure trace keeps bounded stage and reason readable after the container is removed', () => {
+    const h = harness(); h.tick(4272);
+    h.c.startupTrace('GPT error', { slot: 2, failureStage: 'display', failureReason: 'exception', error: 'private-error', url: 'https://private' });
+    h.c.startupTrace('GPT error', { slot: 2, failureStage: 'display', failureReason: 'exception' });
+    assert.equal(h.printed.length, 1);
+    assert.equal(h.printed[0][0], '[HM] +4272ms GPT error slot=2 stage=display reason=exception');
+    const event = h.c.startupSnapshot().events[0];
+    assert.equal(event.failureStage, 'display');
+    assert.equal(event.failureReason, 'exception');
+    assert.equal(JSON.stringify([event,h.printed]).includes('private'), false);
+    h.c.startupTrace('GPT error', { slot: 3, failureStage: 'private-stage', failureReason: 'private-reason' });
+    h.c.startupTrace('CF pass', { failureStage: 'display', failureReason: 'exception' });
+    assert.equal(JSON.stringify(h.c.startupSnapshot()).includes('private'), false);
+    assert.equal(h.c.startupSnapshot().events[2].failureReason, undefined);
+});
+
+test('throwing console cannot change a caller result or remove already-recorded failure evidence', () => {
+    const h = harness(); h.c.console.log = () => { throw new Error('console-unavailable'); };
+    assert.doesNotThrow(() => h.c.startupTrace('GPT error', {slot: 1, failureStage: 'render', failureReason: 'response-rejected'}));
+    assert.equal(h.c.startupSnapshot().events[0].failureReason, 'response-rejected');
+});

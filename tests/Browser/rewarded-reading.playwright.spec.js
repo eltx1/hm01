@@ -262,6 +262,32 @@ test('GPT ready prompt expires safely without a grant', async ({page}) => {
     expect(await page.evaluate(() => window.grants)).toBe(0);
 });
 
+for (const failure of ['ready-timeout', 'callback-missing', 'show-declined', 'exception']) {
+    test(`GPT rewarded ${failure} records the stage and releases the page`, async ({page}) => {
+        await page.clock.install();
+        await openGptRewarded(page);
+        if (failure === 'ready-timeout') await page.clock.fastForward(25001);
+        else if (failure === 'callback-missing') await page.evaluate(() => window.emitGpt('rewardedSlotReady'));
+        else {
+            await page.evaluate(failure => window.emitGpt('rewardedSlotReady', {makeRewardedVisible() {
+                if (failure === 'exception') throw new Error('private-provider-detail');
+                return false;
+            }}), failure);
+            await page.getByRole('button', {name:'شاهد الإعلان'}).click();
+        }
+        const reward = page.locator('#reward');
+        await expect(reward).toBeHidden();
+        await expect(reward).toHaveAttribute('data-hm-gpt-status', 'failed');
+        await expect(reward).toHaveAttribute('data-hm-gpt-failure-stage', ['ready-timeout', 'callback-missing'].includes(failure) ? 'rewarded-ready' : 'rewarded-show');
+        await expect(reward).toHaveAttribute('data-hm-gpt-failure-reason', failure);
+        expect(await page.evaluate(() => window.grants)).toBe(0);
+        expect(await page.evaluate(() => window.destroyed)).toBe(1);
+        expect(await page.evaluate(() => Object.values(window.events).flat().length)).toBe(0);
+        await expect(page.locator('article')).toBeVisible();
+        expect(await reward.evaluate(node => node.outerHTML)).not.toContain('private-provider-detail');
+    });
+}
+
 test('VAST rewarded recovers when IMA never responds', async ({page}) => {
     await page.clock.install();
     await openReading(page, 'en');

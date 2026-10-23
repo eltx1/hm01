@@ -18,7 +18,7 @@ const gateJs = await readFile(new URL('../../public/assets/traffic-gate/horus-tr
 const sdk = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
 const internalSdk = 'https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/offline/pubads_impl.js';
 
-function installGptFixture() {
+function installGptFixture(options = {}) {
     // Only the provider boundary is fake. Both Horus adapters and the Loader,
     // its real gate frame, Click Guard, layout and lazy eligibility run intact.
     const queue = window.googletag?.cmd || [], slots = new Map(), listeners = new Map();
@@ -27,10 +27,11 @@ function installGptFixture() {
     const emit = (name, event) => [...(listeners.get(name) || [])].forEach(fn => fn(event));
     window.googletag = { apiReady: true, cmd: { push(fn) { fn(); } }, pubads: () => pubads,
         defineSlot(path, sizes, id) { const slot = { id, addService() { return this; } }; slots.set(id, slot); return slot; },
-        enableServices() {}, destroySlots() {}, display(id) {
+        enableServices() {}, destroySlots() { window.dependencyMetrics.destroyed++; }, display(id) {
+            if (options.gptFault === 'display') throw new Error('private-provider-detail');
             window.dependencyMetrics.requests++;
             window.dependencyMetrics.requestAt = performance.now();
-            const event = { slot: slots.get(id), isEmpty: false, size: [300, 250] };
+            const event = { slot: slots.get(id), isEmpty: options.gptFault === 'empty', size: options.gptFault === 'response' ? [0, 0] : [300, 250] };
             emit('slotRequested', event);
             queueMicrotask(() => { emit('slotResponseReceived', event); emit('slotRenderEnded', event); emit('slotOnload', event); });
         },
@@ -67,7 +68,7 @@ async function open(page, options = {}) {
         if (url.href === internalSdk) {
             counts.internal++;
             if (options.delay === 'internal') await hold;
-            return route.fulfill({ headers, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')();' });
+            return route.fulfill({ headers, contentType: 'application/javascript', body: '(' + installGptFixture.toString() + ')(' + JSON.stringify({gptFault: options.gptFault}) + ');' });
         }
         if (url.origin === 'https://cdn.horusmedia.net') {
             if (url.pathname.includes('/runtime/gpt/')) {
@@ -101,7 +102,7 @@ async function open(page, options = {}) {
     await page.goto('https://reader.example/article');
     await page.evaluate(initializeTestMedia, settings);
     await page.evaluate(options => {
-        window.dependencyMetrics = { sdkExecutions: 0, requests: 0, requestAt: null, readyAt: null };
+        window.dependencyMetrics = { sdkExecutions: 0, requests: 0, destroyed: 0, requestAt: null, readyAt: null };
         if (!options.autoMount) {
             const node = document.createElement('div'); node.className = 'hm-ad'; node.dataset.placement = 'display';
             node.style.cssText = 'width:320px;min-height:250px;';
@@ -115,6 +116,32 @@ async function open(page, options = {}) {
 }
 
 for (const mode of ['composed', 'minified']) {
+    for (const fault of ['display', 'response', 'empty']) {
+        test(`${mode}: GPT ${fault} keeps bounded diagnostics after cleanup without blocking video`, async ({ page }) => {
+            const run = await open(page, { gptFault: fault, deferManager: false, minified: mode === 'minified' });
+            const placement = page.locator('[data-placement="display"]');
+            await expect(placement).toHaveAttribute('data-hm-direct-last-error', fault === 'empty' ? 'gpt-empty' : 'gpt-failed');
+            await expect(page.locator('#display-runtime')).toHaveCount(0);
+            await expect.poll(() => page.evaluate(() => window.videoMetrics.starts)).toBe(1);
+            expect(run.counts.verifies).toBe(1);
+            expect(await page.evaluate(() => window.dependencyMetrics.requests)).toBe(fault === 'display' ? 0 : 1);
+            expect(await page.evaluate(() => window.dependencyMetrics.destroyed)).toBe(1);
+            const errors = await page.evaluate(() => window.HorusMediaLoader.getStartupTrace().events.filter(e => e.phase === 'GPT error'));
+            if (fault === 'empty') {
+                await expect(placement).not.toHaveAttribute('data-hm-gpt-last-failure-stage');
+                expect(errors).toHaveLength(0);
+            } else {
+                const stage = fault === 'display' ? 'display' : 'render';
+                const reason = fault === 'display' ? 'exception' : 'response-rejected';
+                await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-stage', stage);
+                await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-reason', reason);
+                expect(errors).toHaveLength(1);
+                expect(errors[0]).toMatchObject({ failureStage: stage, failureReason: reason });
+                expect(JSON.stringify(errors)).not.toContain('private-provider-detail');
+            }
+        });
+    }
+
     test(`${mode}: GPT internal dependency starts while its Horus adapter is held`, async ({ page }) => {
         const run = await open(page, { delay: 'adapter', minified: mode === 'minified' });
         await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');

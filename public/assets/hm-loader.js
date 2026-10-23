@@ -1667,6 +1667,20 @@ function nativeDefinition(config, code) {
         return true;
     }
 
+    function preserveGptFailure(entry, container, tag, reason) {
+        // The candidate is removed during fallback. Keep only bounded, enumerated
+        // diagnostic labels on its surviving placement, without changing fallback.
+        try {
+            if (reason !== 'gpt-failed' || !directGptRecipe(tag) || !container) return;
+            var stage = container.getAttribute('data-hm-gpt-failure-stage');
+            var failure = container.getAttribute('data-hm-gpt-failure-reason');
+            if (['library', 'queue', 'api', 'define', 'service', 'listener', 'enable', 'display', 'render', 'rewarded-ready', 'rewarded-show', 'rewarded-refresh'].indexOf(stage) === -1) return;
+            if (['load-error', 'unavailable', 'invalid-queue', 'exception', 'null-slot', 'host-unavailable', 'response-rejected', 'ready-timeout', 'callback-missing', 'show-declined'].indexOf(failure) === -1) return;
+            entry.element.setAttribute('data-hm-gpt-last-failure-stage', stage);
+            entry.element.setAttribute('data-hm-gpt-last-failure-reason', failure);
+        } catch (error) { /* Optional diagnostics cannot delay cleanup or fallback. */ }
+    }
+
     function runNativeFallback(config, entry) {
         if (!directJsServingAllowed(config) || !entry || !entry.native || !entry.native.enabled) return Promise.resolve(false);
         var key = entry.element.id || ensureElementId(entry.element, config, entry.placement);
@@ -1687,6 +1701,7 @@ function nativeDefinition(config, code) {
                 function failed(reason) {
                     if (settled) return;
                     settled = true;
+                    preserveGptFailure(entry, container, tag, reason);
                     if (container && typeof container.__hmDestroy === 'function') {
                         try { container.__hmDestroy('failed'); } catch (error) {}
                     }

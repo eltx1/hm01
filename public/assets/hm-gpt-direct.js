@@ -329,6 +329,22 @@
         return null;
     }
 
+    // Local diagnostics only. Never retain provider exceptions, URLs or payloads.
+    // Keep the first failure; later cleanup must not overwrite its origin.
+    function recordFailure(container, stage, reason) {
+        try {
+            if (container.getAttribute('data-hm-gpt-failure-reason')) return;
+            container.setAttribute('data-hm-gpt-failure-stage', stage);
+            container.setAttribute('data-hm-gpt-failure-reason', reason);
+        } catch (error) { /* Diagnostics must not change terminal state or cleanup. */ }
+        tracePhase('GPT error', container, { failureStage: stage, failureReason: reason });
+    }
+
+    function reportFailure(container, stage, reason) {
+        recordFailure(container, stage, reason);
+        report(container, 'failed');
+    }
+
     function report(container, status, size) {
         if (size) {
             var width = String(size[0]);
@@ -391,28 +407,30 @@
 
         var googletag = window.googletag;
         if (!googletag || typeof googletag.defineSlot !== 'function' || typeof googletag.pubads !== 'function' || typeof googletag.display !== 'function') {
-            report(container, 'failed');
+            reportFailure(container, 'api', 'unavailable');
             return;
         }
 
         var slot;
         var pubads;
+        var failureStage = 'define';
         try {
             slot = googletag.defineSlot(adUnitPath, allowedSizes, container.id);
             if (!slot) {
-                report(container, 'failed');
+                reportFailure(container, 'define', 'null-slot');
                 return;
             }
+            failureStage = 'service';
             pubads = googletag.pubads();
             tracePhase('GPT ready');
             traceSlotService(slot, container, pubads);
             if (!pubads || typeof slot.addService !== 'function') {
-                report(container, 'failed');
+                reportFailure(container, 'service', 'unavailable');
                 destroySlot(slot);
                 return;
             }
         } catch (error) {
-            report(container, 'failed');
+            reportFailure(container, failureStage, 'exception');
             if (slot) destroySlot(slot);
             return;
         }
@@ -434,12 +452,12 @@
             var fluidAllowed = allowedSizes.indexOf('fluid') !== -1;
             var fluidRendered = fluidAllowed && (!flexibleSize || event.size == null || normalizedSlotSize(event.size) === 'fluid');
             if (renderedSize && !fitContainerSizes(container, [renderedSize]).length) {
-                report(container, 'failed');
+                reportFailure(container, 'render', 'host-unavailable');
                 destroySlot(slot);
                 return;
             }
             if (!renderedSize && !fluidRendered) {
-                report(container, 'failed');
+                reportFailure(container, 'render', 'response-rejected');
                 destroySlot(slot);
                 return;
             }
@@ -455,22 +473,26 @@
             report(container, 'rendered', renderedSize || null);
         };
 
+        failureStage = 'listener';
         try {
             if (typeof pubads.addEventListener !== 'function') {
-                report(container, 'failed');
+                reportFailure(container, 'listener', 'unavailable');
                 destroySlot(slot);
                 return;
             }
             pubads.addEventListener('slotRenderEnded', onRender);
+            failureStage = 'service';
             slot.addService(pubads);
             container.setAttribute('data-hm-gpt-runtime-state', 'requested');
+            failureStage = 'enable';
             if (typeof googletag.enableServices === 'function') googletag.enableServices();
             tracePhase('GPT call', container);
+            failureStage = 'display';
             googletag.display(container.id);
         } catch (error) {
             if (!finished) {
                 finished = true;
-                report(container, 'failed');
+                reportFailure(container, failureStage, 'exception');
                 destroySlot(slot);
             }
         }
@@ -521,7 +543,7 @@
             Array.prototype.forEach.call(document.querySelectorAll ? document.querySelectorAll(SELECTOR) : [], function (container) {
                 if (container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION
                     && container.getAttribute('data-hm-gpt-runtime-state') === 'queued') {
-                    report(container, 'failed');
+                    reportFailure(container, 'library', 'load-error');
                 }
             });
         };
@@ -591,12 +613,12 @@
         window.googletag = window.googletag || { cmd: [] };
         window.googletag.cmd = window.googletag.cmd || [];
         if (!window.googletag.cmd || typeof window.googletag.cmd.push !== 'function') {
-            report(container, 'failed');
+            reportFailure(container, 'queue', 'invalid-queue');
             return;
         }
 
         window.googletag.cmd.push(function () { startSlot(container, adUnitPath, allowedSizes); });
-        if (!ensureGptLibrary()) report(container, 'failed');
+        if (!ensureGptLibrary()) reportFailure(container, 'library', 'unavailable');
     }
 
     function renderRewarded(container) {
@@ -622,14 +644,15 @@
         state.rewarded = container;
         var slot = null, pubads = null, closed = false, granted = false, showing = false;
         var listeners = [], previousFocus = null, prompt = null, watch = null, ui = null;
-        var timer = window.setTimeout(function () { close('failed'); }, 25000);
+        var timer = window.setTimeout(function () { close('failed', 'rewarded-ready', 'ready-timeout'); }, 25000);
         function emit(name, detail) {
             if (typeof window.CustomEvent === 'function') window.dispatchEvent(new window.CustomEvent(name, {
                 detail: Object.assign({ placementId: container.id, provider: 'GOOGLE_GPT_REWARDED' }, detail || {}),
             }));
         }
-        function close(reason) {
+        function close(reason, failureStage, failureReason) {
             if (closed) return;
+            if (reason === 'failed') recordFailure(container, failureStage, failureReason);
             closed = true;
             window.clearTimeout(timer);
             // Release the publisher page before calling any third-party cleanup.
@@ -658,7 +681,7 @@
         }
         function ready(event) {
             if (closed || prompt || showing) return;
-            if (typeof event.makeRewardedVisible !== 'function') { close('failed'); return; }
+            if (typeof event.makeRewardedVisible !== 'function') { close('failed', 'rewarded-ready', 'callback-missing'); return; }
             window.clearTimeout(timer);
             timer = window.setTimeout(function () { close('expired'); }, 120000);
             previousFocus = document.activeElement;
@@ -674,10 +697,10 @@
                 window.clearTimeout(timer);
                 container.style.display = 'none';
                 try {
-                    if (!event.makeRewardedVisible()) { close('failed'); return; }
+                    if (!event.makeRewardedVisible()) { close('failed', 'rewarded-show', 'show-declined'); return; }
                     container.setAttribute('data-hm-reward-phase', 'showing');
                     emit('horus:rewarded-opened');
-                } catch (error) { close('failed'); }
+                } catch (error) { close('failed', 'rewarded-show', 'exception'); }
             });
             container.appendChild(prompt);
             window.addEventListener('keydown', keyboard);
@@ -692,14 +715,17 @@
         window.googletag.cmd.push(function () {
             if (closed) return;
             if (!servingContextAllowed(container)) { close('ineligible'); return; }
+            var failureStage = 'define';
             try {
                 var gpt = window.googletag;
                 slot = gpt.defineOutOfPageSlot(path, gpt.enums.OutOfPageFormat.REWARDED);
                 if (!slot) { close('ineligible'); return; }
+                failureStage = 'service';
                 pubads = gpt.pubads();
                 tracePhase('GPT ready');
                 traceSlotService(slot, container, pubads);
                 slot.addService(pubads);
+                failureStage = 'listener';
                 listen('rewardedSlotReady', ready);
                 listen('rewardedSlotGranted', function (event) {
                     if (!showing || granted) return;
@@ -710,14 +736,17 @@
                 });
                 listen('rewardedSlotClosed', function () { close(granted ? 'completed' : 'dismissed'); });
                 listen('slotRenderEnded', function (event) { if (event.isEmpty) close('empty'); });
+                failureStage = 'enable';
                 gpt.enableServices();
                 tracePhase('GPT call', container);
+                failureStage = 'display';
                 gpt.display(slot);
+                failureStage = 'rewarded-refresh';
                 var disabled = gpt.getConfig ? gpt.getConfig('disableInitialLoad').disableInitialLoad : (pubads.isInitialLoadDisabled && pubads.isInitialLoadDisabled());
                 if (disabled && pubads.refresh) pubads.refresh([slot]);
-            } catch (error) { close('failed'); }
+            } catch (error) { close('failed', failureStage, 'exception'); }
         });
-        if (!ensureGptLibrary()) close('failed');
+        if (!ensureGptLibrary()) close('failed', 'library', 'unavailable');
     }
 
     function scan(root) {

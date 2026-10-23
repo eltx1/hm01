@@ -40,6 +40,10 @@ export const startupTraceRuntime = String.raw`
             if (['ready', 'pending'].indexOf(detail.mode) !== -1) clean.mode = detail.mode;
             if (['config', 'controls', 'manifest', 'core', 'gpt', 'dom', 'privacy', 'policy'].indexOf(detail.resource) !== -1) clean.resource = detail.resource;
             if (['preroll', 'midroll', 'postroll'].indexOf(detail.position) !== -1) clean.position = detail.position;
+            if (phase === 'GPT error') {
+                if (['library', 'queue', 'api', 'define', 'service', 'listener', 'enable', 'display', 'render', 'rewarded-ready', 'rewarded-show', 'rewarded-refresh'].indexOf(detail.failureStage) !== -1) clean.failureStage = detail.failureStage;
+                if (['load-error', 'unavailable', 'invalid-queue', 'exception', 'null-slot', 'host-unavailable', 'response-rejected', 'ready-timeout', 'callback-missing', 'show-declined'].indexOf(detail.failureReason) !== -1) clean.failureReason = detail.failureReason;
+            }
             var key = phase + '|' + JSON.stringify(clean);
             if (trace.seen[key]) return;
             if (trace.events.length >= 160) { trace.dropped += 1; return; }
@@ -47,7 +51,9 @@ export const startupTraceRuntime = String.raw`
             var now = window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now() - trace.origin;
             var event = Object.assign({ ms: Math.max(0, Math.round(now)), phase: phase }, clean);
             trace.events.push(event);
-            if (window.console && typeof window.console.log === 'function') window.console.log('[HM] +' + event.ms + 'ms ' + phase, clean);
+            var failureLabel = phase === 'GPT error' && clean.failureStage && clean.failureReason
+                ? ' slot=' + (clean.slot || 0) + ' stage=' + clean.failureStage + ' reason=' + clean.failureReason : '';
+            if (window.console && typeof window.console.log === 'function') window.console.log('[HM] +' + event.ms + 'ms ' + phase + failureLabel, clean);
         } catch (error) { /* Local diagnostics are best effort only. */ }
     }
     function startupSnapshot() {
