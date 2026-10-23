@@ -299,6 +299,15 @@ test('trusted GPT Direct waits for a late terminal render instead of declaring n
     assert.equal(runtime.elements[0].getAttribute('data-hm-direct'), 'ONE');
     assert.equal(runtime.elements[0].getAttribute('data-hm-status'), 'rendered');
     assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), null);
+    const bound = runtime.elements[0].children.find(child => child.id === 'hm-gpt-late-render');
+    assert.equal(bound.getAttribute('data-hm-serving-context'), '1');
+    assert.equal(bound.__hmCanRequestAds(), true);
+    bound.setAttribute('data-hm-gpt-ad-unit-path', '/123/foreign');
+    assert.equal(bound.__hmCanRequestAds(), false);
+    bound.setAttribute('data-hm-gpt-ad-unit-path', '/23055873217/lordai.net');
+    assert.equal(bound.__hmCanRequestAds(), true);
+    runtime.sandbox.HorusMediaLoader.getConfig().controls.directJsDisabled = true;
+    assert.equal(bound.__hmCanRequestAds(), false);
 });
 
 test('trusted GPT Direct terminal empty state fails immediately and cleans the candidate container', async () => {

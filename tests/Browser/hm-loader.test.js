@@ -642,3 +642,36 @@ test('explicit one-shot diagnostic sends only sanitized privacy evidence with cr
     assert.ok(!encoded.includes('FULL_GPP_STRING'));
     assert.ok(!/cookie|userId|fingerprint|bidResponse|click/i.test(encoded));
 });
+
+for (const [label, runtimeSource] of [['source', loaderSource], ['built', builtLoaderSource]]) {
+    test(`rejected hostname stays blocked after public scan (${label})`, async () => {
+        const { sandbox, metrics } = createHarness(activeConfig(), { hostname: 'foreign.example', runtimeSource });
+        await sandbox.HorusMediaLoader.boot();
+        await sandbox.HorusMediaLoader.scan();
+        sandbox.HorusMediaLoader._resetForTests();
+        assert.equal(metrics.gptLoads, 0);
+        assert.equal(metrics.defined.length, 0);
+        assert.equal(metrics.displayed.length, 0);
+    });
+}
+
+for (const changed of ['hostname', 'siteKey', 'configVersion', 'same-version']) {
+    test(`deferred GPT rechecks serving context: ${changed}`, async () => {
+        const { sandbox, metrics } = createHarness(activeConfig(), { deferredGpt: true });
+        const pending = sandbox.HorusMediaLoader.boot();
+        for (let i = 0; i < 20 && !metrics.releaseGpt; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(typeof metrics.releaseGpt, 'function');
+        if (changed === 'hostname') sandbox.location.hostname = 'foreign.example';
+        else {
+            const state = sandbox.__HORUS_MEDIA_LOADER_STATE__;
+            state.config = { ...state.config };
+            if (changed === 'siteKey') state.config.siteKey = 'OTHER_SITE';
+            if (changed === 'configVersion') state.config.configVersion++;
+        }
+        metrics.releaseGpt();
+        await pending;
+        sandbox.HorusMediaLoader._resetForTests();
+        assert.equal(metrics.defined.length, changed === 'same-version' ? 1 : 0);
+        assert.equal(metrics.displayed.length, changed === 'same-version' ? 1 : 0);
+    });
+}

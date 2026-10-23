@@ -135,7 +135,7 @@ function runGpt(selectedContainer, options = {}) {
     };
     const googletag = {
         apiReady: true,
-        cmd: { push(callback) { callback(); } },
+        cmd: options.queue || { push(callback) { callback(); } },
         defineSlot(path, slotSizes, id) {
             const slot = {
                 path,
@@ -3430,3 +3430,55 @@ test('a completed filled pod requests the next ad immediately, while per-ad comp
     f.target.__hmDestroy('dismissed'); clock.advance(1);
     assert.equal(f.runtime.requested.length, 2, 'dismissal cancels immediate continuation');
 });
+
+for (const binding of ['missing', 'blocked', 'throws', 'allowed']) {
+    test(`managed GPT container requires a live serving binding: ${binding}`, () => {
+        const target = container({
+            'data-hm-gpt-direct': '1', 'data-hm-serving-context': '1',
+            'data-hm-gpt-ad-unit-path': '/123/site_a', 'data-hm-gpt-sizes': '[[300,250]]',
+            'data-hm-gpt-inner-id': 'div-gpt-managed',
+        }, 'managed-gpt');
+        if (binding !== 'missing') target.__hmCanRequestAds = () => {
+            if (binding === 'throws') throw new Error('unavailable');
+            return binding === 'allowed';
+        };
+        const runtime = runGpt(target);
+        assert.equal(runtime.definitions.length, binding === 'allowed' ? 1 : 0);
+        assert.equal(runtime.displayCalls.length, binding === 'allowed' ? 1 : 0);
+    });
+}
+
+test('managed GPT queued before revocation cannot define a slot afterward', () => {
+    let allowed = true;
+    const queue = [];
+    const target = container({
+        'data-hm-gpt-direct': '1', 'data-hm-serving-context': '1',
+        'data-hm-gpt-ad-unit-path': '/123/site_a', 'data-hm-gpt-sizes': '[[300,250]]',
+            'data-hm-gpt-inner-id': 'div-gpt-managed',
+    }, 'queued-managed-gpt');
+    target.__hmCanRequestAds = () => allowed;
+    const runtime = runGpt(target, { queue });
+    assert.equal(queue.length, 1);
+    allowed = false;
+    queue.shift()();
+    assert.equal(runtime.definitions.length, 0);
+    assert.equal(runtime.displayCalls.length, 0);
+});
+
+for (const revoke of [false, true]) {
+    test(`managed video rechecks binding after SDK resolves (revoked=${revoke})`, async () => {
+        let allowed = true;
+        const target = container({
+            'data-hm-video-direct': '1', 'data-hm-serving-context': '1',
+            'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=bound').toString('base64'),
+            'data-hm-video-width': '400', 'data-hm-video-height': '225',
+            'data-hm-video-muted': '1', 'data-hm-video-autoplay': '1',
+        }, 'bound-video');
+        target.__hmCanRequestAds = () => allowed;
+        target.clientWidth = 400;
+        const runtime = runVideo(target);
+        if (revoke) allowed = false;
+        await tick();
+        assert.equal(runtime.requested.length, revoke ? 0 : 1);
+    });
+}

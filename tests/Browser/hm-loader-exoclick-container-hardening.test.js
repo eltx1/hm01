@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const loaderSource = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
 
 test('structured Direct Demand preserves the approved ExoClick ins container element', () => {
-    const start = loaderSource.indexOf('function directContainer(entry, candidate)');
+    const start = loaderSource.indexOf('function directContainer(entry, candidate, config)');
     assert.notEqual(start, -1, 'Direct Demand container builder must exist');
 
     const fragment = loaderSource.slice(start, start + 900);

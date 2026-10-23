@@ -98,3 +98,19 @@ test('production diagnosis retains read-only bootstrap and verified-release guar
     assert.ok(workflow.includes('node ops/audit/validate-reporting-networks.mjs'));
     assert.ok(!workflow.includes('cat "$work/raw.json"'));
 });
+
+
+test('serving inventory compares main, direct and chunked VAST paths without query disclosure', () => {
+    const url = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/123/video&description_url=https://private.example/path';
+    const encoded = Buffer.from(url).toString('base64');
+    const payload = {placements: [{adUnitPath:'/123/display'}, {adUnitPath:'secret-invalid'}], directDemand: {placements: {
+        top: {candidates: [{tag: {container: {attributes: {'data-hm-gpt-ad-unit-path':'/123/display'}}}}]},
+        video: {candidates: [{tag: {container: {attributes: {'data-hm-vast-url-parts':'2',
+            'data-hm-vast-url-0':encoded.slice(0, 40), 'data-hm-vast-url-1':encoded.slice(40)}}}}]},
+    }}};
+    const result = spawnSync(process.env.PHP_BINARY || 'php', ['-r',
+        'require "ops/audit/finance-private-evidence.php"; require "ops/audit/reporting-private-evidence.php"; echo json_encode(horusServingConfigPaths(json_decode(stream_get_contents(STDIN), true)));'],
+        {encoding:'utf8', input:JSON.stringify(payload)});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), ['/123/display', '/123/video']);
+});

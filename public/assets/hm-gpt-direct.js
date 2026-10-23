@@ -367,7 +367,16 @@
         }
     }
 
+    function servingContextAllowed(container) {
+        if (!container || container.getAttribute('data-hm-serving-context') !== '1'
+            && typeof container.__hmCanRequestAds !== 'function') return true;
+        try {
+            return typeof container.__hmCanRequestAds === 'function' && container.__hmCanRequestAds() === true;
+        } catch (error) { return false; }
+    }
+
     function startSlot(container, adUnitPath, allowedSizes) {
+        if (!servingContextAllowed(container)) { report(container, 'ineligible'); return; }
         if (!container || container.getAttribute('data-hm-gpt-runtime-version') !== RUNTIME_VERSION) return;
         var currentState = String(container.getAttribute('data-hm-gpt-runtime-state') || '');
         if (currentState === 'failed' || currentState === 'empty' || currentState === 'rendered' || currentState === 'requested') return;
@@ -522,6 +531,7 @@
     }
 
     function render(container) {
+        if (!servingContextAllowed(container)) { report(container, 'ineligible'); return; }
         if (!container) return;
         if (container.getAttribute('data-hm-gpt-runtime-version') === RUNTIME_VERSION) {
             if (container.getAttribute('data-hm-gpt-runtime-state') === 'rendered' && container.__hmViewportSize) {
@@ -658,6 +668,7 @@
             container.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:16px;background:rgba(15,23,42,.35);overflow:auto;pointer-events:auto;';
             watch.addEventListener('click', function (click) {
                 if (closed || showing || !click.isTrusted) return;
+                if (!servingContextAllowed(container)) { close('ineligible'); return; }
                 click.stopPropagation();
                 showing = true;
                 window.clearTimeout(timer);
@@ -680,6 +691,7 @@
         window.googletag.cmd = window.googletag.cmd || [];
         window.googletag.cmd.push(function () {
             if (closed) return;
+            if (!servingContextAllowed(container)) { close('ineligible'); return; }
             try {
                 var gpt = window.googletag;
                 slot = gpt.defineOutOfPageSlot(path, gpt.enums.OutOfPageFormat.REWARDED);
