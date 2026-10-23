@@ -342,10 +342,14 @@
                 });
             }
         } catch (error) { /* Diagnostics must not change terminal state or cleanup. */ }
-        tracePhase('GPT error', container, Object.assign({ failureStage: stage, failureReason: reason }, context ? {
-            failureDetail: context.detail, responseSize: context.response,
-            requestedSizes: context.requested, sizePolicy: context.policy,
-        } : {}));
+        var fields = { failureStage: stage, failureReason: reason };
+        if (context) {
+            fields.failureDetail = context.detail;
+            fields.responseSize = context.response;
+            fields.requestedSizes = context.requested;
+            fields.sizePolicy = context.policy;
+        }
+        tracePhase('GPT error', container, fields);
     }
 
     function reportFailure(container, stage, reason, context) {

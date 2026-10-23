@@ -82,7 +82,7 @@ function harness(fault = '', options = {}) {
     if (fault !== 'library-error' && fault !== 'library-parent-missing') sandbox.googletag=gpt;
     if (fault === 'library-parent-missing') document.head=document.body=null;
     sandbox.window=sandbox;
-    vm.runInNewContext(source,sandbox,{filename:'hm-gpt-direct.js'});
+    vm.runInNewContext((options.assignThrows ? 'Object.assign=function(){throw new Error("broken-object-assign");};' : '')+source,sandbox,{filename:'hm-gpt-direct.js'});
     if (fault === 'library-error') scripts[0].onerror();
     return {
         attributes, requests, traces, destroyed, root, scripts,
@@ -263,5 +263,14 @@ test('fixed-policy diagnostics never invoke custom provider coercion a second ti
     assert.equal(r.attributes['data-hm-gpt-failure-detail'],'dimension-uninspectable');
     assert.equal(r.attributes['data-hm-gpt-failure-response'],'array(object,0)');
     assertFailure(r,'render','response-rejected');
+});
+
+test('a broken trace dependency cannot stop the original rejection or destroySlots cleanup',()=>{
+    const r=harness('',{assignThrows:true});
+    assert.doesNotThrow(()=>r.emit({size:[0,0]}));
+    assert.equal(r.attributes['data-hm-gpt-runtime-state'],'failed');
+    assert.equal(r.attributes['data-hm-gpt-failure-detail'],'dimension-non-positive');
+    assert.equal(r.requests.length,1);
+    assert.equal(r.destroyed.length,1);
 });
 
