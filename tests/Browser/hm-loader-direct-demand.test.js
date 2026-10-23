@@ -310,7 +310,15 @@ test('trusted GPT Direct waits for a late terminal render instead of declaring n
     assert.equal(bound.__hmCanRequestAds(), false);
 });
 
-test('trusted GPT Direct terminal empty state fails immediately and cleans the candidate container', async () => {
+for (const scenario of [
+    { state: 'empty' },
+    { state: 'failed', stage: 'display', reason: 'exception', retained: true },
+    { state: 'failed', stage: 'render', reason: 'response-rejected', retained: true },
+    { state: 'failed', stage: 'https://private.example', reason: 'exception' },
+    { state: 'failed', stage: 'display', reason: 'private-provider-error' },
+    { state: 'failed', stage: 'display', reason: 'exception', writeThrows: true },
+]) {
+test('trusted GPT Direct terminal cleanup preserves only safe failure labels '+JSON.stringify(scenario), async () => {
     const tag = recipe({
         url: 'https://cdn.horusmedia.net/runtime/gpt/hm-gpt-direct.js',
         dedupeKey: 'horus-google-gpt-direct-runtime-empty',
@@ -340,22 +348,34 @@ test('trusted GPT Direct terminal empty state fails immediately and cleans the c
 
     const selected = config({ header: { enabled: true, candidates: [candidate('ONE', tag)], house: null } });
     const runtime = harness(selected);
+    if (scenario.writeThrows) {
+        const original = runtime.elements[0].setAttribute;
+        runtime.elements[0].setAttribute = function (name, value) {
+            if (name.startsWith('data-hm-gpt-last-failure-')) throw new Error('diagnostic-write-blocked');
+            return original.call(this, name, value);
+        };
+    }
     const boot = runtime.sandbox.HorusMediaLoader.boot();
 
     setTimeout(() => {
         const container = runtime.elements[0].children.find((child) => child.id === 'hm-gpt-empty-render');
         assert.ok(container, 'GPT Direct candidate container should exist while waiting');
-        container.setAttribute('data-hm-gpt-runtime-state', 'empty');
-        container.setAttribute('data-hm-gpt-status', 'empty');
+        if (scenario.stage) container.setAttribute('data-hm-gpt-failure-stage', scenario.stage);
+        if (scenario.reason) container.setAttribute('data-hm-gpt-failure-reason', scenario.reason);
+        container.setAttribute('data-hm-gpt-runtime-state', scenario.state);
+        container.setAttribute('data-hm-gpt-status', scenario.state);
     }, 20);
 
     await boot;
 
     assert.equal(runtime.elements[0].getAttribute('data-hm-status'), 'empty');
     assert.equal(runtime.elements[0].getAttribute('data-hm-direct'), 'exhausted');
-    assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), 'gpt-empty');
+    assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), 'gpt-' + scenario.state);
+    assert.equal(runtime.elements[0].getAttribute('data-hm-gpt-last-failure-stage'), scenario.retained ? scenario.stage : null);
+    assert.equal(runtime.elements[0].getAttribute('data-hm-gpt-last-failure-reason'), scenario.retained ? scenario.reason : null);
     assert.equal(runtime.elements[0].children.some((child) => child.id === 'hm-gpt-empty-render'), false);
 });
+}
 
 test('multiple zones share one provider loader but initialize independently', async () => {
     const tagA = recipe({ dedupeKey: 'provider-loader' });
