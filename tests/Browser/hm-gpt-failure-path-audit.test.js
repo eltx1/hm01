@@ -16,6 +16,7 @@ function harness(fault = '', options = {}) {
         'data-hm-gpt-fit-container': '1',
         'data-hm-gpt-responsive-fluid': '1',
         'data-hm-serving-context': '1',
+        ...options.attributes,
     };
     const root = { clientWidth: 720, getBoundingClientRect: () => ({left:314,width:720}) };
     const target = {
@@ -187,5 +188,80 @@ test('repeated library error callbacks preserve one original failure event',()=>
     assertFailure(r,'library','load-error');
     assert.equal(r.scripts.length,1);
     assert.equal(r.requests.length,0);
+});
+
+for (const scenario of [
+    {size: [0, 0], detail: 'dimension-non-positive', response: 'array(0,0)'},
+    {size: [-1, 250], detail: 'dimension-non-positive', response: 'array(-1,250)'},
+    {size: [300.5, 250], detail: 'dimension-non-integer', response: 'array(300.5,250)'},
+    {size: [1e-7, 250], detail: 'dimension-non-integer', response: 'array(1e-7,250)'},
+    {size: [NaN, 250], detail: 'dimension-non-finite', response: 'array(non-finite,250)'},
+    {size: [300, Infinity], detail: 'dimension-non-finite', response: 'array(300,non-finite)'},
+    {size: [10001, 250], detail: 'dimension-out-of-range', response: 'array(out-of-range,250)'},
+    {size: ['300', '250'], detail: 'dimension-type', response: 'array(string,string)'},
+    {size: ['private-provider-token', 250], detail: 'dimension-type', response: 'array(string,250)'},
+    {size: [null, 250], detail: 'dimension-type', response: 'array(null,250)'},
+    {size: [true, 250], detail: 'dimension-type', response: 'array(boolean,250)'},
+    {size: [300], detail: 'size-shape', response: 'array-length:1'},
+    {size: [300, 250, 1], detail: 'size-shape', response: 'array-length:3'},
+    {size: [], detail: 'size-shape', response: 'array-length:0'},
+    {size: Array(50).fill('private'), detail: 'size-shape', response: 'array-length:21'},
+    {size: 'https://private.example/creative', detail: 'size-type', response: 'string'},
+    {size: {width: 300, height: 250, url: 'https://private'}, detail: 'size-type', response: 'object'},
+    {size: 300, detail: 'size-type', response: 'number'},
+    {size: null, detail: 'size-missing', response: 'null', fixed: true},
+    {size: undefined, detail: 'size-missing', response: 'undefined', fixed: true},
+    {size: 'fluid', detail: 'fluid-not-requested', response: 'fluid', fixed: true},
+    {size: ['fluid'], detail: 'fluid-not-requested', response: 'fluid-array', fixed: true},
+    {size: [970, 600], detail: 'outside-size-policy', response: 'array(970,600)', fixed: true},
+    {size: ['private', 250], detail: 'dimension-non-finite', response: 'array(string,250)', fixed: true},
+]) {
+    test('rejected response explains '+scenario.detail+' '+scenario.response+(scenario.fixed?' fixed':''),()=>{
+        const r=harness('',scenario.fixed ? {attributes: {
+            'data-hm-gpt-sizes': '[[300,250]]', 'data-hm-gpt-fit-container': '0', 'data-hm-gpt-responsive-fluid': '0',
+        }} : {});
+        r.emit({size:scenario.size});
+        assert.equal(r.attributes['data-hm-gpt-runtime-state'],'failed');
+        assertFailure(r,'render','response-rejected');
+        assert.equal(r.requests.length,1);
+        assert.equal(r.destroyed.length,1);
+        assert.equal(r.attributes['data-hm-gpt-failure-detail'],scenario.detail);
+        assert.equal(r.attributes['data-hm-gpt-failure-response'],scenario.response);
+        assert.equal(r.attributes['data-hm-gpt-failure-policy'],scenario.fixed?'fixed':'flexible');
+        const error=r.traces.find(e=>e.phase==='GPT error').detail;
+        assert.equal(error.failureDetail,scenario.detail);
+        assert.equal(error.responseSize,scenario.response);
+        assert.equal(error.requestedSizes,scenario.fixed?'300x250':actualSizes.map(s=>s==='fluid'?'fluid':s.join('x')).join(','));
+    });
+}
+
+test('accepted fixed and fluid responses remain successful without rejection context',()=>{
+    for (const size of [[300,250],[970,600],'fluid',['fluid'],null,undefined]) {
+        const r=harness(); r.emit({size});
+        assert.equal(r.attributes['data-hm-gpt-runtime-state'],'rendered');
+        assert.equal(r.attributes['data-hm-gpt-failure-detail'],undefined);
+        assert.equal(r.destroyed.length,0);
+        assert.equal(r.requests.length,1);
+    }
+});
+
+test('throwing new context attributes cannot prevent rejection, cleanup or the local trace',()=>{
+    const r=harness('',{diagnosticsThrow:true}); r.emit({size:[0,0]});
+    assert.equal(r.attributes['data-hm-gpt-runtime-state'],'failed');
+    assert.equal(r.destroyed.length,1);
+    assert.equal(r.requests.length,1);
+    assert.equal(r.traces.find(e=>e.phase==='GPT error').detail.failureDetail,'dimension-non-positive');
+});
+
+test('fixed-policy diagnostics never invoke custom provider coercion a second time or claim an unknown cause',()=>{
+    let calls=0;
+    const width={valueOf(){calls++;return 300;},toString(){throw new Error('private-provider-token');}};
+    const r=harness('',{attributes:{'data-hm-gpt-fit-container':'0','data-hm-gpt-sizes':'[[300,250]]'}});
+    r.emit({size:[width,0]});
+    assert.equal(r.attributes['data-hm-gpt-runtime-state'],'failed');
+    assert.equal(calls,1);
+    assert.equal(r.attributes['data-hm-gpt-failure-detail'],'dimension-uninspectable');
+    assert.equal(r.attributes['data-hm-gpt-failure-response'],'array(object,0)');
+    assertFailure(r,'render','response-rejected');
 });
 

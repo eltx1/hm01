@@ -1667,6 +1667,25 @@ function nativeDefinition(config, code) {
         return true;
     }
 
+    function safeGptFailureField(key, value) {
+        if (typeof value !== 'string') return '';
+        if (key === 'detail') return ['size-missing', 'fluid-not-requested', 'size-type', 'size-shape', 'dimension-type', 'dimension-uninspectable', 'dimension-non-finite', 'dimension-non-integer', 'dimension-non-positive', 'dimension-out-of-range', 'outside-size-policy'].indexOf(value) !== -1 ? value : '';
+        if (key === 'policy') return ['flexible', 'fixed'].indexOf(value) !== -1 ? value : '';
+        if (key === 'requested') {
+            if (value.length > 240 || !/^(?:fluid|[1-9][0-9]{0,4}x[1-9][0-9]{0,4})(?:,(?:fluid|[1-9][0-9]{0,4}x[1-9][0-9]{0,4})){0,19}$/.test(value)) return '';
+            return value.split(',').every(function (size) { return size === 'fluid' || size.split('x').every(function (n) { return Number(n) <= 10000; }); }) ? value : '';
+        }
+        if (key !== 'response' || value.length > 120) return '';
+        if (['null', 'undefined', 'fluid', 'fluid-array', 'string', 'number', 'boolean', 'object', 'other'].indexOf(value) !== -1 || /^array-length:(?:[0-9]|1[0-9]|20|21)$/.test(value)) return value;
+        if (value.slice(0, 6) !== 'array(' || value.slice(-1) !== ')') return '';
+        var dimensions = value.slice(6, -1).split(',');
+        return dimensions.length === 2 && dimensions.every(function (dimension) {
+            if (['null', 'undefined', 'string', 'boolean', 'object', 'other', 'non-finite', 'out-of-range'].indexOf(dimension) !== -1) return true;
+            var numeric = Number(dimension);
+            return Number.isFinite(numeric) && Math.abs(numeric) <= 10000 && String(numeric) === dimension;
+        }) ? value : '';
+    }
+
     function preserveGptFailure(entry, container, tag, reason) {
         // The candidate is removed during fallback. Keep only bounded, enumerated
         // diagnostic labels on its surviving placement, without changing fallback.
@@ -1678,6 +1697,15 @@ function nativeDefinition(config, code) {
             if (['load-error', 'unavailable', 'invalid-queue', 'exception', 'null-slot', 'host-unavailable', 'response-rejected', 'ready-timeout', 'callback-missing', 'show-declined'].indexOf(failure) === -1) return;
             entry.element.setAttribute('data-hm-gpt-last-failure-stage', stage);
             entry.element.setAttribute('data-hm-gpt-last-failure-reason', failure);
+            // Revalidate the candidate DOM and replace the entire context, so a
+            // later failure cannot inherit the previous candidate's details.
+            ['detail', 'response', 'requested', 'policy'].forEach(function (key) {
+                var name = 'data-hm-gpt-last-failure-' + key;
+                var value = stage === 'render' && failure === 'response-rejected'
+                    ? safeGptFailureField(key, container.getAttribute('data-hm-gpt-failure-' + key)) : '';
+                if (value) entry.element.setAttribute(name, value);
+                else if (entry.element.removeAttribute) entry.element.removeAttribute(name);
+            });
         } catch (error) { /* Optional diagnostics cannot delay cleanup or fallback. */ }
     }
 

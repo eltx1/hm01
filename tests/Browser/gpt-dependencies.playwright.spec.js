@@ -31,7 +31,7 @@ function installGptFixture(options = {}) {
             if (options.gptFault === 'display') throw new Error('private-provider-detail');
             window.dependencyMetrics.requests++;
             window.dependencyMetrics.requestAt = performance.now();
-            const event = { slot: slots.get(id), isEmpty: options.gptFault === 'empty', size: options.gptFault === 'response' ? [0, 0] : [300, 250] };
+            const event = { slot: slots.get(id), isEmpty: options.gptFault === 'empty', size: options.gptFault === 'response' ? [0, 0] : options.gptFault === 'fluid' ? 'fluid' : [300, 250] };
             emit('slotRequested', event);
             queueMicrotask(() => { emit('slotResponseReceived', event); emit('slotRenderEnded', event); emit('slotOnload', event); });
         },
@@ -116,7 +116,7 @@ async function open(page, options = {}) {
 }
 
 for (const mode of ['composed', 'minified']) {
-    for (const fault of ['display', 'response', 'empty']) {
+    for (const fault of ['display', 'response', 'fluid', 'empty']) {
         test(`${mode}: GPT ${fault} keeps bounded diagnostics after cleanup without blocking video`, async ({ page }) => {
             const run = await open(page, { gptFault: fault, deferManager: false, minified: mode === 'minified' });
             const placement = page.locator('[data-placement="display"]');
@@ -137,6 +137,15 @@ for (const mode of ['composed', 'minified']) {
                 await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-reason', reason);
                 expect(errors).toHaveLength(1);
                 expect(errors[0]).toMatchObject({ failureStage: stage, failureReason: reason });
+                if (fault === 'response' || fault === 'fluid') {
+                    const detail = fault === 'response' ? 'dimension-non-positive' : 'fluid-not-requested';
+                    const response = fault === 'response' ? 'array(0,0)' : 'fluid';
+                    await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-detail', detail);
+                    await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-response', response);
+                    await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-requested', '300x250');
+                    await expect(placement).toHaveAttribute('data-hm-gpt-last-failure-policy', 'fixed');
+                    expect(errors[0]).toMatchObject({failureDetail:detail,responseSize:response,requestedSizes:'300x250',sizePolicy:'fixed'});
+                }
                 expect(JSON.stringify(errors)).not.toContain('private-provider-detail');
             }
         });

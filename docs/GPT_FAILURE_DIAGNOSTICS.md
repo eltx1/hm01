@@ -45,6 +45,56 @@ For example, `library/load-error` alone cannot distinguish a network failure
 from client blocking. Provider exception messages, stack traces, URLs, tokens,
 ad-unit paths and response payloads are never retained by this feature.
 
+## Explaining `render / response-rejected`
+
+This branch additionally records a bounded context **after** the existing
+acceptance policy rejects the response. It does not change requested sizes,
+fluid eligibility, accepted responses or cleanup. All publishers using the
+adapter receive the same diagnostics; no hostname or publisher-specific branch
+is used.
+
+| Candidate suffix (`data-hm-gpt-failure-…`) | Placement suffix (`data-hm-gpt-last-failure-…`) | Meaning |
+| --- | --- | --- |
+| `detail` | `detail` | Specific validation defect, or an explicit limit on inspection, listed below |
+| `response` | `response` | Bounded description of the returned size and its value types |
+| `requested` | `requested` | Actual eligible sizes supplied when this slot was defined, e.g. `300x250,fluid` |
+| `policy` | `policy` | Existing `flexible` or `fixed` validation mode |
+
+| Detail | Rejected condition |
+| --- | --- |
+| `size-missing` | Size is null or undefined and the existing fluid fallback did not accept it |
+| `fluid-not-requested` | A named fluid response arrived without fluid in this slot's requested sizes |
+| `size-type` | Size is neither an array nor a recognized fluid value |
+| `size-shape` | The fixed-size array does not contain exactly two elements |
+| `dimension-type` | Flexible validation requires numeric dimensions |
+| `dimension-uninspectable` | Fixed-policy coercion involved a non-primitive value; diagnostics will not invoke provider conversion again or claim a more specific cause |
+| `dimension-non-finite` | Width or height is NaN/infinite after existing fixed-policy coercion, where applicable |
+| `dimension-non-integer` | Width or height is fractional |
+| `dimension-non-positive` | Width or height is zero or negative |
+| `dimension-out-of-range` | Width or height exceeds the existing 10000 limit |
+| `outside-size-policy` | Valid positive integer dimensions failed the existing fixed-size tolerance policy |
+
+Example (synthetic; does not assert the cause of any historical live failure):
+
+```text
+[HM] +5257ms GPT error slot=1 stage=render reason=response-rejected detail=dimension-non-positive response=array(0,0) policy=flexible requested=300x250,fluid
+```
+
+The corresponding trace fields are `failureDetail`, `responseSize`,
+`requestedSizes` and `sizePolicy`. Finite numeric dimensions within ±10000 are
+preserved, including zero and fractions. Other dimensions retain only a type or
+`non-finite`/`out-of-range` label. Arbitrary strings and objects are never copied
+or converted to text; `array(string,string)` reports types, not string contents.
+`array-length:21` means 21 or more elements. Requested sizes contain at most 20
+validated pairs/named sizes. Both the Loader's DOM boundary and the trace
+revalidate these fields. A later labelled failure clears earlier context so it
+cannot appear to explain the new failure. Context remains local and is discarded
+on reload, just like the existing diagnostics.
+
+Use the captured condition to construct an offline regression before changing
+acceptance behavior. A failure label proves a validation decision, not that the
+creative was valid or that Google, the publisher, or Horus caused the bad value.
+
 `gpt-empty`, `ineligible`, invalid recipes, normal reward dismissal and prompt
 expiration remain separate outcomes. Successful display, sizes, retries,
 timeouts, rendering policy, Turnstile, Click Guard and report filters are

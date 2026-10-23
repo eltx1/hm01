@@ -74,6 +74,7 @@ function element(code) {
         childNodes: children, children, innerHTML: '',
         getAttribute(name) { return attrs[name] ?? null; },
         setAttribute(name, value) { attrs[name] = String(value); },
+        removeAttribute(name) { delete attrs[name]; },
         appendChild(child) {
             child.parentNode = this; children.push(child);
             if (String(child.tagName).toUpperCase() === 'IFRAME') queueMicrotask(() => child.onload?.());
@@ -314,6 +315,14 @@ for (const scenario of [
     { state: 'empty' },
     { state: 'failed', stage: 'display', reason: 'exception', retained: true },
     { state: 'failed', stage: 'render', reason: 'response-rejected', retained: true },
+    { state: 'failed', stage: 'render', reason: 'response-rejected', retained: true,
+        context: { detail: 'dimension-non-positive', response: 'array(0,0)', requested: '300x250,fluid', policy: 'flexible' }, contextRetained: true },
+    { state: 'failed', stage: 'render', reason: 'response-rejected', retained: true,
+        context: { detail: 'private-provider-error', response: 'array(https://private,250)', requested: '/123/private', policy: 'private' } },
+    { state: 'failed', stage: 'render', reason: 'response-rejected', retained: true,
+        context: { response: 'array(10001,250)', requested: '10001x250', detail: 'unknown', policy: 'unknown' } },
+    { state: 'failed', stage: 'display', reason: 'exception', retained: true, staleContext: true,
+        context: { detail: 'size-missing', response: 'null', requested: '300x250', policy: 'fixed' } },
     { state: 'failed', stage: 'https://private.example', reason: 'exception' },
     { state: 'failed', stage: 'display', reason: 'private-provider-error' },
     { state: 'failed', stage: 'display', reason: 'exception', writeThrows: true },
@@ -348,6 +357,9 @@ test('trusted GPT Direct terminal cleanup preserves only safe failure labels '+J
 
     const selected = config({ header: { enabled: true, candidates: [candidate('ONE', tag)], house: null } });
     const runtime = harness(selected);
+    if (scenario.staleContext) {
+        for (const key of ['detail', 'response', 'requested', 'policy']) runtime.elements[0].setAttribute('data-hm-gpt-last-failure-' + key, 'stale');
+    }
     if (scenario.writeThrows) {
         const original = runtime.elements[0].setAttribute;
         runtime.elements[0].setAttribute = function (name, value) {
@@ -362,6 +374,7 @@ test('trusted GPT Direct terminal cleanup preserves only safe failure labels '+J
         assert.ok(container, 'GPT Direct candidate container should exist while waiting');
         if (scenario.stage) container.setAttribute('data-hm-gpt-failure-stage', scenario.stage);
         if (scenario.reason) container.setAttribute('data-hm-gpt-failure-reason', scenario.reason);
+        for (const [key, value] of Object.entries(scenario.context || {})) container.setAttribute('data-hm-gpt-failure-' + key, value);
         container.setAttribute('data-hm-gpt-runtime-state', scenario.state);
         container.setAttribute('data-hm-gpt-status', scenario.state);
     }, 20);
@@ -373,6 +386,9 @@ test('trusted GPT Direct terminal cleanup preserves only safe failure labels '+J
     assert.equal(runtime.elements[0].getAttribute('data-hm-direct-last-error'), 'gpt-' + scenario.state);
     assert.equal(runtime.elements[0].getAttribute('data-hm-gpt-last-failure-stage'), scenario.retained ? scenario.stage : null);
     assert.equal(runtime.elements[0].getAttribute('data-hm-gpt-last-failure-reason'), scenario.retained ? scenario.reason : null);
+    for (const key of ['detail', 'response', 'requested', 'policy']) {
+        assert.equal(runtime.elements[0].getAttribute('data-hm-gpt-last-failure-' + key), scenario.contextRetained ? scenario.context[key] : null);
+    }
     assert.equal(runtime.elements[0].children.some((child) => child.id === 'hm-gpt-empty-render'), false);
 });
 }

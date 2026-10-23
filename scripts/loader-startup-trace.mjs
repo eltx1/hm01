@@ -1,6 +1,24 @@
 // Compiled into the Loader. Local diagnostic events only: no network, storage,
 // tokens, nonces, URLs, account IDs, consent strings or raw provider errors.
 export const startupTraceRuntime = String.raw`
+    function safeGptTraceFailureField(key, value) {
+        if (typeof value !== 'string') return '';
+        if (key === 'detail') return ['size-missing', 'fluid-not-requested', 'size-type', 'size-shape', 'dimension-type', 'dimension-uninspectable', 'dimension-non-finite', 'dimension-non-integer', 'dimension-non-positive', 'dimension-out-of-range', 'outside-size-policy'].indexOf(value) !== -1 ? value : '';
+        if (key === 'policy') return ['flexible', 'fixed'].indexOf(value) !== -1 ? value : '';
+        if (key === 'requested') {
+            if (value.length > 240 || !/^(?:fluid|[1-9][0-9]{0,4}x[1-9][0-9]{0,4})(?:,(?:fluid|[1-9][0-9]{0,4}x[1-9][0-9]{0,4})){0,19}$/.test(value)) return '';
+            return value.split(',').every(function (size) { return size === 'fluid' || size.split('x').every(function (n) { return Number(n) <= 10000; }); }) ? value : '';
+        }
+        if (key !== 'response' || value.length > 120) return '';
+        if (['null', 'undefined', 'fluid', 'fluid-array', 'string', 'number', 'boolean', 'object', 'other'].indexOf(value) !== -1 || /^array-length:(?:[0-9]|1[0-9]|20|21)$/.test(value)) return value;
+        if (value.slice(0, 6) !== 'array(' || value.slice(-1) !== ')') return '';
+        var dimensions = value.slice(6, -1).split(',');
+        return dimensions.length === 2 && dimensions.every(function (dimension) {
+            if (['null', 'undefined', 'string', 'boolean', 'object', 'other', 'non-finite', 'out-of-range'].indexOf(dimension) !== -1) return true;
+            var numeric = Number(dimension);
+            return Number.isFinite(numeric) && Math.abs(numeric) <= 10000 && String(numeric) === dimension;
+        }) ? value : '';
+    }
     var STARTUP_PHASES = ['Horus init', 'CFG start', 'CFG ready', 'CFG wait', 'CFG error',
         'CF cold', 'CF prepare', 'CF prepared', 'CF adopt', 'CF transport', 'CF document loaded', 'CF start', 'CF ready', 'CF token', 'CF verify', 'CF retry', 'CF pass', 'CF reject', 'CF error', 'CF timeout',
         'Privacy ready', 'Privacy reject', 'Core handoff', 'Core ready', 'Core wait',
@@ -43,6 +61,12 @@ export const startupTraceRuntime = String.raw`
             if (phase === 'GPT error') {
                 if (['library', 'queue', 'api', 'define', 'service', 'listener', 'enable', 'display', 'render', 'rewarded-ready', 'rewarded-show', 'rewarded-refresh'].indexOf(detail.failureStage) !== -1) clean.failureStage = detail.failureStage;
                 if (['load-error', 'unavailable', 'invalid-queue', 'exception', 'null-slot', 'host-unavailable', 'response-rejected', 'ready-timeout', 'callback-missing', 'show-declined'].indexOf(detail.failureReason) !== -1) clean.failureReason = detail.failureReason;
+                if (clean.failureStage === 'render' && clean.failureReason === 'response-rejected') {
+                    [['detail', 'failureDetail'], ['response', 'responseSize'], ['requested', 'requestedSizes'], ['policy', 'sizePolicy']].forEach(function (field) {
+                        var value = safeGptTraceFailureField(field[0], detail[field[1]]);
+                        if (value) clean[field[1]] = value;
+                    });
+                }
             }
             var key = phase + '|' + JSON.stringify(clean);
             if (trace.seen[key]) return;
@@ -53,6 +77,10 @@ export const startupTraceRuntime = String.raw`
             trace.events.push(event);
             var failureLabel = phase === 'GPT error' && clean.failureStage && clean.failureReason
                 ? ' slot=' + (clean.slot || 0) + ' stage=' + clean.failureStage + ' reason=' + clean.failureReason : '';
+            if (clean.failureDetail) failureLabel += ' detail=' + clean.failureDetail;
+            if (clean.responseSize) failureLabel += ' response=' + clean.responseSize;
+            if (clean.sizePolicy) failureLabel += ' policy=' + clean.sizePolicy;
+            if (clean.requestedSizes) failureLabel += ' requested=' + clean.requestedSizes;
             if (window.console && typeof window.console.log === 'function') window.console.log('[HM] +' + event.ms + 'ms ' + phase + failureLabel, clean);
         } catch (error) { /* Local diagnostics are best effort only. */ }
     }
