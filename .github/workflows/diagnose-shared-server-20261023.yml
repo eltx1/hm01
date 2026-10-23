@@ -134,6 +134,7 @@ jobs:
               emit("service",{"unit":unit,"exit_code":rc,"state":values})
           rc,cap=run(["sudo","-n","-l"])
           emit("existing_sudo_capability",{"exit_code":rc,"all_commands":bool(re.search(r"\(ALL(?:\s*:\s*ALL)?\)\s+NOPASSWD:\s*ALL",cap)),"journalctl_mentioned":"journalctl" in cap,"systemctl_mentioned":"systemctl" in cap,"python_mentioned":"python" in cap})
+          emit("existing_sudo_command_names",sorted(set(re.findall(r"/(?:usr/)?(?:local/)?(?:s?bin)/([A-Za-z0-9_.-]+)",cap))))
           for d in domains:
               emit("vhost_directory_evidence",{"domain":d,"directory_match":bool(glob.glob("/home/*/htdocs/"+d))})
           PY
