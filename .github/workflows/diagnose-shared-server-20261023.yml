@@ -1,11 +1,14 @@
 name: Read only shared server incident 20261023
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diagnose-shared-server-20261023.yml']
 permissions:
   contents: read
 jobs:
   diagnose:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
