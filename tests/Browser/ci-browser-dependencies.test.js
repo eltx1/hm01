@@ -13,6 +13,9 @@ test('CI normalizes legacy and Deb822 Ubuntu mirrors while preserving repository
             'sources.list': 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://azure.archive.ubuntu.com/ubuntu noble main universe\n',
             'sources.list.d/runner.list': 'deb https://azure.archive.ubuntu.com/ubuntu/ noble-security main\n',
             'sources.list.d/runner.sources': 'Types: deb\nURIs: http://azure.archive.ubuntu.com/ubuntu\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n',
+            'sources.list.d/ubuntu.sources': 'Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-updates noble-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n',
+            'sources.list.d/legacy-mirror.list': 'deb [signed-by=/ubuntu.gpg] mirror+file:/etc/apt/apt-mirrors.txt jammy main\n',
+            'sources.list.d/custom-mirror.list': 'deb mirror+file:/etc/apt/custom-mirrors.txt noble main\n',
             'sources.list.d/vendor.list': 'deb [signed-by=/vendor.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main\n',
             'sources.list.d/backup.list.save': 'deb http://azure.archive.ubuntu.com/ubuntu noble main\n',
         };
@@ -25,6 +28,8 @@ test('CI normalizes legacy and Deb822 Ubuntu mirrors while preserving repository
             'sources.list': 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe\n',
             'sources.list.d/runner.list': 'deb https://archive.ubuntu.com/ubuntu/ noble-security main\n',
             'sources.list.d/runner.sources': 'Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n',
+            'sources.list.d/ubuntu.sources': 'Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble noble-updates noble-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n',
+            'sources.list.d/legacy-mirror.list': 'deb [signed-by=/ubuntu.gpg] https://archive.ubuntu.com/ubuntu jammy main\n',
         };
         for (const [name, contents] of Object.entries(expected)) assert.equal(readFileSync(join(root, name), 'utf8'), contents, name);
         result = run();
