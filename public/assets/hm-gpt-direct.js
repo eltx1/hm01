@@ -331,18 +331,68 @@
 
     // Local diagnostics only. Never retain provider exceptions, URLs or payloads.
     // Keep the first failure; later cleanup must not overwrite its origin.
-    function recordFailure(container, stage, reason) {
+    function recordFailure(container, stage, reason, context) {
         try {
             if (container.getAttribute('data-hm-gpt-failure-reason')) return;
             container.setAttribute('data-hm-gpt-failure-stage', stage);
             container.setAttribute('data-hm-gpt-failure-reason', reason);
+            if (context) {
+                ['detail', 'response', 'requested', 'policy'].forEach(function (key) {
+                    if (context[key]) container.setAttribute('data-hm-gpt-failure-' + key, context[key]);
+                });
+            }
         } catch (error) { /* Diagnostics must not change terminal state or cleanup. */ }
-        tracePhase('GPT error', container, { failureStage: stage, failureReason: reason });
+        var fields = { failureStage: stage, failureReason: reason };
+        if (context) {
+            fields.failureDetail = context.detail;
+            fields.responseSize = context.response;
+            fields.requestedSizes = context.requested;
+            fields.sizePolicy = context.policy;
+        }
+        tracePhase('GPT error', container, fields);
     }
 
-    function reportFailure(container, stage, reason) {
-        recordFailure(container, stage, reason);
+    function reportFailure(container, stage, reason, context) {
+        recordFailure(container, stage, reason, context);
         report(container, 'failed');
+    }
+
+    // Called only AFTER the existing render decision rejects a response. Never
+    // change that decision, coerce objects, or retain arbitrary provider strings.
+    function rejectedResponseContext(event, allowedSizes, flexible) {
+        try {
+            var size = event.size;
+            function dimension(value) {
+                if (value === null) return 'null';
+                var type = typeof value;
+                if (type !== 'number') return ['undefined', 'string', 'boolean', 'object'].indexOf(type) !== -1 ? type : 'other';
+                if (!Number.isFinite(value)) return 'non-finite';
+                return Math.abs(value) <= 10000 ? String(value) : 'out-of-range';
+            }
+            var array = Array.isArray(size);
+            var fluid = typeof size === 'string' && size.toLowerCase() === 'fluid';
+            var fluidArray = array && size.length === 1 && typeof size[0] === 'string' && size[0].toLowerCase() === 'fluid';
+            var response = size === null ? 'null' : typeof size;
+            if (fluid || fluidArray) response = fluid ? 'fluid' : 'fluid-array';
+            else if (array) response = size.length === 2 ? 'array(' + dimension(size[0]) + ',' + dimension(size[1]) + ')' : 'array-length:' + Math.min(size.length, 21);
+            else if (['undefined', 'string', 'number', 'boolean', 'object'].indexOf(response) === -1 && size !== null) response = 'other';
+
+            var detail = 'outside-size-policy';
+            if (size == null) detail = 'size-missing';
+            else if (fluid || fluidArray) detail = 'fluid-not-requested';
+            else if (!array) detail = 'size-type';
+            else if (size.length !== 2) detail = 'size-shape';
+            else if (flexible && (typeof size[0] !== 'number' || typeof size[1] !== 'number')) detail = 'dimension-type';
+            else if ([size[0], size[1]].some(function (value) { return value !== null && ['number', 'string', 'boolean', 'undefined'].indexOf(typeof value) === -1; })) detail = 'dimension-uninspectable';
+            else {
+                var width = Number(size[0]), height = Number(size[1]);
+                if (!Number.isFinite(width) || !Number.isFinite(height)) detail = 'dimension-non-finite';
+                else if (!Number.isInteger(width) || !Number.isInteger(height)) detail = 'dimension-non-integer';
+                else if (width < 1 || height < 1) detail = 'dimension-non-positive';
+                else if (width > 10000 || height > 10000) detail = 'dimension-out-of-range';
+            }
+            return { detail: detail, response: response, requested: allowedSizes.map(sizeKey).join(','), policy: flexible ? 'flexible' : 'fixed' };
+        } catch (error) { return null; }
     }
 
     function report(container, status, size) {
@@ -457,7 +507,7 @@
                 return;
             }
             if (!renderedSize && !fluidRendered) {
-                reportFailure(container, 'render', 'response-rejected');
+                reportFailure(container, 'render', 'response-rejected', rejectedResponseContext(event, allowedSizes, flexibleSize));
                 destroySlot(slot);
                 return;
             }

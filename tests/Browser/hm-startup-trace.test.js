@@ -91,3 +91,41 @@ test('throwing console cannot change a caller result or remove already-recorded 
     assert.doesNotThrow(() => h.c.startupTrace('GPT error', {slot: 1, failureStage: 'render', failureReason: 'response-rejected'}));
     assert.equal(h.c.startupSnapshot().events[0].failureReason, 'response-rejected');
 });
+
+test('response rejection context is readable, bounded and retained with exact numeric dimensions', () => {
+    const h = harness();
+    const detail = {slot:1, failureStage:'render', failureReason:'response-rejected', failureDetail:'dimension-non-positive',
+        responseSize:'array(0,0)', requestedSizes:'300x250,fluid', sizePolicy:'flexible', rawResponse:{token:'private'}};
+    h.c.startupTrace('GPT error', detail);
+    h.c.startupTrace('GPT error', detail);
+    assert.equal(h.printed.length,1);
+    assert.equal(h.printed[0][0],'[HM] +0ms GPT error slot=1 stage=render reason=response-rejected detail=dimension-non-positive response=array(0,0) policy=flexible requested=300x250,fluid');
+    assert.equal(h.c.startupSnapshot().events[0].responseSize,'array(0,0)');
+    assert.equal(JSON.stringify(h.c.startupSnapshot()).includes('private'),false);
+});
+
+test('response diagnostics refuse arbitrary strings, oversized dimensions and unexpected contexts', () => {
+    const h = harness();
+    for (const responseSize of ['array(https://private,250)','array(10001,250)','array(NaN,250)','array(1e99,250)','array-length:1000000','private']) {
+        h.c.startupTrace('GPT error', {slot:h.printed.length+1, failureStage:'render', failureReason:'response-rejected', failureDetail:'private',
+            responseSize, requestedSizes:'10001x250', sizePolicy:'private'});
+        const event=h.c.startupSnapshot().events.at(-1);
+        assert.equal(event.failureDetail,undefined);
+        assert.equal(event.responseSize,undefined);
+        assert.equal(event.requestedSizes,undefined);
+        assert.equal(event.sizePolicy,undefined);
+    }
+    const extra={failureDetail:'size-missing',responseSize:'null',requestedSizes:'300x250',sizePolicy:'fixed'};
+    h.c.startupTrace('GPT error',{failureStage:'display',failureReason:'exception',...extra});
+    h.c.startupTrace('CF pass',extra);
+    for(const event of h.c.startupSnapshot().events.slice(-2)) assert.equal(event.responseSize,undefined);
+    assert.equal(JSON.stringify(h.c.startupSnapshot()).includes('private'),false);
+});
+
+test('finite numeric diagnostics preserve zero, signs, fractions and scientific notation without coercing text',()=>{
+    const h=harness();
+    for(const responseSize of ['array(-1,250)','array(300.5,250)','array(1e-7,250)','array(non-finite,250)','array(string,string)','fluid-array','array-length:21']) {
+        h.c.startupTrace('GPT error',{failureStage:'render',failureReason:'response-rejected',responseSize});
+        assert.equal(h.c.startupSnapshot().events.at(-1).responseSize,responseSize);
+    }
+});
