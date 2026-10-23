@@ -5,7 +5,7 @@ function horusReportingPrivateEvidence(): array
     // Temporary incident scope, evaluated in UTC and disabled after this investigation.
     if (now()->utc()->gte('2026-10-26')) return [];
     $site = App\Models\Site::withoutGlobalScopes()->whereNull('deleted_at')->where('primary_domain', 'natega.bluekl.com')->first();
-    if (!$site) return ['site_found' => false];
+    if (!$site) return ['site_found' => false, 'serving_inventory' => horusServingInventoryEvidence()];
     $evidence = ['serving_inventory' => horusServingInventoryEvidence(), 'site_found' => true, 'site_id' => $site->id, 'reporting' => [], 'inventory_paths' => [], 'accounts' => []];
     // Compare the actual read models used by both screens with stored facts.
     try {
@@ -167,11 +167,28 @@ function horusServingConfigPaths(array $payload): array
             foreach ($placement['candidates'] ?? [] as $candidate) {
                 $attrs = $candidate['tag']['container']['attributes'] ?? [];
                 if (!empty($attrs['data-hm-gpt-ad-unit-path'])) $paths[] = $attrs['data-hm-gpt-ad-unit-path'];
-                $raw = horusFinanceDecodePayload($attrs, 'data-hm-vast-url');
+                $raw = horusServingDecodeVast($attrs);
                 $path = horusFinanceUrlShape($raw)['unit_path'];
                 if ($path) $paths[] = $path;
             }
         }
     }
     return array_values(array_unique(array_filter($paths, fn ($path) => is_string($path) && preg_match('#^/[0-9]{1,20}(?:,[0-9]{1,20})?/[A-Za-z0-9_./-]{1,240}$#D', $path))));
+}
+
+function horusServingDecodeVast(array $attributes): string
+{
+    $key = 'data-hm-vast-url';
+    $encoded = $attributes[$key] ?? '';
+    if ($encoded === '' && isset($attributes[$key.'-parts'])) {
+        $count = filter_var($attributes[$key.'-parts'], FILTER_VALIDATE_INT);
+        if ($count === false || $count < 1 || $count > 8) return '';
+        for ($i = 0; $i < $count; $i++) {
+            if (!isset($attributes[$key.'-'.$i]) || !is_string($attributes[$key.'-'.$i])) return '';
+            $encoded .= $attributes[$key.'-'.$i];
+            if (strlen($encoded) > 140000) return '';
+        }
+    }
+    if (!is_string($encoded) || strlen($encoded) > 140000) return '';
+    return base64_decode($encoded, true) ?: '';
 }
