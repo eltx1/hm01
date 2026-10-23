@@ -132,6 +132,10 @@ jobs:
                   k,_,v=line.partition("=")
                   if re.fullmatch(r"[a-z0-9_-]{1,30}",v): values[k]=v
               emit("service",{"unit":unit,"exit_code":rc,"state":values})
+          rc,cap=run(["sudo","-n","-l"])
+          emit("existing_sudo_capability",{"exit_code":rc,"all_commands":bool(re.search(r"\(ALL(?:\s*:\s*ALL)?\)\s+NOPASSWD:\s*ALL",cap)),"journalctl_mentioned":"journalctl" in cap,"systemctl_mentioned":"systemctl" in cap,"python_mentioned":"python" in cap})
+          for d in domains:
+              emit("vhost_directory_evidence",{"domain":d,"directory_match":bool(glob.glob("/home/*/htdocs/"+d))})
           PY
           python3 -m py_compile "$RUNNER_TEMP/diagnostic.py"
           if ! timeout 180 ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -p "$SSH_PORT" "$SSH_USER@$HOST" 'python3 -' < "$RUNNER_TEMP/diagnostic.py" > "$RUNNER_TEMP/result.jsonl" 2> "$RUNNER_TEMP/error.txt"; then
