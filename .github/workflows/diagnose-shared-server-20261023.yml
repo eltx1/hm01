@@ -1,0 +1,138 @@
+name: Read only shared server incident 20261023
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Collect bounded sanitized read only origin evidence
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          test -n "$HOST" && test -n "$SSH_USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          cat > "$RUNNER_TEMP/diagnostic.py" <<'PY'
+          import os, re, glob, json, subprocess, datetime, collections
+          START="2026-10-23 16:00:00"; END="2026-10-23 16:20:59"
+          domains=["secretmagic.space","lordai.net","aleph1.online"]
+          def emit(key,value): print(json.dumps({key:value},separators=(",",":")),flush=True)
+          def read(path,limit=8388608):
+              try:
+                  with open(path,"rb") as f:
+                      size=os.fstat(f.fileno()).st_size
+                      if size > limit: f.seek(size-limit)
+                      data=f.read(limit)
+                  return data.decode("utf-8","replace"),size>limit
+              except (OSError,ValueError): return None,False
+          def run(args):
+              try:
+                  p=subprocess.run(args,capture_output=True,text=True,timeout=15)
+                  return p.returncode,p.stdout
+              except Exception: return 124,""
+          emit("window_utc",[START,END])
+          emit("observed_utc",datetime.datetime.now(datetime.timezone.utc).isoformat())
+          matched={d:False for d in domains}; configs=0; config_denied=0
+          for p in set(glob.glob("/etc/nginx/sites-enabled/*")+glob.glob("/etc/nginx/conf.d/*.conf")):
+              data,_=read(p,262144)
+              if data is None: config_denied+=1; continue
+              configs+=1
+              for names in re.findall(r"server_name\s+([^;]+);",data):
+                  for d in domains:
+                      if d in names.split() or "www."+d in names.split(): matched[d]=True
+          emit("vhost_evidence",{"matches":matched,"readable_config_files":configs,"unreadable_config_files":config_denied})
+          for path,label in [("/proc/uptime","uptime_seconds"),("/proc/loadavg","load_average")]:
+              data,_=read(path)
+              if data:
+                  emit(label,[float(x) for x in data.split()[:(1 if label=="uptime_seconds" else 3)]])
+          data,_=read("/proc/meminfo")
+          if data: emit("memory_kb",{k:int(v) for k,v in re.findall(r"^(MemTotal|MemAvailable|SwapTotal|SwapFree):\s+(\d+)",data,re.M)})
+          data,_=read("/proc/vmstat")
+          if data: emit("oom_kills_since_boot",int(dict(x.split() for x in data.splitlines()).get("oom_kill","0")))
+          for p in ["/","/home","/var/log"]:
+              try:
+                  v=os.statvfs(p); emit("disk",{"mount":p,"total_bytes":v.f_blocks*v.f_frsize,"available_bytes":v.f_bavail*v.f_frsize,"free_inodes":v.f_favail})
+              except OSError: pass
+          categories={
+          "oom":r"out of memory|oom-kill|oom_reaper|invoked oom-killer|killed process",
+          "fpm_children_limit":r"max_children|server reached.*children",
+          "upstream_timeout":r"upstream timed out",
+          "upstream_refused":r"connect\(\) failed.*(?:refused|upstream)",
+          "worker_connections_limit":r"worker_connections are not enough|too many open files",
+          "disk_full":r"no space left on device|disk is full",
+          "database_connection_limit":r"too many connections",
+          "database_failure":r"database.*(?:crash|shutdown)|innodb.*(?:error|corrupt|crash)",
+          "service_start":r"started .*?(?:nginx|php|mysql|mariadb)|ready for connections|ready to handle connections",
+          "service_stop":r"stopp(?:ed|ing).*?(?:nginx|php|mysql|mariadb)|terminating|shutting down",
+          "segfault":r"segfault|segmentation fault",
+          "io_error":r"i/o error|blk_update_request|ext4-fs error",
+          "service_failed":r"failed with result|main process exited|start request repeated too quickly"}
+          events=collections.Counter()
+          def classify(ts,msg,source):
+              for cat,pat in categories.items():
+                  if re.search(pat,msg,re.I):
+                      events[(ts,source,cat)]+=1
+                      if cat=="oom":
+                          # Allow only process class, never raw process command line.
+                          m=re.search(r"Killed process\s+\d+\s+\(([^)]+)\)",msg)
+                          if m:
+                              proc=m.group(1)
+                              emit("oom_process_class",{"time":ts,"class":proc if re.fullmatch(r"(?:php-fpm[0-9.]*|mysqld|mariadbd|nginx|node|redis-server)",proc) else "other"})
+          rc,j=run(["journalctl","--since",START+" UTC","--until",END+" UTC","--no-pager","-o","json","-n","20000"])
+          n=0
+          for line in j.splitlines():
+              try:
+                  x=json.loads(line); ts=datetime.datetime.fromtimestamp(int(x["__REALTIME_TIMESTAMP"])/1e6,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                  msg=x.get("MESSAGE",""); n+=1
+                  if isinstance(msg,str): classify(ts,msg,"journal")
+              except (ValueError,KeyError,TypeError): pass
+          emit("journal_coverage",{"exit_code":rc,"records":n,"record_limit":20000,"may_be_user_only":os.geteuid()!=0})
+          paths=set(glob.glob("/var/log/php*-fpm.log")+glob.glob("/var/log/nginx/*error*")+glob.glob("/var/log/mysql/error.log")+glob.glob("/var/log/mysql/error.log.1")+glob.glob("/var/log/syslog")+glob.glob("/var/log/kern.log"))
+          for p in sorted(paths)[:40]:
+              if p.endswith(".gz"): continue
+              data,truncated=read(p)
+              source="php" if "php" in p else "nginx" if "nginx" in p else "database" if "mysql" in p else "system"
+              if data is None:
+                  emit("log_coverage",{"source":source,"readable":False});continue
+              selected=0
+              for line in data.splitlines():
+                  # Handle ISO, nginx, PHP timestamps; do not guess syslog timezone.
+                  m=re.search(r"2026[-/]10[-/]23[ T](16:[0-5]\d:[0-5]\d)",line)
+                  if not m: m=re.search(r"23-Oct-2026 (16:[0-5]\d:[0-5]\d)",line)
+                  if not m: continue
+                  clock=m.group(1)
+                  if clock>"16:20:59":continue
+                  selected+=1;classify("2026-10-23T"+clock," ".join(line.split()),source+"_local_time")
+              emit("log_coverage",{"source":source,"readable":True,"tail_limited":truncated,"window_lines_local_time":selected})
+          emit("server_timezone_offset",datetime.datetime.now().astimezone().strftime("%z"))
+          emit("classified_events",[{"time":t,"source":s,"category":c,"count":n} for (t,s,c),n in sorted(events.items())][:150])
+          for unit in ["nginx","php8.3-fpm","php8.4-fpm","mysql","mariadb"]:
+              rc,data=run(["systemctl","show",unit,"--property=ActiveState,SubState,ActiveEnterTimestampMonotonic,NRestarts,ExecMainStatus"])
+              values={}
+              for line in data.splitlines():
+                  k,_,v=line.partition("=")
+                  if re.fullmatch(r"[a-z0-9_-]{1,30}",v): values[k]=v
+              emit("service",{"unit":unit,"exit_code":rc,"state":values})
+          PY
+          python3 -m py_compile "$RUNNER_TEMP/diagnostic.py"
+          if ! timeout 180 ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -p "$SSH_PORT" "$SSH_USER@$HOST" 'python3 -' < "$RUNNER_TEMP/diagnostic.py" > "$RUNNER_TEMP/result.jsonl" 2> "$RUNNER_TEMP/error.txt"; then
+            echo 'READ_ONLY_DIAGNOSTIC_FAILED_RAW_OUTPUT_WITHHELD'
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/result.jsonl"
