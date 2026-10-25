@@ -89,6 +89,20 @@ jobs:
               core.setFailed(`Release run is not an approved successful main push validation from ${expectedRepo}: ${failures.join(', ')}`);
             }
 
+      - name: Reject superseded automatic release
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: branch } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: 'main',
+            });
+            if (branch.commit.sha !== process.env.RELEASE_SHA) {
+              core.setFailed('Automatic release was superseded by a newer main commit.');
+            }
+
       - name: Checkout trusted deployment tooling
         uses: actions/checkout@v6
         with:
@@ -450,6 +464,17 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Verify the active release before recording success
+        shell: bash
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$SSH_PORT" "$USER@$HOST" \
+            "bash -s -- '$REMOTE_HOME' '$RELEASE_SHA' '${{ steps.artifact.outputs.sha256 }}'" \
+            < ops/deploy/verify-active-release.sh
 
       - name: Write immutable deployment proof
         shell: bash
