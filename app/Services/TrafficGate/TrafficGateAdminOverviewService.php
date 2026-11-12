@@ -36,7 +36,7 @@ final class TrafficGateAdminOverviewService
         $maximum = (int) $this->settings->get('traffic_gate.max_wait_ms');
         $retry = (int) $this->settings->get('traffic_gate.retry_interval_ms');
         if ($initial < 500 || $initial > 5000
-            || $maximum < 2000 || $maximum > 15000
+            || $maximum < 2000 || $maximum > 25000
             || $retry < 500 || $retry > 10000
             || $maximum < $initial) {
             return TrafficGateAdminReadiness::InvalidTiming;

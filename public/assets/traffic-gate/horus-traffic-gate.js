@@ -7,10 +7,10 @@
     const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     const PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
     const MAX_RETRIES = 1;
-    const HARD_BOOT_TIMEOUT_MS = 15000;
+    const HARD_BOOT_TIMEOUT_MS = 25000;
     const DEFAULT_TEST_TIMINGS = Object.freeze({
         initialWaitMs: 1500,
-        maxWaitMs: 15000,
+        maxWaitMs: 25000,
         retryIntervalMs: 1500,
     });
 
@@ -193,7 +193,7 @@
         const maxWaitMs = Number(timings.maxWaitMs);
         const retryIntervalMs = Number(timings.retryIntervalMs);
         if (!Number.isInteger(initialWaitMs) || initialWaitMs < 500 || initialWaitMs > 5000) return null;
-        if (!Number.isInteger(maxWaitMs) || maxWaitMs < 2000 || maxWaitMs > 15000) return null;
+        if (!Number.isInteger(maxWaitMs) || maxWaitMs < 2000 || maxWaitMs > 25000) return null;
         if (!Number.isInteger(retryIntervalMs) || retryIntervalMs < 500 || retryIntervalMs > 10000) return null;
         if (maxWaitMs < initialWaitMs) return null;
 
@@ -214,20 +214,55 @@
     }
 
     async function loadSiteConfiguration(sitePublicKey) {
-        const response = await fetch(`/configs/${encodeURIComponent(sitePublicKey)}/production.json`, {
-            method: 'GET',
-            credentials: 'omit',
-            cache: 'no-store',
-            redirect: 'error',
-            headers: { Accept: 'application/json' },
-        });
-
-        if (!response.ok) {
-            return null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (deadlineElapsed()) throw new Error('GATE_EXPIRED');
+            const controller = new AbortController();
+            let timer;
+            try {
+                // Each HTTP attempt has a fresh timeout; the enclosing gate
+                // deadline still bounds the challenge and never grants a PASS.
+                return await Promise.race([
+                    (async () => {
+                        const response = await fetch(`/configs/${encodeURIComponent(sitePublicKey)}/production.json`, {
+                            method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'error',
+                            signal: controller.signal, headers: { Accept: 'application/json' },
+                        });
+                        if (!response.ok) {
+                            if (response.status === 408 || response.status === 429 || response.status >= 500) {
+                                throw new Error('STATIC_CONFIG_UNAVAILABLE');
+                            }
+                            return null;
+                        }
+                        const config = await response.json();
+                        if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('STATIC_CONFIG_INVALID');
+                        return config;
+                    })(),
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => {
+                            controller.abort();
+                            reject(new Error('STATIC_CONFIG_TIMEOUT'));
+                        }, 5000);
+                    }),
+                ]);
+            } catch (error) {
+                if (attempt === 1 || deadlineElapsed()) throw error;
+            } finally {
+                clearTimeout(timer);
+            }
         }
+    }
 
-        const config = await response.json();
-        return config && typeof config === 'object' ? config : null;
+    function verificationRequestId() {
+        try {
+            if (typeof window.crypto?.randomUUID === 'function') return window.crypto.randomUUID();
+            if (typeof window.crypto?.getRandomValues !== 'function') return null;
+            const bytes = new Uint8Array(16);
+            window.crypto.getRandomValues(bytes);
+            bytes[6] = (bytes[6] & 0x0f) | 0x40;
+            bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        } catch { return null; }
     }
 
     function loadTurnstileScript() {
@@ -284,13 +319,14 @@
 
     async function verifyToken(token, timings) {
         if (deadlineElapsed() || verificationPending) return;
-        if (typeof token !== 'string' || !token || token.length > 2048 || !window.crypto?.randomUUID) {
+        if (typeof token !== 'string' || !token || token.length > 2048) {
             fail('INVALID_VERIFICATION_TOKEN');
             return;
         }
         post(TYPES.progress, { phase: 'token' });
         verificationPending = true;
-        const requestId = window.crypto.randomUUID();
+        const requestId = verificationRequestId();
+        if (!requestId) { fail('CRYPTO_UNAVAILABLE'); return; }
         for (let attempt = 0; attempt < 2 && !deadlineElapsed(); attempt += 1) {
             verificationController = new AbortController();
             const requestTimer = setTimeout(() => verificationController?.abort(), 4000);

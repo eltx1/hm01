@@ -131,7 +131,7 @@ final class TrafficQualityController extends Controller
     ): RedirectResponse {
         $data = $request->validate([
             'initial_wait_ms' => ['required', 'integer', 'min:500', 'max:5000'],
-            'max_wait_ms' => ['required', 'integer', 'min:2000', 'max:15000', 'gte:initial_wait_ms'],
+            'max_wait_ms' => ['required', 'integer', 'min:2000', 'max:25000', 'gte:initial_wait_ms'],
             'retry_interval_ms' => ['required', 'integer', 'min:500', 'max:10000'],
             'activity_recovery_enabled' => ['required', 'boolean'],
             'reason' => ['required', 'string', 'min:8', 'max:2000'],

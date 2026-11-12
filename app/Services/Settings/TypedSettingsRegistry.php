@@ -97,8 +97,8 @@ final class TypedSettingsRegistry
             ),
             new SettingDefinition(
                 'traffic_gate.max_wait_ms', 'CLIENT TRAFFIC GATE', 'Maximum wait (ms)', 'integer', 'traffic_gate.max_wait_ms',
-                ['required', 'integer', 'min:2000', 'max:15000'], [],
-                'Bounded maximum client wait. Allowed range: 2000–15000 ms and must be at least the initial wait.',
+                ['required', 'integer', 'min:2000', 'max:25000'], [],
+                'Bounded maximum client wait. Allowed range: 2000–25000 ms and must be at least the initial wait.',
                 'SAFE', true, true,
                 'Timing changes republish active website static configuration and remain bounded to prevent unbounded blocking.'
             ),
@@ -112,7 +112,7 @@ final class TypedSettingsRegistry
             new SettingDefinition(
                 'traffic_gate.activity_recovery_enabled', 'CLIENT TRAFFIC GATE', 'Activity recovery enabled', 'boolean', 'traffic_gate.activity_recovery_enabled',
                 ['required', 'boolean'], [],
-                'Publishes whether the BALANCED policy may later use trusted browser activity recovery. No recovery logic is executed by Task 48.',
+                'Retry technical failures on connection or visibility return, at most twice per document. Each retry requires fresh server verification; authorization denials never recover.',
                 'SAFE', true, true,
                 'Changing this setting republishes active website static configuration through normal batching.'
             ),

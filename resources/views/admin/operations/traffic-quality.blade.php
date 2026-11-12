@@ -98,9 +98,9 @@
         @csrf
         <div class="detail-grid">
             <label>Initial wait <small>500–5000 milliseconds ({{ number_format($global['initial_wait_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="500" max="5000" step="100" name="initial_wait_ms" value="{{ $global['initial_wait_ms'] }}" required></label>
-            <label>Maximum wait <small>2000–15000 milliseconds ({{ number_format($global['max_wait_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="2000" max="15000" step="100" name="max_wait_ms" value="{{ $global['max_wait_ms'] }}" required></label>
+            <label>Maximum wait <small>2000–25000 milliseconds ({{ number_format($global['max_wait_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="2000" max="25000" step="100" name="max_wait_ms" value="{{ $global['max_wait_ms'] }}" required></label>
             <label>Retry interval <small>500–10000 milliseconds ({{ number_format($global['retry_interval_ms'] / 1000, 2) }} seconds)</small><input class="hm-input" type="number" min="500" max="10000" step="100" name="retry_interval_ms" value="{{ $global['retry_interval_ms'] }}" required></label>
-            <label>Legacy activity preference (does not authorize ads)<select class="hm-input" name="activity_recovery_enabled"><option value="1" @selected($global['activity_recovery_enabled'])>Enabled</option><option value="0" @selected(! $global['activity_recovery_enabled'])>Disabled</option></select></label>
+            <label>Retry technical failures when connection or visibility returns (maximum two; fresh verification required)<select class="hm-input" name="activity_recovery_enabled"><option value="1" @selected($global['activity_recovery_enabled'])>Enabled</option><option value="0" @selected(! $global['activity_recovery_enabled'])>Disabled</option></select></label>
         </div>
         <label>Required reason<input class="hm-input" name="reason" minlength="8" required></label>
         <label>Current password<input class="hm-input" type="password" name="current_password" autocomplete="current-password" required></label>

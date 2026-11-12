@@ -36,7 +36,7 @@ final class TrafficGateSettingsValidator
             'site_key' => ['nullable', 'string', 'min:3', 'max:255', 'regex:/^[A-Za-z0-9_-]+$/'],
             'policy' => ['required', Rule::in(['STRICT', 'BALANCED', 'PERMISSIVE'])],
             'initial_wait_ms' => ['required', 'integer', 'min:500', 'max:5000'],
-            'max_wait_ms' => ['required', 'integer', 'min:2000', 'max:15000'],
+            'max_wait_ms' => ['required', 'integer', 'min:2000', 'max:25000'],
             'retry_interval_ms' => ['required', 'integer', 'min:500', 'max:10000'],
             'activity_recovery_enabled' => ['required', 'boolean'],
         ])->validate();

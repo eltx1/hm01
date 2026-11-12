@@ -37,6 +37,8 @@ function createHarness({
     allowedHostname = 'publisher.example',
     behavior = 'pass',
     verificationReplies = null,
+    configReplies = null,
+    cryptoOverride = null,
     config = configFor(allowedHostname),
     deferConfig = false,
     deferLibrary = false,
@@ -148,13 +150,14 @@ function createHarness({
                 if (deferVerification) return new Promise(resolve => { releaseVerification = () => resolve(response); });
                 return response;
             }
-            const response = { ok: config !== null, json: async () => config };
+            const status = configReplies?.shift() ?? (config !== null ? 200 : 404);
+            const response = { ok: status === 200, status, json: async () => config };
             if (deferConfig) return new Promise(resolve => { releaseConfig = () => resolve(response); });
             return response;
         },
     });
     context.window = {
-        crypto: { randomUUID: () => 'd4b420a9-217b-413b-bf1d-8bf0a1825a7d' },
+        crypto: cryptoOverride ?? { randomUUID: () => 'd4b420a9-217b-413b-bf1d-8bf0a1825a7d' },
         location: { origin: GATE_ORIGIN, hash: documentPreparation ? '#prepare' : '' },
         parent,
         turnstile: undefined,
@@ -467,11 +470,51 @@ test('a token arriving at the iframe deadline cannot start a verification reques
     assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_TIMEOUT');
 });
 
-test('admin test uses the same 15 second verification budget', async () => {
+test('admin test uses the same 25 second verification budget', async () => {
     const h = createHarness({ parentOrigin: ADMIN_ORIGIN, behavior: 'pending' });
     await h.hello({ testMode: true, candidateSiteKey: ALWAYS_PASS_INVISIBLE });
-    assert.ok(h.timers.some(timer => timer.active && timer.delay === 15000));
-    h.elapse(15000);
-    await h.runTimer(15000);
+    assert.ok(h.timers.some(timer => timer.active && timer.delay === 25000));
+    h.elapse(25000);
+    await h.runTimer(25000);
     assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_TIMEOUT');
+});
+
+
+for (const status of [408, 429, 503]) {
+    test(`transient config HTTP ${status} retries once and requires verified PASS`, async () => {
+        const replies = [status, 200];
+        const h = createHarness({ configReplies: replies });
+        await h.hello();
+        assert.equal(replies.length, 0);
+        assert.equal(h.verificationCalls.length, 1);
+        assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+    });
+}
+
+test('exhausted transient config HTTP errors are technical failures, not authorization denial', async () => {
+    const h = createHarness({ configReplies: [503, 503] });
+    await h.hello();
+    assert.equal(h.messages.at(-1).payload.category, 'STATIC_CONFIG_UNAVAILABLE');
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_ERROR');
+    assert.equal(h.verificationCalls.length, 0);
+});
+
+test('authorization HTTP failure cannot be retried into permission', async () => {
+    const replies = [403, 200];
+    const h = createHarness({ configReplies: replies });
+    await h.hello();
+    assert.equal(replies.length, 1);
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_DENIED');
+    assert.equal(h.verificationCalls.length, 0);
+});
+
+test('secure UUID fallback works without randomUUID, but absent secure crypto fails closed', async () => {
+    const h = createHarness({ cryptoOverride: { getRandomValues(bytes) { bytes.fill(42); return bytes; } } });
+    await h.hello();
+    assert.match(h.verificationCalls[0].requestId, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_PASS');
+    const unavailable = createHarness({ cryptoOverride: {} });
+    await unavailable.hello();
+    assert.equal(unavailable.messages.at(-1).payload.category, 'CRYPTO_UNAVAILABLE');
+    assert.equal(unavailable.verificationCalls.length, 0);
 });

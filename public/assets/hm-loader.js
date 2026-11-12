@@ -217,12 +217,40 @@
         return bust ? url + '?v=' + encodeURIComponent(bust) : url;
     }
 
-    function fetchJson(url, force) {
-        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
-            .then(function (response) {
-                if (!response || !response.ok) throw new Error('Static configuration unavailable');
+    // Bound both response headers and JSON decoding, including browsers where
+    // abort is unavailable or a transport ignores its signal. Late data is inert.
+    function fetchJson(url, force, attempt) {
+        attempt = attempt || 0;
+        return new Promise(function (resolve, reject) {
+            var controller = typeof window.AbortController === 'function' ? new window.AbortController() : null;
+            var settled = false;
+            function finish(error, value) {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timer);
+                error ? reject(error) : resolve(value);
+            }
+            var timer = window.setTimeout(function () {
+                finish(new Error('Static configuration timeout'));
+                if (controller) controller.abort();
+            }, 5000);
+            Promise.resolve().then(function () {
+                return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit',
+                    cache: force || attempt ? 'reload' : 'default',
+                    ...(controller ? { signal: controller.signal } : {}) });
+            }).then(function (response) {
+                if (!response || !response.ok) {
+                    var error = new Error('Static configuration unavailable');
+                    error.terminal = response && response.status >= 400 && response.status < 500
+                        && response.status !== 408 && response.status !== 429;
+                    throw error;
+                }
                 return response.json();
-            });
+            }).then(function (value) { finish(null, value); }, function (error) { finish(error); });
+        }).catch(function (error) {
+            if (attempt === 0 && !error.terminal) return fetchJson(url, force, 1);
+            throw error;
+        });
     }
 
     function validateConfig(config, siteKey, expectedVersion) {
@@ -262,17 +290,11 @@
 
     function fetchGlobalControl(script, force) {
         var url = configBase(script) + '/_global/control.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
-        return window.fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit', cache: force ? 'reload' : 'default' })
-            .then(function (response) {
-                if (!response || !response.ok) return {};
-                return response.json().then(function (payload) {
-                    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return failClosedControls();
-                    if (!Object.prototype.hasOwnProperty.call(payload, 'controls')) return {};
-                    return normalizeControls(payload.controls);
-                }).catch(function () { return failClosedControls(); });
-            })
-            .catch(function () { return {}; })
-            .then(function (controls) { return controls || {}; });
+        return fetchJson(url, force).then(function (payload) {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return failClosedControls();
+            if (!Object.prototype.hasOwnProperty.call(payload, 'controls')) return {};
+            return normalizeControls(payload.controls);
+        }).catch(function () { return failClosedControls(); });
     }
 
     function failClosedControls() {
