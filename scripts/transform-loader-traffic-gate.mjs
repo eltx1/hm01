@@ -640,7 +640,8 @@ const trafficGateRuntime = String.raw`
         // inherit an old DISABLED/PASS decision. Keep authoritative denials final.
         if (settings.enabled && !controls.adServingDisabled && !controls.trafficGateDisabled
             && (gate.status === TRAFFIC_GATE_STATES.disabled
-                || (gate.status === TRAFFIC_GATE_STATES.passed && gate.configBinding !== binding))) {
+                || ([TRAFFIC_GATE_STATES.passed, TRAFFIC_GATE_STATES.pending].indexOf(gate.status) !== -1
+                    && gate.configBinding !== binding))) {
             var resume = gate.resume;
             retirePreparedTrafficGate();
             gate = trafficGateRuntimeState();

@@ -9,7 +9,9 @@
 - Loader static JSON fetches bound headers and body decoding to five seconds per request, retry once for transient failures, ignore late completion and abort when supported. Exhausted global-control fetches close serving. Manifest/versioned-config/alias fallback remains, so 25 seconds is not a total page-to-ad SLA.
 - Secure UUIDv4 fallback uses getRandomValues when randomUUID is unavailable. No secure crypto means no verification and no ads.
 - PHP accepts only the canonical verification origin, optionally a root slash normalized before publication. Query, fragment, port, credentials, mixed-case and non-root paths cannot publish a READY contract.
-- Restoring protection from DISABLED or changing a successful gate's authorization configuration requires fresh verification. An unchanged successful document still shares one PASS across placements; no token is persisted, and ordinary navigation to a new document verifies anew. No arbitrary periodic challenge was added.
+- Restoring protection from DISABLED or changing a pending or successful gate's authorization configuration requires fresh verification. An unchanged successful document still shares one PASS across placements; no token is persisted, and ordinary navigation to a new document verifies anew. No arbitrary periodic challenge was added.
+
+- Updated the locked follow-redirects dependency from 1.16.1 to 1.16.3; npm audit reports zero vulnerabilities. Unrelated optional dependency entries are preserved.
 
 ## Security invariants
 
@@ -42,3 +44,5 @@ Live publisher root cause, current WAF rules and real-device behavior remain unv
 - tests/Feature/TrafficGateFoundationTest.php
 - .github/workflows/traffic-gate-resilience.yml
 - docs/TRAFFIC_GATE_RESILIENCE_20261112.md
+
+- package-lock.json (follow-redirects security patch only)

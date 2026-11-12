@@ -1598,3 +1598,32 @@ test('restoring healthy controls after a failed fetch cannot inherit DISABLED pe
     h.sendGate('PASS'); await pending;
     assert.equal(h.metrics.gamRequests, 1);
 });
+
+
+test('changed authorization settings retire a pending source before a new verification', async () => {
+    const config = baseConfig();
+    const h = createHarness(config, { timerScale: 1 });
+    const firstBoot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const old = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const oldSource = old.iframe.contentWindow;
+    const oldNonce = old.pageNonce;
+    config.trafficGate.siteKey = 'different_public_sitekey';
+    const nextBoot = h.sandbox.HorusMediaLoader.boot({ force: true }); await h.flush();
+    assert.notEqual(h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate, old);
+    h.sendGate('PASS', {}, { source: oldSource, nonce: oldNonce });
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await nextBoot; await firstBoot;
+    assert.equal(h.metrics.gamRequests, 1);
+});
+
+test('all hanging configuration reads terminate without accepting late responses', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 0.001 });
+    const resolves = [];
+    h.sandbox.fetch = () => new Promise(resolve => resolves.push(resolve));
+    await h.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(h.metrics);
+    for (const resolve of resolves) resolve({ ok: true, json: async () => baseConfig() });
+    await h.flush();
+    assertNoMonetization(h.metrics);
+    assert.equal(h.metrics.hellos.length, 0);
+});
