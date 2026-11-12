@@ -1,0 +1,54 @@
+name: Horus Cloudflare read-only audit 20261112
+on:
+  push:
+    branches: [audit/cloudflare-readonly-20261112]
+    paths: [.github/workflows/cloudflare-readonly-audit-20261112.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: horus-cloudflare-readonly-audit
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.repository == 'eltx1/hm01' && github.ref == 'refs/heads/audit/cloudflare-readonly-20261112'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Read configuration and print only sanitized findings
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          // One-shot read-only audit. No response bodies, tokens, rule expressions or secrets are logged.
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          if (!account || !token) throw new Error('Required existing production credentials unavailable');
+          const root = 'https://api.cloudflare.com/client/v4';
+          async function get(path, label, summarize) {
+            try {
+              const response = await fetch(root + path, {method:'GET',redirect:'error',signal:AbortSignal.timeout(20000),headers:{Authorization:`Bearer ${token}`}});
+              const data = await response.json();
+              const ok = response.ok && data.success === true;
+              console.log(JSON.stringify({check:label,status:response.status,ok,...(ok ? {summary:summarize(data.result)} : {codes:(data.errors || []).map(e=>e.code)})}));
+              return ok ? data.result : null;
+            } catch { console.log(JSON.stringify({check:label,ok:false,error:'REQUEST_FAILED'})); return null; }
+          }
+          const ap = '/accounts/' + encodeURIComponent(account);
+          const widgets = await get(ap+'/challenges/widgets?per_page=100','turnstile',rows => rows.filter(x=>x.name==='Horus Ad Traffic Gate').map(x=>({mode:x.mode,gateHostnameAllowed:x.domains?.includes('verify.horusmedia.net'),hostnameCount:x.domains?.length,clearance:x.clearance_level})));
+          await get(ap+'/workers/scripts/siteverify/settings','worker-settings',x=>({secretBindingPresent:x.bindings?.some(b=>b.name==='TURNSTILE_SECRET'&&b.type==='secret_text'),managedTag:x.tags?.includes('horus-traffic-gate'),observabilityEnabled:x.observability?.enabled??null}));
+          await get(ap+'/workers/domains','worker-domain',rows=>({siteverifyMapped:rows.some(x=>x.hostname==='siteverify.horusmedia.net'&&x.service==='siteverify')}));
+          await get(ap+'/pages/projects/horus-media-cdn','pages',x=>({productionBranch:x.production_branch,cdnAttached:x.domains?.includes('cdn.horusmedia.net'),gateAttached:x.domains?.includes('verify.horusmedia.net')}));
+          const zones = await get('/zones?name=horusmedia.net','zone',rows=>({count:rows.length,active:rows.some(x=>x.status==='active')}));
+          const zone=zones?.find(x=>x.name==='horusmedia.net'&&x.account?.id===account);
+          if(zone){
+           const zp='/zones/'+encodeURIComponent(zone.id);
+           for(const setting of ['rocket_loader','browser_check','security_level','challenge_ttl']) await get(zp+'/settings/'+setting,setting,x=>({value:x.value}));
+           for(const phase of ['http_request_firewall_custom','http_request_firewall_managed','http_ratelimit','http_request_cache_settings']) await get(zp+'/rulesets/phases/'+phase+'/entrypoint',phase,x=>({rules:(x.rules||[]).map((r,index)=>({index,action:r.action,enabled:r.enabled!==false,mentionsCdn:/cdn\.horusmedia\.net/.test(r.expression||''),mentionsGate:/verify\.horusmedia\.net|traffic-gate/.test(r.expression||''),mentionsLoader:/hm-loader|lord-adx/.test(r.expression||''),mentionsAndroid:/android/i.test(r.expression||'')}))}));
+          } else {console.log(JSON.stringify({check:'zone-detail',ok:false,error:'ZONE_NOT_ACCESSIBLE'}));}
+          NODE
