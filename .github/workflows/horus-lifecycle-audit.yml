@@ -1,0 +1,54 @@
+name: Horus isolated lifecycle audit
+on:
+  push:
+    branches: [audit/cloudflare-readonly-20261112]
+    paths: [.github/workflows/horus-lifecycle-audit.yml]
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node --test tests/Browser/audit-lifecycle.test.js tests/Browser/audit-config-classification.test.js tests/Browser/traffic-gate.test.js tests/Browser/hm-loader-traffic-gate.test.js tests/Browser/siteverify-worker.test.js
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - run: bash scripts/install-playwright-ci.sh
+      - run: npm run build:loader
+      - name: Four-browser isolated gate and loader tests
+        run: npx playwright test --config=playwright.traffic-gate.config.js traffic-gate.playwright.spec.js traffic-gate-loader.playwright.spec.js
+  origin-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Reproduce origin validation mismatch without Laravel or secrets
+        run: |
+          php <<'PHP'
+          <?php
+          require 'app/Services/TrafficGate/TrafficGateConfigurationResolver.php';
+          $r=(new ReflectionClass(App\Services\TrafficGate\TrafficGateConfigurationResolver::class))->newInstanceWithoutConstructor();
+          $cases=[
+              'https://verify.horusmedia.net'=>true,
+              'https://verify.horusmedia.net?x=1'=>false,
+              'https://verify.horusmedia.net#fragment'=>false,
+              'https://verify.horusmedia.net:8443'=>false,
+              'https://u:p@verify.horusmedia.net'=>false,
+              'https://other.example'=>false,
+          ];
+          $failures=0;
+          foreach($cases as $origin=>$expected){
+              $actual=$r->validOrigin($origin);
+              echo json_encode(['origin'=>$origin,'expected'=>$expected,'actual'=>$actual,'pass'=>$actual===$expected]).PHP_EOL;
+              if($actual!==$expected)$failures++;
+          }
+          exit($failures ? 1 : 0);
+          PHP
