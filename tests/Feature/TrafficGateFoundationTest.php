@@ -152,7 +152,7 @@ class TrafficGateFoundationTest extends TestCase
 
         foreach ([
             ['traffic_gate.initial_wait_ms', 499],
-            ['traffic_gate.max_wait_ms', 15001],
+            ['traffic_gate.max_wait_ms', 25001],
             ['traffic_gate.retry_interval_ms', 0],
         ] as [$key, $value]) {
             try {
@@ -317,7 +317,7 @@ class TrafficGateFoundationTest extends TestCase
     public function test_fifteen_second_default_and_persisted_upgrade_reconcile_static_configs_without_inventory_changes(): void
     {
         $defaults = require config_path('traffic_gate.php');
-        $this->assertSame(15000, $defaults['max_wait_ms']);
+        $this->assertSame(25000, $defaults['max_wait_ms']);
         [$site, $admin] = $this->fixture(active: true);
         $this->configureReadyGlobal($admin);
         $settings = app(GlobalSettingsService::class);
@@ -357,6 +357,41 @@ class TrafficGateFoundationTest extends TestCase
             $migration->down();
             $this->assertSame($custom, $settings->get('traffic_gate.max_wait_ms'));
         }
+    }
+
+    public function test_canonical_origin_rejects_components_the_browser_rejects(): void
+    {
+        $resolver = app(TrafficGateConfigurationResolver::class);
+        foreach (['?x=1', '#fragment', ':8443', ':443', '/path', '/?x=1'] as $suffix) {
+            $this->assertFalse($resolver->validOrigin('https://verify.horusmedia.net'.$suffix));
+        }
+        $this->assertFalse($resolver->validOrigin('https://u:p@verify.horusmedia.net'));
+        $this->assertFalse($resolver->validOrigin('HTTPS://VERIFY.HORUSMEDIA.NET'));
+        $this->assertTrue($resolver->validOrigin('https://verify.horusmedia.net'));
+        $this->assertTrue($resolver->validOrigin('https://verify.horusmedia.net/'));
+    }
+
+    public function test_twenty_five_second_migration_is_audited_idempotent_and_preserves_custom_settings(): void
+    {
+        [$site, $admin] = $this->fixture();
+        $settings = app(GlobalSettingsService::class);
+        $migration = require database_path('migrations/2026_11_12_130000_extend_traffic_gate_wait_to_twenty_five_seconds.php');
+        $migration->up();
+        $this->assertDatabaseMissing('global_settings', ['key' => 'traffic_gate.max_wait_ms']);
+        foreach ([6000, 12000, 20000, 25000] as $custom) {
+            $settings->set($admin, 'traffic_gate.max_wait_ms', $custom, 'Preserve custom timeout.');
+            $migration->up();
+            $this->assertSame($custom, $settings->get('traffic_gate.max_wait_ms'));
+        }
+        $settings->set($admin, 'traffic_gate.max_wait_ms', 15000, 'Upgrade previous default.');
+        $migration->up();
+        $this->assertSame(25000, $settings->get('traffic_gate.max_wait_ms'));
+        $payload = app(TrafficGateConfigurationResolver::class)->resolve($site)->toPublicArray();
+        $this->assertSame(15000, $payload['timings']['maxWaitMs']);
+        $this->assertSame(25000, $payload['timings']['attemptWaitMs']);
+        $auditCount = AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count();
+        $migration->up();
+        $this->assertSame($auditCount, AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count());
     }
 
     private function fixture(bool $active = false): array

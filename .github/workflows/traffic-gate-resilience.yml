@@ -1,0 +1,37 @@
+name: Traffic gate resilience validation
+on:
+  push:
+    branches: [fix/traffic-gate-resilience-20261112]
+permissions:
+  contents: read
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, openssl, soap
+          coverage: none
+      - run: bash scripts/install-composer-ci.sh
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ github.token }}"}}'
+      - run: cp .env.example .env
+      - run: php artisan key:generate
+      - run: php artisan test --filter='TrafficGateFoundationTest|TrafficQualityControlCenterTest|TrafficQualityRuntimeSafetyTest'
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - run: bash scripts/install-playwright-ci.sh
+      - run: npm run build:loader
+      - run: node --test tests/Browser/*.test.js
+      - run: npx playwright test --config=playwright.traffic-gate.config.js traffic-gate.playwright.spec.js traffic-gate-loader.playwright.spec.js early-verification.playwright.spec.js startup-recovery.playwright.spec.js

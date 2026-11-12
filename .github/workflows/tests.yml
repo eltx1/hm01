@@ -122,7 +122,7 @@ jobs:
         run: >-
           npx playwright test --config=playwright.traffic-gate.config.js
           traffic-gate-loader.playwright.spec.js
-          --grep='production bundle enforces the 15 second verification window'
+          --grep='production bundle enforces the 25 second verification window'
           --repeat-each=10
       - name: Execute deterministic Traffic Gate real-browser matrix
         run: npx playwright test --config=playwright.traffic-gate.config.js

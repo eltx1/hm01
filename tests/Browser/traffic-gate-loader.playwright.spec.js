@@ -448,10 +448,11 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
     expect(await page.locator('iframe[data-hm-traffic-gate="1"]').count()).toBe(0);
 });
 
-for (const verifiedAt of [12000, 15000]) {
-    test(`production bundle enforces the 15 second verification window at ${verifiedAt}ms`, async ({ page }) => {
+for (const verifiedAt of [15000, 24999, 25000]) {
+    test(`production bundle enforces the 25 second verification window at ${verifiedAt}ms`, async ({ page }) => {
         const selected = config();
         selected.trafficGate.timings.maxWaitMs = 15000;
+        selected.trafficGate.timings.attemptWaitMs = 25000;
         selected.prebid.enabled = false;
         let verifications = 0;
         const unexpected = [];
@@ -496,7 +497,7 @@ for (const verifiedAt of [12000, 15000]) {
         expect(verifications).toBe(0);
         await page.evaluate(() => { history.pushState({}, '', '/next'); window.HorusMediaLoader.boot(); });
         expect(await page.evaluate(() => window.__HORUS_MEDIA_LOADER_STATE__.trafficGate.startedAt)).toBe(startedAt);
-        if (verifiedAt < 15000) {
+        if (verifiedAt < 25000) {
             await page.clock.runFor(verifiedAt - 10001);
             await gateFrame.locator('html').evaluate(() => window.deliverToken());
             await expect.poll(() => page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
@@ -505,7 +506,7 @@ for (const verifiedAt of [12000, 15000]) {
             expect(verifications).toBe(1);
             expect(await page.evaluate(() => window.__task52Engines.gamRequests)).toBe(1);
         } else {
-            await page.clock.runFor(14999 - 10001);
+            await page.clock.runFor(24999 - 10001);
             expect(await page.evaluate(() => window.HorusMediaLoader.getTrafficGateState().state)).toBe('PENDING');
             expect(await page.evaluate(() => window.__task52Engines?.gamRequests || 0)).toBe(0);
             await page.clock.runFor(1);

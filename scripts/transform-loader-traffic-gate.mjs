@@ -250,7 +250,15 @@ const trafficGateRuntime = String.raw`
         state.trafficGate = freshTrafficGateRuntime();
     }
 
-    function beginDomTrafficGate(config, earlyAttempt, generation) {
+    function beginDomTrafficGate(config, earlyAttempt, generation, recover) {
+        // A new boot/explicit refresh may recover a finished technical failure.
+        // Never reuse the old deadline, nonce, source or settled promise.
+        if (recover && !earlyAttempt && trafficGateCanRecover() && Number(state.gateRecoveryCount || 0) < 2) {
+            state.gateRecoveryCount = Number(state.gateRecoveryCount || 0) + 1;
+            var resume = trafficGateRuntimeState().resume;
+            retirePreparedTrafficGate();
+            setTrafficGateResume(resume);
+        }
         return beginTrafficGate(config).then(function (decision) {
             // A preparation may still be pending at DOM readiness. If it fails
             // afterwards, restore the same one normal attempt instead of letting
@@ -302,7 +310,7 @@ const trafficGateRuntime = String.raw`
     var TRAFFIC_GATE_PROTOCOL_VERSION = 2;
     var TRAFFIC_GATE_PATH = '/traffic-gate/';
     var TRAFFIC_GATE_PROVIDER = 'CLOUDFLARE_TURNSTILE_SERVER_VERIFIED';
-    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 15000;
+    var TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS = 25000;
     var TRAFFIC_GATE_STATES = {
         disabled: 'DISABLED', booting: 'BOOTING', pending: 'PENDING', passed: 'PASSED',
         error: 'ERROR', timeout: 'TIMEOUT', unavailable: 'UNAVAILABLE',
@@ -315,6 +323,7 @@ const trafficGateRuntime = String.raw`
             reason: null,
             started: false,
             startedAt: 0,
+            configBinding: null,
             settings: null,
             pageNonce: null,
             iframe: null,
@@ -372,7 +381,7 @@ const trafficGateRuntime = String.raw`
         var policy = String(selected.policy || '').toUpperCase();
         var timings = selected.timings || {};
         var initialWaitMs = Number(timings.initialWaitMs);
-        var maxWaitMs = Number(timings.maxWaitMs);
+        var maxWaitMs = Number(Object.prototype.hasOwnProperty.call(timings, 'attemptWaitMs') ? timings.attemptWaitMs : timings.maxWaitMs);
         var retryIntervalMs = Number(timings.retryIntervalMs);
         var origin = canonicalTrafficGateOrigin(selected.gateOrigin);
         var siteKey = String(config && config.siteKey || '');
@@ -383,7 +392,7 @@ const trafficGateRuntime = String.raw`
             && /^[A-Za-z0-9_-]{3,64}$/.test(siteKey)
             && /^[A-Za-z0-9_-]{3,255}$/.test(publicSiteKey)
             && Number.isInteger(initialWaitMs) && initialWaitMs >= 500 && initialWaitMs <= 5000
-            && Number.isInteger(maxWaitMs) && maxWaitMs >= 2000 && maxWaitMs <= 15000
+            && Number.isInteger(maxWaitMs) && maxWaitMs >= 2000 && maxWaitMs <= 25000
             && Number.isInteger(retryIntervalMs) && retryIntervalMs >= 500 && retryIntervalMs <= 10000
             && maxWaitMs >= initialWaitMs;
         return {
@@ -418,7 +427,7 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         if (gate.maxTimer !== null || !gate.settings) return;
         var delay = Number(gate.settings.maxWaitMs);
-        if (!Number.isInteger(delay) || delay < 2000 || delay > 15000) {
+        if (!Number.isInteger(delay) || delay < 2000 || delay > 25000) {
             delay = TRAFFIC_GATE_DEFAULT_MAX_WAIT_MS;
         }
         gate.maxTimer = window.setTimeout(trafficGateOnMaxWait, delay);
@@ -504,6 +513,35 @@ const trafficGateRuntime = String.raw`
         settleTrafficGateDecision();
     }
 
+    function trafficGateCanRecover() {
+        var gate = trafficGateRuntimeState();
+        return gate.started && [TRAFFIC_GATE_STATES.error, TRAFFIC_GATE_STATES.timeout,
+            TRAFFIC_GATE_STATES.unavailable].indexOf(gate.status) !== -1
+            && ['MAX_WAIT', 'TURNSTILE_TIMEOUT', 'TURNSTILE_ERROR', 'STATIC_CONFIG_UNAVAILABLE',
+                'VERIFICATION_UNAVAILABLE', 'TURNSTILE_SCRIPT_ERROR', 'TURNSTILE_API_UNAVAILABLE',
+                'IFRAME_UNAVAILABLE', 'IFRAME_CREATE_FAILED', 'IFRAME_APPEND_FAILED', 'HANDSHAKE_FAILED'].indexOf(gate.reason) !== -1;
+    }
+
+    function installTrafficGateRecovery() {
+        var gate = trafficGateRuntimeState();
+        if (!gate.settings || !gate.settings.activityRecoveryEnabled || !trafficGateCanRecover()
+            || Number(state.gateRecoveryCount || 0) >= 2 || !window.addEventListener) return;
+        function recover(event) {
+            if (state.trafficGate !== gate || !trafficGateCanRecover()
+                || document.visibilityState === 'hidden' || gate.initialTimer !== null) return;
+            if (event.type === 'pageshow' && !event.persisted) return;
+            gate.initialTimer = window.setTimeout(function () {
+                gate.initialTimer = null;
+                if (state.trafficGate !== gate || !trafficGateCanRecover()) return;
+                boot({ force: true });
+            }, gate.settings.retryIntervalMs);
+        }
+        ['online', 'pageshow', 'visibilitychange'].forEach(function (type) {
+            gate.activityListeners.push({ type: type, listener: recover });
+            window.addEventListener(type, recover, true);
+        });
+    }
+
     function trafficGateTechnicalFailure(stateName, reason, retryAtDomReady) {
         var gate = trafficGateRuntimeState();
         if (trafficGateAllowsMonetization() || gate.status === TRAFFIC_GATE_STATES.blocked) return;
@@ -512,6 +550,7 @@ const trafficGateRuntime = String.raw`
         gate.retryAtDomReady = retryAtDomReady !== false;
         trafficGateCleanup();
         settleTrafficGateDecision();
+        installTrafficGateRecovery();
     }
 
     function trafficGateOnInitialWait() {
@@ -583,7 +622,7 @@ const trafficGateRuntime = String.raw`
             // attempt. An explicit server rejection is authoritative and is not
             // a loading failure. Every new attempt still needs fresh verification.
             var preparationFailed = message.category !== 'VERIFICATION_REJECTED';
-            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, message.category === 'VERIFICATION_REJECTED' ? 'VERIFICATION_REJECTED' : 'TURNSTILE_ERROR', preparationFailed);
+            trafficGateTechnicalFailure(TRAFFIC_GATE_STATES.error, ['VERIFICATION_REJECTED', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE', 'TURNSTILE_SCRIPT_ERROR', 'TURNSTILE_API_UNAVAILABLE', 'UNSUPPORTED_BROWSER', 'CRYPTO_UNAVAILABLE', 'GATE_NOT_READY', 'INVALID_VERIFICATION_TOKEN'].indexOf(message.category) !== -1 ? message.category : 'TURNSTILE_ERROR', preparationFailed);
             return;
         }
         if (type === 'HORUS_TRAFFIC_GATE_TIMEOUT') {
@@ -595,7 +634,21 @@ const trafficGateRuntime = String.raw`
         var gate = trafficGateRuntimeState();
         var controls = effectiveControls(config);
         var settings = trafficGateSettings(config);
+        var binding = JSON.stringify({ siteKey: config && config.siteKey,
+            allowedHostnames: config && config.allowedHostnames, trafficGate: config && config.trafficGate });
+        // Re-enabling protection or changing its authorization contract must not
+        // inherit an old DISABLED/PASS decision. Keep authoritative denials final.
+        if (settings.enabled && !controls.adServingDisabled && !controls.trafficGateDisabled
+            && (gate.status === TRAFFIC_GATE_STATES.disabled
+                || ([TRAFFIC_GATE_STATES.passed, TRAFFIC_GATE_STATES.pending].indexOf(gate.status) !== -1
+                    && gate.configBinding !== binding))) {
+            var resume = gate.resume;
+            retirePreparedTrafficGate();
+            gate = trafficGateRuntimeState();
+            gate.resume = resume;
+        }
         gate.settings = settings;
+        gate.configBinding = binding;
 
         if (controls.adServingDisabled || controls.trafficGateDisabled || !settings.enabled) {
             discardTrafficGateDocument();
@@ -822,7 +875,7 @@ const bootReplacement = String.raw`    function startMonetization(config, script
                 if (state.config !== config || !state.privacyDecision) return [];
                 return startMonetization(config, script, diagnostic);
             });
-            var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation);
+            var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation, Boolean(options.force));
             var privacyPromise = resolvePrivacy(config).then(function (decision) {
                 startupTrace(decision.blocked ? 'Privacy reject' : 'Privacy ready');
                 if (!decision.blocked && state.config === config && generation === state.preparationGeneration) {

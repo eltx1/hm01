@@ -31,7 +31,9 @@ final readonly class TrafficGateConfiguration
             'policy' => $this->policy->value,
             'timings' => [
                 'initialWaitMs' => $this->initialWaitMs,
-                'maxWaitMs' => $this->maxWaitMs,
+                // Cached older clients keep their supported budget during rollout.
+                'maxWaitMs' => min($this->maxWaitMs, 15000),
+                'attemptWaitMs' => $this->maxWaitMs,
                 'retryIntervalMs' => $this->retryIntervalMs,
             ],
             'activityRecoveryEnabled' => $this->activityRecoveryEnabled,

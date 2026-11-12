@@ -7,12 +7,12 @@ return [
     'site_key' => env('HORUS_TRAFFIC_GATE_SITE_KEY'),
     'policy' => 'BALANCED',
     'initial_wait_ms' => 1500,
-    'max_wait_ms' => 15000,
+    'max_wait_ms' => 25000,
     'retry_interval_ms' => 1500,
     'activity_recovery_enabled' => true,
     'bounds' => [
         'initial_wait_ms' => [500, 5000],
-        'max_wait_ms' => [2000, 15000],
+        'max_wait_ms' => [2000, 25000],
         'retry_interval_ms' => [500, 10000],
     ],
 ];

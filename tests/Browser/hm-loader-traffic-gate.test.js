@@ -820,7 +820,9 @@ test('a failed normal attempt after early failure cannot create an unbounded res
     await boot;
     await runtime.sandbox.HorusMediaLoader.boot();
     await runtime.sandbox.HorusMediaLoader.refresh();
-    assert.equal(runtime.metrics.gateFrames, 2);
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    await runtime.sandbox.HorusMediaLoader.refresh();
+    assert.equal(runtime.metrics.gateFrames, 4);
     assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
     assertNoMonetization(runtime.metrics);
 });
@@ -1514,7 +1516,6 @@ for (const fireDeadline of [false, true]) {
         else h.sendGate('PASS'); // Network message wins the event-loop race.
         await boot;
         h.sendGate('PASS');
-        await h.sandbox.HorusMediaLoader.boot();
         assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
         assertNoMonetization(h.metrics);
         assert.equal(gate.iframe, null);
@@ -1523,3 +1524,106 @@ for (const fireDeadline of [false, true]) {
         assert.equal(h.metrics.gateFrames, 1);
     });
 }
+
+
+test('25 second fresh recovery rejects stale PASS and is bounded across repeated refreshes', async () => {
+    const config = baseConfig();
+    config.trafficGate.timings.maxWaitMs = 25000;
+    const h = createHarness(config, { timerScale: 1 });
+    for (let index = 0; index < 3; index++) {
+        const pending = h.sandbox.HorusMediaLoader.boot({ force: true });
+        await h.flush();
+        const gate = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+        assert.equal(gate.maxTimer._idleTimeout, 25000);
+        assert.equal(h.metrics.gateFrames, index + 1);
+        if (index) {
+            const previous = h.metrics.hellos[index - 1].payload.pageNonce;
+            assert.notEqual(gate.pageNonce, previous);
+            h.sendGate('PASS', {}, { nonce: previous });
+            assertNoMonetization(h.metrics);
+        }
+        h.elapse(25000);
+        h.fireTimer(gate.maxTimer);
+        await pending;
+    }
+    await h.sandbox.HorusMediaLoader.boot({ force: true });
+    assert.equal(h.metrics.gateFrames, 3);
+    assertNoMonetization(h.metrics);
+});
+
+test('online recovery uses a new deadline and still needs server verification', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 1 });
+    const pending = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const old = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    h.fireTimer(old.maxTimer); await pending;
+    h.dispatchTrusted('online');
+    h.fireTimer(old.initialTimer); await h.flush();
+    const current = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    assert.notEqual(current, old);
+    assert.equal(current.maxTimer._idleTimeout, 2000);
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await h.flush();
+    assert.equal(h.metrics.gamRequests, 1);
+});
+
+for (const category of ['VERIFICATION_REJECTED', 'UNSUPPORTED_BROWSER', 'CRYPTO_UNAVAILABLE', 'GATE_NOT_READY']) {
+    test(`refresh cannot retry terminal ${category}`, async () => {
+        const h = createHarness(baseConfig(), { timerScale: 1 });
+        const pending = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+        h.sendGate('ERROR', { category }); await pending;
+        await h.sandbox.HorusMediaLoader.boot({ force: true });
+        assert.equal(h.metrics.gateFrames, 1);
+        assertNoMonetization(h.metrics);
+    });
+}
+
+test('bounded configuration read recovers once from an ignored network timeout', async () => {
+    const h = createHarness(baseConfig(), { deferFirstConfig: true, gateAutoResponse: 'PASS' });
+    await h.sandbox.HorusMediaLoader.boot();
+    assert.ok(h.metrics.configFetches >= 2);
+    assert.equal(h.metrics.gamRequests, 1);
+});
+
+
+test('restoring healthy controls after a failed fetch cannot inherit DISABLED permission', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 1 });
+    const fetch = h.sandbox.fetch;
+    h.sandbox.fetch = async (url) => String(url).includes('/_global/') ? { ok: false, status: 503 } : fetch(url);
+    await h.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(h.metrics);
+    h.sandbox.fetch = fetch;
+    const pending = h.sandbox.HorusMediaLoader.boot({ force: true }); await h.flush();
+    assert.equal(h.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PENDING');
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await pending;
+    assert.equal(h.metrics.gamRequests, 1);
+});
+
+
+test('changed authorization settings retire a pending source before a new verification', async () => {
+    const config = baseConfig();
+    const h = createHarness(config, { timerScale: 1 });
+    const firstBoot = h.sandbox.HorusMediaLoader.boot(); await h.flush();
+    const old = h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const oldSource = old.iframe.contentWindow;
+    const oldNonce = old.pageNonce;
+    config.trafficGate.siteKey = 'different_public_sitekey';
+    const nextBoot = h.sandbox.HorusMediaLoader.boot({ force: true }); await h.flush();
+    assert.notEqual(h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate, old);
+    h.sendGate('PASS', {}, { source: oldSource, nonce: oldNonce });
+    assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await nextBoot; await firstBoot;
+    assert.equal(h.metrics.gamRequests, 1);
+});
+
+test('all hanging configuration reads terminate without accepting late responses', async () => {
+    const h = createHarness(baseConfig(), { timerScale: 0.001 });
+    const resolves = [];
+    h.sandbox.fetch = () => new Promise(resolve => resolves.push(resolve));
+    await h.sandbox.HorusMediaLoader.boot();
+    assertNoMonetization(h.metrics);
+    for (const resolve of resolves) resolve({ ok: true, json: async () => baseConfig() });
+    await h.flush();
+    assertNoMonetization(h.metrics);
+    assert.equal(h.metrics.hellos.length, 0);
+});

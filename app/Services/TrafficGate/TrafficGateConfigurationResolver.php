@@ -68,15 +68,9 @@ final class TrafficGateConfigurationResolver
 
     public function validOrigin(string $origin): bool
     {
-        $parts = parse_url($origin);
-        if (! is_array($parts)) {
-            return false;
-        }
-
-        return strtolower((string) ($parts['scheme'] ?? '')) === 'https'
-            && strtolower((string) ($parts['host'] ?? '')) === 'verify.horusmedia.net'
-            && ! isset($parts['port'], $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'])
-            && in_array($parts['path'] ?? '', ['', '/'], true);
+        // Match the browser's canonical origin contract. The optional root
+        // slash is removed by resolve() before publishing the static payload.
+        return in_array($origin, ['https://verify.horusmedia.net', 'https://verify.horusmedia.net/'], true);
     }
 
     private function validTiming(string $key, int $value): bool
