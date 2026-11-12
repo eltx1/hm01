@@ -556,8 +556,9 @@ test('falls back to the compatibility production alias when manifest propagation
     const { sandbox, metrics } = createHarness(activeConfig(), { manifestMode: 'missing' });
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.gptLoads, 1);
-    assert.equal(metrics.fetches.length, 3);
-    assert.match(metrics.fetches[2], /\/production\.json$/);
+    assert.equal(metrics.fetches.length, 4);
+    assert.equal(metrics.fetches[1], metrics.fetches[2], 'retry the missing manifest once');
+    assert.match(metrics.fetches[3], /\/production\.json$/);
 });
 
 test('stale manifest version mismatch safely revalidates through the current alias', async () => {

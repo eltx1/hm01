@@ -373,7 +373,7 @@ class TrafficGateFoundationTest extends TestCase
 
     public function test_twenty_five_second_migration_is_audited_idempotent_and_preserves_custom_settings(): void
     {
-        [, $admin] = $this->fixture();
+        [$site, $admin] = $this->fixture();
         $settings = app(GlobalSettingsService::class);
         $migration = require database_path('migrations/2026_11_12_130000_extend_traffic_gate_wait_to_twenty_five_seconds.php');
         $migration->up();
@@ -386,6 +386,9 @@ class TrafficGateFoundationTest extends TestCase
         $settings->set($admin, 'traffic_gate.max_wait_ms', 15000, 'Upgrade previous default.');
         $migration->up();
         $this->assertSame(25000, $settings->get('traffic_gate.max_wait_ms'));
+        $payload = app(TrafficGateConfigurationResolver::class)->resolve($site)->toPublicArray();
+        $this->assertSame(15000, $payload['timings']['maxWaitMs']);
+        $this->assertSame(25000, $payload['timings']['attemptWaitMs']);
         $auditCount = AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count();
         $migration->up();
         $this->assertSame($auditCount, AuditLog::query()->where('event', 'traffic_gate.timings_changed')->count());

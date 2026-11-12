@@ -190,7 +190,7 @@
         }
 
         const initialWaitMs = Number(timings.initialWaitMs);
-        const maxWaitMs = Number(timings.maxWaitMs);
+        const maxWaitMs = Number(Object.prototype.hasOwnProperty.call(timings, 'attemptWaitMs') ? timings.attemptWaitMs : timings.maxWaitMs);
         const retryIntervalMs = Number(timings.retryIntervalMs);
         if (!Number.isInteger(initialWaitMs) || initialWaitMs < 500 || initialWaitMs > 5000) return null;
         if (!Number.isInteger(maxWaitMs) || maxWaitMs < 2000 || maxWaitMs > 25000) return null;

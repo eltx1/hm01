@@ -19,9 +19,9 @@ Exact origin/source/protocol/nonce binding, server verification, hostname/action
 
 ## Verification and delivery
 
-Local full Node suite: 1032 passed, 0 failed, 36 skipped (1068 total; before adding three HTTP-status cases), before final remote validation. Build succeeds. PHP and four-profile Playwright validation runs in the isolated workflow; CI results are authoritative for final counts. Pixel 5/iPhone 13 projects are browser emulations, not physical devices or real Cloudflare challenges.
+Local full Node suite: 1035 passed, 0 failed, 36 skipped (1071 total), before final remote validation. Build succeeds. PHP and four-profile Playwright validation runs in the isolated workflow; CI results are authoritative for final counts. Pixel 5/iPhone 13 projects are browser emulations, not physical devices or real Cloudflare challenges.
 
-Deployment order matters: gate JavaScript and loader that accept 25 seconds must be available before publishing 25-second configs. Allow existing 300-second asset caches to expire or purge only the specific assets as part of an approved release; verify served hashes before republishing. Keep old custom timeouts during staged rollout. Do not roll back to a 15-second-only client while 25-second contracts remain published: restore compatible configs first. The migration does not silently overwrite an operator setting on rollback.
+Rollout is backward compatible: public configs retain a capped legacy `maxWaitMs` (at most 15000), and add `attemptWaitMs` with the actual configured budget. New parent/child clients validate and prefer the added field; cached old clients retain their previous 15-second behavior instead of rejecting a 25-second contract. New clients still accept older contracts. Rolling back the client does not require weakening protection or stripping the new field. The migration does not overwrite later operator settings on rollback.
 
 Live publisher root cause, current WAF rules and real-device behavior remain unverified because the audit environment was blocked from the publisher page. This change addresses reproduced code defects without treating the cloud-environment block as evidence about all Android users.
 
@@ -46,3 +46,7 @@ Live publisher root cause, current WAF rules and real-device behavior remain unv
 - docs/TRAFFIC_GATE_RESILIENCE_20261112.md
 
 - package-lock.json (follow-redirects security patch only)
+
+- app/Services/TrafficGate/TrafficGateConfiguration.php (backward-compatible timing contract)
+- tests/Browser/hm-loader.test.js (bounded manifest retry)
+- .github/workflows/tests.yml (25-second boundary selector)

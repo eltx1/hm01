@@ -451,7 +451,8 @@ test('BALANCED technical failure leaves content available and suppresses monetiz
 for (const verifiedAt of [15000, 24999, 25000]) {
     test(`production bundle enforces the 25 second verification window at ${verifiedAt}ms`, async ({ page }) => {
         const selected = config();
-        selected.trafficGate.timings.maxWaitMs = 25000;
+        selected.trafficGate.timings.maxWaitMs = 15000;
+        selected.trafficGate.timings.attemptWaitMs = 25000;
         selected.prebid.enabled = false;
         let verifications = 0;
         const unexpected = [];
