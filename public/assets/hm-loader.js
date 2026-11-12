@@ -241,14 +241,12 @@
             }).then(function (response) {
                 if (!response || !response.ok) {
                     var error = new Error('Static configuration unavailable');
-                    error.terminal = response && response.status >= 400 && response.status < 500
-                        && response.status !== 408 && response.status !== 429;
                     throw error;
                 }
                 return response.json();
             }).then(function (value) { finish(null, value); }, function (error) { finish(error); });
         }).catch(function (error) {
-            if (attempt === 0 && !error.terminal) return fetchJson(url, force, 1);
+            if (attempt === 0) return fetchJson(url, force, 1);
             throw error;
         });
     }

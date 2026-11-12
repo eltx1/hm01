@@ -480,7 +480,7 @@ test('admin test uses the same 25 second verification budget', async () => {
 });
 
 
-for (const status of [408, 429, 503]) {
+for (const status of [401, 403, 404, 408, 429, 503]) {
     test(`transient config HTTP ${status} retries once and requires verified PASS`, async () => {
         const replies = [status, 200];
         const h = createHarness({ configReplies: replies });
@@ -499,12 +499,12 @@ test('exhausted transient config HTTP errors are technical failures, not authori
     assert.equal(h.verificationCalls.length, 0);
 });
 
-test('authorization HTTP failure cannot be retried into permission', async () => {
-    const replies = [403, 200];
+test('persistent HTTP rejection retries once but never grants permission', async () => {
+    const replies = [403, 403];
     const h = createHarness({ configReplies: replies });
     await h.hello();
-    assert.equal(replies.length, 1);
-    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_DENIED');
+    assert.equal(replies.length, 0);
+    assert.equal(h.messages.at(-1).payload.type, 'HORUS_TRAFFIC_GATE_ERROR');
     assert.equal(h.verificationCalls.length, 0);
 });
 

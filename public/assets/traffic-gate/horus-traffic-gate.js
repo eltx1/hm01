@@ -228,10 +228,11 @@
                             signal: controller.signal, headers: { Accept: 'application/json' },
                         });
                         if (!response.ok) {
-                            if (response.status === 408 || response.status === 429 || response.status >= 500) {
-                                throw new Error('STATIC_CONFIG_UNAVAILABLE');
-                            }
-                            return null;
+                            // An HTTP error may be an edge/proxy response, not
+                            // an authorization decision. Retry once, then stay
+                            // closed with a technical error. Only a validated
+                            // config can authorize (or explicitly deny) a host.
+                            throw new Error('STATIC_CONFIG_UNAVAILABLE');
                         }
                         const config = await response.json();
                         if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('STATIC_CONFIG_INVALID');
