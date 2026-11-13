@@ -46,10 +46,10 @@ function harness(source = production) {
 }
 
 for (const kind of ['gpt', 'video']) {
-    test(`${kind} Quick Monetize bytes are prepared before gate completion but not before required privacy resolution`, () => {
+    test(`${kind} Quick Monetize bytes are prepared before gate completion but without a Horus privacy wait`, () => {
         const h = harness(), c = config(kind);
         h.context.__prepare(c, false);
-        assert.deepEqual(h.preload(), []);
+        assert.deepEqual(h.preload(), [asset(kind), sdk[kind]]);
         h.context.__prepare(c, true);
         assert.deepEqual(h.preload(), [asset(kind), sdk[kind]]);
         assert.equal(h.scripts.length, 0, 'preparation must not execute an SDK');

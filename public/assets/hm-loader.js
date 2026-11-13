@@ -26,9 +26,6 @@
         standaloneEntries: {},
         standaloneAuctions: {},
         standaloneObservers: {},
-        privacyPromise: null,
-        privacyDecision: null,
-        privacyDiagnostic: null,
         adInitializationStarted: false,
         rewardedListenersInstalled: false,
         clickGuard: null
@@ -95,103 +92,6 @@
         return String(window.location && window.location.hostname || '').toLowerCase().replace(/\.$/, '');
     }
 
-    function capturePrivacyDiagnostic(script) {
-        if (state.privacyDiagnostic) return state.privacyDiagnostic;
-        var token = scriptData(script, 'privacyDiagnosticToken');
-        try {
-            var pageUrl = new URL(window.location.href);
-            token = token || pageUrl.searchParams.get('hm_privacy_diagnostic');
-            if (pageUrl.searchParams.has('hm_privacy_diagnostic')) {
-                pageUrl.searchParams.delete('hm_privacy_diagnostic');
-                if (window.history && typeof window.history.replaceState === 'function') {
-                    window.history.replaceState(window.history.state || null, '', pageUrl.href);
-                }
-            }
-        } catch (error) {
-            token = token || null;
-        }
-        token = String(token || '');
-        if (!/^[A-Za-z0-9_-]{32,160}$/.test(token)) return null;
-        state.privacyDiagnostic = { token: token, sent: false };
-        return state.privacyDiagnostic;
-    }
-
-    function privacyDiagnosticEndpoint(config) {
-        var settings = config && config.privacyDiagnostics || {};
-        if (settings.explicitOnly !== true || !settings.endpoint || !settings.controlPlaneOrigin) return null;
-        try {
-            var endpoint = new URL(settings.endpoint);
-            var allowedOrigin = new URL(settings.controlPlaneOrigin);
-            if (endpoint.protocol !== 'https:' || endpoint.origin !== allowedOrigin.origin) return null;
-            return endpoint.href;
-        } catch (error) {
-            return null;
-        }
-    }
-
-    function sanitizedPrivacyDiagnostic(config, diagnostic) {
-        var privacy = config.privacy || {};
-        var cmp = privacy.cmp || {};
-        var decision = state.privacyDecision || {};
-        var prebid = config.prebid || {};
-        var auction = prebid.auction || {};
-        var modules = prebid.build && Array.isArray(prebid.build.modules) ? prebid.build.modules : [];
-        return {
-            loaderVersion: VERSION,
-            configVersion: Number(config.configVersion || 0),
-            hostname: currentHostname(),
-            timestamp: new Date().toISOString(),
-            tcf: {
-                detected: decision.tcfDetected === true,
-                responded: decision.tcfResponded === true,
-                cmpId: Number.isInteger(decision.tcfCmpId) ? decision.tcfCmpId : null,
-                eventStatus: decision.tcfEventStatus || null
-            },
-            gpp: {
-                detected: decision.gppDetected === true,
-                responded: decision.gppResponded === true,
-                applicableSections: Array.isArray(decision.gppApplicableSections)
-                    ? decision.gppApplicableSections.filter(function (section) { return Number.isInteger(Number(section)); }).map(Number).slice(0, 20)
-                    : []
-            },
-            gpcDetected: decision.gpc === true,
-            configuredTimeoutAction: String(cmp.actionOnTimeout || 'LIMITED_ADS').toUpperCase(),
-            prebid: {
-                modulesPresent: modules.filter(function (module) { return /^[A-Za-z0-9_-]{1,64}$/.test(String(module)); }).map(String).slice(0, 40),
-                consentConfigured: Boolean(auction.consent && Object.keys(auction.consent).length),
-                storageControlConfigured: Boolean(auction.storageControl && auction.storageControl.enforcement),
-                activityControlsConfigured: Boolean(auction.allowActivities && Object.keys(auction.allowActivities).length)
-            },
-            privacyGateRespected: Boolean(state.privacyDecision) && state.adInitializationStarted !== true
-        };
-    }
-
-    function reportPrivacyDiagnostic(config, diagnostic) {
-        if (!diagnostic || diagnostic.sent) return Promise.resolve();
-        var endpoint = privacyDiagnosticEndpoint(config);
-        if (!endpoint) return Promise.resolve();
-        diagnostic.sent = true;
-        var request = window.fetch(endpoint, {
-            method: 'POST',
-            mode: 'cors',
-            credentials: 'omit',
-            cache: 'no-store',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Horus-Diagnostic-Token': diagnostic.token
-            },
-            body: JSON.stringify(sanitizedPrivacyDiagnostic(config, diagnostic))
-        }).then(function (response) {
-            if (!response || !response.ok) throw new Error('Privacy diagnostic was not accepted');
-        }).catch(function (error) {
-            log(config, 'Explicit privacy diagnostic failed', error);
-        });
-        return Promise.race([
-            request,
-            new Promise(function (resolve) { window.setTimeout(resolve, 2500); })
-        ]);
-    }
-
     function hostAllowed(hostname, allowed) {
         if (!hostname || !Array.isArray(allowed) || !allowed.length) return false;
         return allowed.some(function (candidate) {
@@ -219,7 +119,8 @@
 
     // Bound both response headers and JSON decoding, including browsers where
     // abort is unavailable or a transport ignores its signal. Late data is inert.
-    function fetchJson(url, force, attempt) {
+    function fetchJson(url, force, attempt, retries) {
+        retries = retries === undefined ? 1 : retries;
         attempt = attempt || 0;
         return new Promise(function (resolve, reject) {
             var controller = typeof window.AbortController === 'function' ? new window.AbortController() : null;
@@ -246,7 +147,7 @@
                 return response.json();
             }).then(function (value) { finish(null, value); }, function (error) { finish(error); });
         }).catch(function (error) {
-            if (attempt === 0) return fetchJson(url, force, 1);
+            if (attempt < retries) return fetchJson(url, force, attempt + 1, retries);
             throw error;
         });
     }
@@ -274,15 +175,40 @@
             return fetchJson(aliasUrl, force).then(function (config) { return validateConfig(config, siteKey); });
         }
         var manifestUrl = configBase(script) + '/' + encodeURIComponent(siteKey) + '/manifest.json' + (force ? '?v=' + encodeURIComponent(Date.now()) : '');
-        return fetchJson(manifestUrl, force).then(function (manifest) {
+        var expectedVersion = null, fallback = null, completed = false;
+        function prepareFallback() {
+            if (!fallback && !completed) {
+                // Revalidate the mutable alias. Speculation is never permission:
+                // the manifest still owns version selection when it is available.
+                fallback = fetchJson(aliasUrl, true).then(function (config) {
+                    return { config: config };
+                }, function (error) { return { error: error }; });
+            }
+            return fallback;
+        }
+        // Only slow paths pay for an extra read; fast cache hits remain two GETs.
+        var hedge = window.setTimeout(prepareFallback, 750);
+        return fetchJson(manifestUrl, force, 0, 0).then(function (manifest) {
             var entry = manifestEntry(manifest, script, siteKey);
             if (!entry) throw new Error('Static configuration manifest is invalid');
+            expectedVersion = entry.version;
             var immutableUrl = new URL(entry.path, configBase(script) + '/').href;
-            return fetchJson(immutableUrl, false).then(function (config) {
-                return validateConfig(config, siteKey, entry.version);
+            return fetchJson(immutableUrl, false, 0, 0).then(function (config) {
+                return validateConfig(config, siteKey, expectedVersion);
             });
         }).catch(function () {
-            return fetchJson(aliasUrl, force).then(function (config) { return validateConfig(config, siteKey); });
+            return prepareFallback().then(function (result) {
+                if (result.error) throw result.error;
+                var config = validateConfig(result.config, siteKey);
+                if (expectedVersion && (!Number.isInteger(Number(config.configVersion))
+                    || Number(config.configVersion) < Number(expectedVersion))) {
+                    throw new Error('Fallback configuration is older than the manifest');
+                }
+                return config;
+            });
+        }).finally(function () {
+            completed = true;
+            window.clearTimeout(hedge);
         });
     }
 
@@ -517,7 +443,6 @@
         // or a superseded configuration before any engine can request an ad.
         if (!state.config || state.config.siteKey !== config.siteKey
             || state.config.configVersion !== config.configVersion) return false;
-        if (state.privacyDecision && state.privacyDecision.blocked) return false;
         return !clickGuardBlocked(config);
     }
 
@@ -812,75 +737,6 @@
             return ensureGoogletagQueue();
         });
         return state.gptPromise;
-    }
-
-    function resolvePrivacy(config) {
-        if (state.privacyPromise) return state.privacyPromise;
-        var privacy = config.privacy || {};
-        var cmp = privacy.cmp || {};
-        var timeout = Math.max(100, Number(cmp.timeoutMs || 1200));
-        state.privacyPromise = new Promise(function (resolve) {
-            var pending = 0;
-            var settled = false;
-            var tcfDone = false;
-            var gppDone = false;
-            var decision = {
-                tcf: null, gpp: null,
-                tcfDetected: typeof window.__tcfapi === 'function', tcfResponded: false, tcfCmpId: null, tcfEventStatus: null,
-                gppDetected: typeof window.__gpp === 'function', gppResponded: false, gppApplicableSections: [],
-                gpc: Boolean(window.navigator && window.navigator.globalPrivacyControl), limitedAds: false, blocked: false
-            };
-            function finish() {
-                if (settled || pending > 0) return;
-                settled = true;
-                var tcfDenied = decision.tcf && decision.tcf.gdprApplies === true
-                    && (!decision.tcf.purpose || !decision.tcf.purpose.consents || decision.tcf.purpose.consents[1] !== true);
-                decision.limitedAds = decision.gpc || Boolean(tcfDenied) || decision.limitedAds;
-                state.privacyDecision = decision;
-                resolve(decision);
-            }
-            if (typeof window.__tcfapi === 'function') {
-                pending += 1;
-                try {
-                    window.__tcfapi('addEventListener', 2, function (tcData, success) {
-                        if (tcfDone || settled) return;
-                        if (success && tcData) {
-                            decision.tcfResponded = true;
-                            decision.tcfEventStatus = typeof tcData.eventStatus === 'string' ? tcData.eventStatus.slice(0, 64) : null;
-                            decision.tcfCmpId = Number.isInteger(Number(tcData.cmpId)) ? Number(tcData.cmpId) : null;
-                        }
-                        if (!success || !tcData || ['tcloaded', 'useractioncomplete'].indexOf(tcData.eventStatus) === -1) return;
-                        tcfDone = true; decision.tcf = tcData; pending -= 1; finish();
-                    });
-                } catch (error) { tcfDone = true; pending -= 1; }
-            }
-            if (typeof window.__gpp === 'function') {
-                pending += 1;
-                try {
-                    window.__gpp('ping', function (data, success) {
-                        if (gppDone || settled) return;
-                        gppDone = true;
-                        if (success !== false) {
-                            decision.gpp = data || {};
-                            decision.gppResponded = true;
-                            decision.gppApplicableSections = Array.isArray(data && data.applicableSections) ? data.applicableSections.slice(0, 20) : [];
-                        }
-                        pending -= 1; finish();
-                    });
-                } catch (error) { gppDone = true; pending -= 1; }
-            }
-            if (pending === 0 && String(privacy.mode || 'AUTO').toUpperCase() === 'STRICT' && privacy.requireConsentBeforeAds !== false) pending = 1;
-            window.setTimeout(function () {
-                if (settled) return;
-                pending = 0;
-                var timeoutAction = String(cmp.actionOnTimeout || 'LIMITED_ADS').toUpperCase();
-                if (timeoutAction === 'LIMITED_ADS') decision.limitedAds = true;
-                if (timeoutAction === 'BLOCK_ADS') decision.blocked = true;
-                finish();
-            }, timeout);
-            finish();
-        });
-        return state.privacyPromise;
     }
 
     function loadPrebid(config) {
@@ -1884,36 +1740,16 @@ function nativeDefinition(config, code) {
                         var pubads = googletag.pubads();
                         if (typeof startupTrace === 'function') startupTrace('GPT ready');
                         if (typeof traceGptService === 'function') traceGptService(pubads);
-                        var privacy = state.privacyDecision || {};
-                        var privacySignals = config.privacy && config.privacy.signals || {};
                         var unifiedConfig = typeof googletag.setConfig === 'function';
                         if (googletag.setConfig) {
                             var pageConfig = Object.assign({}, config.gpt && config.gpt.config || {});
-                            if (privacy.gpc || privacy.limitedAds) pageConfig.privacyTreatments = { treatments: ['disablePersonalization'] };
                             pageConfig.disableInitialLoad = true;
                             pageConfig.singleRequest = Boolean(config.gpt && config.gpt.singleRequest);
                             googletag.setConfig(pageConfig);
                             state.initialLoadDisabled = true;
                         }
-                        if (pubads.setPrivacySettings) {
-                            var privacySettings = {
-                                childDirectedTreatment: Boolean(privacySignals.coppa),
-                                underAgeOfConsent: Boolean(privacySignals.underAgeOfConsent),
-                                restrictDataProcessing: Boolean(privacy.gpc),
-                                nonPersonalizedAds: Boolean(privacy.limitedAds)
-                            };
-                            var age = String(privacySignals.ageTreatment || '').toUpperCase();
-                            if (age && googletag.enums && googletag.enums.TagForAgeTreatment && googletag.enums.TagForAgeTreatment[age]) {
-                                privacySettings.tagForAgeTreatment = googletag.enums.TagForAgeTreatment[age];
-                            }
-                            pubads.setPrivacySettings(privacySettings);
-                        } else {
-                            if (pubads.setTagForChildDirectedTreatment) pubads.setTagForChildDirectedTreatment(privacySignals.coppa ? 1 : 0);
-                            if (pubads.setTagForUnderAgeOfConsent) pubads.setTagForUnderAgeOfConsent(privacySignals.underAgeOfConsent ? 1 : 0);
-                        }
+                        // Consent APIs and provider-owned settings remain untouched.
                         applyTargeting(pubads, config.pageTargeting || {});
-                        if (privacy.gpc) pubads.setTargeting('hm_gpc', ['1']);
-                        if (privacy.limitedAds) pubads.setTargeting('hm_limited_ads', ['1']);
                         var lazy = lazyOptions(gamItems, config);
                         if (lazy && pubads.enableLazyLoad) pubads.enableLazyLoad(lazy);
                         if (!unifiedConfig && config.gpt && config.gpt.singleRequest && pubads.enableSingleRequest && !state.servicesEnabled) pubads.enableSingleRequest();
@@ -2139,23 +1975,37 @@ function nativeDefinition(config, code) {
         window.addEventListener('horus:navigation', function () { window.setTimeout(function () { scan(state.config); }, 0); });
     }
 
+    function delegatedReleaseUrl(config, script) {
+        var selected = config.loader || {};
+        if (!selected.assetUrl || !selected.version || selected.version === VERSION
+            || String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
+        try {
+            var url = new URL(selected.assetUrl, window.location.href);
+            if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
+                || url.origin !== new URL(configBase(script)).origin
+                || !/^\/assets\/(?:loader\/)?hm-loader(?:\.[a-f0-9]{16})?\.min\.js$/.test(url.pathname)) return null;
+            url.searchParams.set('v', String(selected.version));
+            return url.href;
+        } catch (error) { return null; }
+    }
+
     function maybeDelegateRelease(config, script) {
         var selected = config.loader || {};
         if (!selected.assetUrl || !selected.version || selected.version === VERSION) return null;
         if (String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
         if (window.__HM_RELEASE_HANDOFF_PROMISE__) return window.__HM_RELEASE_HANDOFF_PROMISE__;
         if (window.__HM_RELEASE_DELEGATED__) return null;
-        try {
-            if (new URL(selected.assetUrl, window.location.href).hostname === 'app.horusmedia.net') return null;
-        } catch (error) {
-            return null;
+        var releaseUrl = delegatedReleaseUrl(config, script);
+        if (!releaseUrl) {
+            window.__HM_RELEASE_HANDOFF_FAILED__ = true;
+            return Promise.resolve(true);
         }
 
         if (typeof startupTrace === 'function') startupTrace('Core handoff');
         window.__HM_RELEASE_DELEGATED__ = true;
         var replacement = document.createElement('script');
         replacement.async = true;
-        replacement.src = selected.assetUrl + (selected.assetUrl.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(selected.version);
+        replacement.src = releaseUrl;
         replacement.setAttribute('data-site-key', config.siteKey);
         replacement.setAttribute('data-config-base', configBase(script));
         replacement.setAttribute('data-environment', String(scriptData(script, 'environment') || 'production'));
@@ -2221,7 +2071,7 @@ function nativeDefinition(config, code) {
                     finish(new Error('Delegated Loader release did not install a boot API'));
                     return;
                 }
-                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement })).then(function () {
+                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement, handoffConfig: config })).then(function () {
                     finish(null);
                 }).catch(finish);
             };
@@ -2249,7 +2099,6 @@ function nativeDefinition(config, code) {
             return window.__HM_RELEASE_HANDOFF_PROMISE__;
         }
         var script = options.script || findScript();
-        var diagnostic = capturePrivacyDiagnostic(script);
         var siteKey = options.siteKey || scriptData(script, 'siteKey');
         if (!siteKey || !window.fetch) return Promise.resolve([]);
         if (state.booting && !options.force) return state.booting;
@@ -2262,7 +2111,7 @@ function nativeDefinition(config, code) {
             }
             return fetchConfig(script, siteKey, Boolean(options.force)).then(function (config) {
                 config.controls = mergeControls(config.controls || {}, globalControls || {});
-                return resolvePrivacy(config).then(function () { return config; });
+                return config;
             });
         }).then(function (config) {
             if (!config) return [];
@@ -2271,13 +2120,8 @@ function nativeDefinition(config, code) {
                 log(config, 'Hostname rejected', currentHostname());
                 return [];
             }
-            return reportPrivacyDiagnostic(config, diagnostic).then(function () {
             if (config.status !== 'active' || config.immediatePause || servingDisabled(config)) {
                 log(config, 'Advertising is disabled; no advertising calls were made');
-                return [];
-            }
-            if (state.privacyDecision && state.privacyDecision.blocked) {
-                log(config, 'Privacy gate blocked advertising after the bounded CMP timeout');
                 return [];
             }
             initializeClickGuard(config);
@@ -2289,7 +2133,6 @@ function nativeDefinition(config, code) {
             if (delegation) return delegation.then(function () { return []; });
             installSpaSupport();
             return scan(config);
-            });
         }).catch(function (error) {
             log({ debug: Boolean(scriptData(script, 'debug')) }, 'Loader stopped safely', error);
             return [];
@@ -2318,9 +2161,6 @@ function nativeDefinition(config, code) {
             state.config = null;
             state.gptPromise = null;
             state.prebidPromise = null;
-            state.privacyPromise = null;
-            state.privacyDecision = null;
-            state.privacyDiagnostic = null;
             state.adInitializationStarted = false;
             state.servicesEnabled = false;
             state.initialLoadDisabled = false;

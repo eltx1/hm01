@@ -509,14 +509,14 @@ test('Click Guard block prevents Direct Demand script requests', async () => {
     assert.equal(runtime.metrics.directLoads.length, 0);
 });
 
-test('consent timeout with BLOCK_ADS prevents Direct Demand script requests', async () => {
+test('legacy privacy timeout no longer blocks provider startup', async () => {
     const definition = { header: { enabled: true, candidates: [candidate('ONE', recipe())], house: null } };
     const selected = config(definition, {
         privacy: { mode: 'STRICT', cmp: { timeoutMs: 1, actionOnTimeout: 'BLOCK_ADS' }, requireConsentBeforeAds: true },
     });
     const runtime = harness(selected);
     await runtime.sandbox.HorusMediaLoader.boot();
-    assert.equal(runtime.metrics.directLoads.length, 0);
+    assert.equal(runtime.metrics.directLoads.length, 1);
 });
 
 

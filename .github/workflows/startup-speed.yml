@@ -1,0 +1,21 @@
+name: Startup speed validation
+on:
+  push:
+    branches: [perf/ad-startup-20261113]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
+      - run: bash scripts/install-playwright-ci.sh
+      - run: npm run build:loader
+      - run: node --test tests/Browser/*.test.js
+      - run: npx playwright test --config=playwright.traffic-gate.config.js startup-speed.playwright.spec.js early-verification.playwright.spec.js traffic-gate-loader.playwright.spec.js startup-recovery.playwright.spec.js traffic-gate.playwright.spec.js
