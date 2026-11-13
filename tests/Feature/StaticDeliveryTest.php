@@ -90,6 +90,21 @@ class StaticDeliveryTest extends TestCase
         $this->assertTrue(AuditLog::query()->where('event', 'site.config.delivery.queued')->exists());
     }
 
+    public function test_gate_document_embeds_exact_runtime_with_hash_csp_and_keeps_legacy_asset(): void
+    {
+        [$site, $admin] = $this->siteWithPrimaryHorus();
+        app(SiteConfigPublisher::class)->publish($site, ConfigEnvironment::Production, $admin);
+        app(StaticDeliveryManager::class)->processPending();
+        $files = $this->driver->snapshots[0]->files;
+        $runtime = $files['assets/traffic-gate/horus-traffic-gate.js'];
+        $html = $files['traffic-gate/index.html'];
+        $this->assertStringNotContainsString('<script src=', $html);
+        $this->assertStringContainsString('>'.$runtime.'</script>', $html);
+        $this->assertStringContainsString("'sha256-".base64_encode(hash('sha256', $runtime, true))."'", $files['_headers']);
+        $this->assertStringNotContainsString("script-src 'unsafe-inline'", $files['_headers']);
+        $this->assertLessThan(strpos($html, 'data-hm-gate-runtime'), strpos($html, 'id="horus-turnstile"'));
+    }
+
     public function test_batch_deduplicates_same_site_and_combines_multiple_sites(): void
     {
         [$first, $admin] = $this->siteWithPrimaryHorus();

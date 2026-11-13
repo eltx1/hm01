@@ -22,6 +22,7 @@ class QueueStaticAssetsTest extends TestCase
             File::ensureDirectoryExists(dirname($directory.'/'.$path));
             File::put($directory.'/'.$path, 'fixture-'.$path);
         }
+        File::put($directory.'/traffic-gate/index.html', '<!doctype html><html><head><script src="/assets/traffic-gate/horus-traffic-gate.js?v=2" defer></script></head><body><div id="horus-turnstile"></div></body></html>');
         $this->app->usePublicPath($directory);
         $this->travelTo(now()->utc()->startOfDay()->addHours(12)->addMinute());
         config(['static-delivery.normal_batch_interval_minutes' => 5]);

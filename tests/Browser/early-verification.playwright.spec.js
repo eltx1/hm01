@@ -142,7 +142,7 @@ for (const mode of ['composed','minified']) {
     for (const variant of ['denied','kill','gateDisabled','serverReject','privacyBlocked','failWarm']) {
         test(`${mode}: early gate preserves ${variant} behavior`, async ({page}) => {
             const run = await open(page,{loader:mode==='composed'?composed:minified,[variant]:true});
-            if (variant==='gateDisabled' || variant==='failWarm') {
+            if (variant==='gateDisabled' || variant==='failWarm' || variant==='privacyBlocked') {
                 await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
                 expect(run.counts.verifies).toBe(variant==='gateDisabled'?0:1);
                 if (variant==='failWarm') expect(run.counts.documents).toBe(2);

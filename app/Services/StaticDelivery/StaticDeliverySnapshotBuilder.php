@@ -147,6 +147,18 @@ final class StaticDeliverySnapshotBuilder
         $prebidHash = hash('sha256', $prebid);
         $trafficGateHtml = $this->readRequired(public_path('traffic-gate/index.html'));
         $trafficGateJs = $this->readRequired(public_path('assets/traffic-gate/horus-traffic-gate.js'));
+        // Ship the small gate runtime in the document: no extra blocking script
+        // fetch. Authorize only these exact bytes, never arbitrary inline script.
+        if (stripos($trafficGateJs, '</script') !== false) {
+            throw new StaticDeliveryException('ASSET_INVALID', 'Traffic Gate runtime cannot be embedded safely.');
+        }
+        $externalGateTag = '<script src="/assets/traffic-gate/horus-traffic-gate.js?v=2" defer></script>';
+        if (substr_count($trafficGateHtml, $externalGateTag) !== 1 || substr_count($trafficGateHtml, '</body>') !== 1) {
+            throw new StaticDeliveryException('ASSET_INVALID', 'Traffic Gate document template changed unexpectedly.');
+        }
+        $trafficGateHtml = str_replace($externalGateTag, '', $trafficGateHtml);
+        $trafficGateHtml = str_replace('</body>', '<script data-hm-gate-runtime="/assets/traffic-gate/horus-traffic-gate.js">'.$trafficGateJs.'</script>'."\n</body>", $trafficGateHtml);
+        $gateScriptHash = 'sha256-'.base64_encode(hash('sha256', $trafficGateJs, true));
 
         return [
             'hm-loader.js' => $loader,
@@ -172,7 +184,7 @@ final class StaticDeliverySnapshotBuilder
             'assets/prebid/horus-prebid.sha256' => $prebidHash."\n",
             'traffic-gate/index.html' => $trafficGateHtml,
             'assets/traffic-gate/horus-traffic-gate.js' => $trafficGateJs,
-            '_headers' => $this->headers(),
+            '_headers' => $this->headers($gateScriptHash),
             '_routes.json' => $this->routes(),
             '404.html' => "<!doctype html><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><title>Not found</title>\n",
         ];
@@ -236,9 +248,9 @@ final class StaticDeliverySnapshotBuilder
         ]);
     }
 
-    private function headers(): string
+    private function headers(string $gateScriptHash): string
     {
-        return <<<'HEADERS'
+        $headers = <<<'HEADERS'
 /*
   Access-Control-Allow-Origin: *
   X-Content-Type-Options: nosniff
@@ -344,6 +356,8 @@ final class StaticDeliverySnapshotBuilder
   Content-Type: text/plain; charset=utf-8
   X-Content-Type-Options: nosniff
 HEADERS;
+
+        return str_replace("script-src 'self' https://challenges.cloudflare.com;", "script-src 'self' https://challenges.cloudflare.com '{$gateScriptHash}';", $headers);
     }
 
     private function readRequired(string $path): string

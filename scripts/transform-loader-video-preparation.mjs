@@ -166,7 +166,7 @@ const RUNTIME = String.raw`
 export function applyVideoPreparationTransform(input) {
     let source = String(input);
     if (source.includes(MARKER)) return source;
-    const hook = '    function prepareStaticConnections(config, privacyReady) {';
+    const hook = '    function prepareStaticConnections(config) {';
     const reset = '            resetClickGuardRuntime();';
     if (!source.includes(hook) || !source.includes(reset)) throw new Error('Video preparation requires actual Loader boot and reset boundaries');
     source = source.replace(hook, () => RUNTIME + hook + '\n        try { prepareInlineVideoHistory(config); } catch (error) { stopInlineVideoPreparation(); }');

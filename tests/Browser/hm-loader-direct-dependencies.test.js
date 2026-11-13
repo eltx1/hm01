@@ -55,7 +55,7 @@ test('trusted Direct starts the GPT SDK before its adapter and shares the pendin
     assert.equal(h.scripts.length, 1);
 });
 
-for (const variant of ['PENDING', 'ERROR', 'TIMEOUT', 'UNAVAILABLE', 'BLOCKED', 'privacy-pending', 'privacy-denied', 'site-off', 'host', 'serving-off', 'direct-off', 'handoff-failed']) {
+for (const variant of ['PENDING', 'ERROR', 'TIMEOUT', 'UNAVAILABLE', 'BLOCKED', 'site-off', 'host', 'serving-off', 'direct-off', 'handoff-failed']) {
     test(`dependency execution respects admission: ${variant}`, () => {
         const h = harness();
         if (/^[A-Z]+$/.test(variant)) h.state.trafficGate.status = variant;

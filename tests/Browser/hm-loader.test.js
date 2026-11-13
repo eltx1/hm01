@@ -286,6 +286,7 @@ test('built release mismatch hands boot to the delegated Loader without sharing 
     assert.equal(concurrentBoot, firstBoot);
     await Promise.all([firstBoot, concurrentBoot]);
 
+    assert.equal(metrics.fetches.length, 3, 'fresh handoff reuses the exact static snapshot');
     assert.equal(metrics.delegatedLoads, 1);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
@@ -439,54 +440,19 @@ test('concurrent scans while GPT loads reserve one GAM slot owner', async () => 
     assert.equal(metrics.displayed.length, 1);
 });
 
-test('privacy gate waits for TCF and applies unified GPT privacy configuration', async () => {
-    const selected = activeConfig({
-        privacy: {
-            mode: 'STRICT', requireConsentBeforeAds: true,
-            cmp: { timeoutMs: 200, actionOnTimeout: 'LIMITED_ADS' },
-            signals: { coppa: true, underAgeOfConsent: true },
-        },
-        gpt: {
-            url: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', singleRequest: true,
-            config: { threadYield: 'ENABLED_ALL_SLOTS', autoRefresh: { heavyAds: true } },
-        },
-    });
-    const { sandbox, metrics } = createHarness(selected, { unifiedConfig: true, deferredTcf: true });
-    const boot = sandbox.HorusMediaLoader.boot();
-    for (let attempt = 0; attempt < 10 && !metrics.tcfCallback; attempt += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-    }
-
-    assert.equal(metrics.gptLoads, 0);
-    assert.equal(typeof metrics.tcfCallback, 'function');
-    metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: true, purpose: { consents: { 1: false } } }, true);
-    await boot;
-
-    assert.equal(metrics.gptLoads, 1);
-    assert.equal(metrics.pageConfigs.length, 1);
-    assert.equal(metrics.pageConfigs[0].disableInitialLoad, true);
-    assert.equal(metrics.pageConfigs[0].singleRequest, true);
-    assert.equal(metrics.pageConfigs[0].privacyTreatments.treatments[0], 'disablePersonalization');
-    assert.equal(metrics.singleRequest, 0);
-    assert.equal(metrics.privacySettings[0].childDirectedTreatment, true);
-    assert.equal(metrics.privacySettings[0].underAgeOfConsent, true);
-    assert.equal(metrics.pageTargeting.hm_limited_ads[0], '1');
-});
-
-test('strict privacy mode can block every advertising call after its bounded CMP timeout', async () => {
-    const selected = activeConfig({
-        privacy: {
-            mode: 'STRICT', requireConsentBeforeAds: true,
-            cmp: { timeoutMs: 100, actionOnTimeout: 'BLOCK_ADS' },
-        },
-    });
-    const { sandbox, metrics } = createHarness(selected);
-
+test('legacy privacy settings and an unresolved CMP do not delay or override GPT', async () => {
+    const selected = activeConfig({privacy: {mode:'STRICT', requireConsentBeforeAds:true,
+        cmp:{timeoutMs:10000,actionOnTimeout:'BLOCK_ADS'}}});
+    const {sandbox,metrics} = createHarness(selected,{unifiedConfig:true,deferredTcf:true,gpc:true});
+    const cmp = sandbox.__tcfapi;
     await sandbox.HorusMediaLoader.boot();
-
-    assert.equal(metrics.gptLoads, 0);
-    assert.equal(metrics.defined.length, 0);
-    assert.equal(metrics.displayed.length, 0);
+    assert.equal(metrics.gptLoads,1);
+    assert.equal(metrics.defined.length,1);
+    assert.equal(metrics.tcfCallback,null);
+    assert.equal(sandbox.__tcfapi,cmp);
+    assert.deepEqual(metrics.privacySettings,[]);
+    assert.equal(metrics.pageConfigs[0].privacyTreatments,undefined);
+    assert.equal(metrics.pageConfigs[0].disableInitialLoad,true);
 });
 
 test('paused sites never load GPT or define an advertising slot', async () => {
@@ -556,12 +522,11 @@ test('falls back to the compatibility production alias when manifest propagation
     const { sandbox, metrics } = createHarness(activeConfig(), { manifestMode: 'missing' });
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.gptLoads, 1);
-    assert.equal(metrics.fetches.length, 4);
-    assert.equal(metrics.fetches[1], metrics.fetches[2], 'retry the missing manifest once');
-    assert.match(metrics.fetches[3], /\/production\.json$/);
+    assert.equal(metrics.fetches.length, 3);
+    assert.match(metrics.fetches[2], /\/production\.json$/);
 });
 
-test('stale manifest version mismatch safely revalidates through the current alias', async () => {
+test('a freshly revalidated newer alias handles a stale manifest', async () => {
     const { sandbox, metrics } = createHarness(activeConfig(), { manifestVersion: 4, immutableConfig: activeConfig({ configVersion: 5 }) });
     await sandbox.HorusMediaLoader.boot();
     assert.equal(metrics.gptLoads, 1);
@@ -594,54 +559,12 @@ test('normal Loader boot sends no privacy diagnostic request', async () => {
     assert.ok(metrics.fetches.every((url) => !url.includes('/privacy-diagnostics/report')));
 });
 
-test('explicit one-shot diagnostic sends only sanitized privacy evidence with credentials omitted', async () => {
-    const token = 'd'.repeat(64);
-    const selected = activeConfig({
-        privacy: {
-            mode: 'STRICT', requireConsentBeforeAds: true,
-            cmp: { timeoutMs: 200, actionOnTimeout: 'LIMITED_ADS', tcfRequired: true, gppRequired: true },
-            signals: { gpc: true },
-        },
-        prebid: {
-            enabled: false,
-            build: { modules: ['consentManagementTcf', 'consentManagementGpp', 'storageControl'] },
-            auction: {
-                consent: { gdpr: { cmpApi: 'iab' }, gpp: { cmpApi: 'iab' } },
-                storageControl: { enforcement: 'strict' },
-                allowActivities: { accessDevice: { default: false } },
-            },
-        },
-    });
-    const { sandbox, metrics } = createHarness(selected, {
-        deferredTcf: true,
-        gppResponse: { applicableSections: [7, 8], gppString: 'FULL_GPP_STRING_MUST_NOT_LEAVE_BROWSER' },
-        gpc: true,
-        diagnosticToken: token,
-    });
-    const boot = sandbox.HorusMediaLoader.boot();
-    for (let attempt = 0; attempt < 10 && !metrics.tcfCallback; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
-    metrics.tcfCallback({
-        eventStatus: 'tcloaded', cmpId: 42, gdprApplies: true,
-        tcString: 'FULL_TC_STRING_MUST_NOT_LEAVE_BROWSER',
-        purpose: { consents: { 1: true } },
-    }, true);
-    await boot;
-
-    assert.equal(metrics.diagnosticPosts.length, 1);
-    const report = metrics.diagnosticPosts[0];
-    assert.equal(report.options.credentials, 'omit');
-    assert.equal(report.options.headers['X-Horus-Diagnostic-Token'], token);
-    assert.equal(report.payload.tcf.detected, true);
-    assert.equal(report.payload.tcf.responded, true);
-    assert.equal(report.payload.tcf.cmpId, 42);
-    assert.deepEqual(report.payload.gpp.applicableSections, [7, 8]);
-    assert.equal(report.payload.gpcDetected, true);
-    assert.equal(report.payload.privacyGateRespected, true);
-    assert.ok(metrics.cleanedUrls[0] && !metrics.cleanedUrls[0].includes(token));
-    const encoded = JSON.stringify(report.payload);
-    assert.ok(!encoded.includes('FULL_TC_STRING'));
-    assert.ok(!encoded.includes('FULL_GPP_STRING'));
-    assert.ok(!/cookie|userId|fingerprint|bidResponse|click/i.test(encoded));
+test('retired privacy diagnostic never sends requests or delays advertising', async () => {
+    const {sandbox,metrics} = createHarness(activeConfig(),{diagnosticToken:'d'.repeat(64),deferredTcf:true});
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.diagnosticPosts.length,0);
+    assert.equal(metrics.tcfCallback,null);
+    assert.equal(metrics.gptLoads,1);
 });
 
 for (const [label, runtimeSource] of [['source', loaderSource], ['built', builtLoaderSource]]) {
@@ -676,3 +599,16 @@ for (const changed of ['hostname', 'siteKey', 'configVersion', 'same-version']) 
         assert.equal(metrics.displayed.length, changed === 'same-version' ? 1 : 0);
     });
 }
+
+
+test('slow delegated handoff revalidates configuration instead of adopting an old snapshot',async()=>{
+    const selected=activeConfig({loader:{version:'1.3.0',assetUrl:'https://cdn.horusmedia.net/assets/hm-loader.min.js'}});
+    const {sandbox,metrics}=createHarness(selected,{delegatedLoader:true,deferredDelegatedLoader:true,runtimeSource:builtLoaderSource});
+    const boot=sandbox.HorusMediaLoader.boot();
+    for(let n=0;n<20&&!metrics.releaseDelegatedLoader;n++)await new Promise(r=>setImmediate(r));
+    assert.equal(metrics.fetches.length,3);
+    sandbox.Date=class extends Date {static now(){return Date.now()+6000;}};
+    metrics.releaseDelegatedLoader();await boot;
+    assert.equal(metrics.fetches.length,6);
+    assert.equal(metrics.gptLoads,1);
+});

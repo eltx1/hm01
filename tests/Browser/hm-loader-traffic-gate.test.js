@@ -575,54 +575,22 @@ function assertNoMonetization(metrics) {
     assert.equal(metrics.providerInitializations, 0);
 }
 
-test('pre-DOM verification can PASS but all engines wait for DOM and a CMP installed later', async () => {
-    const config = baseConfig({ gam: true, standalone: true, direct: true });
-    config.privacy.cmp.timeoutMs = 5000;
-    config.privacy.requireConsentBeforeAds = false;
-    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
-    await runtime.flush();
-    assert.equal(runtime.metrics.configFetches, 1);
-    assert.equal(runtime.metrics.globalFetches, 1);
-    assert.equal(runtime.metrics.gateFrames, 1);
-    assert.equal(runtime.sandbox.HorusMediaLoader.getConfig(), null);
-    runtime.sendGate('PASS');
-    await runtime.flush();
-    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
-    await runtime.sandbox.HorusMediaLoader.scan();
-    assertNoMonetization(runtime.metrics);
-    const hints = runtime.metrics.preparationHints.map(node => node.attributes);
-    assert.equal(hints.filter(hint => hint.rel === 'preload' && hint.as === 'script' && hint.href === config.gpt.url).length, 1);
-    assert.equal(hints.filter(hint => hint.rel === 'preconnect').length, 3);
-    let consent;
-    runtime.sandbox.__tcfapi = (command, version, callback) => { consent = callback; };
-    runtime.domReady();
-    await runtime.flush();
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.flush();
-    await runtime.sandbox.HorusMediaLoader.scan();
-    assertNoMonetization(runtime.metrics);
-    consent({ eventStatus: 'tcloaded', gdprApplies: false }, true);
-    await boot;
-    assert.equal(runtime.metrics.gamRequests, 1);
-    assert.equal(runtime.metrics.gptScripts, 1);
-    assert.equal(runtime.metrics.configFetches, 1);
-    assert.equal(runtime.metrics.globalFetches, 1);
-    assert.equal(runtime.metrics.gateFrames, 1, 'DOM boot adopts the same verified attempt');
-    assert.equal(runtime.metrics.preparationHints.length, 4);
+test('PASS starts all ready engines during parsing without calling a late CMP', async () => {
+    const h=createHarness(baseConfig({gam:true,standalone:true,direct:true}),{readyState:'loading',autoboot:true,timerScale:1,deferredTcf:true});
+    await h.flush(); assertNoMonetization(h.metrics);
+    assert.ok(h.sandbox.HorusMediaLoader.getConfig());
+    h.sendGate('PASS'); await h.sandbox.__HORUS_MEDIA_LOADER_STATE__.booting;
+    assert.equal(h.metrics.gamRequests,1); assert.equal(h.metrics.prebidAuctions,1);
+    assert.equal(h.metrics.directScripts,1); assert.equal(h.metrics.privacyStarted,0);
+    h.domReady(); await h.flush();
+    assert.equal(h.metrics.gamRequests,1); assert.equal(h.metrics.configFetches,1);
 });
 
-test('a long parser stall refreshes configuration and emergency controls before monetization', async () => {
-    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
-    await runtime.flush();
-    runtime.elapse(6000);
-    runtime.setGlobalControls({ ...openControls(), adServingDisabled: true });
-    runtime.domReady();
-    await runtime.sandbox.HorusMediaLoader.boot();
-    assert.equal(runtime.metrics.configFetches, 2);
-    assert.equal(runtime.metrics.globalFetches, 2);
-    assert.equal(runtime.metrics.gateFrames, 1);
-    assert.equal(runtime.metrics.gateFrameRemovals, 1);
-    assertNoMonetization(runtime.metrics);
+test('explicit refresh during parsing rechecks emergency controls', async () => {
+    const h=createHarness(baseConfig(),{readyState:'loading',autoboot:true});
+    await h.flush(); h.setGlobalControls({...openControls(),adServingDisabled:true});
+    await h.sandbox.HorusMediaLoader.refresh();
+    assert.equal(h.metrics.globalFetches,2); assertNoMonetization(h.metrics);
 });
 
 test('discarded pending preparations cannot add hints after a newer emergency stop', async () => {
@@ -639,37 +607,20 @@ test('discarded pending preparations cannot add hints after a newer emergency st
     assertNoMonetization(runtime.metrics);
 });
 
-test('consent-required sites preload Google only after privacy permits it, while verification is pending', async () => {
-    const config = baseConfig();
-    config.privacy.cmp = { timeoutMs: 10000, actionOnTimeout: 'BLOCK_ADS' };
-    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, deferredTcf: true, timerScale: 1 });
-    await runtime.flush();
-    const googleHints = () => runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload');
-    assert.equal(googleHints().length, 0);
-    runtime.domReady();
-    await runtime.flush();
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    assert.equal(googleHints().length, 0);
-    runtime.metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: false }, true);
-    await runtime.flush();
-    assert.equal(googleHints().length, 1);
-    assertNoMonetization(runtime.metrics);
-    runtime.sendGate('PASS');
-    await boot;
-    assert.equal(runtime.metrics.gamRequests, 1);
+test('Google bytes preload during pending verification regardless of legacy privacy settings', async () => {
+    const c=baseConfig(); c.privacy={mode:'STRICT',requireConsentBeforeAds:true,cmp:{timeoutMs:10000,actionOnTimeout:'BLOCK_ADS'}};
+    const h=createHarness(c,{readyState:'loading',autoboot:true,deferredTcf:true,timerScale:1});
+    await h.flush();
+    assert.equal(h.metrics.preparationHints.filter(n=>n.getAttribute('rel')==='preload').length,1);
+    assert.equal(h.metrics.privacyStarted,0); assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await h.sandbox.__HORUS_MEDIA_LOADER_STATE__.booting;
+    assert.equal(h.metrics.gamRequests,1);
 });
 
-test('privacy BLOCK_ADS prevents even Google preloading after a successful traffic verification', async () => {
-    const config = baseConfig();
-    config.privacy.mode = 'STRICT';
-    config.privacy.cmp = { timeoutMs: 100, actionOnTimeout: 'BLOCK_ADS' };
-    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, gateAutoResponse: 'PASS' });
-    await runtime.flush();
-    runtime.domReady();
-    await runtime.sandbox.HorusMediaLoader.boot();
-    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
-    assert.equal(runtime.metrics.preparationHints.filter(hint => hint.getAttribute('rel') === 'preload').length, 0);
-    assertNoMonetization(runtime.metrics);
+test('a legacy privacy BLOCK_ADS setting cannot veto server-verified PASS', async () => {
+    const c=baseConfig(); c.privacy={mode:'STRICT',cmp:{timeoutMs:100,actionOnTimeout:'BLOCK_ADS'}};
+    const h=createHarness(c,{gateAutoResponse:'PASS'});
+    await h.sandbox.HorusMediaLoader.boot(); assert.equal(h.metrics.gamRequests,1);
 });
 
 test('early preparation respects rejected domains, paused sites, invalid gates and engine controls', async () => {
@@ -753,138 +704,36 @@ test('DOM readiness never retries an explicit denial or rejected server verifica
     }
 });
 
-test('every pre-DOM loading failure gets one normal attempt with a new nonce and still requires PASS', async () => {
-    for (const result of ['DEADLINE', 'TIMEOUT', 'TURNSTILE_SCRIPT_ERROR', 'STATIC_CONFIG_UNAVAILABLE', 'VERIFICATION_UNAVAILABLE', 'ERROR', 'GATE_NOT_READY']) {
-        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
-        await runtime.flush();
-        const oldNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
-        if (result === 'DEADLINE') await new Promise(resolve => setTimeout(resolve, 60));
-        else runtime.sendGate(result === 'TIMEOUT' ? 'TIMEOUT' : 'ERROR', { category: result });
-        runtime.domReady();
-        const boot = runtime.sandbox.HorusMediaLoader.boot();
-        await runtime.flush();
-        assert.equal(runtime.metrics.gateFrames, 2, result);
-        assert.notEqual(runtime.metrics.hellos.at(-1).payload.pageNonce, oldNonce);
-        assertNoMonetization(runtime.metrics);
-        runtime.sendGate('PASS');
-        await boot;
-        assert.equal(runtime.metrics.gamRequests, 1, result);
-    }
+for (const category of ['TURNSTILE_SCRIPT_ERROR','STATIC_CONFIG_UNAVAILABLE','CRYPTO_UNAVAILABLE']) {
+    test(`pre-DOM ${category} recovers only through a fresh bounded attempt`, async () => {
+        const h=createHarness(baseConfig(),{readyState:'loading',autoboot:true,timerScale:1});
+        await h.flush(); const oldNonce=h.metrics.hellos.at(-1).payload.pageNonce;
+        h.sendGate('ERROR',{category}); await h.flush(); h.domReady(); await h.flush();
+        assertNoMonetization(h.metrics); assert.equal(h.metrics.gateFrames,2);
+        const retry=h.sandbox.__HORUS_MEDIA_LOADER_STATE__.booting;
+        assert.equal(h.metrics.gateFrames,2);
+        assert.notEqual(h.metrics.hellos.at(-1).payload.pageNonce,oldNonce);
+        h.sendGate('PASS',{}, {nonce:oldNonce}); await h.flush(); assertNoMonetization(h.metrics);
+        h.sendGate('PASS'); await retry; assert.equal(h.metrics.gamRequests,1);
+    });
+}
+
+test('parser completion never restarts a healthy pending gate or extends its deadline', async () => {
+    const h=createHarness(baseConfig(),{readyState:'loading',autoboot:true,timerScale:1});
+    await h.flush(); const gate=h.sandbox.__HORUS_MEDIA_LOADER_STATE__.trafficGate;
+    const started=gate.startedAt; h.domReady(); await h.flush();
+    assert.equal(h.metrics.gateFrames,1); assert.equal(gate.startedAt,started);
+    h.sendGate('PASS'); await h.sandbox.__HORUS_MEDIA_LOADER_STATE__.booting;
+    assert.equal(h.metrics.gamRequests,1);
 });
 
-test('an unavailable early runtime can recover when the normal page environment is ready', async () => {
-    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, cryptoUnavailable: true });
-    await runtime.flush();
-    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'UNAVAILABLE');
-    assert.equal(runtime.metrics.gateFrames, 0);
-    runtime.sandbox.crypto = { getRandomValues(bytes) { bytes.fill(17); return bytes; } };
-    runtime.domReady();
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.flush();
-    assert.equal(runtime.metrics.gateFrames, 1);
-    assertNoMonetization(runtime.metrics);
-    runtime.sendGate('PASS');
-    await boot;
-    assert.equal(runtime.metrics.gamRequests, 1);
-});
-
-test('an adopted pending preparation that fails after DOM still gets exactly one normal attempt', async () => {
-    for (const recovered of [true, false]) {
-        const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true, timerScale: 1 });
-        await runtime.flush();
-        runtime.domReady();
-        const boot = runtime.sandbox.HorusMediaLoader.boot();
-        await runtime.flush();
-        assert.equal(runtime.metrics.gateFrames, 1);
-        runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
-        await runtime.flush();
-        assert.equal(runtime.metrics.gateFrames, 2);
-        assertNoMonetization(runtime.metrics);
-        runtime.sendGate(recovered ? 'PASS' : 'TIMEOUT');
-        await boot;
-        await runtime.sandbox.HorusMediaLoader.boot();
-        assert.equal(runtime.metrics.gateFrames, 2);
-        if (recovered) assert.equal(runtime.metrics.gamRequests, 1);
-        else assertNoMonetization(runtime.metrics);
-    }
-});
-
-test('a failed normal attempt after early failure cannot create an unbounded restart loop', async () => {
-    const runtime = createHarness(baseConfig(), { readyState: 'loading', autoboot: true });
-    await runtime.flush();
-    runtime.sendGate('ERROR', { category: 'TURNSTILE_SCRIPT_ERROR' });
-    runtime.domReady();
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.flush();
-    runtime.sendGate('TIMEOUT');
-    await boot;
-    await runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.sandbox.HorusMediaLoader.refresh();
-    await runtime.sandbox.HorusMediaLoader.refresh();
-    await runtime.sandbox.HorusMediaLoader.refresh();
-    assert.equal(runtime.metrics.gateFrames, 4);
-    assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'TIMEOUT');
-    assertNoMonetization(runtime.metrics);
-});
-
-test('a fresh unchanged snapshot after a parser stall preserves the early deadline and iframe', async () => {
-    const config = baseConfig();
-    config.trafficGate.timings.maxWaitMs = 15000;
-    const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
-    await runtime.flush();
-    runtime.elapse(6000);
-    runtime.domReady();
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    await runtime.flush();
-    assert.equal(runtime.metrics.configFetches, 2);
-    assert.equal(runtime.metrics.gateFrames, 1);
-    runtime.sendGate('PASS');
-    await boot;
-    assert.equal(runtime.metrics.gamRequests, 1);
-});
-
-test('changed configuration retires the early attempt and rejects its late messages and PASS', async () => {
-    for (const earlyPass of [false, true]) {
-        const config = baseConfig();
-        const runtime = createHarness(config, { readyState: 'loading', autoboot: true, timerScale: 1 });
-        await runtime.flush();
-        const previousSource = runtime.gateFrame.contentWindow;
-        const previousNonce = runtime.metrics.hellos.at(-1).payload.pageNonce;
-        if (earlyPass) runtime.sendGate('PASS');
-        config.configVersion += 1;
-        config.trafficGate.siteKey = '0x4AAAAA_replacement_key';
-        runtime.elapse(6000);
-        runtime.domReady();
-        const boot = runtime.sandbox.HorusMediaLoader.boot();
-        await runtime.flush();
-        assert.equal(runtime.metrics.gateFrames, 2);
-        assert.equal(runtime.metrics.gateFrameRemovals, 1);
-        assert.notEqual(runtime.metrics.hellos.at(-1).payload.pageNonce, previousNonce);
-        runtime.sendGate('PASS', {}, { source: previousSource, nonce: previousNonce });
-        await runtime.flush();
-        assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PENDING');
-        assertNoMonetization(runtime.metrics);
-        runtime.sendGate('PASS');
-        await boot;
-        assert.equal(runtime.metrics.gamRequests, 1);
-    }
-});
-
-test('a discarded early PASS never survives a domain revocation or failed config refresh', async () => {
-    for (const failure of ['domain', 'fetch']) {
-        const config = baseConfig();
-        const runtime = createHarness(config, { readyState: 'loading', autoboot: true });
-        await runtime.flush();
-        runtime.sendGate('PASS');
-        runtime.elapse(6000);
-        if (failure === 'domain') config.allowedHostnames = ['another.example'];
-        else runtime.sandbox.fetch = async () => { throw new Error('unavailable'); };
-        runtime.domReady();
-        await runtime.sandbox.HorusMediaLoader.boot();
-        await runtime.sandbox.HorusMediaLoader.scan();
-        assert.notEqual(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'PASSED');
-        assertNoMonetization(runtime.metrics);
-    }
+test('refresh during parsing rejects stale authorization from the superseded configuration', async () => {
+    const c=baseConfig(); const h=createHarness(c,{readyState:'loading',autoboot:true,timerScale:1});
+    await h.flush(); const source=h.gateFrame.contentWindow,nonce=h.metrics.hellos.at(-1).payload.pageNonce;
+    c.configVersion++; c.trafficGate.siteKey='0x4AAAAA_replacement_key';
+    const next=h.sandbox.HorusMediaLoader.refresh(); await h.flush();
+    h.sendGate('PASS',{}, {source,nonce}); await h.flush(); assertNoMonetization(h.metrics);
+    h.sendGate('PASS'); await next; assert.equal(h.metrics.gamRequests,1);
 });
 
 test('before PASS every monetization engine remains at zero, then one PASS releases GAM, standalone Prebid and Direct JS', async () => {
@@ -1086,49 +935,25 @@ test('Traffic Gate outcomes create no Laravel/analytics/reporting request', asyn
     assert.equal(runtime.metrics.fetches.some((url) => /analytics|beacon|traffic-gate.*report/i.test(url)), false);
 });
 
-test('boot architecture starts gate and privacy in parallel and does not refetch static config after PASS', async () => {
-    const config = baseConfig({ policy: 'STRICT' });
-    config.privacy = {
-        mode: 'STRICT',
-        requireConsentBeforeAds: true,
-        cmp: { timeoutMs: 5000, actionOnTimeout: 'LIMITED_ADS' },
-    };
-    const runtime = createHarness(config, { gateAutoResponse: 'PASS', deferredTcf: true, timerScale: 1 });
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    for (let attempt = 0; attempt < 20 && (!runtime.metrics.hellos.length || !runtime.metrics.tcfCallback); attempt += 1) await runtime.flush();
-
-    assert.equal(runtime.metrics.gateFrames, 1);
-    assert.equal(runtime.metrics.hellos.length, 1);
-    assert.equal(typeof runtime.metrics.tcfCallback, 'function');
-    assert.equal(runtime.metrics.gptScripts, 0, 'privacy remains an independent prerequisite after fast PASS');
-    assert.equal(runtime.metrics.globalFetches, 1);
-    assert.equal(runtime.metrics.configFetches, 1);
-
-    runtime.metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: false, purpose: { consents: { 1: true } } }, true);
-    await boot;
-    await runtime.sandbox.HorusMediaLoader.scan();
-    runtime.sandbox.dispatchEvent(new runtime.sandbox.Event('horus:navigation'));
-    await runtime.flush();
-    assert.equal(runtime.metrics.gptScripts, 1);
-    assert.equal(runtime.metrics.globalFetches, 1);
-    assert.equal(runtime.metrics.configFetches, 1);
+test('PASS starts ads without waiting for CMP and without refetching config', async () => {
+    const config = baseConfig({policy:'STRICT'});
+    config.privacy = {mode:'STRICT',requireConsentBeforeAds:true,cmp:{timeoutMs:10000,actionOnTimeout:'BLOCK_ADS'}};
+    const h = createHarness(config,{gateAutoResponse:'PASS',deferredTcf:true});
+    await h.sandbox.HorusMediaLoader.boot();
+    assert.equal(h.metrics.gptScripts,1);
+    assert.equal(h.metrics.globalFetches,1);
+    assert.equal(h.metrics.configFetches,1);
+    assert.equal(Boolean(h.metrics.tcfCallback),false);
 });
 
-test('privacy can resolve while Turnstile is still pending, but monetization stays blocked until PASS', async () => {
-    const config = baseConfig({ policy: 'STRICT' });
-    config.privacy = {
-        mode: 'STRICT', requireConsentBeforeAds: true,
-        cmp: { timeoutMs: 5000, actionOnTimeout: 'LIMITED_ADS' },
-    };
-    const runtime = createHarness(config, { deferredTcf: true, timerScale: 1 });
-    const boot = runtime.sandbox.HorusMediaLoader.boot();
-    for (let attempt = 0; attempt < 20 && (!runtime.metrics.hellos.length || !runtime.metrics.tcfCallback); attempt += 1) await runtime.flush();
-    runtime.metrics.tcfCallback({ eventStatus: 'tcloaded', gdprApplies: false, purpose: { consents: { 1: true } } }, true);
-    await runtime.flush();
-    assertNoMonetization(runtime.metrics);
-    runtime.sendGate('PASS');
-    await boot;
-    assert.equal(runtime.metrics.gptScripts, 1);
+test('removing CMP wait never releases a pending Cloudflare gate', async () => {
+    const h = createHarness(baseConfig(),{deferredTcf:true});
+    const boot = h.sandbox.HorusMediaLoader.boot();
+    for(let n=0;n<20&&!h.metrics.hellos.length;n++) await h.flush();
+    assertNoMonetization(h.metrics);
+    assert.equal(Boolean(h.metrics.tcfCallback),false);
+    h.sendGate('PASS'); await boot;
+    assert.equal(h.metrics.gptScripts,1);
 });
 
 function scanClock(h) {

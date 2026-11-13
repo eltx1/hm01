@@ -417,12 +417,12 @@ test('Click Guard block prevents a standalone refresh auction', async () => {
     sandbox.HorusMediaLoader._resetForTests();
 });
 
-test('consent timeout with BLOCK_ADS prevents standalone auction', async () => {
+test('legacy privacy timeout no longer blocks provider startup', async () => {
     const selected = standaloneConfig({ privacy: { mode: 'STRICT', cmp: { timeoutMs: 100, actionOnTimeout: 'BLOCK_ADS' }, requireConsentBeforeAds: true } });
     const { sandbox, metrics } = harness(selected);
     await sandbox.HorusMediaLoader.boot();
-    assert.equal(metrics.requests.length, 0);
-    assert.equal(metrics.renders.length, 0);
+    assert.equal(metrics.requests.length, 1);
+    assert.equal(metrics.renders.length, 1);
 });
 
 test('standalone banner is isolated in the approved sandbox and has no unrestricted top navigation', async () => {

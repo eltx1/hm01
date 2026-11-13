@@ -14,11 +14,13 @@ class TrafficGateCspIsolationTest extends TestCase
         $reflection = new ReflectionClass($builder);
         $method = $reflection->getMethod('headers');
         $method->setAccessible(true);
-        $headers = $method->invoke($builder);
+        $hash = 'sha256-'.base64_encode(hash('sha256', 'fixture-gate-runtime', true));
+        $headers = $method->invoke($builder, $hash);
 
         $this->assertIsString($headers);
         $this->assertStringContainsString("/traffic-gate/*\n  Cache-Control: public, max-age=300, must-revalidate, no-transform", $headers);
         $this->assertStringContainsString("script-src 'self' https://challenges.cloudflare.com", $headers);
+        $this->assertStringContainsString("script-src 'self' https://challenges.cloudflare.com '{$hash}';", $headers);
         $this->assertStringContainsString("frame-src https://challenges.cloudflare.com", $headers);
         $this->assertStringContainsString("connect-src 'self' https://challenges.cloudflare.com", $headers);
         $this->assertStringNotContainsString('static.cloudflareinsights.com', $headers);

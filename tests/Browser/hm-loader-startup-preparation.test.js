@@ -61,7 +61,7 @@ function harness(initialTop = 80, initialHeight = 180) {
 for (const kind of ['gpt', 'video']) {
     test(`approved ${kind} bytes overlap verification but never execute before privacy/admission`, () => {
         const h = harness(), c = config(kind);
-        h.context.prep(c, false); assert.deepEqual(h.preload(), []);
+        h.context.prep(c, false); assert.equal(h.preload().length, 2);
         h.context.prep(c, true);
         assert.deepEqual(h.preload(), [asset(kind), kind === 'video' ? 'https://imasdk.googleapis.com/js/sdkloader/ima3.js' : 'https://securepubads.g.doubleclick.net/tag/js/gpt.js']);
         h.context.prep(c, true); assert.equal(h.preload().length, 2); assert.equal(h.scripts.length, 0);
