@@ -188,6 +188,17 @@ for (const mode of ['success','fail','hang']) {
             expect(await page.evaluate(()=>window.observedAction)).toBe('horus_cf_pass');
             await expect(page.locator('.grecaptcha-badge')).toHaveCSS('visibility','hidden');
             await expect(page.locator('.grecaptcha-badge')).toHaveAttribute('data-hm-recaptcha-badge','hidden');
+            // The scoped rule remains effective after the startup observer stops.
+            await page.evaluate(() => {
+                const own=document.querySelector('.grecaptcha-badge');
+                const replacement=own.cloneNode(true); replacement.removeAttribute('style');
+                replacement.removeAttribute('data-hm-recaptcha-badge'); own.replaceWith(replacement);
+                const publisher=replacement.cloneNode(true); publisher.setAttribute('data-publisher-badge','1');
+                publisher.querySelector('iframe').src='https://www.google.com/recaptcha/api2/anchor?k=AnotherPublisherKey_12345';
+                document.body.appendChild(publisher);
+            });
+            await expect(page.locator('.grecaptcha-badge:not([data-publisher-badge])')).toHaveCSS('visibility','hidden');
+            await expect(page.locator('[data-publisher-badge]')).toHaveCSS('visibility','visible');
         }
         expect(run.counts.verifies).toBe(1);
         expect(await page.evaluate(()=>window.adCalls)).toBe(1);
