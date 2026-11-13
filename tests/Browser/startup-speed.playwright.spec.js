@@ -135,14 +135,18 @@ for (const inline of [false,true]) {
                 await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe('ERROR');
                 expect(await page.evaluate(()=>window.adCalls||0)).toBe(0);
             } else {
-                await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
+                // Assert our scheduling boundary, independently of a browser's
+                // evaluation order for async scripts while a parser script is held.
+                await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getStartupTrace().events.some(e=>e.phase==='GPT load'))).toBe(true);
+                expect(await page.locator('script[data-hm-gpt="1"]').count()).toBe(1);
                 expect(await page.evaluate(()=>document.readyState)).toBe('loading');
                 const trace=await page.evaluate(()=>window.HorusMediaLoader.getStartupTrace());
+                console.log('PARSER_HELD_STARTUP',JSON.stringify({inline,trace,adCalls:await page.evaluate(()=>window.adCalls||0)}));
                 expect(trace.events.find(e=>e.phase==='Horus start').ms).toBeGreaterThanOrEqual(trace.events.find(e=>e.phase==='CF pass').ms);
             }
             expect(run.counts.gateScripts).toBe(inline?0:1);
             run.releaseParser(); await page.waitForLoadState('domcontentloaded');
-            expect(await page.evaluate(()=>window.adCalls||0)).toBe(denied?0:1);
+            await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(denied?0:1);
             expect(await page.evaluate(()=>window.cmpCalls)).toBe(0);
         });
     }

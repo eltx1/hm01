@@ -102,7 +102,7 @@ const HELPER = String.raw`
 export function applyDirectPreparationTransform(input) {
     let source = String(input);
     if (source.includes(MARKER)) return source;
-    const declaration = '    function prepareStaticConnections(config, privacyReady) {';
+    const declaration = '    function prepareStaticConnections(config) {';
     const point = '        if (controls.gamDisabled || (window.googletag && (window.googletag.apiReady || window.googletag.pubadsReady))) return;';
     if (!source.includes(declaration) || !source.includes(point)) {
         throw new Error('Trusted Direct preparation requires the reviewed Traffic Gate preparation boundary');
@@ -111,6 +111,6 @@ export function applyDirectPreparationTransform(input) {
     const start = '    function loadDirectScripts(config, candidate) {';
     if (!source.includes(start)) throw new Error('Trusted Direct startup requires the actual candidate boundary');
     source = source.replace(start, start + '\n        try { startTrustedDirectDependencies(config, candidate); }\n        catch (error) { log(config, \'Independent dependency preparation failed\', error); }');
-    // AFTER the existing host, site, control, gate validity and privacy boundary.
+    // AFTER the existing host, site, control and gate validity boundary.
     return source.replace(point, '        prepareTrustedDirectAssets(config, controls);\n' + point);
 }

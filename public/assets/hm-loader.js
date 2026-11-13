@@ -2001,6 +2001,7 @@ function nativeDefinition(config, code) {
             return Promise.resolve(true);
         }
 
+        var handoffStartedAt = Date.now();
         if (typeof startupTrace === 'function') startupTrace('Core handoff');
         window.__HM_RELEASE_DELEGATED__ = true;
         var replacement = document.createElement('script');
@@ -2071,7 +2072,7 @@ function nativeDefinition(config, code) {
                     finish(new Error('Delegated Loader release did not install a boot API'));
                     return;
                 }
-                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement, handoffConfig: config })).then(function () {
+                Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement, handoffConfig: config, handoffStartedAt: handoffStartedAt })).then(function () {
                     finish(null);
                 }).catch(finish);
             };

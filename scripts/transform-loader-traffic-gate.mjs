@@ -11,7 +11,7 @@ function replaceOnce(source, search, replacement, label) {
 
 const trafficGateRuntime = String.raw`
     // Start static work and isolated verification early. Ad initialization and CMP
-    // discovery keep their DOM boundary, including CMPs installed later by the page.
+    // discovery can proceed during parsing; admission still requires verified PASS.
     state.earlyBootPreparation = state.earlyBootPreparation || null;
     var EARLY_PREPARATION_MAX_AGE_MS = 5000;
 
@@ -40,7 +40,7 @@ const trafficGateRuntime = String.raw`
         }
     }
 
-    function prepareStaticConnections(config, privacyReady) {
+    function prepareStaticConnections(config) {
         if (!config || window.__HM_RELEASE_HANDOFF_FAILED__
             || !hostAllowed(currentHostname(), config.allowedHostnames)
             || config.status !== 'active' || config.immediatePause) return;
@@ -69,7 +69,7 @@ const trafficGateRuntime = String.raw`
                 || url.pathname !== '/tag/js/gpt.js') return;
             // Match the selected GPT script's fetch mode. A preload downloads
             // bytes without running GPT or any publisher-owned googletag queue.
-            // Slot definition, script execution and requests stay behind PASS/CMP.
+            // Slot definition, script execution and requests stay behind verified PASS.
             addPreparationHint('preload', url.href, 'script', gptScriptCrossOrigin(url.href));
         } catch (error) {}
     }
@@ -841,7 +841,10 @@ const bootReplacement = String.raw`    function startMonetization(config, script
         var generation = nextPreparationGeneration();
         var handoff = options.delegatedHandoff && options.handoffConfig === state.config
             && options.handoffConfig && options.handoffConfig.siteKey === siteKey
-            && String(scriptData(script, 'delegatedHandoff') || '') === '1';
+            && String(scriptData(script, 'delegatedHandoff') || '') === '1'
+            && Number.isFinite(options.handoffStartedAt)
+            && Date.now() >= options.handoffStartedAt
+            && Date.now() - options.handoffStartedAt <= EARLY_PREPARATION_MAX_AGE_MS;
         var preparedConfig = handoff ? Promise.resolve(options.handoffConfig)
             : takeBootPreparation(script, siteKey, Boolean(options.force));
         var bootPromise = preparedConfig.then(function (config) {

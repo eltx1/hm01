@@ -286,6 +286,7 @@ test('built release mismatch hands boot to the delegated Loader without sharing 
     assert.equal(concurrentBoot, firstBoot);
     await Promise.all([firstBoot, concurrentBoot]);
 
+    assert.equal(metrics.fetches.length, 3, 'fresh handoff reuses the exact static snapshot');
     assert.equal(metrics.delegatedLoads, 1);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.adInitializationStarted, true);
     assert.equal(sandbox.__HORUS_MEDIA_LOADER_STATE__.booting, null);
@@ -598,3 +599,16 @@ for (const changed of ['hostname', 'siteKey', 'configVersion', 'same-version']) 
         assert.equal(metrics.displayed.length, changed === 'same-version' ? 1 : 0);
     });
 }
+
+
+test('slow delegated handoff revalidates configuration instead of adopting an old snapshot',async()=>{
+    const selected=activeConfig({loader:{version:'1.3.0',assetUrl:'https://cdn.horusmedia.net/assets/hm-loader.min.js'}});
+    const {sandbox,metrics}=createHarness(selected,{delegatedLoader:true,deferredDelegatedLoader:true,runtimeSource:builtLoaderSource});
+    const boot=sandbox.HorusMediaLoader.boot();
+    for(let n=0;n<20&&!metrics.releaseDelegatedLoader;n++)await new Promise(r=>setImmediate(r));
+    assert.equal(metrics.fetches.length,3);
+    sandbox.Date=class extends Date {static now(){return Date.now()+6000;}};
+    metrics.releaseDelegatedLoader();await boot;
+    assert.equal(metrics.fetches.length,6);
+    assert.equal(metrics.gptLoads,1);
+});
