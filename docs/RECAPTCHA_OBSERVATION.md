@@ -8,10 +8,12 @@ The loader schedules one background attempt per page only after an actual verifi
 
 The action is `horus_cf_pass`. Tokens are discarded, never posted to Horus, stored or verified. Google Admin analytics describe only executed observations after Cloudflare PASS, not total traffic or verified ad invalid-traffic rates. Charts require sufficient traffic. No real-key dashboard result is claimed by automated tests.
 
-A third-party script consumes network/CPU and can display Google's normal badge. Absolute zero performance/UI impact cannot be guaranteed; this implementation removes control-flow dependencies and leaves the feature off unless selected by an admin. No changes to Google's messages, Turnstile rules, CSP, placement scheduling or ad auctions.
+A third-party script consumes network/CPU even with the badge hidden. Absolute zero performance/UI impact cannot be guaranteed; this implementation removes control-flow dependencies and leaves the feature off unless selected by an admin. No changes to Google's messages, Turnstile rules, CSP, placement scheduling or ad auctions.
 
 Validation covers default-off, no PASS/no SDK, verified PASS, duplicate boots, failed/hung SDK, thrown/rejected execute, stale config/late callbacks, publisher CAPTCHA coexistence, secret confidentiality, authorization and static publication. Browser fixtures mock Google and never send real visitor tokens. Rollback: disable the per-site option and allow normal CDN publication, or revert the code release. Already loaded third-party JavaScript cannot be unloaded from an existing page; settings take effect on newly loaded config/pages.
 
 References:
 - https://developers.google.com/recaptcha/docs/v3
 - https://developers.google.com/recaptcha/docs/analytics
+
+Badge: hide only the badge whose Google anchor uses this exact site key, using visibility:hidden (not display:none). A bounded MutationObserver catches creation before paint; it never globally hides publisher CAPTCHA. Google's visible branding disclosure is still required in the publisher user flow; the admin form explains it. No publisher notice is injected automatically. https://developers.google.com/recaptcha/docs/faq/

@@ -104,7 +104,7 @@ async function open(page, options = {}) {
             counts.recaptcha++;
             if (options.recaptcha === 'hang') return new Promise(() => {});
             if (options.recaptcha === 'fail') return route.abort('failed');
-            return route.fulfill({contentType:'application/javascript',body:`window.grecaptcha={ready:f=>f(),execute:(key,options)=>{window.observedAction=options.action;window.observationExecutions=(window.observationExecutions||0)+1;return Promise.resolve('unused-token');}};`});
+            return route.fulfill({contentType:'application/javascript',body:`const badge=document.createElement('div');badge.className='grecaptcha-badge';badge.innerHTML='<iframe src="https://www.google.com/recaptcha/api2/anchor?k=6LcObservationBrowserTest_12345"></iframe>';document.body.appendChild(badge);window.grecaptcha={ready:f=>f(),execute:(key,options)=>{window.observedAction=options.action;window.observationExecutions=(window.observationExecutions||0)+1;return Promise.resolve('unused-token');}};`});
         }
         if (u.origin === 'https://challenges.cloudflare.com') {
             counts.sdkDownloads++;
@@ -186,6 +186,8 @@ for (const mode of ['success','fail','hang']) {
         if (mode==='success') {
             await expect.poll(()=>page.evaluate(()=>window.observationExecutions||0)).toBe(1);
             expect(await page.evaluate(()=>window.observedAction)).toBe('horus_cf_pass');
+            await expect(page.locator('.grecaptcha-badge')).toHaveCSS('visibility','hidden');
+            await expect(page.locator('.grecaptcha-badge')).toHaveAttribute('data-hm-recaptcha-badge','hidden');
         }
         expect(run.counts.verifies).toBe(1);
         expect(await page.evaluate(()=>window.adCalls)).toBe(1);

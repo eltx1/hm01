@@ -112,7 +112,7 @@
                 <input class="hm-input" type="password" name="recaptcha_observation_secret" maxlength="2000" autocomplete="new-password" placeholder="Leave blank to keep the stored secret">
             </label>
             <label><input type="checkbox" name="clear_secret" value="1"> Remove stored secret</label>
-            <p class="muted">No token verification or score storage in Horus. View the action “horus_cf_pass” in Google reCAPTCHA Admin. Register the publisher's domain with this key. Google may show its standard reCAPTCHA badge. Existing publisher reCAPTCHA is left alone; observation is skipped on those pages to avoid conflicts.</p>
+            <p class="muted">No token verification or score storage in Horus. View the action “horus_cf_pass” in Google reCAPTCHA Admin. Register the publisher's domain with this key. The Horus reCAPTCHA badge is hidden. Google requires a visible disclosure in the publisher's user flow: “This site is protected by reCAPTCHA.” The publisher can place it in the footer; Horus does not inject a popup or notice. Existing publisher reCAPTCHA is left alone; observation is skipped on those pages to avoid conflicts.</p>
             <button class="hm-button-secondary">Save reCAPTCHA observation</button>
         </form>
     @endif

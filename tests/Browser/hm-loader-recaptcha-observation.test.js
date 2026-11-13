@@ -6,7 +6,7 @@ function harness({enabled=true,status='PASSED',existing=false,idle=true}={}) {
     const scripts=[],timers=new Map(),idleTasks=[];let seq=0,now=0;
     const config={status:'active',allowedHostnames:['publisher.test'],recaptchaObservation:{enabled,siteKey:'6LcTestObservationKey_123456789'}};
     const state={config};const gate={status};
-    const w={document:{querySelector(){return existing;},createElement(){return {setAttribute(){}};},head:{appendChild(s){scripts.push(s);}}},
+    const w={document:{querySelector(){return existing;},createElement(tag){return {tagName:tag.toUpperCase(),setAttribute(){}};},head:{appendChild(s){if(s.tagName==='SCRIPT')scripts.push(s);}}},
         state,TRAFFIC_GATE_STATES:{passed:'PASSED'},trafficGateRuntimeState:()=>gate,hostAllowed:()=>true,currentHostname:()=> 'publisher.test',
         setTimeout(fn,ms){const id=++seq;timers.set(id,{fn,at:now+ms});return id;},clearTimeout(id){timers.delete(id);}};
     if(idle)w.requestIdleCallback=fn=>idleTasks.push(fn);
