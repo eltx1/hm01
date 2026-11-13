@@ -22,6 +22,8 @@ Route::middleware(['auth', 'active', 'verified', 'horus', 'admin.2fa'])->group(f
             ->name('admin.operations.traffic-quality.sitekey.activate');
         Route::post('/admin/operations/traffic-quality/sites/bulk-inherit', [TrafficQualityController::class, 'bulkInherit'])
             ->name('admin.operations.traffic-quality.sites.bulk-inherit');
+        Route::post('/admin/sites/{site}/recaptcha-observation', [\App\Http\Controllers\Admin\RecaptchaObservationController::class, 'update'])
+            ->name('admin.sites.recaptcha-observation');
         Route::post('/admin/sites/{site}/traffic-gate', [TrafficGateController::class, 'updateSite'])
             ->name('admin.sites.traffic-gate');
     });

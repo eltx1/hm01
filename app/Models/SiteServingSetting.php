@@ -23,7 +23,10 @@ class SiteServingSetting extends Model
         'monetization_manager_role', 'monetization_manager_domain', 'monetization_manager_relationship', 'monetization_manager_country',
         'ads_txt_deployment_mode', 'ads_txt_redirect_target', 'ads_txt_redirect_status',
         'ads_txt_redirect_verified_at', 'placement_plan', 'configuration_version',
+        'recaptcha_observation_enabled', 'recaptcha_observation_site_key', 'recaptcha_observation_secret',
     ];
+
+    protected $hidden = ['recaptcha_observation_secret'];
 
     protected function casts(): array
     {
@@ -31,6 +34,8 @@ class SiteServingSetting extends Model
             'serving_mode' => ServingMode::class,
             'revenue_share_percent' => 'decimal:2',
             'prebid_enabled' => 'boolean',
+            'recaptcha_observation_enabled' => 'boolean',
+            'recaptcha_observation_secret' => 'encrypted',
             'prebid_configured_mode' => PrebidConfiguredMode::class,
             'native_demand_enabled' => 'boolean',
             'traffic_gate_state' => TrafficGateSiteState::class,

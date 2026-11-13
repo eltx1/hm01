@@ -55,6 +55,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tax_identifier',
             'payment_details',
             'cf-turnstile-response',
+            'recaptcha_observation_secret',
             '_company_website',
         ]);
         $exceptions->report(function (Throwable $exception): void {
