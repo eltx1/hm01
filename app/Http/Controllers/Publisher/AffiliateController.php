@@ -51,7 +51,7 @@ final class AffiliateController extends Controller
             'publisher' => $publisher,
             'referralUrl' => $affiliates->referralUrl($publisher),
             'effectiveRateBp' => $affiliates->effectiveRateBp($publisher),
-            'referralsCount' => $publisher->referrals()->count(),
+            'referralsCount' => $referrals->total(),
             'referrals' => $referrals,
             'earnedByCurrency' => $earnedByCurrency,
             'commissions' => $commissions,

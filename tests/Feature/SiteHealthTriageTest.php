@@ -23,6 +23,7 @@ class SiteHealthTriageTest extends TestCase
         $publisher = $this->makePublisherFor($owner);
         foreach (['Finding' => ['BROKEN', now()], 'Stale' => ['HEALTHY', now()->subHours(2)], 'Missing' => null] as $name => $evidence) {
             $site = $this->makeSiteFor($publisher, $owner, ['display_name' => 'Triage'.$name, 'primary_domain' => strtolower($name).'.example.test', 'status' => 'ACTIVE']);
+            $site->update(['status' => 'ACTIVE']);
             if ($evidence) MonetizationHealthState::create(['organization_id' => $site->organization_id, 'site_id' => $site->id, 'state_key' => 'renderer_conflict', 'status' => $evidence[0], 'observed_at' => $evidence[1]]);
         }
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
