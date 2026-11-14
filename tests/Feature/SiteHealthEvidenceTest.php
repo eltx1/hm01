@@ -25,7 +25,8 @@ class SiteHealthEvidenceTest extends TestCase
         $record = MonetizationHealthState::create(['organization_id' => $site->organization_id, 'site_id' => $site->id,
             'state_key' => 'renderer_conflict', 'status' => 'BROKEN', 'fingerprint' => str_repeat('a', 64),
             'details' => ['private' => 'INTERNAL_VALUE_NEVER_RENDER'], 'observed_at' => now()]);
-        $before = $record->getRawOriginal();
+        // Compare database snapshots: MySQL normalizes JSON and column ordering on insert.
+        $before = $record->fresh()->getRawOriginal();
         $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.sites.index'))->assertOk()->assertSee('Stored checks have findings')
             ->assertSee('data-health-evidence="CURRENT_FINDINGS"', false)->assertDontSee('INTERNAL_VALUE_NEVER_RENDER');
