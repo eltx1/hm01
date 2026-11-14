@@ -34,11 +34,19 @@ class SiteController extends Controller
     public function index(Request $request): View
     {
         $status = $request->string('status')->upper()->value();
-        $sites = Site::withoutGlobalScopes()->with('publisher')
+        $sites = Site::withoutGlobalScopes()->with([
+            'publisher',
+            'monetizationHealthStates:id,site_id,status,observed_at',
+        ])
             ->when(in_array($status, array_column(SiteStatus::cases(), 'value'), true), fn ($query) => $query->where('status', $status))
             ->latest()->paginate(25)->withQueryString();
 
-        return view('admin.sites.index', ['sites' => $sites, 'activeStatus' => $status]);
+        return view('admin.sites.index', [
+            'sites' => $sites, 'activeStatus' => $status,
+            'healthEvidence' => $sites->getCollection()->mapWithKeys(fn (Site $site) => [
+                $site->id => app(\App\Services\Sites\SiteHealthEvidence::class)->forSite($site),
+            ])->all(),
+        ]);
     }
 
     public function show(Request $request, Site $site, TrafficGateConfigurationResolver $trafficGateResolver, SiteGamReportingService $gamReporting): View
@@ -67,6 +75,7 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'publicationSummary' => app(\App\Services\Sites\SitePublicationSummary::class)->forSite($site),
             'todayReport' => $request->user()->hasPermission('reporting.admin.view')
                 && $request->user()->hasPermission('reporting.sources.manage')
                 ? app(SiteGamTodayReport::class)->forSite($site) : null,
