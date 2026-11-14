@@ -218,5 +218,9 @@ duplicate referral, ownership dispute, rule changes, refunds, FX and payout retr
 - Baseline: main 4b4d211 (existing speed and reCAPTCHA releases).
 - Working branch: feat/platform-health-foundation.
 - Started: task 02, read-only publication evidence in existing Site 360.
-- Tasks 01 and 03–16: planned, not implemented by this change.
+- Started: task 09 foundation in the existing paginated website list, reading only
+  stored monitor outcomes with explicit current/stale/unknown/inactive evidence.
+  A one-hour freshness window covers four scheduled monitor intervals; one recent
+  record cannot hide older or undated records. No monitor or notification runs on GET.
+- Tasks 01 and 03–08 / 10–16: planned, not implemented by this change.
 - Each follow-up must update this record with exact test and deployment results.
