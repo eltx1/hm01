@@ -13,14 +13,14 @@ row is considered deployed without a recorded production release.
 | 06 Reports | Existing source-aware health, timezone/currency and finality/reconciliation UI | Full freshness/coverage review across every report surface |
 | 07 Earnings/payments | Existing statement balances, provisional earnings, finality and idempotent payout workflow | Reconciliation and reversal coverage review before financial changes |
 | 08 Permissions | Existing Horus/admin RBAC and organization isolation; new feature tests deny publishers | Site-assignment model only where existing roles cannot meet scope |
-| 09 Site health | PR306 paginated stored-check evidence, oldest-observation freshness, no monitor runs on GET | Cross-source triage, evidence actions and query-budget checks |
+| 09 Site health | PR306 paginated stored-check evidence, oldest-observation freshness, no monitor runs on GET | Stored finding/stale/missing filters added to the existing list; integration and one-query-per-page regression tests pending. Cross-source issue queue remains. |
 | 10 Check my site | Existing synthetic probe storage and schedule | Public URL guard review, explicit bounded on-demand check and report |
 | 11 Visitor speed | Existing local timings; analyzer supports one page only | Sample contract, edge aggregation and population p50/p75/p95; not implemented |
 | 12 Recovery | Existing versions and rollback; follow-up preserves current CF/Click Guard/domain/pause/control settings | Safe diff/dry-run UI and current-provider compatibility validation |
 | 13 Gradual releases | Existing protected release/deployment pipeline | Explicit pilot cohort flags, pinned versions, comparisons and recovery tests |
 | 14 Support | Existing tenant-safe website linking; follow-up immutable minimal creation-time snapshot for staff | Integration/permission tests and production evidence |
 | 15 Onboarding | Existing simplified dashboard → sites → ads.txt → review flow; legacy writes retired | Next-action guidance added for every current lifecycle state; integration CI pending, no retired wizard restored |
-| 16 Referrals | Existing PublisherAffiliateService, attribution, finalized-period commission ledger and views | Commission/partner visibility review and onboarding integration |
+| 16 Referrals | Existing PublisherAffiliateService, attribution, finalized-period commission ledger and views | Referral page now has aggregate active/setup website counts, scoped to authorized referral parents with child organization parity and soft deletes retained; integration CI pending. Further partner-role review remains. |
 
 ## PR306 baseline validation
 

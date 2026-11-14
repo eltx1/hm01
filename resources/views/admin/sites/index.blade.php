@@ -2,7 +2,13 @@
 @section('title', 'Website operations')
 @section('heading', 'Website operations')
 @section('content')
-@if(filled($activeStatus ?? null))<p><x-status-badge :status="$activeStatus" /> <a class="section-anchor" href="{{ route('admin.sites.index') }}">Clear filter</a></p>@endif
+<form method="GET" action="{{ route('admin.sites.index') }}" class="inline-form" aria-label="Filter website health evidence">
+    <label>Website state<select class="hm-input" name="status"><option value="">All states</option>@foreach(\App\Enums\SiteStatus::cases() as $state)<option value="{{ $state->value }}" @selected($activeStatus === $state->value)>{{ str($state->value)->replace('_', ' ')->headline() }}</option>@endforeach</select></label>
+    <label>Stored evidence<select class="hm-input" name="health"><option value="">All evidence</option><option value="findings" @selected($healthFilter === 'findings')>Has stored findings (including old records)</option><option value="stale" @selected($healthFilter === 'stale')>Has stale or invalid observation times</option><option value="missing" @selected($healthFilter === 'missing')>No stored checks</option></select></label>
+    <button class="hm-button-secondary" type="submit">Filter sites</button>
+    @if($healthFilter || $activeStatus)<a href="{{ route('admin.sites.index') }}">Clear all filters</a>@endif
+</form>
+@if(filled($activeStatus ?? null))<p><x-status-badge :status="$activeStatus" /> <a class="section-anchor" href="{{ route('admin.sites.index', ['health' => $healthFilter]) }}">Clear state filter</a></p>@endif
 <p class="muted">Recorded monetization checks run every 15 minutes. Evidence older than one hour is stale. These checks do not confirm ad rendering or classify all website traffic.</p>
 <div class="table-wrap"><table><thead><tr><th>Website</th><th>Publisher</th><th>Domain</th><th>Status</th><th>Serving mode</th><th>Recorded health evidence</th><th></th></tr></thead><tbody>
 @forelse($sites as $site)

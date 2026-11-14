@@ -41,13 +41,14 @@
     @if($referrals->count())
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Publisher</th><th>Joined referral program</th><th>Account status</th></tr></thead>
+                <thead><tr><th>Publisher</th><th>Joined referral program</th><th>Account status</th><th>Website setup progress</th></tr></thead>
                 <tbody>
                 @foreach($referrals as $referral)
                     <tr>
                         <td><strong>{{ $referral->display_name }}</strong></td>
                         <td>{{ $referral->referred_at?->toDateString() ?? '—' }}</td>
                         <td><x-status-badge :status="$referral->status" /></td>
+                        <td>{{ $referral->active_sites_count }} active website(s) · {{ $referral->setup_sites_count }} awaiting setup or review</td>
                     </tr>
                 @endforeach
                 </tbody>
