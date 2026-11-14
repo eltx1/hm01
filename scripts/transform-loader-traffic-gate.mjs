@@ -1,3 +1,4 @@
+import { recaptchaObservationRuntime } from './recaptcha-observation-runtime.mjs';
 import { startupTraceRuntime } from './loader-startup-trace.mjs';
 const MARKER = 'var TRAFFIC_GATE_PROTOCOL_VERSION = 2;';
 
@@ -10,6 +11,7 @@ function replaceOnce(source, search, replacement, label) {
 }
 
 const trafficGateRuntime = String.raw`
+${recaptchaObservationRuntime}
     // Start static work and isolated verification early. Ad initialization and CMP
     // discovery can proceed during parsing; admission still requires verified PASS.
     state.earlyBootPreparation = state.earlyBootPreparation || null;
@@ -878,10 +880,12 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             prepareStaticConnections(config, false);
             setTrafficGateResume(function () {
                 if (state.config !== config) return [];
+                scheduleRecaptchaObservation(config);
                 return startMonetization(config, script);
             });
             var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation, Boolean(options.force));
             return gatePromise.then(function () {
+                scheduleRecaptchaObservation(config);
                 if (!trafficGateAllowsMonetization()) return [];
                 return startMonetization(config, script);
             });

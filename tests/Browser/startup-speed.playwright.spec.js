@@ -44,12 +44,13 @@ const gpt = `(() => {
 
 async function open(page, options = {}) {
     const selected = config();
+    if (options.recaptcha) selected.recaptchaObservation = {enabled:true,siteKey:"6LcObservationBrowserTest_12345"};
     if (options.timings) Object.assign(selected.trafficGate.timings, options.timings);
     if (options.denied) selected.allowedHostnames = ['another.example'];
     if (options.gateDisabled) selected.trafficGate.enabled = false;
     if (options.privacyBlocked) selected.privacy = {mode: 'STRICT', requireConsentBeforeAds: true,
         cmp: {timeoutMs:100,actionOnTimeout:'BLOCK_ADS'}};
-    const counts = {documents:0, configs:0, gateConfigs:0, sdkDownloads:0, verifies:0, gateScripts:0};
+    const counts = {documents:0, configs:0, gateConfigs:0, sdkDownloads:0, verifies:0, gateScripts:0, recaptcha:0};
     let releaseConfig, releaseVerification, releaseSdk, releaseDocument, releaseParser;
     const parserHold = new Promise(r=>{releaseParser=r;});
     if (!options.holdParser) releaseParser();
@@ -98,6 +99,12 @@ async function open(page, options = {}) {
             }
             counts.gateScripts++; await sleep(options.gateScriptMs);
             return route.fulfill({contentType:'application/javascript',body:options.legacyGate ? gateJs.replace("if (window.location.origin === GATE_ORIGIN && window.location.hash === '#prepare')", 'if (false)') : gateJs});
+        }
+        if (u.origin === 'https://www.google.com' && u.pathname === '/recaptcha/api.js') {
+            counts.recaptcha++;
+            if (options.recaptcha === 'hang') return new Promise(() => {});
+            if (options.recaptcha === 'fail') return route.abort('failed');
+            return route.fulfill({contentType:'application/javascript',body:`const badge=document.createElement('div');badge.className='grecaptcha-badge';badge.innerHTML='<iframe src="https://www.google.com/recaptcha/api2/anchor?k=6LcObservationBrowserTest_12345"></iframe>';document.body.appendChild(badge);window.grecaptcha={ready:f=>f(),execute:(key,options)=>{window.observedAction=options.action;window.observationExecutions=(window.observationExecutions||0)+1;return Promise.resolve('unused-token');}};`});
         }
         if (u.origin === 'https://challenges.cloudflare.com') {
             counts.sdkDownloads++;
@@ -165,3 +172,44 @@ test('controlled gate document comparison removes one delayed script fetch, not 
     console.log('CONTROLLED_GATE_TRANSPORT',JSON.stringify(times));
     expect(times[1].passMs).toBeLessThan(times[0].passMs-500);
 });
+
+for (const mode of ['success','fail','hang']) {
+    test(`optional reCAPTCHA ${mode} never delays ads after verified PASS`, async ({page}) => {
+        const run = await open(page, {recaptcha:mode,holdVerification:true,inline:true});
+        await expect.poll(()=>run.counts.verifies).toBe(1);
+        expect(run.counts.recaptcha).toBe(0);
+        expect(await page.evaluate(()=>window.adCalls||0)).toBe(0);
+        run.releaseVerification();
+        await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
+        await expect.poll(()=>run.counts.recaptcha).toBe(1);
+        expect(await page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
+        if (mode==='success') {
+            await expect.poll(()=>page.evaluate(()=>window.observationExecutions||0)).toBe(1);
+            expect(await page.evaluate(()=>window.observedAction)).toBe('horus_cf_pass');
+            await expect(page.locator('.grecaptcha-badge')).toHaveCSS('visibility','hidden');
+            await expect(page.locator('.grecaptcha-badge')).toHaveAttribute('data-hm-recaptcha-badge','hidden');
+            // The scoped rule remains effective after the startup observer stops.
+            await page.evaluate(() => {
+                const own=document.querySelector('.grecaptcha-badge');
+                const replacement=own.cloneNode(true); replacement.removeAttribute('style');
+                replacement.removeAttribute('data-hm-recaptcha-badge'); own.replaceWith(replacement);
+                const publisher=replacement.cloneNode(true); publisher.setAttribute('data-publisher-badge','1');
+                publisher.querySelector('iframe').src='https://www.google.com/recaptcha/api2/anchor?k=AnotherPublisherKey_12345';
+                document.body.appendChild(publisher);
+            });
+            await expect(page.locator('.grecaptcha-badge:not([data-publisher-badge])')).toHaveCSS('visibility','hidden');
+            await expect(page.locator('[data-publisher-badge]')).toHaveCSS('visibility','visible');
+        }
+        expect(run.counts.verifies).toBe(1);
+        expect(await page.evaluate(()=>window.adCalls)).toBe(1);
+    });
+}
+for (const mode of ['denied','disabled','default']) {
+    test(`reCAPTCHA has zero requests when ${mode}`, async ({page}) => {
+        const run = await open(page, {recaptcha:mode!=='default',serverReject:mode==='denied',gateDisabled:mode==='disabled',inline:true});
+        await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe(mode==='denied'?'ERROR':mode==='disabled'?'DISABLED':'PASSED');
+        await page.waitForTimeout(1300);
+        expect(run.counts.recaptcha).toBe(0);
+        expect(await page.evaluate(()=>window.adCalls||0)).toBe(mode==='denied'?0:1);
+    });
+}

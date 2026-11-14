@@ -121,6 +121,12 @@ final class SiteConfigPublisher
     {
         $payload = $this->builder->build($site, $environment, $version);
         $payload['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
+        // Explicit public allowlist: the reserved secret never leaves the server.
+        $settings = $site->servingSettings;
+        $payload['recaptchaObservation'] = [
+            'enabled' => (bool) ($settings?->recaptcha_observation_enabled ?? false),
+            'siteKey' => $settings?->recaptcha_observation_enabled ? $settings->recaptcha_observation_site_key : null,
+        ];
 
         return $payload;
     }

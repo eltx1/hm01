@@ -90,6 +90,33 @@
         </div>
     </div>
 
+    @if(auth()->user()->hasPermission('traffic_gate.manage'))
+        <div class="workspace-heading" style="margin-top:1.5rem">
+            <div><p class="eyebrow">Optional · observation only</p><h3>Google reCAPTCHA v3</h3>
+                <p class="muted">Runs once in the background after a verified Cloudflare PASS. Never blocks advertising or changes protection decisions. Statistics cover only visitors who passed Cloudflare, not all website traffic.</p>
+            </div>
+            <x-status-badge :status="$site->servingSettings?->recaptcha_observation_enabled ? 'ENABLED' : 'DISABLED'" />
+        </div>
+        <form method="POST" action="{{ route('admin.sites.recaptcha-observation', $site) }}" class="form-stack">
+            @csrf
+            <label>Observation mode
+                <select class="hm-input" name="enabled">
+                    <option value="0" @selected(!$site->servingSettings?->recaptcha_observation_enabled)>Disabled (default)</option>
+                    <option value="1" @selected($site->servingSettings?->recaptcha_observation_enabled)>Enabled after Cloudflare PASS</option>
+                </select>
+            </label>
+            <label>reCAPTCHA v3 site key
+                <input class="hm-input" name="site_key" maxlength="200" value="{{ $site->servingSettings?->recaptcha_observation_site_key }}" autocomplete="off">
+            </label>
+            <label>Secret key (optional; stored securely, unused in observation mode)
+                <input class="hm-input" type="password" name="recaptcha_observation_secret" maxlength="2000" autocomplete="new-password" placeholder="Leave blank to keep the stored secret">
+            </label>
+            <label><input type="checkbox" name="clear_secret" value="1"> Remove stored secret</label>
+            <p class="muted">No token verification or score storage in Horus. View the action “horus_cf_pass” in Google reCAPTCHA Admin. Register the publisher's domain with this key. The Horus reCAPTCHA badge is hidden. Google requires a visible disclosure in the publisher's user flow: “This site is protected by reCAPTCHA.” The publisher can place it in the footer; Horus does not inject a popup or notice. Existing publisher reCAPTCHA is left alone; observation is skipped on those pages to avoid conflicts.</p>
+            <button class="hm-button-secondary">Save reCAPTCHA observation</button>
+        </form>
+    @endif
+
     <div class="workspace-heading" style="margin-top:1.5rem"><div><p class="eyebrow">Renderer ownership</p><h3>Placement Matrix</h3></div><span class="muted">Production config v{{ $servingOverview['production_config']['version'] ?: '—' }}</span></div>
     <div class="table-scroll" tabindex="0" role="region" aria-label="Placement delivery details"><table class="hm-table"><thead><tr><th>Placement</th><th>GAM</th><th>Prebid</th><th>Direct JS</th><th>Renderer</th><th>Status</th></tr></thead><tbody>
         @forelse($servingOverview['placement_matrix'] as $row)
