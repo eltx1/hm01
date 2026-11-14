@@ -81,6 +81,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/publisher/onboarding/{step}', [OnboardingController::class, 'show'])->whereNumber('step')->middleware('permission:onboarding.manage')->name('publisher.onboarding.show');
         Route::put('/publisher/onboarding/{step}', [OnboardingController::class, 'update'])->whereNumber('step')->middleware('permission:onboarding.manage')->name('publisher.onboarding.update');
+        Route::post('/publisher/sites/{site}/installation-check', \App\Http\Controllers\SiteInstallationCheckController::class)->middleware(['permission:sites.view', 'throttle:3,1'])->name('publisher.sites.installation-check');
         Route::get('/publisher/sites', [PublisherSiteController::class, 'index'])->middleware('permission:sites.view')->name('publisher.sites.index');
         Route::get('/publisher/sites/create', [PublisherSiteController::class, 'create'])->middleware('permission:sites.manage')->name('publisher.sites.create');
         Route::post('/publisher/sites', [PublisherSiteController::class, 'store'])->middleware('permission:sites.manage')->name('publisher.sites.store');
@@ -155,6 +156,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.index');
         Route::get('/admin/click-protection', [ClickProtectionController::class, 'index'])->middleware(['horus', 'permission:settings.view'])->name('admin.click-protection.index');
         Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
+        Route::post('/admin/sites/{site}/installation-check', \App\Http\Controllers\SiteInstallationCheckController::class)->middleware(['horus', 'permission:sites.view', 'throttle:3,1'])->name('admin.sites.installation-check');
         Route::get('/admin/sites/{site}', [AdminSiteController::class, 'show'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.show');
         Route::middleware(['horus', 'permission:reporting.sources.manage', 'permission:gam.connections.manage', 'throttle:20,1'])->group(function (): void {
             Route::get('/admin/gam/reporting/google-app', [\App\Http\Controllers\Admin\GamReportingGoogleAppController::class, 'show'])->middleware('permission:settings.manage')->name('admin.gam.reporting.google-app.show');
