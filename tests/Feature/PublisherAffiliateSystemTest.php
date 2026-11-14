@@ -207,12 +207,14 @@ final class PublisherAffiliateSystemTest extends TestCase
     public function test_referral_progress_counts_only_authorized_non_deleted_site_aggregates(): void
     {
         [, $referrer, $referred, $referrerUser, $referredUser] = $this->affiliateContext();
-        $this->makeSiteFor($referred, $referredUser, ['primary_domain' => 'private-active.example.test', 'status' => 'ACTIVE']);
+        $active = $this->makeSiteFor($referred, $referredUser, ['primary_domain' => 'private-active.example.test']);
+        $active->update(['status' => 'ACTIVE']);
         $this->makeSiteFor($referred, $referredUser, ['primary_domain' => 'private-draft.example.test', 'status' => 'DRAFT']);
         $deleted = $this->makeSiteFor($referred, $referredUser, ['primary_domain' => 'private-deleted.example.test', 'status' => 'ACTIVE']);
+        $deleted->update(['status' => 'ACTIVE']);
         $deleted->delete();
         $this->actingAs($referrerUser)->get(route('publisher.affiliate.index'))->assertOk()
-            ->assertSee('1 active website(s)')->assertSee('1 awaiting setup or review')
+            ->assertViewHas('referralsCount', 1)->assertSee('1 active website(s)')->assertSee('1 awaiting setup or review')
             ->assertDontSee('private-active.example.test')->assertDontSee('private-draft.example.test')
             ->assertDontSee('private-deleted.example.test');
     }
