@@ -1,0 +1,35 @@
+name: Read-only reCAPTCHA save incident
+on:
+  push:
+    branches: [fix/recaptcha-save-20261114]
+    paths: ['ops/audit/recaptcha-save-incident.php', '.github/workflows/recaptcha-save-incident.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read bounded sanitized save evidence
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/home/[a-zA-Z0-9_-]+$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          probe="$REMOTE_HOME/incoming/recaptcha-save-$GITHUB_RUN_ID.php"
+          trap 'ssh -p "$SSH_PORT" "$SSH_USER@$HOST" "rm -f '\''$probe'\''"; rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          scp -P "$SSH_PORT" ops/audit/recaptcha-save-incident.php "$SSH_USER@$HOST:$probe"
+          ssh -p "$SSH_PORT" "$SSH_USER@$HOST" "php '$probe' '$REMOTE_HOME/htdocs/app.horusmedia.net'"
