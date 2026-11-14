@@ -3,6 +3,7 @@
 namespace App\Services\Campaigns;
 
 use App\Services\Network\Contracts\DnsResolver;
+use App\Services\Security\PublicProviderOriginValidator;
 use Illuminate\Validation\ValidationException;
 
 final class RemoteUrlSafetyValidator
@@ -33,7 +34,7 @@ final class RemoteUrlSafetyValidator
             throw ValidationException::withMessages([$field => 'The remote hostname could not be resolved safely.']);
         }
         foreach ($addresses as $address) {
-            if (! filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            if (! (new PublicProviderOriginValidator)->isGlobalUnicastIp($address)) {
                 throw ValidationException::withMessages([$field => 'The remote URL resolves to a private or reserved network.']);
             }
         }

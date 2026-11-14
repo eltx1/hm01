@@ -39,6 +39,7 @@
 
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')
+@include('publisher.sites.installation-check')
 
 @if(auth()->user()->hasPermission('inventory.view'))
 <article id="inventory" class="workspace-section">
@@ -175,6 +176,7 @@
 </article>
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')
+@include('publisher.sites.installation-check')
 
 @if(auth()->user()->hasPermission('publisher.ads_txt.view'))
 <article id="ads-txt-setup" class="workspace-section publisher-ads-installation">
