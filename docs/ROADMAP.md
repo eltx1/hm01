@@ -1,5 +1,9 @@
 # Roadmap
 
+The platform improvements authorized on 2026-11-14 are tracked in
+[PLATFORM_EVOLUTION_PLAN.md](PLATFORM_EVOLUTION_PLAN.md). That explicit scope
+extends the historical Task-42 roadmap below; its architectural guarantees remain.
+
 The speculative implementation roadmap stops at Task 42. Current product work is governed by `FINAL_LAUNCH_READINESS.md`, `GO_LIVE_CHECKLIST.md`, and `PILOT_RUNBOOK.md`: collect missing external production evidence, remediate only observed failures, and scale only profiles whose own gates pass.
 
 ## Implemented foundation

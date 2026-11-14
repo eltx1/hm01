@@ -67,6 +67,7 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site,
             'internal' => true,
+            'publicationSummary' => app(\App\Services\Sites\SitePublicationSummary::class)->forSite($site),
             'todayReport' => $request->user()->hasPermission('reporting.admin.view')
                 && $request->user()->hasPermission('reporting.sources.manage')
                 ? app(SiteGamTodayReport::class)->forSite($site) : null,
