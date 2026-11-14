@@ -30,13 +30,14 @@ final class SitePublicationSummary
         // The production pointer is updated by delivery confirmation, not by save.
         $state = match (true) {
             $latest === null => 'NOT_QUEUED',
-            $versionStatus === 'DELIVERY_FAILED', $deliveryStatus === 'FAILED' => 'FAILED',
-            $deliveryStatus === 'RETRY_SCHEDULED' => 'RETRY_SCHEDULED',
             $versionStatus === 'SUPERSEDED', $deliveryStatus === 'SUPERSEDED' => 'SUPERSEDED',
             $versionStatus === 'ROLLED_BACK' => 'ROLLED_BACK',
+            $deliveryStatus === 'RETRY_SCHEDULED' => 'RETRY_SCHEDULED',
+            in_array($deliveryStatus, ['BATCHING', 'UPLOADING'], true) => 'PUBLISHING',
+            $deliveryStatus === 'PENDING' => 'PENDING',
+            $versionStatus === 'DELIVERY_FAILED', $deliveryStatus === 'FAILED' => 'FAILED',
             $latest === $published && in_array($versionStatus, ['DEPLOYED', 'PUBLISHED'], true)
                 && ($deliveryStatus === 'DEPLOYED' || ($versionStatus === 'PUBLISHED' && $deliveryStatus === null)) => 'PUBLISHED',
-            in_array($deliveryStatus, ['BATCHING', 'UPLOADING'], true) => 'PUBLISHING',
             default => 'PENDING',
         };
         [$label, $detail] = match ($state) {

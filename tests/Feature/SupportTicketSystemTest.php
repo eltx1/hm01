@@ -41,7 +41,9 @@ class SupportTicketSystemTest extends TestCase
         $this->assertSame($site->id, $ticket->linked_resource_id);
         $snapshot = $ticket->events()->where('event', SupportTicketEventType::Created->value)->firstOrFail()->metadata['site_diagnostics'];
         $this->assertSame(1, $snapshot['schema']);
-        $this->assertSame(['schema', 'captured_at_utc', 'publication', 'monitor'], array_keys($snapshot));
+        $keys = array_keys($snapshot);
+        sort($keys);
+        $this->assertSame(['captured_at_utc', 'monitor', 'publication', 'schema'], $keys);
         $this->assertSame('NOT_QUEUED', $snapshot['publication']['state']);
         $this->assertStringNotContainsString('siteKey', json_encode($snapshot));
         $this->assertStringNotContainsString('secret', json_encode($snapshot));

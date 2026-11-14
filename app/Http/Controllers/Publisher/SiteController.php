@@ -45,6 +45,7 @@ class SiteController extends Controller
         return view('publisher.sites.show', [
             'site' => $site->load(['domains.verifications', 'reviews', 'servingSettings', 'publisher', 'placements']),
             'internal' => false,
+            'setupGuidance' => app(\App\Services\Sites\PublisherSetupGuidance::class)->describe($site->status->value),
             'adsTxtInstallation' => $adsTxt->bundle($site),
         ]);
     }

@@ -7,10 +7,19 @@ export function summarizeStartupTrace(input) {
         if (!event || typeof event.ms !== 'number' || !Number.isFinite(event.ms) || event.ms < previous || event.ms < 0 || event.ms > 86400000 || typeof event.phase !== 'string') throw new Error('Invalid startup event timing.');
         previous = event.ms;
         return { ms: event.ms, phase: phases.has(event.phase) ? event.phase : null,
+            resource: ['controls', 'config'].includes(event.resource) ? event.resource : null,
+            attempt: Number.isSafeInteger(event.attempt) && event.attempt > 0 && event.attempt <= 1000000 ? event.attempt : null,
             slot: Number.isSafeInteger(event.slot) && event.slot > 0 && event.slot <= 1000000 ? event.slot : null };
     }).filter(event => event.phase);
     const first = phase => events.find(event => event.phase === phase)?.ms ?? null;
     const elapsed = (start, end) => start !== null && end !== null && end >= start ? end - start : null;
+    const configStarts = events.filter(event => event.phase === 'CFG start');
+    const configStart = configStarts.at(-1);
+    const readyAt = resource => !configStart || (configStart.attempt === null && configStarts.length > 1) ? null
+        : events.find(event => event.phase === 'CFG ready' && event.resource === resource && event.attempt === configStart.attempt && event.ms >= configStart.ms)?.ms ?? null;
+    const configReady = readyAt('config'), controlsReady = readyAt('controls');
+    const configDuration = elapsed(configStart?.ms ?? null, configReady);
+    const controlsDuration = elapsed(configStart?.ms ?? null, controlsReady);
     const init = first('Horus init');
     const pass = first('CF pass');
     const cfEnd = events.find(event => ['CF pass', 'CF reject', 'CF error', 'CF timeout'].includes(event.phase));
@@ -24,7 +33,8 @@ export function summarizeStartupTrace(input) {
     }
     return { schema: 1, scope: 'One supplied page trace; not population statistics or a fraud score',
         events_analyzed: events.length, dropped: Number.isSafeInteger(input.dropped) && input.dropped >= 0 ? input.dropped : 0,
-        timing_ms: { config: elapsed(first('CFG start'), first('CFG ready')),
+        timing_ms: { config: configDuration, controls: controlsDuration,
+            boot_preparation: configReady !== null && controlsReady !== null ? elapsed(configStart.ms, Math.max(configReady, controlsReady)) : null,
             cloudflare_total: elapsed(first('CF start'), cfEnd?.ms ?? null),
             after_pass_to_first_request: elapsed(pass, first('GPT request')),
             page_init_to_first_nonempty_render: elapsed(init, first('GPT render')),

@@ -19,7 +19,7 @@ row is considered deployed without a recorded production release.
 | 12 Recovery | Existing versions and rollback; follow-up preserves current CF/Click Guard/domain/pause/control settings | Safe diff/dry-run UI and current-provider compatibility validation |
 | 13 Gradual releases | Existing protected release/deployment pipeline | Explicit pilot cohort flags, pinned versions, comparisons and recovery tests |
 | 14 Support | Existing tenant-safe website linking; follow-up immutable minimal creation-time snapshot for staff | Integration/permission tests and production evidence |
-| 15 Onboarding | Existing simplified dashboard → sites → ads.txt → review flow; legacy writes retired | Derived next-action progress UI without restoring the retired wizard |
+| 15 Onboarding | Existing simplified dashboard → sites → ads.txt → review flow; legacy writes retired | Next-action guidance added for every current lifecycle state; integration CI pending, no retired wizard restored |
 | 16 Referrals | Existing PublisherAffiliateService, attribution, finalized-period commission ledger and views | Commission/partner visibility review and onboarding integration |
 
 ## PR306 baseline validation
@@ -27,8 +27,7 @@ row is considered deployed without a recorded production release.
 An initial feature assertion failed on PHP/SQLite and MySQL because it compared
 an inserted in-memory record with a database-normalized record. The only mismatch
 was key order / JSON spacing. It was corrected to compare database snapshots both
-before and after the GET, retaining strict immutability verification. Full CI is
-running again on d57e5e710c81d53f587fb59813803762e7483439.
+before and after the GET, retaining strict immutability verification. Full CI passed on d57e5e710c81d53f587fb59813803762e7483439. Review then found that retry/progress delivery-item state must override a historical DELIVERY_FAILED version status; this is fixed with regression cases and CI is rerunning.
 
 ## Follow-up validation
 
@@ -39,7 +38,7 @@ running again on d57e5e710c81d53f587fb59813803762e7483439.
 - PHP syntax and diff checks pass for edited files.
 - Cloud Browser could not reach the isolated local preview (connection refused).
   No successful visual/browser check is claimed from that attempt.
-- Laravel feature tests and required full CI are still required on the follow-up commit.
+- Follow-up PHP 8.2/8.3/8.4 and Chromium/WebKit passed on its first commit. MySQL found an order-sensitive JSON-key assertion; it now compares the sorted exact key allowlist. Review also found config/controls readiness ambiguity; timing now pairs resource and attempt, with regression tests. Full CI is rerunning.
 - Follow-up modifies no Loader source or siteverify worker and adds no browser-to-server
   trace transmission. It does change rollback payload protection and support metadata,
   so integration tests must pass before release.
