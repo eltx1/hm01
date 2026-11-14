@@ -22,6 +22,10 @@ class PublisherPageInspectionTest extends TestCase
         $this->assertSame('LOADER_TAG_NOT_FOUND', $check->inspectHtml('<template>'.$tag.'</template>', 'hm_expected', $loader));
         $this->assertSame('LOADER_TAG_NOT_FOUND', $check->inspectHtml(str_replace('<script ', '<script type="text/plain" ', $tag), 'hm_expected', $loader));
         $this->assertSame('LOADER_TAG_NOT_FOUND', $check->inspectHtml(str_replace('https:', '', $tag), 'hm_expected', $loader, 'http'));
+        foreach (['textarea', 'iframe', 'xmp', 'style', 'title', 'noembed', 'noframes'] as $container) {
+            $this->assertSame('LOADER_TAG_NOT_FOUND', $check->inspectHtml('<'.$container.'>'.$tag.'</'.$container.'>', 'hm_expected', $loader));
+            if ($container !== 'noframes') $this->assertSame('CORRECT_TAG_FOUND', $check->inspectHtml('<'.$container.'>'.$tag.'</'.$container.'>'.$tag, 'hm_expected', $loader));
+        }
         $this->assertSame('UNREADABLE_HTML', $check->inspectHtml('', 'hm_expected', $loader));
     }
 }

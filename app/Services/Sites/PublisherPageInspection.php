@@ -19,7 +19,7 @@ final class PublisherPageInspection
                 if (! in_array(strtolower(trim($script->getAttribute('type'))), ['', 'module', 'text/javascript', 'application/javascript'], true)) continue;
                 $inert = false;
                 for ($parent = $script->parentNode; $parent; $parent = $parent->parentNode) {
-                    if (in_array(strtolower($parent->nodeName), ['template', 'noscript'], true)) { $inert = true; break; }
+                    if (in_array(strtolower($parent->nodeName), ['template', 'noscript', 'textarea', 'iframe', 'xmp', 'style', 'title', 'noembed', 'noframes', 'plaintext', 'script'], true)) { $inert = true; break; }
                 }
                 if ($inert) continue;
                 $src = trim($script->getAttribute('src'));

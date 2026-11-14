@@ -3,6 +3,8 @@
 namespace App\Services\Sites;
 
 use App\Models\Site;
+use App\Services\Network\DeadlineDnsResolver;
+use Closure;
 use App\Services\Campaigns\RemoteUrlSafetyValidator;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
@@ -16,7 +18,7 @@ use Throwable;
 /** Bounded HTML inspection only: scripts are never executed. */
 final class PublisherPageChecker
 {
-    public function __construct(private readonly RemoteUrlSafetyValidator $urls, private readonly PublisherPageInspection $inspection, private readonly ?ClientInterface $client = null) {}
+    public function __construct(private readonly PublisherPageInspection $inspection, private readonly ?ClientInterface $client = null, private readonly ?Closure $dnsFactory = null) {}
 
     public function check(Site $site, string $url): array
     {
@@ -27,6 +29,9 @@ final class PublisherPageChecker
         $finish = function (string $code) use ($site, $started, &$http): array { return ['site_id' => $site->id, 'code' => $code, 'http_status' => $http,
             'checked_at_utc' => now()->utc()->toIso8601String(), 'duration_ms' => (int) ((hrtime(true) - $started) / 1000000)]; };
         if (! function_exists('curl_init')) return $finish('CHECK_TRANSPORT_UNAVAILABLE');
+        $deadline = $started + 10000000000;
+        $dns = $this->dnsFactory ? ($this->dnsFactory)($deadline) : new DeadlineDnsResolver($deadline);
+        $urls = new RemoteUrlSafetyValidator($dns);
         $client = $this->client ?? new Client(['handler' => HandlerStack::create(new CurlHandler)]);
         for ($hop = 0; $hop <= 3; $hop++) {
             if ((hrtime(true) - $started) > 10000000000) return $finish('CHECK_TIMEOUT');
@@ -34,7 +39,8 @@ final class PublisherPageChecker
             if (! in_array($host, $hosts, true)) return $finish('UNAUTHORIZED_HOST');
             try {
                 $url = (string) (new Uri($url))->withHost($host)->withFragment('');
-                $addresses = $this->urls->publicAddresses($url, 'page_url');
+                $addresses = $urls->publicAddresses($url, 'page_url');
+                if (hrtime(true) >= $deadline) return $finish('CHECK_TIMEOUT');
                 $address = collect($addresses)->first(fn ($ip) => filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) ?? $addresses[0];
                 if (str_contains($address, ':')) $address = '['.$address.']';
                 $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));

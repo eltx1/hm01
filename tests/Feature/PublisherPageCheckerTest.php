@@ -39,7 +39,7 @@ class PublisherPageCheckerTest extends TestCase
         };
         $stack = HandlerStack::create(new MockHandler($responses));
         $stack->push(Middleware::history($history));
-        return new PublisherPageChecker(new RemoteUrlSafetyValidator($dns), new PublisherPageInspection, new Client(['handler' => $stack]));
+        return new PublisherPageChecker(new PublisherPageInspection, new Client(['handler' => $stack]), static fn (int $deadline) => $dns);
     }
 
     public function test_checks_html_without_executing_ads_and_audits_no_url_or_html(): void
