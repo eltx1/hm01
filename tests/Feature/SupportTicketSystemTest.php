@@ -39,6 +39,12 @@ class SupportTicketSystemTest extends TestCase
         $this->assertMatchesRegularExpression('/^HM-TKT-[0-9A-Z]{12}$/', $ticket->ticket_number);
         $this->assertSame($publisherAdmin->organization_id, $ticket->organization_id);
         $this->assertSame($site->id, $ticket->linked_resource_id);
+        $snapshot = $ticket->events()->where('event', SupportTicketEventType::Created->value)->firstOrFail()->metadata['site_diagnostics'];
+        $this->assertSame(1, $snapshot['schema']);
+        $this->assertSame(['schema', 'captured_at_utc', 'publication', 'monitor'], array_keys($snapshot));
+        $this->assertSame('NOT_QUEUED', $snapshot['publication']['state']);
+        $this->assertStringNotContainsString('siteKey', json_encode($snapshot));
+        $this->assertStringNotContainsString('secret', json_encode($snapshot));
         $this->assertSame(SupportTicketStatus::Open, $ticket->status);
         $this->assertDatabaseHas('support_ticket_events', ['support_ticket_id' => $ticket->id, 'event' => SupportTicketEventType::Created->value]);
 

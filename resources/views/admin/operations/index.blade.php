@@ -254,4 +254,12 @@ $controlTargets = [
     }));
 })();
 </script>
+<article class="workspace-section" aria-labelledby="startup-diagnostics-title">
+    <h2 id="startup-diagnostics-title">Analyze an ad startup trace</h2>
+    <p>In the affected page console, copy JSON.stringify(window.HorusMediaLoader.getStartupTrace()) if that diagnostic API is available. Paste the result below. Analysis runs locally in this browser and sends no trace to Horus.</p>
+    <label>Startup trace JSON<textarea class="hm-input" rows="6" maxlength="65536" data-startup-trace-input autocomplete="off" spellcheck="false"></textarea></label>
+    <button class="hm-button-secondary" type="button" data-startup-trace-analyze>Analyze trace locally</button>
+    <pre data-startup-trace-result role="status" aria-live="polite"></pre>
+    <p class="muted">Missing timings mean evidence was not recorded. No-fill is separate from an error. One trace is not a population speed measurement or proof of fraud.</p>
+</article>
 @endsection

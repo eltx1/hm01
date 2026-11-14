@@ -97,6 +97,10 @@
             </div>
             <x-status-badge :status="$site->servingSettings?->recaptcha_observation_enabled ? 'ENABLED' : 'DISABLED'" />
         </div>
+        <div data-observation-state="{{ $observationSummary['state'] }}">
+            <strong>{{ $observationSummary['label'] }}</strong>
+            <p class="muted">Publication confirms configuration delivery only. Browser execution and Google dashboard scores are separate evidence. No score is received or verified by Horus.</p>
+        </div>
         <form method="POST" action="{{ route('admin.sites.recaptcha-observation', $site) }}" class="form-stack">
             @csrf
             <label>Observation mode

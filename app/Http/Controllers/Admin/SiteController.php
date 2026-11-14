@@ -76,6 +76,7 @@ class SiteController extends Controller
             'site' => $site,
             'internal' => true,
             'publicationSummary' => app(\App\Services\Sites\SitePublicationSummary::class)->forSite($site),
+            'observationSummary' => app(\App\Services\Sites\RecaptchaObservationSummary::class)->forSite($site),
             'todayReport' => $request->user()->hasPermission('reporting.admin.view')
                 && $request->user()->hasPermission('reporting.sources.manage')
                 ? app(SiteGamTodayReport::class)->forSite($site) : null,

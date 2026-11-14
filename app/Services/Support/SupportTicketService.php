@@ -70,6 +70,7 @@ final class SupportTicketService
                 'category' => $ticket->category->value,
                 'priority' => $ticket->priority->value,
                 'linked_resource_type' => $ticket->linked_resource_type?->value,
+                'site_diagnostics' => $resource instanceof \App\Models\Site ? app(SupportSiteSnapshot::class)->capture($resource) : null,
             ]);
             if ($attachment) {
                 $this->attachments->store($attachment, $ticket, $message, $actor);
