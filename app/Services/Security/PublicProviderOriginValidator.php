@@ -108,7 +108,8 @@ class PublicProviderOriginValidator
         return array_values(array_filter(array_unique($addresses), 'is_string'));
     }
 
-    private function isGlobalUnicastIp(string $address): bool
+    /** Shared address classification for provider origins and bounded server-side fetches. */
+    public function isGlobalUnicastIp(string $address): bool
     {
         $packed = @inet_pton($address);
         if ($packed === false) {
