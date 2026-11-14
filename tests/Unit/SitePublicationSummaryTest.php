@@ -32,6 +32,9 @@ class SitePublicationSummaryTest extends TestCase
             $this->assertSame($expected, $service->describe(8, 'PENDING_DELIVERY', $status, 7)['state']);
         }
         $this->assertSame('FAILED', $service->describe(8, 'DELIVERY_FAILED', null, 7)['state']);
+        foreach (['PENDING' => 'PENDING', 'RETRY_SCHEDULED' => 'RETRY_SCHEDULED', 'BATCHING' => 'PUBLISHING', 'UPLOADING' => 'PUBLISHING'] as $status => $expected) {
+            $this->assertSame($expected, $service->describe(8, 'DELIVERY_FAILED', $status, 7)['state']);
+        }
         $this->assertSame('ROLLED_BACK', $service->describe(8, 'ROLLED_BACK', 'DEPLOYED', 7)['state']);
         $this->assertSame('NOT_QUEUED', $service->describe(null, null, null, null)['state']);
     }
