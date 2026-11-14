@@ -1,0 +1,59 @@
+name: Read-only reCAPTCHA save incident
+on:
+  pull_request:
+    paths: ['ops/audit/recaptcha-save-incident.php', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs']
+  push:
+    branches: [main]
+    paths: ['ops/audit/recaptcha-save-incident.php', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: php -l ops/audit/recaptcha-save-incident.php
+      - run: node --test tests/Deployment/recaptcha-save-incident.test.mjs
+  inspect:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Read bounded sanitized save evidence
+        env:
+          HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
+          SSH_USER: ${{ secrets.HORUS_PRODUCTION_SSH_USER }}
+          SSH_KEY: ${{ secrets.HORUS_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HORUS_PRODUCTION_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.HORUS_PRODUCTION_SSH_PORT || '22' }}
+          REMOTE_HOME: ${{ vars.HORUS_PRODUCTION_HOME || '/home/horusapp' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$REMOTE_HOME" =~ ^/home/[a-zA-Z0-9_-]+$ ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          probe="$REMOTE_HOME/incoming/recaptcha-save-$GITHUB_RUN_ID.php"
+          trap 'ssh -o BatchMode=yes -o ConnectTimeout=10 -p "$SSH_PORT" "$SSH_USER@$HOST" "rm -f '\''$probe'\''" >/dev/null 2>&1 || true; rm -f "$HOME/.ssh/id_ed25519"' EXIT
+          scp -o BatchMode=yes -o ConnectTimeout=10 -P "$SSH_PORT" ops/audit/recaptcha-save-incident.php "$SSH_USER@$HOST:$probe"
+          ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -p "$SSH_PORT" "$SSH_USER@$HOST" "php '$probe' '$REMOTE_HOME/htdocs/app.horusmedia.net'"
