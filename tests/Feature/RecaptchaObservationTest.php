@@ -34,9 +34,9 @@ class RecaptchaObservationTest extends TestCase
         [$admin, , $site] = $this->fixture();
         $this->assertFalse($site->servingSettings->recaptcha_observation_enabled);
         $site->update(['status' => SiteStatus::Active]);
-        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+        $this->actingAs($admin)->withHeader('X-Request-ID', '11111111-1111-4111-8111-111111111111')->withSession(['two_factor_passed_at' => now()->timestamp])
             ->post(route('admin.sites.recaptcha-observation', $site), ['enabled' => 1, 'site_key' => self::KEY, 'recaptcha_observation_secret' => self::SECRET])
-            ->assertSessionHasNoErrors()->assertRedirect();
+            ->assertSessionHasNoErrors()->assertSessionHas('operation_reference', '11111111-1111-4111-8111-111111111111')->assertRedirect();
         $settings = $site->refresh()->servingSettings;
         $this->assertTrue($settings->recaptcha_observation_enabled);
         $this->assertSame(self::SECRET, $settings->recaptcha_observation_secret);
@@ -50,7 +50,7 @@ class RecaptchaObservationTest extends TestCase
         $versions = \App\Models\ConfigVersion::where('site_id', $site->id)->count();
         $this->post(route('admin.sites.recaptcha-observation', $site), ['enabled' => 1, 'site_key' => self::KEY, 'recaptcha_observation_secret' => self::SECRET])->assertSessionHasNoErrors();
         $this->assertSame($versions, \App\Models\ConfigVersion::where('site_id', $site->id)->count());
-        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Google reCAPTCHA v3')->assertDontSee(self::SECRET);
+        $this->get(route('admin.sites.show', $site))->assertOk()->assertSee('Google reCAPTCHA v3')->assertSee('publication not confirmed')->assertDontSee(self::SECRET);
 
     }
 

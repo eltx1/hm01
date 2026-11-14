@@ -166,6 +166,13 @@
     <div><p class="eyebrow">Publisher website</p><h2>{{ $site->display_name }}</h2><p>{{ $site->primary_domain }}</p><div class="status-row"><x-status-badge :status="$site->status" /><x-status-badge :status="$monetization['overall']['status']" /></div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-secondary button-link" href="{{ route('publisher.sites.edit', $site) }}">Edit website</a>@endif</div>
 </section>
 
+<article class="workspace-section" aria-labelledby="setup-next-action-title">
+    <p class="eyebrow">Current website step</p><h2 id="setup-next-action-title">{{ $setupGuidance['title'] }}</h2>
+    <p>{{ $setupGuidance['detail'] }}</p><p class="muted">Responsible team: {{ $setupGuidance['owner'] }}</p>
+    @if($setupGuidance['target'] && ($setupGuidance['target'] !== '#ads-txt-setup' || auth()->user()->hasPermission('publisher.ads_txt.view')))
+        <a class="section-anchor" href="{{ $setupGuidance['target'] }}">Open the relevant website section</a>
+    @endif
+</article>
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')
 

@@ -32,6 +32,35 @@ final class SiteConfigurationBuilder
         private readonly RuntimePolicyResolver $runtimePolicies,
     ) {}
 
+    /** Current safety fields without building provider recipes; rollback must work even when a new recipe is broken. */
+    public function currentSafetyControls(Site $site): array
+    {
+        $site->loadMissing(['domains', 'siteConfig']);
+        $config = $site->siteConfig;
+        $connection = $this->engines->resolve($site)->gamConnection;
+        $adServingDisabled = $this->controls->disabledForSite('AD_SERVING', $site->id, $connection?->id);
+        $legacyNativeDisabled = $this->controls->disabledForSite('NATIVE_DEMAND', $site->id);
+        $directJsDisabled = $this->controls->disabledForSite('DIRECT_JS', $site->id) || $legacyNativeDisabled;
+        $active = $site->status === SiteStatus::Active && ! $adServingDisabled && $config?->status === 'ACTIVE'
+            && ! $config?->immediate_pause && $site->serving_mode !== ServingMode::Paused;
+
+        return [
+            'siteKey' => $site->public_key,
+            'allowedHostnames' => $this->hostnames($site),
+            'clickGuard' => $this->runtimePolicies->clickGuard($config?->click_guard_settings),
+            'status' => $active ? 'active' : 'paused',
+            'immediatePause' => (bool) $config?->immediate_pause,
+            'controls' => [
+                'adServingDisabled' => $adServingDisabled,
+                'gamDisabled' => $this->controls->disabledForSite('GAM', $site->id, $connection?->id),
+                'prebidDisabled' => $this->controls->disabledForSite('PREBID', $site->id),
+                'directJsDisabled' => $directJsDisabled,
+                'directDemandDisabled' => $directJsDisabled,
+                'nativeDemandDisabled' => $legacyNativeDisabled,
+            ],
+        ];
+    }
+
     public function build(Site $site, ConfigEnvironment $environment, int $version): array
     {
         $site->loadMissing([

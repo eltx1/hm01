@@ -125,6 +125,8 @@ class InventoryConfigurationTest extends TestCase
         $versionOne = $publisher->publish($site, ConfigEnvironment::Production, $admin);
         $inventory->updatePlacement($placement, ['status' => 'PAUSED'], $admin);
         $versionTwo = $publisher->publish($site->refresh(), ConfigEnvironment::Production, $admin);
+        $site->siteConfig->update(['click_guard_settings' => ['inheritGlobal' => false, 'enabled' => true, 'maxClicks' => 2, 'windowHours' => 1, 'blockHours' => 24]]);
+        $currentProtection = $publisher->preview($site->fresh(), ConfigEnvironment::Production);
         $rollback = $publisher->rollback($site->refresh(), ConfigEnvironment::Production, $versionOne, $admin);
         app(StaticDeliveryManager::class)->processPending();
 
@@ -134,6 +136,10 @@ class InventoryConfigurationTest extends TestCase
         $this->assertSame($versionOne->id, $rollback->source_version_id);
         $this->assertSame('active', $rollback->payload['placements'][0]['status']);
         $this->assertSame(4, $rollback->payload['schemaVersion']);
+        foreach (['trafficGate', 'clickGuard', 'allowedHostnames', 'status', 'immediatePause', 'controls', 'recaptchaObservation'] as $key) {
+            $this->assertSame($currentProtection[$key], $rollback->payload[$key]);
+        }
+        $this->assertSame(2, $rollback->payload['clickGuard']['maxClicks']);
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v1.*.json'));
         $this->assertNotEmpty(glob($this->staticRoot.'/configs/'.$site->public_key.'/production.v3.*.json'));
         $this->assertFileExists($this->staticRoot.'/configs/'.$site->public_key.'/production.json');

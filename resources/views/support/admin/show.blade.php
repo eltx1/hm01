@@ -63,5 +63,19 @@
 </section>
 @endif
 
+@foreach($ticket->events as $event)
+    @if($event->event === \App\Enums\SupportTicketEventType::Created && ($snapshot = $event->metadata['site_diagnostics'] ?? null))
+        <article class="workspace-section"><h2>Website evidence at ticket creation</h2>
+            <p class="muted">Historical configuration and monitor evidence; this does not prove a browser rendered an ad.</p>
+            <dl>
+                <dt>Captured (UTC)</dt><dd>{{ $snapshot['captured_at_utc'] ?? 'Not recorded' }}</dd>
+                <dt>Publication</dt><dd>{{ $snapshot['publication']['label'] ?? 'Unknown' }}</dd>
+                <dt>Latest queued version</dt><dd>{{ $snapshot['publication']['latest_version'] ?? 'None' }}</dd>
+                <dt>Confirmed production version</dt><dd>{{ $snapshot['publication']['published_version'] ?? 'None' }}</dd>
+                <dt>Stored monitor evidence</dt><dd>{{ $snapshot['monitor']['label'] ?? 'Unknown' }}</dd>
+            </dl>
+        </article>
+    @endif
+@endforeach
 <article class="workspace-section"><div class="workspace-heading"><div><p class="eyebrow">Immutable ticket history</p><h2>Events</h2></div></div>@foreach($ticket->events as $event)<div class="event"><div><strong>{{ str($event->event->value)->replace('_', ' ')->title() }}</strong><br><span>{{ $event->actor?->name ?: 'System' }} · {{ $event->created_at->toDayDateTimeString() }}</span></div><span>{{ $event->from_value }} @if($event->to_value)→ {{ $event->to_value }}@endif</span></div>@endforeach</article>
 @endsection

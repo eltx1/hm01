@@ -19,6 +19,6 @@ final class RecaptchaObservationController extends Controller
             'clear_secret' => ['sometimes', 'boolean'],
         ]);
         $settings->update($site, $request->user(), $data);
-        return back()->with('status', 'reCAPTCHA observation settings saved. Active sites publish through normal CDN delivery. Advertising and Cloudflare decisions are unchanged.');
+        return back()->with('operation_reference', $request->header('X-Request-ID'))->with('status', 'reCAPTCHA observation settings saved. Active sites publish through normal CDN delivery. Advertising and Cloudflare decisions are unchanged.');
     }
 }

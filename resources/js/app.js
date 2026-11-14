@@ -1,6 +1,7 @@
 import './bootstrap';
 import './site-gam-reporting';
 import './payment-profile';
+import './startup-diagnostics';
 import '../css/publisher-application.css';
 import '../css/ux-launch.css';
 import '../css/interface-density.css';

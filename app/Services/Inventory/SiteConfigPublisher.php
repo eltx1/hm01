@@ -78,7 +78,10 @@ final class SiteConfigPublisher
 
         return DB::transaction(function () use ($site, $environment, $target, $actor): ConfigVersion {
             $version = $this->nextVersion($site, $environment);
-            $payload = $target->payload;
+            $current = $this->builder->currentSafetyControls($site->refresh());
+            $current['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
+            $current['recaptchaObservation'] = $this->observationPayload($site);
+            $payload = (new ConfigurationRollbackPolicy)->preserveCurrentProtection($target->payload, $current);
             $payload['configVersion'] = $version;
             $payload['generatedAt'] = now()->utc()->toIso8601String();
             $payload['rollbackSourceVersion'] = $target->version;
@@ -122,13 +125,19 @@ final class SiteConfigPublisher
         $payload = $this->builder->build($site, $environment, $version);
         $payload['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
         // Explicit public allowlist: the reserved secret never leaves the server.
+        $payload['recaptchaObservation'] = $this->observationPayload($site);
+
+        return $payload;
+    }
+
+    private function observationPayload(Site $site): array
+    {
         $settings = $site->servingSettings;
-        $payload['recaptchaObservation'] = [
+
+        return [
             'enabled' => (bool) ($settings?->recaptcha_observation_enabled ?? false),
             'siteKey' => $settings?->recaptcha_observation_enabled ? $settings->recaptcha_observation_site_key : null,
         ];
-
-        return $payload;
     }
 
     private function storePendingVersion(

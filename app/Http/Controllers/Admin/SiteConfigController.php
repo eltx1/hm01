@@ -86,7 +86,7 @@ class SiteConfigController extends Controller
             return $publisher->publishActiveProduction($site, $request->user());
         });
 
-        return back()->with('status', $version
+        return back()->with('operation_reference', $request->header('X-Request-ID'))->with('status', $version
             ? 'Static settings updated and production configuration v'.$version->version.' was queued automatically.'
             : 'Static settings saved. Production will publish automatically when the website is activated.');
     }

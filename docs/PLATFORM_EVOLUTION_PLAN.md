@@ -213,6 +213,8 @@ duplicate referral, ownership dispute, rule changes, refunds, FX and payout retr
 6. Feature flags recover additive behavior; schema additions remain compatible.
    Financial changes require reconciliation before activation.
 
+Detailed per-task evidence is tracked in [PLATFORM_EVOLUTION_PROGRESS.md](PLATFORM_EVOLUTION_PROGRESS.md).
+
 ## Current execution record
 
 - Baseline: main 4b4d211 (existing speed and reCAPTCHA releases).
