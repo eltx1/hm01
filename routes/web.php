@@ -187,6 +187,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/sites/{site}/inventory/seller-declarations', [InventoryController::class, 'storeSellerDeclaration'])->middleware('permission:supply_chain.sellers.manage')->name('admin.sites.inventory.sellers.store');
         Route::put('/admin/sites/{site}/configuration', [SiteConfigController::class, 'update'])->middleware('permission:configs.manage')->name('admin.sites.config.update');
         Route::get('/admin/sites/{site}/configuration/preview', [SiteConfigController::class, 'preview'])->middleware('permission:configs.view')->name('admin.sites.config.preview');
+        Route::get('/admin/sites/{site}/configuration/history', \App\Http\Controllers\Admin\ConfigurationHistoryController::class)->middleware(['horus', 'permission:sites.view', 'permission:configs.view'])->name('admin.sites.config.history');
         Route::post('/admin/sites/{site}/configuration/publish', [SiteConfigController::class, 'publish'])->middleware('permission:configs.publish')->name('admin.sites.config.publish');
         Route::post('/admin/sites/{site}/configuration/versions/{configVersion}/rollback', [SiteConfigController::class, 'rollback'])->middleware('permission:configs.publish')->name('admin.sites.config.rollback');
         Route::post('/admin/sites/{site}/configuration/pause', [SiteConfigController::class, 'pause'])->middleware('permission:configs.publish')->name('admin.sites.config.pause');
