@@ -7,6 +7,7 @@ import { applyPlacementPresetTransform } from './transform-loader-placement-pres
 import { applyDirectPreparationTransform } from './transform-loader-direct-preparation.mjs';
 import { applyVideoPreparationTransform } from './transform-loader-video-preparation.mjs';
 import './build-rewarded-prompt.mjs';
+import './build-performance-observer.mjs';
 
 const sourcePath = new URL('../public/assets/hm-loader.js', import.meta.url);
 const outputPath = new URL('../public/assets/hm-loader.min.js', import.meta.url);

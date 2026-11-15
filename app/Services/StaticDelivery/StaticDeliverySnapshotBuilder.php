@@ -178,6 +178,7 @@ final class StaticDeliverySnapshotBuilder
             'runtime/gpt/hm-gpt-direct.'.substr($gptDirectHash, 0, 16).'.js' => $gptDirect,
             'runtime/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
             'runtime/video/hm-video-direct.'.substr($videoDirectHash, 0, 16).'.js' => $videoDirect,
+            ...($this->performanceAssets()),
 
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,
@@ -358,6 +359,19 @@ final class StaticDeliverySnapshotBuilder
 HEADERS;
 
         return str_replace("script-src 'self' https://challenges.cloudflare.com;", "script-src 'self' https://challenges.cloudflare.com '{$gateScriptHash}';", $headers);
+    }
+
+    private function performanceAssets(): array
+    {
+        $files = [];
+        foreach (glob(public_path('assets/performance/hm-performance.*.js')) ?: [] as $path) {
+            $bytes = $this->readRequired($path);
+            $expected = 'hm-performance.'.substr(hash('sha256', $bytes), 0, 16).'.js';
+            if (basename($path) !== $expected) throw new StaticDeliveryException('ASSET_INVALID', 'Performance archive content does not match its immutable name.');
+            $files['runtime/performance/'.$expected] = $bytes;
+        }
+
+        return $files;
     }
 
     private function readRequired(string $path): string

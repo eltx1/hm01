@@ -15,6 +15,14 @@ final class ConfigurationRollbackPolicy
             }
         }
 
+        // An advertising rollback cannot resurrect a previously enabled collector
+        // or a stale endpoint/sample policy. Keep the current optional setting.
+        if (array_key_exists('performanceObservation', $current)) {
+            $historical['observability']['performance'] = $current['performanceObservation'];
+        } else {
+            unset($historical['observability']['performance']);
+        }
+
         return $historical;
     }
 }

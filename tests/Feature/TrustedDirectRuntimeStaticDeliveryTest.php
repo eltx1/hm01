@@ -10,6 +10,22 @@ final class TrustedDirectRuntimeStaticDeliveryTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_previous_performance_builds_remain_available_for_stored_configuration_references(): void
+    {
+        $bytes = '/* previous immutable observation runtime */';
+        $name = 'hm-performance.'.substr(hash('sha256', $bytes), 0, 16).'.js';
+        $path = public_path('assets/performance/'.$name);
+        file_put_contents($path, $bytes);
+        try {
+            $snapshot = app(StaticDeliverySnapshotBuilder::class)->build();
+            $this->assertSame($bytes, $snapshot->files['runtime/performance/'.$name]);
+            $current = file_get_contents(public_path('assets/hm-performance.js'));
+            $this->assertSame($current, $snapshot->files['runtime/performance/hm-performance.'.substr(hash('sha256', $current), 0, 16).'.js']);
+        } finally {
+            unlink($path);
+        }
+    }
+
     public function test_static_snapshot_contains_rollback_retained_content_addressed_trusted_runtimes(): void
     {
         config([
@@ -18,6 +34,8 @@ final class TrustedDirectRuntimeStaticDeliveryTest extends TestCase
         ]);
 
         $snapshot = app(StaticDeliverySnapshotBuilder::class)->build();
+        $performance = file_get_contents(public_path('assets/hm-performance.js'));
+        $this->assertSame($performance, $snapshot->files['runtime/performance/hm-performance.'.substr(hash('sha256', $performance), 0, 16).'.js']);
         $gpt = file_get_contents(public_path('assets/hm-gpt-direct.js'));
         $isolated = file_get_contents(public_path('assets/hm-isolated-direct.js'));
         $video = file_get_contents(public_path('assets/hm-video-direct.js'));

@@ -14,15 +14,20 @@ export function summarizeStartupTrace(input) {
     const first = phase => events.find(event => event.phase === phase)?.ms ?? null;
     const elapsed = (start, end) => start !== null && end !== null && end >= start ? end - start : null;
     const configStarts = events.filter(event => event.phase === 'CFG start');
-    const configStart = configStarts.at(-1);
+    const configStart = configStarts[configStarts.length - 1];
     const readyAt = resource => !configStart || (configStart.attempt === null && configStarts.length > 1) ? null
         : events.find(event => event.phase === 'CFG ready' && event.resource === resource && event.attempt === configStart.attempt && event.ms >= configStart.ms)?.ms ?? null;
     const configReady = readyAt('config'), controlsReady = readyAt('controls');
     const configDuration = elapsed(configStart?.ms ?? null, configReady);
     const controlsDuration = elapsed(configStart?.ms ?? null, controlsReady);
     const init = first('Horus init');
-    const pass = first('CF pass');
-    const cfEnd = events.find(event => ['CF pass', 'CF reject', 'CF error', 'CF timeout'].includes(event.phase));
+    const firstRequest = first('GPT request');
+    // A failed attempt can be followed by a verified retry. Describe the last
+    // decision before this page's first request, rather than its first failure.
+    const decisions = events.filter(event => ['CF pass', 'CF reject', 'CF error', 'CF timeout'].includes(event.phase)
+        && (firstRequest === null || event.ms <= firstRequest));
+    const cfEnd = decisions[decisions.length - 1];
+    const pass = cfEnd?.phase === 'CF pass' ? cfEnd.ms : null;
     const slots = new Map();
     for (const event of events) {
         if (event.slot === null || !event.phase.startsWith('GPT ')) continue;
@@ -36,7 +41,7 @@ export function summarizeStartupTrace(input) {
         timing_ms: { config: configDuration, controls: controlsDuration,
             boot_preparation: configReady !== null && controlsReady !== null ? elapsed(configStart.ms, Math.max(configReady, controlsReady)) : null,
             cloudflare_total: elapsed(first('CF start'), cfEnd?.ms ?? null),
-            after_pass_to_first_request: elapsed(pass, first('GPT request')),
+            after_pass_to_first_request: elapsed(pass, firstRequest),
             page_init_to_first_nonempty_render: elapsed(init, first('GPT render')),
             gpt_library: elapsed(first('GPT load'), first('GPT ready')) },
         cloudflare_outcome: cfEnd?.phase ?? 'No terminal decision recorded',

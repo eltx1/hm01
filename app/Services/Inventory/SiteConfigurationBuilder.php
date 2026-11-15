@@ -50,6 +50,7 @@ final class SiteConfigurationBuilder
             'clickGuard' => $this->runtimePolicies->clickGuard($config?->click_guard_settings),
             'status' => $active ? 'active' : 'paused',
             'immediatePause' => (bool) $config?->immediate_pause,
+            'performanceObservation' => app(\App\Services\Diagnostics\PerformancePolicy::class)->publicConfig($config?->observability_settings),
             'controls' => [
                 'adServingDisabled' => $adServingDisabled,
                 'gamDisabled' => $this->controls->disabledForSite('GAM', $site->id, $connection?->id),
@@ -208,11 +209,13 @@ final class SiteConfigurationBuilder
                 'explicitOnly' => true,
             ],
             ...($publicSchain['nodes'] === [] ? [] : ['supplyChain' => ['schain' => $publicSchain]]),
-            'observability' => array_replace_recursive([
+            'observability' => array_replace(array_replace_recursive([
                 'runtimeTelemetry' => false,
                 'localDiagnostics' => (bool) $config->debug_enabled,
                 'syntheticProbeUrl' => rtrim((string) config('horus.cdn_url'), '/').'/health/delivery.json',
-            ], $config->observability_settings ?? []),
+            ], $config->observability_settings ?? []), [
+                'performance' => app(\App\Services\Diagnostics\PerformancePolicy::class)->publicConfig($config->observability_settings),
+            ]),
             'pageTargeting' => $pageTargeting,
             'placements' => $site->placements
                 ->sortBy('sort_order')
