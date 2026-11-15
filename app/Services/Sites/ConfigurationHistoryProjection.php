@@ -8,7 +8,7 @@ final class ConfigurationHistoryProjection
     public function project(array $payload): array
     {
         $result = ['Serving state' => in_array($payload['status'] ?? null, ['active', 'paused'], true) ? $payload['status'] : null];
-        foreach (['Emergency pause' => 'immediatePause', 'Cloudflare enabled' => 'trafficGate.enabled', 'Click Guard enabled' => 'clickGuard.enabled', 'GAM enabled' => 'engines.gam.enabled', 'Prebid enabled' => 'prebid.enabled', 'Direct JS enabled' => 'directDemand.enabled'] as $label => $path) {
+        foreach (['Emergency pause' => 'immediatePause', 'Cloudflare enabled' => 'trafficGate.enabled', 'Click Guard enabled' => 'clickGuard.enabled', 'GAM enabled' => 'engines.gam.enabled', 'Prebid enabled' => 'prebid.enabled', 'Direct JS enabled' => 'engines.directJs.enabled'] as $label => $path) {
             $value = data_get($payload, $path);
             $result[$label] = is_bool($value) ? $value : null;
         }

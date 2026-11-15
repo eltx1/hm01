@@ -44,4 +44,16 @@ class ConfigurationHistoryTest extends TestCase
         $this->assertNull($result['fields']['Placement count']);
         $this->assertStringNotContainsString('PRIVATE', json_encode($result));
     }
+    public function test_direct_js_history_uses_engine_eligibility_and_preserves_legacy_unknown(): void
+    {
+        $projection = new \App\Services\Sites\ConfigurationHistoryProjection;
+        $legacy = ['directDemand' => ['enabled' => true]];
+        $this->assertNull($projection->project($legacy)['Direct JS enabled']);
+        $paused = $legacy + ['engines' => ['directJs' => ['enabled' => false]]];
+        $active = $legacy + ['engines' => ['directJs' => ['enabled' => true]]];
+        $this->assertFalse($projection->project($paused)['Direct JS enabled']);
+        $this->assertTrue($projection->project($active)['Direct JS enabled']);
+        $this->assertContains('Direct JS enabled', $projection->changes($paused, $active)['changed']);
+    }
+
 }
