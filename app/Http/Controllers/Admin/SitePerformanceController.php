@@ -16,8 +16,11 @@ final class SitePerformanceController extends Controller
 {
     public function show(Site $site, PerformanceReport $report, PerformancePolicy $policy)
     {
+        $stored = $site->siteConfig?->observability_settings['performance'] ?? [];
+        $rate = $stored['sampleBp'] ?? 100;
         return view('admin.sites.performance', ['site' => $site, 'report' => $report->forSite($site),
-            'configured' => $policy->configured(), 'settings' => $site->siteConfig?->observability_settings['performance'] ?? ['enabled' => false, 'sampleBp' => 100]]);
+            'configured' => $policy->configured(), 'settings' => ['enabled' => ($stored['enabled'] ?? false) === true,
+                'sampleBp' => is_int($rate) && $rate >= 1 && $rate <= 1000 ? $rate : 100]]);
     }
 
     public function update(Request $request, Site $site, PerformancePolicy $policy, AuditRecorder $audit, SiteConfigPublisher $publisher)

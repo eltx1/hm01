@@ -87,6 +87,8 @@ class PerformanceObservationSettingsTest extends TestCase
         $before = $site->refresh()->siteConfig->getRawOriginal('observability_settings');
         $this->get(route('admin.sites.performance.show', $site))->assertOk()->assertSee('SETUP_REQUIRED')->assertSee('Missing observations do not mean zero latency');
         $this->assertSame($before, $site->refresh()->siteConfig->getRawOriginal('observability_settings'));
+        $site->siteConfig->update(['observability_settings' => ['performance' => ['enabled' => 'PRIVATE', 'sampleBp' => ['PRIVATE']]]]);
+        $this->get(route('admin.sites.performance.show', $site))->assertOk()->assertDontSee('PRIVATE');
         Http::assertNothingSent();
     }
 }
