@@ -13,7 +13,16 @@ export async function deployDiagnostics({account,token,source,apply=false,reques
             if(missing&&response.status===404)return null;
             data=await response.json();
         } catch {throw Error('Diagnostics Cloudflare transport failed');}
-        if(!response.ok||data.success!==true)throw Error('Diagnostics Cloudflare request failed ('+response.status+')');
+        if(!response.ok||data.success!==true) {
+            // Numeric provider codes diagnose account/binding access without
+            // printing raw API messages (which may include private identifiers).
+            const codes=Array.isArray(data.errors)?data.errors.slice(0,10).map(e=>e?.code).filter(c=>Number.isSafeInteger(c)&&c>=0):[];
+            const messages=Array.isArray(data.errors)?data.errors.map(e=>typeof e?.message==='string'?e.message:'').join(' '):'';
+            const category=/analytics.*(?:not enabled|enable|permission)|(?:not enabled|enable).*analytics/i.test(messages)?'ANALYTICS_AVAILABILITY'
+                :/permission|not authorized|authentication|unauthorized/i.test(messages)?'AUTHORIZATION':'UPSTREAM_REJECTED';
+            const operation=path.endsWith('/workers/scripts/'+WORKER)?'WORKER_UPLOAD':path.endsWith('/subdomain')?'WORKER_SUBDOMAIN':path.endsWith('/workers/domains')?'WORKER_DOMAIN':'READINESS';
+            throw Error('Diagnostics Cloudflare request failed ('+response.status+'); operation='+operation+'; codes='+codes.join(',')+'; category='+category);
+        }
         return data.result;
     }
     const zones=await api('/zones?name=horusmedia.net');

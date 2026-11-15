@@ -36,3 +36,9 @@ for(const options of [{conflict:true},{unknown:true}])test('unrecognized ownersh
 test('transport exceptions cannot disclose credentials',async()=>{
     const h=fixture({failure:true});await assert.rejects(h.run(false),error=>!error.message.includes('PRIVATE'));
 });
+test('provider rejection exposes bounded numeric codes and fixed category, never raw messages',async()=>{
+    await assert.rejects(deployDiagnostics({account:'a'.repeat(32),token:'PRIVATE_TOKEN',source:'export default {}',request:async()=>Response.json({success:false,errors:[{code:10000,message:'Authentication permission denied PRIVATE_TOKEN'},{code:'PRIVATE_ID'}]},{status:403})}),error=>{
+        assert.match(error.message,/operation=READINESS; codes=10000; category=AUTHORIZATION/);
+        assert.equal(error.message.includes('PRIVATE'),false);return true;
+    });
+});
