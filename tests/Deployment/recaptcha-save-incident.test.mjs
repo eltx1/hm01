@@ -36,3 +36,21 @@ test('probe has no model write or publication calls', () => {
     const source = readFileSync(script, 'utf8');
     assert.doesNotMatch(source, /(?:->|::)(?:save|update|delete|insert|create|publish|forceFill)\s*\(/);
 });
+function parse(lines) {
+    const code='require $argv[1]; $lines=json_decode(stream_get_contents(STDIN),true); echo json_encode(array_map("hmIncidentLogRecord",$lines));';
+    const r=spawnSync(php,['-r',code,script],{encoding:'utf8',input:JSON.stringify(lines)});
+    assert.equal(r.status,0,r.stderr);assert.equal(r.stderr,'');return JSON.parse(r.stdout);
+}
+test('production JSON records are parsed with UTC time and private messages discarded',()=>{
+    const [record]=parse([JSON.stringify({datetime:'2026-11-14T18:20:30+02:00',level_name:'ERROR',message:'RecaptchaObservation PRIVATE_TOKEN',context:{exception:{class:'Illuminate\\Database\\QueryException',message:'SQLSTATE deadlock PRIVATE_SQL',trace:'PRIVATE_STACK'}}})]);
+    assert.equal(record.at,'2026-11-14 16:20:30');assert.equal(record.format,'json');
+    assert.equal(record.level,'ERROR');assert.deepEqual(record.categories,['db_lock']);
+    assert.equal(record.class,'Illuminate\\Database\\QueryException');assert.equal(record.mentions_observation,true);
+    assert.equal(JSON.stringify(record).includes('PRIVATE'),false);
+});
+test('text errors and valid non-error JSON remain distinguishable from unrecognized records',()=>{
+    const records=parse(['[2026-11-14 17:00:00] production.ERROR: Allowed memory size exhausted PRIVATE_VALUE',JSON.stringify({datetime:'2026-11-15T01:00:00Z',level_name:'INFO',message:'PRIVATE_VALUE'}),'not a record',JSON.stringify({datetime:'not a date',level_name:'ERROR',message:'PRIVATE_VALUE'})]);
+    assert.deepEqual(records[0].categories,['memory']);assert.equal(records[0].format,'text');
+    assert.equal(records[1].level,'INFO');assert.equal(records[1].at,'2026-11-15 01:00:00');
+    assert.equal(records[2],null);assert.equal(records[3],null);assert.equal(JSON.stringify(records).includes('PRIVATE'),false);
+});
