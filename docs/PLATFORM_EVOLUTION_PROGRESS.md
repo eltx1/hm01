@@ -82,3 +82,44 @@ PR310 review correctly identified JSON production log formatting. The parser now
 supports JSON/text, converts explicit offsets to UTC, redacts raw content, and
 reports recognized/unrecognized coverage; 6 deployment/parser tests pass locally.
 The original browser ERR_CONNECTION_CLOSED cause is still unproven.
+
+## Follow-up checkpoint — 2026-11-16 (Cairo)
+
+This checkpoint supersedes earlier pending/deployment statements above. Completion
+still requires implementation, tests, deployment and appropriate live evidence.
+
+- Last verified application release: main `7a3d9bc94f9700f412cbd998619df36dd7edbd99`,
+  deploy 43725174147 and live verification 43725324653 succeeded. PR306–310/313
+  are included. Canonical permanent Loader cache now respects origin revalidation;
+  direct HTTP 200 and exact unchanged Loader bytes were verified.
+- PR311 performance observations and PR312 consistent save references are merged,
+  but application deployment has not yet been confirmed. Main `1b686f4` production
+  validation 43772982616 remained in progress at this checkpoint.
+- Optional separate diagnostics Worker deployment failed with Cloudflare 403,
+  code 10089, Analytics Engine availability. No site was automatically opted in.
+  Account availability must be resolved before a controlled live pilot. No WAF or
+  admission change was used to work around this dependency.
+- PR315 configuration history remains open. Effective Direct JS state now uses
+  `engines.directJs.enabled`, not the legacy demand flag. Local PHPUnit: 3 tests,
+  15 assertions passed; updated required CI pending. No deployment claimed.
+- PR316 attention queue remains open. It now includes current production failures
+  and scheduled retries, excludes historical failures and retries already uploading,
+  and displays queued versus confirmed versions. Local attention/health tests:
+  3 tests, 44 assertions passed; updated CI pending. No deployment claimed.
+- This reconciliation presentation change shows missing source totals and absent
+  comparisons as unavailable, preserves genuine zero, and explains partial versus
+  missing comparison evidence. Recorded workflow status is not independently
+  verified equality. Financial calculations, import status, ledger, readiness and
+  payout rules are unchanged. Local finance/source-integrity suite: 37 tests,
+  343 assertions passed. Required CI and deployment pending.
+
+Remaining acceptance work: full independent ad-engine diagnostics; aggregate
+protection outcomes with valid denominators; report-surface coverage review;
+finance/reversal and partner-role review; site assignment where existing RBAC
+cannot express scope; remaining installation/ads.txt/protection/reporting queue
+sources; current-provider-safe rollback preview and concurrency; actual immutable
+canary version selection and recovery; preference-aware onboarding reminders;
+controlled live observation and real publisher/device rendering verification.
+The original browser connection-closed incident remains unexplained because the
+available production logs did not cover the incident window. Browser emulation
+and successful static delivery are not evidence of live physical Android ads.

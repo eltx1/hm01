@@ -46,6 +46,45 @@ class AdminFinanceOperationsTest extends TestCase
 {
     use InteractsWithIdentity, InteractsWithPublisherSites, RefreshDatabase;
 
+
+    public function test_reconciliation_view_distinguishes_missing_source_from_zero_without_writes(): void
+    {
+        [$creator, , , $publisher, , $site] = $this->context();
+        $date = now()->subMonthNoOverflow()->startOfMonth()->addDay()->toImmutable();
+        $connection = $this->connection($creator->organization_id, 'GBP', 'missing-source-evidence');
+        $job = app(ReportImportService::class)->importRows($connection, [[
+            'date' => $date, 'publisher_id' => $publisher->id, 'site_id' => $site->id,
+            'impressions' => 100, 'gross_revenue_minor' => 12345, 'currency' => 'GBP',
+        ]], ReportGranularity::Daily, ReportFinality::Finalized, $date, $date, $creator, 'missing-source-import');
+        $before = $job->reconciliations()->get()->toJson();
+        $financeBefore = DailyReport::withoutGlobalScopes()->get()->toJson();
+        $this->actingAs($creator)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.finance.reconciliation.index'))->assertOk()
+            ->assertSee('Unavailable')->assertSee('123.45')->assertSee('No comparable source evidence.')
+            ->assertSee('Recorded workflow status');
+        $this->assertSame($before, $job->reconciliations()->get()->toJson());
+        $this->assertSame($financeBefore, DailyReport::withoutGlobalScopes()->get()->toJson());
+    }
+
+    public function test_reconciliation_evidence_keeps_real_zero_and_rejects_incomplete_comparisons(): void
+    {
+        $projection = new \App\Services\Reporting\ReconciliationEvidence;
+        $run = new \App\Models\ReconciliationRun([
+            'source_totals' => ['gross_revenue_minor' => 0], 'stored_totals' => ['gross_revenue_minor' => 0],
+            'differences' => ['gross_revenue_minor' => ['source' => 0, 'stored' => 0, 'difference' => 0]],
+        ]);
+        $result = $projection->forRun($run);
+        $this->assertSame(0, $result['source_gross']);
+        $this->assertSame(0, $result['stored_gross']);
+        $this->assertSame(0, $result['gross_difference']);
+        $this->assertSame(1, $result['compared_count']);
+        $run->source_totals = ['impressions' => 100];
+        $result = $projection->forRun($run);
+        $this->assertNull($result['source_gross']);
+        $this->assertNull($result['gross_difference']);
+        $this->assertSame(0, $result['compared_count']);
+    }
+
     public function test_control_center_renders_real_currency_isolated_totals_and_masked_profiles(): void
     {
         [$creator, $approver, , $publisher, $publisherUser, $site, $otherPublisher, $otherUser] = $this->context();
