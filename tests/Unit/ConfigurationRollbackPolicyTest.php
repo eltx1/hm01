@@ -25,4 +25,13 @@ class ConfigurationRollbackPolicyTest extends TestCase
         $this->assertSame(['placements' => []], (new ConfigurationRollbackPolicy)->preserveCurrentProtection(
             ['placements' => [], 'trafficGate' => ['enabled' => false], 'siteKey' => 'stale'], []));
     }
+
+    public function test_rollback_retains_current_optional_observation_policy_and_other_historical_diagnostics(): void
+    {
+        $old = ['observability' => ['localDiagnostics' => true, 'performance' => ['enabled' => true, 'collectorOrigin' => 'https://old.test']]];
+        $policy = new ConfigurationRollbackPolicy;
+        $result = $policy->preserveCurrentProtection($old, ['performanceObservation' => ['enabled' => false]]);
+        $this->assertSame(['localDiagnostics' => true, 'performance' => ['enabled' => false]], $result['observability']);
+        $this->assertSame(['localDiagnostics' => true], $policy->preserveCurrentProtection($old, [])['observability']);
+    }
 }

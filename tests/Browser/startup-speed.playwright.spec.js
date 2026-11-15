@@ -44,13 +44,18 @@ const gpt = `(() => {
 
 async function open(page, options = {}) {
     const selected = config();
+    if (options.performance) selected.observability = {performance:{enabled:true,sampleBp:1000,collectorOrigin:'https://metrics.horusmedia.net',scriptUrl:C+'/runtime/performance/hm-performance.0123456789abcdef.js'}};
     if (options.recaptcha) selected.recaptchaObservation = {enabled:true,siteKey:"6LcObservationBrowserTest_12345"};
     if (options.timings) Object.assign(selected.trafficGate.timings, options.timings);
     if (options.denied) selected.allowedHostnames = ['another.example'];
     if (options.gateDisabled) selected.trafficGate.enabled = false;
     if (options.privacyBlocked) selected.privacy = {mode: 'STRICT', requireConsentBeforeAds: true,
         cmp: {timeoutMs:100,actionOnTimeout:'BLOCK_ADS'}};
-    const counts = {documents:0, configs:0, gateConfigs:0, sdkDownloads:0, verifies:0, gateScripts:0, recaptcha:0};
+    const counts = {documents:0, configs:0, gateConfigs:0, sdkDownloads:0, verifies:0, gateScripts:0, recaptcha:0, performance:0};
+    if (options.performance) await page.addInitScript(() => {
+        // Force deterministic inclusion in this test's sampled cohort only.
+        Object.defineProperty(window.crypto, 'getRandomValues', {value:array=>{array.fill(0);return array;}});
+    });
     let releaseConfig, releaseVerification, releaseSdk, releaseDocument, releaseParser;
     const parserHold = new Promise(r=>{releaseParser=r;});
     if (!options.holdParser) releaseParser();
@@ -76,6 +81,12 @@ async function open(page, options = {}) {
             ${options.duplicate ? `<script src="${C}/hm-loader.js" data-site-key="${KEY}" data-config-version="1"></script>` : ''}
             <script src="/parser-delay.js"></script></body></html>`});
         if (u.origin === C && u.pathname === '/hm-loader.js') return route.fulfill({contentType:'application/javascript',body: options.loader || minified});
+        if (u.origin === C && u.pathname.startsWith('/runtime/performance/')) {
+            counts.adsWhenPerformanceStarted = await page.evaluate(()=>window.adCalls||0);
+            counts.performance++;
+            if (options.performance === 'hang') return;
+            return route.abort('failed');
+        }
         if (u.origin === C) {
             if (!u.pathname.includes('_global')) counts.configs++;
             await configHold;
@@ -127,6 +138,19 @@ async function open(page, options = {}) {
     await page.goto(P, {waitUntil:options.holdParser?'commit':'domcontentloaded'});
     return {counts,releaseConfig,releaseVerification,releaseSdk,releaseDocument,releaseParser};
 }
+
+for (const failure of ['fail','hang']) test(`optional performance observer ${failure} starts after ad requests and cannot change verified admission`,async ({page})=>{
+    const run=await open(page,{performance:failure,holdVerification:true,inline:true});
+    await expect.poll(()=>run.counts.verifies).toBe(1);
+    expect(run.counts.performance).toBe(0);
+    expect(await page.evaluate(()=>window.adCalls||0)).toBe(0);
+    run.releaseVerification();
+    await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
+    await expect.poll(()=>run.counts.performance).toBe(1);
+    expect(run.counts.adsWhenPerformanceStarted).toBe(1);
+    expect(await page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
+    expect(await page.evaluate(()=>window.adCalls||0)).toBe(1);
+});
 
 
 for (const inline of [false,true]) {

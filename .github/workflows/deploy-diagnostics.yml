@@ -1,0 +1,41 @@
+name: Deploy optional performance observations
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the separate observation Worker after dry-run
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ['workers/diagnostics/**', 'scripts/deploy-diagnostics.mjs', '.github/workflows/deploy-diagnostics.yml']
+permissions:
+  contents: read
+concurrency:
+  group: production-performance-diagnostics
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node --test tests/Browser/diagnostics-worker.test.js tests/Deployment/deploy-diagnostics.test.mjs
+      - name: Verify independent service ownership without writes
+        run: node scripts/deploy-diagnostics.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply and read back the separate observation Worker
+        if: github.event_name == 'push' || inputs.apply == true
+        run: node scripts/deploy-diagnostics.mjs --apply
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

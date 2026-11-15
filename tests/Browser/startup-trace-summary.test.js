@@ -52,3 +52,9 @@ test('late results from an earlier attempt cannot complete the current attempt',
     assert.equal(s.timing_ms.config, null);
     assert.equal(s.timing_ms.boot_preparation, null);
 });
+test('a successful retry replaces an earlier timeout, but later decisions do not rewrite an earlier request', () => {
+    const s = summarizeStartupTrace(trace([['Horus init',0], ['CF start',10], ['CF timeout',25010], ['CF retry',25020], ['CF pass',26000], ['GPT request',26100,1], ['CF error',27000]]));
+    assert.equal(s.cloudflare_outcome, 'CF pass');
+    assert.equal(s.timing_ms.cloudflare_total, 25990);
+    assert.equal(s.timing_ms.after_pass_to_first_request,100);
+});
