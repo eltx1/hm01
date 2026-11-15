@@ -1,10 +1,10 @@
 name: Read-only reCAPTCHA save incident
 on:
   pull_request:
-    paths: ['ops/audit/recaptcha-save-incident.php', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs']
+    paths: ['ops/audit/**', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs', 'tests/Deployment/public-cache-audit.test.mjs']
   push:
     branches: [main]
-    paths: ['ops/audit/recaptcha-save-incident.php', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs']
+    paths: ['ops/audit/**', '.github/workflows/recaptcha-save-incident.yml', 'tests/Deployment/recaptcha-save-incident.test.mjs', 'tests/Deployment/public-cache-audit.test.mjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,6 +25,7 @@ jobs:
           node-version: '22'
       - run: php -l ops/audit/recaptcha-save-incident.php
       - run: node --test tests/Deployment/recaptcha-save-incident.test.mjs
+      - run: node --test tests/Deployment/public-cache-audit.test.mjs
   inspect:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: validate
@@ -35,6 +36,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Read public cache policy without modifying Cloudflare
+        run: node ops/audit/public-cache.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Read bounded sanitized save evidence
         env:
           HOST: ${{ secrets.HORUS_PRODUCTION_HOST }}
