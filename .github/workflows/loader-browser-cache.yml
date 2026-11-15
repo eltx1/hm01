@@ -1,0 +1,46 @@
+name: Permanent Loader browser cache
+on:
+  pull_request:
+    paths: ['scripts/configure-loader-browser-cache.mjs', 'tests/Deployment/loader-browser-cache.test.mjs', '.github/workflows/loader-browser-cache.yml']
+  push:
+    branches: [main]
+    paths: ['scripts/configure-loader-browser-cache.mjs', 'tests/Deployment/loader-browser-cache.test.mjs', '.github/workflows/loader-browser-cache.yml']
+  workflow_dispatch:
+    inputs:
+      apply:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: permanent-loader-browser-cache
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v6
+        with: {node-version: '22'}
+      - run: node --test tests/Deployment/loader-browser-cache.test.mjs
+  configure:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v6
+        with: {node-version: '22'}
+      - run: node scripts/configure-loader-browser-cache.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - if: github.event_name == 'push' || inputs.apply == true
+        run: node scripts/configure-loader-browser-cache.mjs --apply
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
