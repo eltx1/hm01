@@ -36,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(SecureResponseHeaders::class);
         $middleware->validateCsrfTokens(except: []);
         $middleware->appendToGroup('web', \App\Http\Middleware\ValidateImpersonationSession::class);
+        $middleware->appendToGroup('web', \App\Http\Middleware\AppendSiteOperationReference::class);
         $middleware->alias([
             'active' => EnsureActiveUser::class,
             'admin.2fa' => EnsureAdministratorTwoFactor::class,
