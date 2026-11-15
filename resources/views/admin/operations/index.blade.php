@@ -2,6 +2,7 @@
 @section('title', 'Operations Center')
 @section('heading', 'Operations Control Center')
 @section('content')
+@if(auth()->user()->hasPermission('sites.view'))<section><a class="section-anchor" href="{{ route('admin.operations.site-attention') }}">Review website attention queue</a></section>@endif
 <section class="metric-grid">
     <article><p class="eyebrow">Scheduler heartbeat</p><strong class="metric">{{ $heartbeatStale ? 'STALE' : 'HEALTHY' }}</strong><p class="muted">{{ $heartbeat?->last_seen_at ?: 'Never recorded' }}</p></article>
     <article><p class="eyebrow">Static delivery failures</p><strong class="metric">{{ $overview['failed_static_deliveries'] }}</strong><p class="muted">{{ $overview['retry_scheduled_deliveries'] }} retry scheduled · {{ $overview['retry_exhausted'] }} exhausted</p></article>
