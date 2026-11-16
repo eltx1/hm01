@@ -21,8 +21,11 @@ inside their database transaction. Identical immediate recovery retries reuse th
 latest matching source/candidate, ignoring only generated time, version number and
 loader cache bust metadata. Changed current policy produces a new candidate rather
 than reusing stale safety settings. Unique version and delivery constraints remain.
-Full parallel MySQL contention behavior still requires release CI / a dedicated
-contention test; a sequential replay test is not proof of every concurrent edit.
+ConfigurationRecoveryConcurrencyTest adds two real MySQL processes to verify
+publish/recovery serialization in both directions. It refuses non-testing databases
+and requires a database name ending in _test. Its two cases intentionally skip on
+SQLite; their MySQL CI result is still pending. Sequential replay alone is not
+counted as concurrency evidence.
 
 Validation: PHP 8.4 DirectDemandAdminControlCenterTest, InventoryConfigurationTest
 PrebidModeControlHardeningTest, StandalonePrebidRuntimeTest and ConfigurationRollbackPolicyTest: 36 tests / 270 assertions passed. Regressions
