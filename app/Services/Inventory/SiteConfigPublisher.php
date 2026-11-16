@@ -99,7 +99,8 @@ final class SiteConfigPublisher
     private function rollbackPayload(Site $site, ConfigEnvironment $environment, ConfigVersion $target, int $version): array
     {
         try {
-            $currentSupply = $this->builder->build($site, $environment, $version);
+            $recoverPaused = collect($target->payload['placements'] ?? [])->filter(fn ($placement) => is_array($placement) && ($placement['status'] ?? null) === 'active')->pluck('code')->filter(fn ($code) => is_string($code))->all();
+            $currentSupply = $this->builder->build($site, $environment, $version, $recoverPaused);
         } catch (\Throwable) {
             throw \Illuminate\Validation\ValidationException::withMessages(['rollback' => 'Current supply configuration cannot be validated. Review current providers before retrying.']);
         }
@@ -108,7 +109,7 @@ final class SiteConfigPublisher
         $current['recaptchaObservation'] = $this->observationPayload($site);
         $policy = new ConfigurationRollbackPolicy;
         $controls = app(\App\Services\Operations\PlatformControlService::class);
-        $disabled = $site->placements->filter(fn ($placement) => $controls->placementDisabled($placement->id))->pluck('code')->all();
+        $disabled = $site->placements->filter(fn ($placement) => $placement->status === \App\Enums\PlacementStatus::Disabled || $controls->placementDisabled($placement->id))->pluck('code')->all();
         $payload = $policy->preserveCurrentSupply($target->payload, $currentSupply, $disabled);
         $payload = $policy->preserveCurrentProtection($payload, $current);
         $payload['configVersion'] = $version;

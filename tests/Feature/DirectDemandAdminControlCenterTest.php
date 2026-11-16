@@ -329,6 +329,23 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertSame($countBefore + 2, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
+    public function test_recovery_restores_a_paused_direct_placement_without_database_writes_or_overriding_disabled_inventory(): void
+    {
+        $publisher = app(SiteConfigPublisher::class);
+        $source = $publisher->publishActiveProduction($this->site->fresh(), $this->admin);
+        $this->placement->update(['status' => 'PAUSED']);
+        $preview = $publisher->previewRollback($this->site->fresh(), $source);
+        $this->assertTrue($preview['directDemand']['enabled']);
+        $this->assertSame('DIRECT_JS', $preview['placements'][0]['renderer']);
+        $this->assertTrue($preview['placements'][0]['enabled']);
+        $this->assertSame('PAUSED', $this->placement->fresh()->status->value);
+        $this->placement->update(['status' => 'DISABLED']);
+        $preview = $publisher->previewRollback($this->site->fresh(), $source);
+        $this->assertFalse($preview['directDemand']['enabled']);
+        $this->assertFalse($preview['placements'][0]['enabled']);
+        $this->assertSame('DISABLED', $this->placement->fresh()->status->value);
+    }
+
     private function adminSession(): static
     {
         $this->actingAs($this->admin);
