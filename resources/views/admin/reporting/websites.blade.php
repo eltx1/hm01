@@ -20,7 +20,7 @@
         <article class="admin-website-card">
             <header><div><h3>{{ $site->display_name }}</h3><p>{{ $site->primary_domain }}</p><p class="muted">{{ $site->publisher?->display_name }}</p></div><x-status-badge :status="$site->status" /></header>
             @if($row)
-                <p class="report-state report-finality-state">{{ $row['has_estimates'] ? 'Includes estimates · Awaiting finalization' : 'Finalized reports' }}</p>
+                <p class="report-state report-finality-state">{{ $row['has_estimates'] ? 'Includes estimates · Awaiting finalization' : 'Finalized imported rows' }}</p>
                 <div class="admin-website-revenue"><span>Main gross revenue</span><strong>{{ \App\Support\Money::formatMinor($row['gross_revenue_minor']) }} <small>{{ $currency }}</small></strong></div>
                 <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::label($metric, $row) }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
             @else<p class="muted">No main reports for these dates. Missing data does not mean zero earnings.</p>@endif

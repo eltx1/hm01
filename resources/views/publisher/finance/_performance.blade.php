@@ -19,7 +19,7 @@
     @if($performance['available'])
     <div class="publisher-report-overview">
     <article class="publisher-earnings" aria-labelledby="publisher-earnings-heading">
-        <div class="publisher-earnings-topline"><h3 id="publisher-earnings-heading">{{ $hasVideo ? 'Main earnings' : 'Your earnings' }}</h3><span class="report-state report-finality-state">{{ $performance['has_estimates'] ? 'Includes estimates · Awaiting finalization' : 'Finalized reports' }}</span></div>
+        <div class="publisher-earnings-topline"><h3 id="publisher-earnings-heading">{{ $hasVideo ? 'Main earnings' : 'Your earnings' }}</h3><span class="report-state report-finality-state"><x-report-data-state :available="$performance['available']" :has-estimates="$performance['has_estimates']" :coverage="$performance['coverage']['main'] ?? []" /></span></div>
         <p class="publisher-earnings-value"><span>{{ $performance['currency'] }}</span> {{ \App\Support\Money::formatMinor($performance['earnings_minor']) }}</p>
         <details class="publisher-earnings-breakdown">
             <summary>Earnings breakdown</summary>
