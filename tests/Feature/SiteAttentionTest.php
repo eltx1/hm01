@@ -69,4 +69,47 @@ class SiteAttentionTest extends TestCase
         $this->assertSame($before, \App\Models\StaticDeliveryItem::withoutGlobalScopes()->get()->toJson());
     }
 
+    public function test_latest_source_queue_replaces_old_failures_and_excludes_other_domains_and_preview(): void
+    {
+        $this->seedIdentity();
+        $admin = $this->makeUser($this->makeOrganization(OrganizationType::HorusMedia), RoleName::SuperAdmin);
+        $owner = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
+        $publisher = $this->makePublisherFor($owner);
+        foreach (['Failed', 'Recovered'] as $label) {
+            $site = $this->makeSiteFor($publisher, $owner, ['display_name' => 'Source'.$label]);
+            $site->update(['status' => 'ACTIVE']);
+            $domain = $site->domains()->firstOrFail();
+            $domain->update(['domain' => $site->primary_domain, 'is_primary' => true]);
+            foreach ([1, 2] as $attempt) {
+                \App\Models\SiteVerification::create(['site_id' => $site->id, 'organization_id' => $site->organization_id,
+                    'site_domain_id' => $domain->id, 'method' => 'ADS_TXT', 'status' => $label === 'Recovered' && $attempt === 2 ? 'VERIFIED' : 'FAILED',
+                    'expected_value' => 'PRIVATE_RECORD', 'evidence' => ['url' => 'PRIVATE_URL'], 'attempted_at' => now()->subMinutes(3 - $attempt)]);
+                \App\Models\SyntheticProbeResult::create(['site_id' => $site->id, 'organization_id' => $site->organization_id,
+                    'probe' => 'PRIVATE_PROBE', 'environment' => 'PRODUCTION', 'status' => $label === 'Recovered' && $attempt === 2 ? 'PASS' : 'FAIL',
+                    'checks' => ['token' => 'PRIVATE_TOKEN'], 'observed_at' => now()->subMinutes(3 - $attempt)]);
+            }
+            if ($label === 'Recovered') {
+                \App\Models\SyntheticProbeResult::create(['site_id' => $site->id, 'organization_id' => $site->organization_id,
+                    'probe' => 'PRIVATE_PROBE', 'environment' => 'PREVIEW', 'status' => 'FAIL', 'observed_at' => now()]);
+                $removed = $site->domains()->create(['organization_id' => $site->organization_id, 'domain' => 'removed.example', 'verification_token' => 'PRIVATE_REMOVED_TOKEN', 'is_primary' => false]);
+                \App\Models\SiteVerification::create(['site_id' => $site->id, 'organization_id' => $site->organization_id,
+                    'site_domain_id' => $removed->id, 'expected_value' => 'PRIVATE_REMOVED_RECORD', 'method' => 'ADS_TXT', 'status' => 'FAILED', 'attempted_at' => now()]);
+            }
+        }
+        $before = \App\Models\SiteVerification::get()->toJson();
+        $probesBefore = \App\Models\SyntheticProbeResult::get()->toJson();
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        foreach (['ads_txt', 'synthetic'] as $filter) {
+            \Illuminate\Support\Facades\DB::enableQueryLog();
+            \Illuminate\Support\Facades\DB::flushQueryLog();
+            $this->get(route('admin.operations.site-attention', ['evidence' => $filter]))->assertOk()
+                ->assertSee('SourceFailed')->assertDontSee('SourceRecovered')->assertDontSee('PRIVATE_');
+            $sourceQueries = collect(\Illuminate\Support\Facades\DB::getQueryLog())->filter(fn ($q) => str_contains($q['query'], 'from "site_verifications"') || str_contains($q['query'], 'from `site_verifications`'));
+            $this->assertLessThanOrEqual(3, $sourceQueries->count());
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+        }
+        $this->assertSame($before, \App\Models\SiteVerification::get()->toJson());
+        $this->assertSame($probesBefore, \App\Models\SyntheticProbeResult::get()->toJson());
+    }
+
 }
