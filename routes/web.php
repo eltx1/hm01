@@ -154,6 +154,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/admin/gam/connections/{gamConnection}/assign-site', [GamConnectionController::class, 'assignSite'])->middleware('permission:gam.connections.assign')->name('admin.gam.connections.assign-site');
 
         Route::get('/admin/sites', [AdminSiteController::class, 'index'])->middleware(['horus', 'permission:sites.view'])->name('admin.sites.index');
+        Route::get('/admin/site-attention', \App\Http\Controllers\Admin\SiteAttentionController::class)->middleware(['horus', 'permission:sites.view', 'permission:operations.view'])->name('admin.operations.site-attention');
         Route::get('/admin/click-protection', [ClickProtectionController::class, 'index'])->middleware(['horus', 'permission:settings.view'])->name('admin.click-protection.index');
         Route::put('/admin/click-protection', [ClickProtectionController::class, 'update'])->middleware(['horus', 'permission:settings.manage', 'throttle:sensitive'])->name('admin.click-protection.update');
         Route::post('/admin/sites/{site}/installation-check', \App\Http\Controllers\SiteInstallationCheckController::class)->middleware(['horus', 'permission:sites.view', 'throttle:3,1'])->name('admin.sites.installation-check');
