@@ -17,7 +17,7 @@ final class ConfigurationHistoryController extends Controller
         $confirmed = $number > 0 ? (clone $query)->where('version', $number)->first() : null;
         $versions = $query->with('deliveryItem')->orderByDesc('version')->paginate(20);
         $rows = $versions->getCollection()->map(fn ($version) => [
-            'version' => $version->version, 'status' => $version->status->value,
+            'id' => $version->id, 'version' => $version->version, 'status' => $version->status->value,
             'delivery' => $version->deliveryItem?->status?->value ?? 'UNKNOWN',
             'created_at' => $version->created_at?->utc()->toIso8601String(),
             'confirmed' => $confirmed?->id === $version->id,
