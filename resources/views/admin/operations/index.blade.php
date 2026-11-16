@@ -264,4 +264,14 @@ $controlTargets = [
     <pre data-startup-trace-result role="status" aria-live="polite"></pre>
     <p class="muted">Missing timings mean evidence was not recorded. No-fill is separate from an error. One trace is not a population speed measurement or proof of fraud.</p>
 </article>
+<article class="workspace-section" aria-labelledby="protection-evidence-title">
+    <h2 id="protection-evidence-title">Compare local protection evidence</h2>
+    <p>Review manually collected startup snapshots by website, device, browser and capture day. This tool runs locally; it uploads no data and changes no protection rule. Production Cloudflare outcome totals and Click Guard traffic rates are not collected here.</p>
+    <p>Use the public website key and window.HorusMediaLoader.getStartupTrace(). If debug evidence already exists, copy only enabled and blocked from window.__HM_DIAGNOSTICS__.clickGuard; this is the recorded debug snapshot, not continuous monitoring. Omit clickGuard when unavailable. Device, browser and capture time are supplied labels, not verified metadata. Do not paste secret keys, tokens, visitor identifiers or raw logs.</p>
+    <details><summary>Input format</summary><pre>{"schema":1,"samples":[{"site":"PUBLIC_SITE_KEY","device":"android","browser":"chrome","capturedAt":"2026-11-16T12:00:00Z","trace":{"schema":1,"events":[]},"clickGuard":{"enabled":true,"blocked":false}}]}</pre></details>
+    <label>Protection snapshots JSON<textarea class="hm-input" rows="6" maxlength="262144" data-protection-input autocomplete="off" spellcheck="false"></textarea></label>
+    <button class="hm-button-secondary" type="button" data-protection-analyze>Compare snapshots locally</button>
+    <pre data-protection-result role="status" aria-live="polite"></pre>
+    <p class="muted">Counts describe submitted snapshots only. Missing and truncated evidence stays unknown. A reported PASS is not independently verified admission; a rejection, timeout or Click Guard block is not proof of fraud. Repeated submissions are not deduplicated visitors.</p>
+</article>
 @endsection
