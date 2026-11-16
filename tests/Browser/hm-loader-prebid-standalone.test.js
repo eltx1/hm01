@@ -265,6 +265,10 @@ function harness(selectedConfig, options = {}) {
         __HM_DISABLE_AUTOBOOT__: true,
     };
     sandbox.window = sandbox;
+    metrics.trace = [];
+    const traceSlots = new WeakMap(); let traceSlot = 0;
+    sandbox.startupTrace = (phase, detail) => { if (options.traceThrows) throw new Error('diagnostic failure'); metrics.trace.push({phase, ...detail}); };
+    sandbox.startupSlotNumber = element => { if (!traceSlots.has(element)) traceSlots.set(element, ++traceSlot); return traceSlots.get(element); };
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
 
     return {
@@ -505,4 +509,17 @@ test('Task 19 standalone Prebid and two Direct JS placements operate independent
     assert.equal(metrics.renders.length, 1, 'standalone Prebid renders independently');
     assert.equal(metrics.nativeLoads, 2, 'both Direct JS placements start without waiting for a global auction');
     assert.equal(metrics.gptLoads, 0, 'GAM/GPT is never introduced by parallel no-GAM serving');
+});
+
+test('passive standalone trace follows real outcomes and cannot break rendering when diagnostics throws', async () => {
+    for (const traceThrows of [false, true]) {
+        const { sandbox, metrics } = harness(standaloneConfig(), {traceThrows});
+        await sandbox.HorusMediaLoader.boot();
+        assert.equal(metrics.renders.length,1);
+        if (!traceThrows) assert.deepEqual(metrics.trace.map(e=>e.phase),['Prebid start','Prebid frame']);
+    }
+    const {sandbox, metrics} = harness(standaloneConfig(),{auction:'no-bid'});
+    await sandbox.HorusMediaLoader.boot();
+    assert.deepEqual(metrics.trace.map(e=>e.phase),['Prebid start','Prebid no-bid']);
+    assert.equal(JSON.stringify(metrics.trace).includes('ad-1'),false);
 });

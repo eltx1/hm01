@@ -58,3 +58,19 @@ test('a successful retry replaces an earlier timeout, but later decisions do not
     assert.equal(s.timing_ms.cloudflare_total, 25990);
     assert.equal(s.timing_ms.after_pass_to_first_request,100);
 });
+
+test('independent engines keep signals, failed candidates and no valid bid separate from GPT impressions', () => {
+    const s = summarizeStartupTrace(trace([
+        ['Horus init',0], ['CF pass',1], ['Prebid start',2,1], ['Direct start',3,2],
+        ['Direct candidate failed',4,2], ['Prebid frame',5,1], ['Direct render signal',6,2],
+        ['Prebid start',7,3], ['Prebid no-bid',8,3], ['Direct start',9,4], ['Direct exhausted',10,4], ['House render',11,4],
+    ]));
+    assert.equal(s.slots.length, 0);
+    assert.equal(s.timing_ms.page_init_to_first_nonempty_render, null);
+    assert.equal(s.engine_evidence.prebid_standalone[0].start_to_signal_ms,3);
+    assert.equal(s.engine_evidence.prebid_standalone[1].no_valid_bid_recorded,true);
+    assert.equal(s.engine_evidence.direct_js[0].candidate_failure_recorded,true);
+    assert.equal(s.engine_evidence.direct_js[0].signal_recorded,true);
+    assert.equal(s.engine_evidence.direct_js[1].candidates_exhausted_recorded,true);
+    assert.equal(s.engine_evidence.house_signals_recorded,1);
+});

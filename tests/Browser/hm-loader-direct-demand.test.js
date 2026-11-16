@@ -204,6 +204,10 @@ function harness(selectedConfig, options = {}) {
     };
     if (options.intersectionObserver) sandbox.IntersectionObserver = IntersectionObserver;
     sandbox.window = sandbox;
+    metrics.trace = [];
+    const traceSlots = new WeakMap(); let traceSlot = 0;
+    sandbox.startupTrace = (phase, detail) => { if (options.traceThrows) throw new Error('diagnostic failure'); metrics.trace.push({phase, ...detail}); };
+    sandbox.startupSlotNumber = element => { if (!traceSlots.has(element)) traceSlots.set(element, ++traceSlot); return traceSlots.get(element); };
     vm.runInNewContext(loaderSource, sandbox, { filename: 'hm-loader.js' });
 
     return {
@@ -543,4 +547,15 @@ test('legacy video recipe allows bounded startup phases while independent banner
     assert.equal(loadsBeforeVideo, 2, 'banner startup cannot wait on video media');
     assert.ok(timerDelays.includes(60000), JSON.stringify(timerDelays));
     assert.equal(runtime.elements.find(el => el.getAttribute('data-placement') === 'banner').getAttribute('data-hm-direct'), 'BANNER');
+});
+
+test('Direct trace records only bounded local signals and thrown diagnostics do not stop the provider', async () => {
+    for (const traceThrows of [false,true]) {
+        const selected=config({header:{enabled:true,candidates:[candidate('ONE',recipe())],house:null}});
+        const {sandbox,metrics,elements}=harness(selected,{traceThrows});
+        await sandbox.HorusMediaLoader.boot();
+        assert.equal(elements[0].getAttribute('data-hm-status'),'rendered');
+        if (!traceThrows) assert.deepEqual(metrics.trace.map(e=>e.phase),['Direct start','Direct render signal']);
+        assert.equal(JSON.stringify(metrics.trace).includes('ads.example'),false);
+    }
 });

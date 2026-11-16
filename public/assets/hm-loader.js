@@ -994,6 +994,14 @@ function nativeDefinition(config, code) {
         });
     }
 
+    function traceIndependentEngine(phase, element) {
+        try {
+            if (typeof startupTrace === 'function' && typeof startupSlotNumber === 'function') {
+                startupTrace(phase, { slot: startupSlotNumber(element) });
+            }
+        } catch (error) { /* Local diagnostics cannot change delivery. */ }
+    }
+
     function standaloneBidValid(winner, auctionId, responseBids) {
         if (!winner || !winner.adId || String(winner.mediaType || '').toLowerCase() !== 'banner') return false;
         if (winner.auctionId && auctionId && String(winner.auctionId) !== String(auctionId)) return false;
@@ -1040,6 +1048,7 @@ function nativeDefinition(config, code) {
             pbjs.renderAd(iframe.contentWindow.document, winner.adId);
         } catch (error) {
             if (iframe.parentNode && iframe.parentNode.removeChild) iframe.parentNode.removeChild(iframe);
+            traceIndependentEngine('Prebid error', entry.element);
             log(config, 'Standalone Prebid render failed', error);
             return false;
         }
@@ -1053,6 +1062,7 @@ function nativeDefinition(config, code) {
             adId: winner.adId,
             refreshCount: Number(previous && previous.refreshCount || 0)
         });
+        traceIndependentEngine('Prebid frame', entry.element);
         entry.element.setAttribute('data-hm-prebid', 'standalone-rendered');
         entry.element.setAttribute('data-hm-status', 'rendered');
         discoverClickGuardIframes(config);
@@ -1074,6 +1084,7 @@ function nativeDefinition(config, code) {
             return Promise.resolve(false);
         }
 
+        traceIndependentEngine('Prebid start', entry.element);
         state.standaloneAuctions[key] = loadPrebid(config).then(function (pbjs) {
             if (!pbjs || !prebidServingAllowed(config)) return false;
             return new Promise(function (resolve) {
@@ -1088,6 +1099,7 @@ function nativeDefinition(config, code) {
                         var winner = Array.isArray(winners) ? winners[0] : null;
                         var response = bids && bids[key];
                         if (!standaloneBidValid(winner, auctionId, response)) {
+                            traceIndependentEngine(status === 'timeout' ? 'Prebid timeout' : (status === 'failed' ? 'Prebid error' : 'Prebid no-bid'), entry.element);
                             entry.element.setAttribute('data-hm-prebid', status);
                             if (!state.standaloneEntries[key]) entry.element.setAttribute('data-hm-status', 'empty');
                             resolve(false);
@@ -1097,6 +1109,7 @@ function nativeDefinition(config, code) {
                         if (rendered && state.standaloneEntries[key]) state.standaloneEntries[key].auctionId = auctionId || winner.auctionId || null;
                         resolve(rendered);
                     } catch (error) {
+                        traceIndependentEngine('Prebid error', entry.element);
                         log(config, 'Standalone Prebid winner selection failed', error);
                         entry.element.setAttribute('data-hm-prebid', 'failed');
                         resolve(false);
@@ -1133,6 +1146,7 @@ function nativeDefinition(config, code) {
                 });
             });
         }).catch(function (error) {
+            traceIndependentEngine('Prebid error', entry.element);
             log(config, 'Standalone Prebid build unavailable', error);
             entry.element.setAttribute('data-hm-prebid', 'failed');
             if (!state.standaloneEntries[key]) entry.element.setAttribute('data-hm-status', 'empty');
@@ -1592,10 +1606,15 @@ function nativeDefinition(config, code) {
         if (state.nativeAttempts[key]) return state.nativeAttempts[key];
 
         var candidates = directCandidates(config, entry);
+        traceIndependentEngine('Direct start', entry.element);
         state.nativeAttempts[key] = new Promise(function (resolve) {
             function tryCandidate(index) {
                 if (!directJsServingAllowed(config)) { resolve(false); return; }
-                if (index >= candidates.length) { resolve(renderHouse(config, entry)); return; }
+                if (index >= candidates.length) {
+                    var houseRendered = renderHouse(config, entry);
+                    traceIndependentEngine(houseRendered ? 'House render' : 'Direct exhausted', entry.element);
+                    resolve(houseRendered); return;
+                }
 
                 var candidate = candidates[index];
                 var tag = candidate.tag || {};
@@ -1613,6 +1632,7 @@ function nativeDefinition(config, code) {
                         container.parentNode.removeChild(container);
                     }
                     entry.element.setAttribute('data-hm-native-last-error', String(reason || 'no-fill'));
+                    traceIndependentEngine('Direct candidate failed', entry.element);
                     entry.element.setAttribute('data-hm-direct-last-error', String(reason || 'no-fill'));
                     log(config, 'Direct Demand candidate failed', candidate.network, reason);
                     tryCandidate(index + 1);
@@ -1625,6 +1645,7 @@ function nativeDefinition(config, code) {
                     entry.element.setAttribute('data-hm-native', String(candidate.network));
                     entry.element.setAttribute('data-hm-direct', String(candidate.network));
                     entry.element.setAttribute('data-hm-status', 'rendered');
+                    traceIndependentEngine('Direct render signal', entry.element);
                     log(config, 'Direct Demand candidate rendered', candidate.network, entry.placement.code);
                     discoverClickGuardIframes(config);
                     resolve(true);

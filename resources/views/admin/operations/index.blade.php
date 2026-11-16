@@ -258,6 +258,7 @@ $controlTargets = [
 <article class="workspace-section" aria-labelledby="startup-diagnostics-title">
     <h2 id="startup-diagnostics-title">Analyze an ad startup trace</h2>
     <p>In the affected page console, copy JSON.stringify(window.HorusMediaLoader.getStartupTrace()) if that diagnostic API is available. Paste the result below. Analysis runs locally in this browser and sends no trace to Horus.</p>
+    <p>GAM display timings, standalone Prebid frame handoff, Direct JS render signals and video starts are reported separately when recorded. A frame or provider render signal does not verify viewability, an impression or revenue. Missing evidence remains unknown; this bounded trace is for startup diagnosis.</p>
     <label>Startup trace JSON<textarea class="hm-input" rows="6" maxlength="65536" data-startup-trace-input autocomplete="off" spellcheck="false"></textarea></label>
     <button class="hm-button-secondary" type="button" data-startup-trace-analyze>Analyze trace locally</button>
     <pre data-startup-trace-result role="status" aria-live="polite"></pre>
