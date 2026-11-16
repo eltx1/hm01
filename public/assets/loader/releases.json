@@ -1,0 +1,14 @@
+{
+  "1bdbd462baebd358afce12cc4278a34fd90054b3ec8076d9f344a4e90a444751": {
+    "file": "hm-loader.1bdbd462baebd358.min.js",
+    "runtimeBuild": "sha256:4f9456e092ef5fe9a5550e235e6f75651509e6470f218bc06adfc3980ab98e23",
+    "version": "2.0.0",
+    "protocol": 2
+  },
+  "d9e7b0098bf7e2f1da9a6dd0befe7803f8c989dffe679396d07fc8a9a4b85b52": {
+    "file": "hm-loader.d9e7b0098bf7e2f1.min.js",
+    "runtimeBuild": "sha256:6d66ce7f155b5af7ba34f3791c6f2e3923b8bdd06ce44f38d04fa755d459635c",
+    "version": "2.0.0",
+    "protocol": 2
+  }
+}

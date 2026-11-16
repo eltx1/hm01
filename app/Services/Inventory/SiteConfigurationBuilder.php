@@ -30,6 +30,7 @@ final class SiteConfigurationBuilder
         private readonly SupplyChainStandardsContract $supplyChain,
         private readonly SupplyChainObjectValidator $supplyChainValidator,
         private readonly RuntimePolicyResolver $runtimePolicies,
+        private readonly LoaderArchiveRegistry $loaderArchives,
     ) {}
 
     /** Current safety fields without building provider recipes; rollback must work even when a new recipe is broken. */
@@ -184,11 +185,7 @@ final class SiteConfigurationBuilder
             'houseAdTesting' => (bool) $config->house_ad_testing,
             'clickGuard' => $this->runtimePolicies->clickGuard($config->click_guard_settings),
             'allowedHostnames' => $this->hostnames($site),
-            'loader' => [
-                'version' => $loader?->version ?? '2.0.0',
-                'assetUrl' => $loader ? rtrim((string) config('horus.cdn_url'), '/').'/'.ltrim($loader->minified_path, '/') : null,
-                'cacheBust' => $version,
-            ],
+            'loader' => $this->loaderArchives->configuration($loader, $version),
             // GPT metadata remains for compatibility, but the Loader initializes
             // GPT only when a generated placement still has a GAM adUnitPath.
             'gpt' => [

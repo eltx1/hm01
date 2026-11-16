@@ -136,3 +136,5 @@
         @empty<tr><td colspan="6" class="muted">No active monetization source currently requires financial reporting.</td></tr>@endforelse
     </tbody></table></div>
 </article>
+
+@if(auth()->user()->hasPermission('configs.view'))<a class="section-anchor" href="{{ route('admin.sites.loader-pilot.show', $site) }}">Loader pilot release</a>@endif
