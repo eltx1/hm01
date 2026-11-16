@@ -21,6 +21,8 @@ export const startupTraceRuntime = String.raw`
     }
     var STARTUP_PHASES = ['Horus init', 'CFG start', 'CFG ready', 'CFG wait', 'CFG error',
         'CF cold', 'CF prepare', 'CF prepared', 'CF adopt', 'CF transport', 'CF document loaded', 'CF start', 'CF ready', 'CF token', 'CF verify', 'CF retry', 'CF pass', 'CF reject', 'CF error', 'CF timeout',
+        'Prebid start', 'Prebid no-bid', 'Prebid timeout', 'Prebid error', 'Prebid frame',
+        'Direct start', 'Direct candidate failed', 'Direct exhausted', 'Direct render signal', 'House render',
         'Privacy ready', 'Privacy reject', 'Core handoff', 'Core ready', 'Core wait',
         'Horus start', 'Horus wait', 'GPT load', 'GPT ready', 'GPT call', 'GPT request', 'GPT response',
         'GPT render', 'GPT empty', 'GPT error', 'GPT fetched', 'GPT wait', 'GPT onload', 'Core error', 'VAST call', 'VAST no-fill', 'VAST error', 'Video start', 'Video content'];

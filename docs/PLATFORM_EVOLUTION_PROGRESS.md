@@ -123,3 +123,23 @@ controlled live observation and real publisher/device rendering verification.
 The original browser connection-closed incident remains unexplained because the
 available production logs did not cover the incident window. Browser emulation
 and successful static delivery are not evidence of live physical Android ads.
+
+
+## Independent engine diagnostic coverage — 2026-11-16
+
+- PR315–317 passed required PHP/MySQL/Chromium/WebKit/release checks and merged;
+  main 6a9d7df deployed (43906615698) and live verification 43907014539 passed.
+- PR318 current Direct Demand recipe review passed full CI and merged as 0c694a2;
+  application deployment remains unconfirmed at this checkpoint.
+- Local bounded startup trace now records standalone Prebid start/no-valid-bid/
+  timeout/error/frame handoff, Direct JS start/candidate failure/render signal/
+  exhausted candidates, and house fallback separately. No extra network, timers,
+  provider details or request dependencies are introduced by these trace calls.
+- The local analyzer keeps engine evidence separate. Existing GPT first-ad timing
+  and optional aggregate collector semantics remain GPT display only. A provider
+  frame handoff/render signal is not a verified impression or viewability event.
+  The trace deduplicates startup phases per numeric slot and is not refresh totals.
+- New runtime regressions prove thrown diagnostic callbacks cannot prevent either
+  independent engine rendering. Targeted Node tests: 70 passed, 0 failed.
+  Full Node browser suite: 1110 passed, 36 intentional skips, 0 failures.
+  Required release CI remains pending before merge.

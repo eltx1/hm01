@@ -129,3 +129,13 @@ test('finite numeric diagnostics preserve zero, signs, fractions and scientific 
         assert.equal(h.c.startupSnapshot().events.at(-1).responseSize,responseSize);
     }
 });
+
+test('independent engine trace phases retain numeric slot only and discard provider content', () => {
+    const h=harness();
+    for (const phase of ['Prebid start','Prebid frame','Prebid no-bid','Prebid timeout','Prebid error','Direct start','Direct candidate failed','Direct exhausted','Direct render signal','House render']) {
+        h.c.startupTrace(phase,{slot:1,network:'PRIVATE_NETWORK',adId:'PRIVATE_AD',url:'PRIVATE_URL',error:'PRIVATE_ERROR'});
+    }
+    const snapshot=h.c.startupSnapshot();
+    assert.equal(snapshot.events.length,10);
+    assert.equal(JSON.stringify(snapshot).includes('PRIVATE'),false);
+});
