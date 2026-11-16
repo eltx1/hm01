@@ -25,8 +25,8 @@ Full parallel MySQL contention behavior still requires release CI / a dedicated
 contention test; a sequential replay test is not proof of every concurrent edit.
 
 Validation: PHP 8.4 DirectDemandAdminControlCenterTest, InventoryConfigurationTest
-and ConfigurationRollbackPolicyTest: 21 tests / 164 assertions passed. Regressions
+and ConfigurationRollbackPolicyTest: 21 tests / 166 assertions passed. Regressions
 include a disabled provider remaining disabled, current network/renderer paths,
 placement kill switches, deleted inventory, obsolete historical script removal,
 read-only preview, unchanged source version, current protection preservation and
-replay reuse of one outbox item. Required CI and deployment remain pending.
+replay reuse of one outbox item, and a fresh recovery version after a terminal delivery failure. Required CI and deployment remain pending.

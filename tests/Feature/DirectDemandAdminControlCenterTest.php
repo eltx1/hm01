@@ -322,6 +322,11 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertSame($countBefore + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
         $this->assertSame(1, \App\Models\StaticDeliveryItem::withoutGlobalScopes()->where('config_version_id', $recovery->id)->count());
         $this->assertTrue($source->fresh()->payload['directDemand']['enabled']);
+        $recovery->update(['status' => 'DELIVERY_FAILED']);
+        $recovery->deliveryItem()->update(['status' => 'FAILED']);
+        $afterFailure = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertNotSame($recovery->id, $afterFailure->id);
+        $this->assertSame($countBefore + 2, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
     }
 
     private function adminSession(): static

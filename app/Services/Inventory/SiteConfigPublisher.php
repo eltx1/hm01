@@ -81,7 +81,9 @@ final class SiteConfigPublisher
             $version = $this->nextVersion($site, $environment);
             $payload = $this->rollbackPayload($site, $environment, $target, $version);
             $latest = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->where('environment', $environment->value)->orderByDesc('version')->first();
-            if ($latest?->source_version_id === $target->id && $this->rollbackDigest($latest->payload) === $this->rollbackDigest($payload)) return $latest;
+            if ($latest?->source_version_id === $target->id
+                && in_array($latest->status, [ConfigVersionStatus::PendingDelivery, ConfigVersionStatus::Deployed, ConfigVersionStatus::Published], true)
+                && $this->rollbackDigest($latest->payload) === $this->rollbackDigest($payload)) return $latest;
 
             return $this->storePendingVersion($site, $environment, $version, $payload, $actor, StaticDeliveryPriority::Normal, $target);
         });
