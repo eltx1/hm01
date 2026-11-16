@@ -301,6 +301,29 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertSame($gam->id, $gam->fresh()->id);
     }
 
+    public function test_recovery_keeps_disabled_provider_out_and_reuses_identical_retry(): void
+    {
+        $publisher = app(SiteConfigPublisher::class);
+        $source = $publisher->publishActiveProduction($this->site->fresh(), $this->admin);
+        $this->assertTrue($source->payload['directDemand']['enabled']);
+        $this->account->update(['is_enabled' => false]);
+        $before = ConfigVersion::withoutGlobalScopes()->get()->toJson();
+        $countBefore = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->adminSession()->get(route('admin.sites.config.recovery-preview', [$this->site, $source]))
+            ->assertOk()->assertSee('Current provider recipes')->assertDontSee('publicPlacementId');
+        $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->get()->toJson());
+        $recovery = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertFalse($recovery->payload['directDemand']['enabled']);
+        $this->assertFalse($recovery->payload['nativeDemand']['enabled']);
+        $this->assertFalse($recovery->payload['engines']['directJs']['enabled']);
+        $this->assertSame([], $recovery->payload['directDemand']['placements']);
+        $retry = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertSame($recovery->id, $retry->id);
+        $this->assertSame($countBefore + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertSame(1, \App\Models\StaticDeliveryItem::withoutGlobalScopes()->where('config_version_id', $recovery->id)->count());
+        $this->assertTrue($source->fresh()->payload['directDemand']['enabled']);
+    }
+
     private function adminSession(): static
     {
         $this->actingAs($this->admin);

@@ -1,0 +1,32 @@
+# Configuration recovery with current supply
+
+Recovery restores historical placement order, status, targeting, lazy-load,
+refresh and collapse behavior, plus page targeting and diagnostic/house flags.
+The candidate starts from the current public configuration. Provider recipes,
+Prebid bidders/build/configuration, GAM network, inventory paths, format, renderer
+ownership, loader, supply chain and all admission/observation controls remain
+current. Deleted placements and obsolete historical payload fields are omitted;
+placement kill switches remain authoritative. A current provider configuration
+that cannot be built causes a fixed validation error instead of publishing an
+unvalidated candidate.
+
+The history screen links to an authorized private/no-store preview with a selected
+field projection. Preview queues nothing and exposes no recipe/secret payload.
+Applying uses the existing audited rollback/outbox path, recomputes current supply,
+and preserves current Cloudflare, Click Guard, domains and pause. It is a recovery
+of advertising presentation, not a mechanism to restore revoked provider access.
+
+Normal publication and recovery serialize version allocation using the site row
+inside their database transaction. Identical immediate recovery retries reuse the
+latest matching source/candidate, ignoring only generated time, version number and
+loader cache bust metadata. Changed current policy produces a new candidate rather
+than reusing stale safety settings. Unique version and delivery constraints remain.
+Full parallel MySQL contention behavior still requires release CI / a dedicated
+contention test; a sequential replay test is not proof of every concurrent edit.
+
+Validation: PHP 8.4 DirectDemandAdminControlCenterTest, InventoryConfigurationTest
+and ConfigurationRollbackPolicyTest: 21 tests / 164 assertions passed. Regressions
+include a disabled provider remaining disabled, current network/renderer paths,
+placement kill switches, deleted inventory, obsolete historical script removal,
+read-only preview, unchanged source version, current protection preservation and
+replay reuse of one outbox item. Required CI and deployment remain pending.
