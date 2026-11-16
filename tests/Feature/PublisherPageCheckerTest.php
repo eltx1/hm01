@@ -55,6 +55,11 @@ class PublisherPageCheckerTest extends TestCase
         $this->assertSame(['publisher.example.test:443:8.8.8.8:443'], $history[0]['options']['curl'][CURLOPT_CONNECT_TO]);
         $this->assertStringNotContainsString('do_not_record', \App\Models\AuditLog::query()->get()->toJson());
         $this->assertStringNotContainsString('<script', json_encode(session('installation_check')));
+        $record = \App\Models\AuditLog::where('event', 'site.installation_check.completed')->latest('id')->firstOrFail();
+        $this->assertSame($site->primary_domain, $record->new_values['primary_domain']);
+        $this->assertSame($site->public_key, $record->new_values['site_key']);
+        $this->assertTrue($record->new_values['checked_primary']);
+        $this->assertStringNotContainsString('https://', json_encode($record->new_values));
     }
 
     public function test_redirects_cannot_reach_other_hosts_or_rebound_private_addresses(): void
