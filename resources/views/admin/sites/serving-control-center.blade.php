@@ -1,4 +1,5 @@
 <article id="serving-control-center" class="workspace-section">
+    @if(auth()->user()->hasPermission('configs.view'))<a class="section-anchor" href="{{ route('admin.sites.config.history', $site) }}">Configuration history and selected-field differences</a>@endif
     <div class="workspace-heading">
         <div><p class="eyebrow">Multi-engine serving</p><h2>Serving Control Center</h2><p class="muted">One operational view of the master serving gate, GAM, Header Bidding, Direct JS, renderer ownership, and source-aware financial reporting.</p></div>
         @if(auth()->user()->hasPermission('operations.view'))<div><a class="section-anchor" href="{{ route('admin.operations.index') }}">Open Operations</a> · <a class="section-anchor" href="{{ route('admin.sites.performance.show', $site) }}">Performance observations</a></div>@endif
