@@ -21,7 +21,7 @@ class SiteAttentionTest extends TestCase
         $owner = $this->makeUser($this->makeOrganization(OrganizationType::Publisher), RoleName::PublisherAdmin);
         $publisher = $this->makePublisherFor($owner);
         $foreign = $this->makeOrganization(OrganizationType::Publisher);
-        foreach (['Finding', 'Recovered', 'Moved', 'Rotated', 'Secondary', 'Legacy', 'Unknown'] as $name) {
+        foreach (['Finding', 'Recovered', 'Moved', 'Rotated', 'Secondary', 'Legacy', 'Unknown', 'Encoding'] as $name) {
             $site = $this->makeSiteFor($publisher, $owner, ['display_name' => 'Install'.$name]);
             $site->update(['status' => 'ACTIVE']);
             $values = ['primary_domain' => $site->primary_domain, 'site_key' => $site->public_key,
@@ -29,6 +29,7 @@ class SiteAttentionTest extends TestCase
             $write = fn ($values, $org, $time) => \App\Models\AuditLog::forceCreate(['organization_id' => $org, 'event' => 'site.installation_check.completed',
                 'auditable_type' => $site->getMorphClass(), 'auditable_id' => $site->id, 'new_values' => $values,
                 'metadata' => ['secret' => 'PRIVATE_METADATA'], 'ip_address' => '192.0.2.123', 'created_at' => $time]);
+            if ($name === 'Encoding') $values['code'] = 'UNSUPPORTED_ENCODING';
             $write($values, $site->organization_id, now()->subMinutes(3));
             if ($name === 'Recovered') $write(array_replace($values, ['code' => 'CORRECT_TAG_FOUND']), $site->organization_id, now()->subMinute());
             if ($name === 'Unknown') $write(array_replace($values, ['code' => 'PRIVATE_UNRECOGNIZED_CODE']), $site->organization_id, now()->subMinute());
@@ -51,7 +52,7 @@ class SiteAttentionTest extends TestCase
         \Illuminate\Support\Facades\DB::flushQueryLog();
         $response = $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
             ->get(route('admin.operations.site-attention', ['evidence' => 'installation']))->assertOk()->assertSee('InstallFinding')
-            ->assertSee('LOADER_TAG_NOT_FOUND')->assertDontSee('PRIVATE_')->assertDontSee('192.0.2.123');
+            ->assertSee('LOADER_TAG_NOT_FOUND')->assertSee('InstallEncoding')->assertSee('UNSUPPORTED_ENCODING')->assertDontSee('PRIVATE_')->assertDontSee('192.0.2.123');
         foreach (['Recovered', 'Moved', 'Rotated', 'Secondary', 'Legacy', 'Unknown'] as $name) $response->assertDontSee('Install'.$name);
         $auditQueries = collect(\Illuminate\Support\Facades\DB::getQueryLog())->filter(fn ($query) => str_contains($query['query'], 'audit_logs'));
         $this->assertLessThanOrEqual(3, $auditQueries->count());
