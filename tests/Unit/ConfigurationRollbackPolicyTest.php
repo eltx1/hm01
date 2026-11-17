@@ -34,4 +34,24 @@ class ConfigurationRollbackPolicyTest extends TestCase
         $this->assertSame(['localDiagnostics' => true, 'performance' => ['enabled' => false]], $result['observability']);
         $this->assertSame(['localDiagnostics' => true], $policy->preserveCurrentProtection($old, [])['observability']);
     }
+    public function test_current_supply_inventory_and_renderer_controls_replace_historical_authorization(): void
+    {
+        $policy = new ConfigurationRollbackPolicy;
+        $old = ['obsoleteProviderScript' => 'PRIVATE_OLD_SCRIPT', 'gamNetworkCode' => 'old', 'prebid' => ['private_old_bidder' => true], 'directDemand' => ['old_recipe' => true],
+            'placements' => [['code' => 'a', 'enabled' => true, 'status' => 'active', 'adUnitPath' => '/old/path', 'targeting' => ['kept' => ['1']]],
+                ['code' => 'deleted', 'enabled' => true]]];
+        $current = ['gamNetworkCode' => 'new', 'prebid' => ['enabled' => false], 'directDemand' => ['enabled' => false, 'placements' => []],
+            'placements' => [['code' => 'a', 'renderer' => 'GAM', 'rendererConflict' => false, 'adUnitPath' => '/new/path', 'gamEnabled' => true]]];
+        $result = $policy->preserveCurrentSupply($old, $current);
+        $this->assertArrayNotHasKey('obsoleteProviderScript', $result);
+        $this->assertSame('new', $result['gamNetworkCode']);
+        $this->assertSame($current['prebid'], $result['prebid']);
+        $this->assertSame($current['directDemand'], $result['directDemand']);
+        $this->assertCount(1, $result['placements']);
+        $this->assertSame('/new/path', $result['placements'][0]['adUnitPath']);
+        $this->assertSame(['kept' => ['1']], $result['placements'][0]['targeting']);
+        $this->assertTrue($result['placements'][0]['enabled']);
+        $this->assertFalse($policy->preserveCurrentSupply($old, $current, ['a'])['placements'][0]['enabled']);
+    }
+
 }

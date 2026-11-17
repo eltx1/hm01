@@ -203,6 +203,23 @@ class StandalonePrebidRuntimeTest extends TestCase
         $this->assertNotSame('PREBID_STANDALONE', data_get($payload, 'placements.0.renderer'));
     }
 
+    public function test_recovery_rebuilds_current_standalone_supply_for_historically_active_paused_inventory(): void
+    {
+        $site = $this->site('recovery-paused');
+        $placement = $this->placement($site, 'recover_slot');
+        $this->mapPrebid($site, $placement, 'current-authorized-placement');
+        app(PrebidManager::class)->updateStandaloneSettings($site, ['enabled' => true], $this->admin);
+        $publisher = app(\App\Services\Inventory\SiteConfigPublisher::class);
+        $source = $publisher->publish($site->fresh(), ConfigEnvironment::Production, $this->admin);
+        $this->assertTrue($source->payload['prebid']['enabled']);
+        $placement->update(['status' => 'PAUSED']);
+        $preview = $publisher->previewRollback($site->fresh(), $source);
+        $this->assertTrue($preview['prebid']['enabled']);
+        $this->assertTrue($preview['placements'][0]['enabled']);
+        $this->assertSame('PREBID_STANDALONE', $preview['placements'][0]['renderer']);
+        $this->assertSame('PAUSED', $placement->fresh()->status->value);
+    }
+
     private function site(string $suffix): Site
     {
         $site = $this->makeSiteFor($this->publisher, $this->publisherUser, [

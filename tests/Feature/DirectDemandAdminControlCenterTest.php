@@ -301,6 +301,51 @@ final class DirectDemandAdminControlCenterTest extends TestCase
         $this->assertSame($gam->id, $gam->fresh()->id);
     }
 
+    public function test_recovery_keeps_disabled_provider_out_and_reuses_identical_retry(): void
+    {
+        $publisher = app(SiteConfigPublisher::class);
+        $source = $publisher->publishActiveProduction($this->site->fresh(), $this->admin);
+        $this->assertTrue($source->payload['directDemand']['enabled']);
+        $this->account->update(['is_enabled' => false]);
+        $before = ConfigVersion::withoutGlobalScopes()->get()->toJson();
+        $countBefore = ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count();
+        $this->adminSession()->get(route('admin.sites.config.recovery-preview', [$this->site, $source]))
+            ->assertOk()->assertSee('Current provider recipes')->assertDontSee('publicPlacementId');
+        $this->assertSame($before, ConfigVersion::withoutGlobalScopes()->get()->toJson());
+        $recovery = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertFalse($recovery->payload['directDemand']['enabled']);
+        $this->assertFalse($recovery->payload['nativeDemand']['enabled']);
+        $this->assertFalse($recovery->payload['engines']['directJs']['enabled']);
+        $this->assertSame([], $recovery->payload['directDemand']['placements']);
+        $retry = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertSame($recovery->id, $retry->id);
+        $this->assertSame($countBefore + 1, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+        $this->assertSame(1, \App\Models\StaticDeliveryItem::withoutGlobalScopes()->where('config_version_id', $recovery->id)->count());
+        $this->assertTrue($source->fresh()->payload['directDemand']['enabled']);
+        $recovery->update(['status' => 'DELIVERY_FAILED']);
+        $recovery->deliveryItem()->update(['status' => 'FAILED']);
+        $afterFailure = $publisher->rollback($this->site->fresh(), ConfigEnvironment::Production, $source, $this->admin);
+        $this->assertNotSame($recovery->id, $afterFailure->id);
+        $this->assertSame($countBefore + 2, ConfigVersion::withoutGlobalScopes()->where('site_id', $this->site->id)->count());
+    }
+
+    public function test_recovery_restores_a_paused_direct_placement_without_database_writes_or_overriding_disabled_inventory(): void
+    {
+        $publisher = app(SiteConfigPublisher::class);
+        $source = $publisher->publishActiveProduction($this->site->fresh(), $this->admin);
+        $this->placement->update(['status' => 'PAUSED']);
+        $preview = $publisher->previewRollback($this->site->fresh(), $source);
+        $this->assertTrue($preview['directDemand']['enabled']);
+        $this->assertSame('DIRECT_JS', $preview['placements'][0]['renderer']);
+        $this->assertTrue($preview['placements'][0]['enabled']);
+        $this->assertSame('PAUSED', $this->placement->fresh()->status->value);
+        $this->placement->update(['status' => 'DISABLED']);
+        $preview = $publisher->previewRollback($this->site->fresh(), $source);
+        $this->assertFalse($preview['directDemand']['enabled']);
+        $this->assertFalse($preview['placements'][0]['enabled']);
+        $this->assertSame('DISABLED', $this->placement->fresh()->status->value);
+    }
+
     private function adminSession(): static
     {
         $this->actingAs($this->admin);

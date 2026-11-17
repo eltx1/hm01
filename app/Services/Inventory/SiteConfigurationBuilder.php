@@ -62,12 +62,24 @@ final class SiteConfigurationBuilder
         ];
     }
 
-    public function build(Site $site, ConfigEnvironment $environment, int $version): array
+    public function build(Site $site, ConfigEnvironment $environment, int $version, array $recoverPausedPlacements = []): array
     {
         $site->loadMissing([
             'domains', 'placements.adUnit', 'placements.adFormat', 'placements.sizes', 'placements.targeting',
             'targeting', 'siteConfig.loaderRelease', 'siteConfig.tagVersion',
         ]);
+
+        // Recovery may restore presentation PAUSED -> ACTIVE in memory only.
+        // DISABLED inventory, provider approvals and operational controls remain current.
+        if ($recoverPausedPlacements !== []) {
+            $site->setRelation('placements', $site->placements->map(function ($placement) use ($recoverPausedPlacements) {
+                $copy = clone $placement;
+                if ($copy->status === PlacementStatus::Paused && in_array($copy->code, $recoverPausedPlacements, true)) {
+                    $copy->status = PlacementStatus::Active;
+                }
+                return $copy;
+            }));
+        }
 
         $config = $site->siteConfig ?? SiteConfig::withoutGlobalScopes()->create([
             'organization_id' => $site->organization_id,
@@ -101,7 +113,7 @@ final class SiteConfigurationBuilder
             && $site->serving_mode !== ServingMode::Paused;
 
         $prebid = $this->prebid->build($site, $connection, $engineState->prebidDeliveryMode);
-        $native = $this->demand->build($site);
+        $native = $this->demand->build($site, $recoverPausedPlacements);
         $publicNative = $this->filterNativeDemand($native, $legacyNativeDisabled, $directJsOnlyDisabled);
 
         // Legacy Prebid flags remain bridge-only so existing schema-v2 consumers
