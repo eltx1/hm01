@@ -1,3 +1,51 @@
+# Current delivery checkpoint — 2026-11-16 20:56 UTC
+
+This table supersedes the historical checkpoints below. “Implemented” and
+“deployed” are separate; synthetic/emulated browser checks do not establish
+physical Android advertising results.
+
+Latest verified production application: `e2371e9da6ad583af869c391fe421ad99aa79f57`.
+Tests 43946587423 and production validation 43946587512 passed. Deployment
+43953110092, static synchronization 43953470486 and live verification
+43953470700 succeeded. The verifier confirmed exact Pages assets and all 69
+ads.txt artifacts; canonical WAF refusals in that runner remain distinct from
+browser delivery evidence. No WAF bypass was introduced.
+
+| Task | Delivered evidence and current state | Remaining boundary |
+|---|---|---|
+| 01 Site management | Site 360 publication, health, next actions and source review; PR306–309/315/316/320 deployed | Production protection aggregates and actual installation/device evidence cannot be inferred from configuration |
+| 02 Save/publication | Audited save references and requested/queued/confirmed states; PR306/307/312 deployed | Original connection-closed incident cause remains unproven; logs did not cover its time window |
+| 03 Ad diagnostics | Bounded local GAM, standalone Prebid, Direct JS and house evidence; PR319 deployed | No claim of verified impressions, viewability, revenue or physical Android rendering from frame signals |
+| 04 Protection visibility | Existing protection preserved; this branch adds bounded local snapshot comparison by site/device/browser/day | Authoritative per-site production outcome aggregation is not implemented; central hostname/action cannot attribute publishers by itself |
+| 05 reCAPTCHA status | Saved versus confirmed activation/key parity; PR307 deployed | Google score and actual runtime execution remain separate evidence, no token verification added |
+| 06 Reports | Missing reconciliation evidence distinguished from zero, finality and partial coverage labels; PR317/324 deployed | Existing source/import limitations remain explicit; no financial calculation changes |
+| 07 Earnings/payments | Existing ledger/payout system reviewed with finance, retry, reversal and source-integrity tests | Existing tested behavior retained; no new payment processor or commission mathematics claimed |
+| 08 Permissions | Staff, publisher, partner and referral permission regressions; PR322 deployed | Extra site-assignment system is conditional on a demonstrated unmet authorization requirement, not silently added |
+| 09 Health center | Stored health, publication failure/retry, latest primary-domain ads.txt and production probe attention filters; PR308/316/320 deployed | These recorded attempts are not current visitor protection/rendering totals |
+| 10 Check my site | Bounded safe on-demand HTML inspection with DNS pinning, redirect/body/deadline limits; PR309 deployed | Publisher browser currently returns a bare blocked response; no protection bypass or physical-device claim |
+| 11 Visitor speed | Opt-in post-PASS client observer, independent collector/report code, default OFF; PR311 deployed in app | Collector deployment blocked by Cloudflare 403/code10089 Analytics Engine account availability; live pilot not completed |
+| 12 Recovery | History, allowlisted comparison and current Direct Demand recipe review; PR307/315/318 deployed | PR323 adds current-provider-safe preview, recovery idempotency and MySQL concurrency; review/release pending at this checkpoint |
+| 13 Gradual releases | Protected release tooling remains; PR325 implements explicit per-site immutable Loader selection, SRI/build identity and recovery | PR325 CI/release pending; no publisher enrolled |
+| 14 Support | Site-linked staff-only immutable minimal diagnostic snapshot; PR307 deployed/tested | No raw traces, secrets, ad identifiers or visitor data attached |
+| 15 Onboarding | Existing responsible-party next actions and preference-aware, audited/idempotent stale-setup reminders; PR307/321 deployed | Existing notification preferences and delivery channels remain authoritative |
+| 16 Referrals | Scoped active/setup site counts and staff/partner/referral access tests; PR308/322 deployed | Existing finalized, versioned commission and payout rules retained |
+
+## This branch — local protection comparison
+
+Changed files: `scripts/protection-evidence-summary.mjs`,
+`resources/js/protection-diagnostics.js`, `resources/js/app.js`,
+`resources/views/admin/operations/index.blade.php`,
+`tests/Browser/protection-evidence.test.js`, `docs/PROTECTION_EVIDENCE.md`,
+`docs/PLATFORM_EVOLUTION_PROGRESS.md`.
+
+Targeted Node tests: 11 passed, 0 failed. Vite production build: passed (71
+modules). Diff check passed. Generated Vite artifacts are rebuilt by the release
+pipeline and are not committed here. Full Browser-unit suite: 1116 passed, 36 intentional skips, 0 failed
+(1152 total). CI results are recorded in the PR. This branch has no publisher Loader or Worker changes and
+has not been deployed at this checkpoint.
+
+---
+
 # Platform improvement progress
 
 Each row separates existing functionality from new code and remaining work. No
