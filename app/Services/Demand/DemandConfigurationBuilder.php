@@ -25,7 +25,7 @@ final class DemandConfigurationBuilder
         $this->controls = $controls ?? app(PlatformControlService::class);
     }
 
-    public function build(Site $site): array
+    public function build(Site $site, array $recoverPausedPlacements = []): array
     {
         // native_demand_enabled is the rollout-compatible database master flag.
         // The public product/runtime concept is now Direct Demand.
@@ -54,7 +54,7 @@ final class DemandConfigurationBuilder
 
         foreach ($mappings as $mapping) {
             foreach ($mapping->placements as $demandPlacement) {
-                if (! $this->eligible($demandPlacement)) {
+                if (! $this->eligible($demandPlacement, $recoverPausedPlacements)) {
                     continue;
                 }
 
@@ -125,12 +125,13 @@ final class DemandConfigurationBuilder
         ];
     }
 
-    private function eligible(DemandPlacement $mapping): bool
+    private function eligible(DemandPlacement $mapping, array $recoverPausedPlacements = []): bool
     {
         return $mapping->is_enabled
             && $mapping->approval_status === DemandApprovalStatus::Approved
             && $mapping->placement
-            && $mapping->placement->status === PlacementStatus::Active;
+            && ($mapping->placement->status === PlacementStatus::Active
+                || ($mapping->placement->status === PlacementStatus::Paused && in_array($mapping->placement->code, $recoverPausedPlacements, true)));
     }
 
     private function networkDisabled(DemandSite $mapping, string $control): bool

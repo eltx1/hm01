@@ -72,22 +72,59 @@ final class SiteConfigPublisher
 
     public function rollback(Site $site, ConfigEnvironment $environment, ConfigVersion $target, User $actor): ConfigVersion
     {
-        if ($target->site_id !== $site->id || $target->environment !== $environment) {
+        if ($target->site_id !== $site->id || $target->organization_id !== $site->organization_id || $target->environment !== $environment) {
             throw new RuntimeException('The selected configuration version does not belong to this site and environment.');
         }
 
         return DB::transaction(function () use ($site, $environment, $target, $actor): ConfigVersion {
+            $site = Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
             $version = $this->nextVersion($site, $environment);
-            $current = $this->builder->currentSafetyControls($site->refresh());
-            $current['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
-            $current['recaptchaObservation'] = $this->observationPayload($site);
-            $payload = (new ConfigurationRollbackPolicy)->preserveCurrentProtection($target->payload, $current);
-            $payload['configVersion'] = $version;
-            $payload['generatedAt'] = now()->utc()->toIso8601String();
-            $payload['rollbackSourceVersion'] = $target->version;
+            $payload = $this->rollbackPayload($site, $environment, $target, $version);
+            $latest = ConfigVersion::withoutGlobalScopes()->where('site_id', $site->id)->where('environment', $environment->value)->orderByDesc('version')->first();
+            if ($latest?->source_version_id === $target->id
+                && in_array($latest->status, [ConfigVersionStatus::PendingDelivery, ConfigVersionStatus::Deployed, ConfigVersionStatus::Published], true)
+                && $this->rollbackDigest($latest->payload) === $this->rollbackDigest($payload)) return $latest;
 
             return $this->storePendingVersion($site, $environment, $version, $payload, $actor, StaticDeliveryPriority::Normal, $target);
         });
+    }
+
+    public function previewRollback(Site $site, ConfigVersion $target): array
+    {
+        if ($target->site_id !== $site->id || $target->organization_id !== $site->organization_id) abort(404);
+
+        return $this->rollbackPayload($site->fresh(), $target->environment, $target, $this->nextVersion($site, $target->environment));
+    }
+
+    private function rollbackPayload(Site $site, ConfigEnvironment $environment, ConfigVersion $target, int $version): array
+    {
+        try {
+            $recoverPaused = collect($target->payload['placements'] ?? [])->filter(fn ($placement) => is_array($placement) && ($placement['status'] ?? null) === 'active')->pluck('code')->filter(fn ($code) => is_string($code))->all();
+            $currentSupply = $this->builder->build($site, $environment, $version, $recoverPaused);
+        } catch (\Throwable) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['rollback' => 'Current supply configuration cannot be validated. Review current providers before retrying.']);
+        }
+        $current = $this->builder->currentSafetyControls($site);
+        $current['trafficGate'] = $this->trafficGate->resolve($site)->toPublicArray();
+        $current['recaptchaObservation'] = $this->observationPayload($site);
+        $policy = new ConfigurationRollbackPolicy;
+        $controls = app(\App\Services\Operations\PlatformControlService::class);
+        $disabled = $site->placements->filter(fn ($placement) => $placement->status === \App\Enums\PlacementStatus::Disabled || $controls->placementDisabled($placement->id))->pluck('code')->all();
+        $payload = $policy->preserveCurrentSupply($target->payload, $currentSupply, $disabled);
+        $payload = $policy->preserveCurrentProtection($payload, $current);
+        $payload['configVersion'] = $version;
+        $payload['generatedAt'] = now()->utc()->toIso8601String();
+        $payload['rollbackSourceVersion'] = $target->version;
+
+        return $payload;
+    }
+
+    private function rollbackDigest(array $payload): string
+    {
+        unset($payload['configVersion'], $payload['generatedAt']);
+        unset($payload['loader']['cacheBust']);
+
+        return hash('sha256', $this->canonicalJson->encode($payload));
     }
 
     public function pauseImmediately(Site $site, User $actor): ConfigVersion
@@ -114,6 +151,7 @@ final class SiteConfigPublisher
         User $actor,
         StaticDeliveryPriority $priority = StaticDeliveryPriority::Normal,
     ): ConfigVersion {
+        $site = Site::withoutGlobalScopes()->whereKey($site->id)->lockForUpdate()->firstOrFail();
         $version = $this->nextVersion($site, $environment);
         $payload = $this->buildPayload($site->refresh(), $environment, $version);
 
@@ -195,6 +233,7 @@ final class SiteConfigPublisher
             'delivery_status' => StaticDeliveryStatus::Pending->value,
             'priority' => $priority->value,
             'rollback_source_version' => $source?->version,
+            'current_supply_preserved' => $source !== null,
         ]);
 
         return $record;

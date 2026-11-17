@@ -8,6 +8,7 @@
 @forelse($rows as $row)
 <section><h2>Version {{ $row['version'] }} @if($row['confirmed']) · Confirmed production @endif</h2>
 <a href="{{ route('admin.sites.config.demand-review', [$site, $row['id']]) }}">Review current Direct Demand recipe evidence</a>
+<a href="{{ route('admin.sites.config.recovery-preview', [$site, $row['id']]) }}">Preview recovery with current supply</a>
 <p>Version state: {{ $row['status'] }} · Delivery: {{ $row['delivery'] }} · Created (UTC): {{ $row['created_at'] ?? 'Unknown' }}</p>
 @if(!$row['comparison']['baseline_available'])<p>No confirmed baseline; differences are unavailable.</p>@endif
 <div class="table-wrap"><table><thead><tr><th>Field</th><th>Stored value</th><th>Compared with confirmed production</th></tr></thead><tbody>
