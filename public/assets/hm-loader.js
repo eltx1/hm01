@@ -1996,15 +1996,29 @@ function nativeDefinition(config, code) {
         window.addEventListener('horus:navigation', function () { window.setTimeout(function () { scan(state.config); }, 0); });
     }
 
+    function selectedLoaderBuildNeeded(selected) {
+        if (Object.prototype.hasOwnProperty.call(selected, 'runtimeBuild')) {
+            return typeof startupRuntimeBuild !== 'function' || selected.runtimeBuild !== startupRuntimeBuild();
+        }
+        return selected.version !== VERSION;
+    }
+
+    function validPinnedLoader(selected) {
+        return /^sha256:[a-f0-9]{64}$/.test(selected.runtimeBuild || '')
+            && /^sha256-[A-Za-z0-9+/]{43}=$/.test(selected.integrity || '');
+    }
+
     function delegatedReleaseUrl(config, script) {
         var selected = config.loader || {};
-        if (!selected.assetUrl || !selected.version || selected.version === VERSION
+        if (!selected.assetUrl || !selected.version || !selectedLoaderBuildNeeded(selected)
             || String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
         try {
             var url = new URL(selected.assetUrl, window.location.href);
             if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
                 || url.origin !== new URL(configBase(script)).origin
-                || !/^\/assets\/(?:loader\/)?hm-loader(?:\.[a-f0-9]{16})?\.min\.js$/.test(url.pathname)) return null;
+                || !/^(?:\/assets\/(?:loader\/)?|\/runtime\/loader\/)hm-loader(?:\.[a-f0-9]{16})?\.min\.js$/.test(url.pathname)) return null;
+            if (Object.prototype.hasOwnProperty.call(selected, 'runtimeBuild')
+                && (!validPinnedLoader(selected) || !/^\/runtime\/loader\/hm-loader\.[a-f0-9]{16}\.min\.js$/.test(url.pathname))) return null;
             url.searchParams.set('v', String(selected.version));
             return url.href;
         } catch (error) { return null; }
@@ -2012,7 +2026,11 @@ function nativeDefinition(config, code) {
 
     function maybeDelegateRelease(config, script) {
         var selected = config.loader || {};
-        if (!selected.assetUrl || !selected.version || selected.version === VERSION) return null;
+        if (Object.prototype.hasOwnProperty.call(selected, 'runtimeBuild') && !validPinnedLoader(selected)) {
+            window.__HM_RELEASE_HANDOFF_FAILED__ = true;
+            return Promise.resolve(true);
+        }
+        if (!selected.assetUrl || !selected.version || !selectedLoaderBuildNeeded(selected)) return null;
         if (String(scriptData(script, 'delegatedHandoff') || '') === '1') return null;
         if (window.__HM_RELEASE_HANDOFF_PROMISE__) return window.__HM_RELEASE_HANDOFF_PROMISE__;
         if (window.__HM_RELEASE_DELEGATED__) return null;
@@ -2028,6 +2046,10 @@ function nativeDefinition(config, code) {
         var replacement = document.createElement('script');
         replacement.async = true;
         replacement.src = releaseUrl;
+        if (selected.runtimeBuild) {
+            replacement.integrity = selected.integrity;
+            replacement.crossOrigin = 'anonymous';
+        }
         replacement.setAttribute('data-site-key', config.siteKey);
         replacement.setAttribute('data-config-base', configBase(script));
         replacement.setAttribute('data-environment', String(scriptData(script, 'environment') || 'production'));
@@ -2092,6 +2114,14 @@ function nativeDefinition(config, code) {
                 if (!delegatedLoader || typeof delegatedLoader.boot !== 'function') {
                     finish(new Error('Delegated Loader release did not install a boot API'));
                     return;
+                }
+                if (selected.runtimeBuild) {
+                    var actualBuild = null;
+                    try {
+                        actualBuild = typeof delegatedLoader.getRuntimeBuild === 'function' ? delegatedLoader.getRuntimeBuild()
+                            : typeof delegatedLoader.getStartupTrace === 'function' ? delegatedLoader.getStartupTrace().runtimeBuild : null;
+                    } catch (identityError) {}
+                    if (actualBuild !== selected.runtimeBuild) { finish(new Error('Delegated Loader identity mismatch')); return; }
                 }
                 Promise.resolve(delegatedLoader.boot({ force: true, delegatedHandoff: true, script: replacement, handoffConfig: config, handoffStartedAt: handoffStartedAt })).then(function () {
                     finish(null);

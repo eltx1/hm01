@@ -376,3 +376,55 @@ for (const verifiedAt of [15000, 24999, 25000]) {
         expect(unexpected).toEqual([]);
     });
 }
+
+for (const scenario of ['pass', 'deny', 'tampered-archive']) {
+    test(`immutable pilot keeps verified admission and SRI enforcement: ${scenario}`, async ({page}) => {
+        const digest='1bdbd462baebd358afce12cc4278a34fd90054b3ec8076d9f344a4e90a444751';
+        const registry=JSON.parse(await readFile(new URL('../../public/assets/loader/releases.json',import.meta.url),'utf8'));
+        const record=registry[digest];
+        const archived=await readFile(new URL('../../public/assets/loader/'+record.file,import.meta.url),'utf8');
+        const selected=config();
+        selected.loader={version:record.version,assetUrl:CDN+'/runtime/loader/'+record.file,runtimeBuild:record.runtimeBuild,
+            integrity:'sha256-'+Buffer.from(digest,'hex').toString('base64'),cacheBust:52};
+        await page.route('**/*', async route=>{
+            const url=new URL(route.request().url());
+            if(url.origin===PUBLISHER)return route.fulfill({status:200,contentType:'text/html',body:publisherHtml()});
+            if(url.origin===CDN){
+                const headers={'Access-Control-Allow-Origin':'*'};
+                if(url.pathname==='/hm-loader.js')return route.fulfill({status:200,headers,contentType:'application/javascript',body:productionLoader});
+                if(url.pathname==='/runtime/loader/'+record.file)return route.fulfill({status:200,headers,contentType:'application/javascript',body:archived+(scenario==='tampered-archive'?'\n//modified':'')});
+                if(url.pathname===`/configs/${SITE}/production.json`)return route.fulfill({status:200,headers,contentType:'application/json',body:JSON.stringify(selected)});
+                if(url.pathname==='/configs/_global/control.json')return route.fulfill({status:200,headers,contentType:'application/json',body:JSON.stringify({schemaVersion:2,controls:selected.controls})});
+                if(url.pathname==='/assets/prebid/horus-prebid.min.js')return route.fulfill({status:200,headers,contentType:'application/javascript',body:prebidStub()});
+                return route.fulfill({status:404,body:'not found'});
+            }
+            if(url.origin===GATE){
+                if(url.pathname==='/traffic-gate/'||url.pathname==='/traffic-gate')return route.fulfill({status:200,contentType:'text/html',body:gateHtml});
+                if(url.pathname==='/assets/traffic-gate/horus-traffic-gate.js')return route.fulfill({status:200,contentType:'application/javascript',body:gateJs});
+                if(url.pathname===`/configs/${SITE}/production.json`)return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(selected)});
+                return route.fulfill({status:404,body:'not found'});
+            }
+            if(url.origin==='https://challenges.cloudflare.com'){
+                if(url.pathname==='/turnstile/v0/api.js')return route.fulfill({status:200,contentType:'application/javascript',body:scenario==='deny'?turnstileTechnicalErrorStub():turnstileSlowPassStub()});
+                return route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><title>challenge</title>'});
+            }
+            if(url.origin==='https://siteverify.horusmedia.net'){
+                const headers={'Access-Control-Allow-Origin':GATE,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type'};
+                if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers});
+                return route.fulfill({status:200,headers,contentType:'application/json',body:JSON.stringify({success:true,pageNonce:route.request().postDataJSON().pageNonce})});
+            }
+            if(url.origin==='https://securepubads.g.doubleclick.net'&&url.pathname==='/tag/js/gpt.js')return route.fulfill({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'application/javascript',body:gptStub()});
+            return route.abort('blockedbyclient');
+        });
+        await page.goto(PUBLISHER+'/');
+        if(scenario==='pass'){
+            await expect.poll(()=>page.evaluate(()=>window.__task52Engines?.gamRequests||0)).toBe(1);
+            expect(await page.evaluate(()=>window.HorusMediaLoader.getStartupTrace().runtimeBuild)).toBe(record.runtimeBuild);
+            expect(await page.evaluate(()=>window.__task52Engines.gamSlots)).toBe(1);
+        }else{
+            await page.waitForTimeout(2300);
+            expect(await page.evaluate(()=>window.__task52Engines?.gamRequests||0)).toBe(0);
+            if(scenario==='tampered-archive')expect(await page.evaluate(()=>window.__HM_RELEASE_HANDOFF_FAILED__)).toBe(true);
+        }
+    });
+}

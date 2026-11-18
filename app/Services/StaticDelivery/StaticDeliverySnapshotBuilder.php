@@ -179,6 +179,7 @@ final class StaticDeliverySnapshotBuilder
             'runtime/direct/hm-isolated-direct.'.substr($isolatedDirectHash, 0, 16).'.js' => $isolatedDirect,
             'runtime/video/hm-video-direct.'.substr($videoDirectHash, 0, 16).'.js' => $videoDirect,
             ...($this->performanceAssets()),
+            ...(app(\App\Services\Inventory\LoaderArchiveRegistry::class)->assets()),
 
             'assets/prebid/horus-prebid.min.js' => $prebid,
             'assets/prebid/horus-prebid.'.substr($prebidHash, 0, 16).'.min.js' => $prebid,

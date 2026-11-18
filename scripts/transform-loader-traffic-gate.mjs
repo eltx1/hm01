@@ -981,7 +981,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "        getConfig: function () { return state.config; },\n        _resetForTests: function () {\n",
-        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        getStartupTrace: startupSnapshot,\n        trace: startupTrace,\n        traceGpt: traceGptService,\n        traceSlot: startupSlotNumber,\n        _resetForTests: function () {\n",
+        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        getStartupTrace: startupSnapshot,\n        getRuntimeBuild: startupRuntimeBuild,\n        trace: startupTrace,\n        traceGpt: traceGptService,\n        traceSlot: startupSlotNumber,\n        _resetForTests: function () {\n",
         'public local state accessor',
     );
 

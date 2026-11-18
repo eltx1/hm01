@@ -86,10 +86,11 @@ export const startupTraceRuntime = String.raw`
             if (window.console && typeof window.console.log === 'function') window.console.log('[HM] +' + event.ms + 'ms ' + phase + failureLabel, clean);
         } catch (error) { /* Local diagnostics are best effort only. */ }
     }
+    function startupRuntimeBuild() { return 'source-inflight-1'; }
     function startupSnapshot() {
         try {
             var trace = startupTraceState();
-            return { schema: 1, version: VERSION, build: 'startup-trace-2', runtimeBuild: 'source-inflight-1', dropped: trace.dropped,
+            return { schema: 1, version: VERSION, build: 'startup-trace-2', runtimeBuild: startupRuntimeBuild(), dropped: trace.dropped,
                 events: trace.events.map(function (entry) { return Object.assign({}, entry); }) };
         } catch (error) { return { schema: 1, events: [] }; }
     }
