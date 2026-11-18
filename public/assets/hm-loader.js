@@ -396,6 +396,16 @@
         state.clickGuard.blockTimer = null;
     }
 
+    // Live policy changes revoke running managed video, never grant advertising.
+    function notifyServingPolicyChange() {
+        if (state.notifyingServingPolicy || typeof window.dispatchEvent !== 'function'
+            || typeof window.CustomEvent !== 'function') return;
+        state.notifyingServingPolicy = true;
+        try { window.dispatchEvent(new window.CustomEvent('horus:serving-policy-change')); }
+        catch (error) { /* Notification is best effort; request-time checks remain authoritative. */ }
+        finally { state.notifyingServingPolicy = false; }
+    }
+
     function scheduleClickGuardBlockExpiry(config, blockedUntil) {
         clearClickGuardBlockTimer();
         if (!blockedUntil || blockedUntil <= Date.now()) return;
@@ -408,6 +418,7 @@
                 return;
             }
             state.clickGuard.blocked = false;
+            notifyServingPolicyChange();
             if (canRequestAds(config)) {
                 installSpaSupport();
                 scan(config);
@@ -417,6 +428,7 @@
 
     function applyClickGuardState(config, persisted) {
         var blocked = Boolean(persisted && persisted.blockedUntil > Date.now());
+        var changed = state.clickGuard.blocked !== blocked;
         if (blocked) {
             if (!state.clickGuard.blocked) clearAllRefreshTimers();
             state.clickGuard.blocked = true;
@@ -425,6 +437,7 @@
             state.clickGuard.blocked = false;
             clearClickGuardBlockTimer();
         }
+        if (changed) notifyServingPolicyChange();
         return blocked;
     }
 
@@ -2128,6 +2141,7 @@ function nativeDefinition(config, code) {
         var bootPromise = fetchGlobalControl(script, Boolean(options.force)).then(function (globalControls) {
             if (normalizeControls(globalControls).adServingDisabled) {
                 state.config = { siteKey: siteKey, status: 'paused', controls: globalControls };
+                notifyServingPolicyChange();
                 log(state.config, 'Global advertising kill switch is active');
                 return null;
             }
@@ -2138,6 +2152,7 @@ function nativeDefinition(config, code) {
         }).then(function (config) {
             if (!config) return [];
             state.config = config;
+            notifyServingPolicyChange();
             if (!hostAllowed(currentHostname(), config.allowedHostnames)) {
                 log(config, 'Hostname rejected', currentHostname());
                 return [];
