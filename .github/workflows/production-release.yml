@@ -45,8 +45,8 @@ jobs:
         run: |
           bash scripts/install-composer-ci.sh
           npm ci
-          npm audit --package-lock-only --audit-level=moderate || \
-            npm audit --package-lock-only --audit-level=moderate --registry=https://registry.yarnpkg.com
+          node --test tests/Deployment/npm-audit-ci.test.mjs
+          node scripts/audit-npm-ci.mjs
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           bash scripts/install-playwright-ci.sh
       - name: Render changed forms through real application routes

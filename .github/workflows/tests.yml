@@ -85,8 +85,8 @@ jobs:
         run: npm ci
       - name: Audit frontend dependencies
         run: |
-          npm audit --package-lock-only --audit-level=moderate || \
-            npm audit --package-lock-only --audit-level=moderate --registry=https://registry.yarnpkg.com
+          node --test tests/Deployment/npm-audit-ci.test.mjs
+          node scripts/audit-npm-ci.mjs
       - name: Execute Horus Loader browser tests
         run: npm run test:browser
       - name: Build production assets, custom Prebid, and minified loader
