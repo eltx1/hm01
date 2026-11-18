@@ -412,8 +412,12 @@ ${performanceObservationRuntime}
 
     function trafficGateSetState(next, reason) {
         var gate = trafficGateRuntimeState();
+        var changed = gate.status !== next;
         gate.status = next;
         gate.reason = reason || null;
+        // Revoke an active managed video when verification is no longer valid.
+        // Notification is never an admission grant; each player rechecks policy.
+        if (changed && typeof notifyServingPolicyChange === 'function') notifyServingPolicyChange();
     }
 
     function trafficGateClearTimer(name) {
