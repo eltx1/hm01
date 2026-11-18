@@ -790,11 +790,13 @@ test('DENIED blocks monetization under every policy, including PERMISSIVE', asyn
 
 test('gate transitions notify the existing managed-video policy boundary without granting ad requests', async () => {
     const runtime = createHarness(baseConfig({ policy: 'STRICT' }), { gateAutoResponse: 'DENIED' });
-    let notifications = 0;
-    runtime.sandbox.addEventListener('horus:serving-policy-change', () => { notifications += 1; });
+    const notifiedStates = [];
+    runtime.sandbox.addEventListener('horus:serving-policy-change', () => {
+        notifiedStates.push(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state);
+    });
     await runtime.sandbox.HorusMediaLoader.boot();
     assert.equal(runtime.sandbox.HorusMediaLoader.getTrafficGateState().state, 'BLOCKED');
-    assert.ok(notifications >= 1, 'denial must notify any currently active managed player');
+    assert.ok(notifiedStates.includes('BLOCKED'), 'terminal denial must notify the active managed player');
     assertNoMonetization(runtime.metrics);
 });
 
