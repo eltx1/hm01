@@ -1,3 +1,80 @@
+# Verified delivery checkpoint — 2026-11-18 21:26 UTC
+
+This checkpoint supersedes earlier deployment-status statements below.
+**Code merged**, **CI green**, **production release verified**, and **external acceptance**
+are separate requirements. The release is verified; the platform is **not**
+fully production-ready for a first real-revenue pilot.
+
+## Exact reviewed release
+
+- `main`: `5f442c08e5b428d57491d70b018e8f17fafa43e7`, after
+  [PR #332](https://github.com/eltx1/hm01/pull/332) (live managed-video
+  revocation/rewarded prompt) and
+  [PR #333](https://github.com/eltx1/hm01/pull/333) (WAF-aware installation
+  checker guidance).
+- Tests (PHP 8.2/8.3/8.4, MySQL, frontend, Chromium/WebKit, deployment):
+  [44391112746](https://github.com/eltx1/hm01/actions/runs/44391112746),
+  **success**.
+- Production release validation:
+  [44391112869](https://github.com/eltx1/hm01/actions/runs/44391112869),
+  **success**.
+- Deploy production:
+  [44398130995](https://github.com/eltx1/hm01/actions/runs/44398130995),
+  **success**; immutable `horus-production-deploy-proof` artifact retained.
+- Static edge sync:
+  [44398451785](https://github.com/eltx1/hm01/actions/runs/44398451785),
+  **success**.
+- Verify production live:
+  [44398451937](https://github.com/eltx1/hm01/actions/runs/44398451937),
+  **success**; `horus-production-live-proof` artifact retained, exact
+  `5f442c08...` release.
+- Post-live Video player regression:
+  [44398893063](https://github.com/eltx1/hm01/actions/runs/44398893063),
+  **success** (browser succeeded; PR-only runtime job skipped by design).
+- Production readiness audit:
+  [44398893010](https://github.com/eltx1/hm01/actions/runs/44398893010),
+  workflow **success**, but the published
+  [audit in issue #111](https://github.com/eltx1/hm01/issues/111#issuecomment-6991771613)
+  explicitly says **NOT_READY** with one P1 blocker: `real_revenue_path`.
+  A successful audit workflow is not a passing readiness verdict.
+- The audit records two enabled GAM connections but zero non-dry-run
+  connections, five enabled approved Demand accounts but zero recorded tests,
+  and no enabled Prebid settings. Do not change provider credentials,
+  publisher data, serving modes, or rollout to manufacture a passing result.
+- Task 11's separate Worker/Analytics Engine pilot remains externally blocked
+  by Cloudflare 403/code 10089; see
+  [issue #334](https://github.com/eltx1/hm01/issues/334).
+  No Cloudflare WAF/Click Guard permission changes, automatic canary
+  enrollment, production publisher-data mutations or real-device/paid
+  impression claims are made by this checkpoint.
+
+## 16-task acceptance ledger at this checkpoint
+
+| Task | Source implementation / release evidence | Remaining acceptance boundary |
+|---|---|---|
+| 01 Site management | Site 360 and operations improvements included in verified main release | Authoritative protection totals and actual device/installation evidence |
+| 02 Save/publication | Audited references, delivery status and queue improvements deployed | Historic connection-closed cause not established from incident-window logs |
+| 03 Ad diagnostics | Bounded GAM, standalone Prebid, Direct JS and house diagnostics deployed | Real provider/render/impression/revenue confirmation; local frames do not establish it |
+| 04 Protection visibility | Local-only protection snapshot comparisons merged and deployed via #326 | Verified site-level production outcomes with denominators and scoped coverage |
+| 05 reCAPTCHA status | Saved/confirmed key/status representation deployed | Real external Google verification and execution evidence |
+| 06 Reports | Freshness, reconciliation, missing-versus-zero and finality cues deployed | Actual data-source coverage and source reconciliation across reports |
+| 07 Earnings/payments | Tested ledger, payout, idempotency and finance safeguards retained | Audit reports incomplete source bindings/coverage and unfinished periods; no synthetic settlement |
+| 08 Permissions | Role/tenant isolation and denied-publisher regressions deployed | Only add per-site assignment if an unmet role boundary is proven |
+| 09 Health center | Stored health, attention/retry queues and current-domain findings deployed | These are stored observations, not real-time visitor or creative evidence |
+| 10 Check my site | SSRF-safe HTML checker and #333 WAF/missing-code guidance deployed | WAF-blocked inspection stays unknown; real browser installation/execution is unproven |
+| 11 Visitor speed | Optional client observer, collector/report code deployed in app, default OFF | Analytics Engine account availability, Worker deployment, consented controlled live pilot and real-device checks |
+| 12 Recovery | Current-provider-safe preview/recovery concurrency and immutable replay deployed | Operational dry-run/recovery exercise with authorized live evidence |
+| 13 Gradual releases | Immutable Loader archives and per-site manual pilot selection in verified main via #331 | No sites opted into canary; real controlled pilot/rollback acceptance unproven |
+| 14 Support | Tenant-safe, staff-only minimal diagnostic snapshots deployed | No full raw traces or protected data should be attached |
+| 15 Onboarding | Audited, preference-aware reminders and next actions deployed | Sender/delivery effectiveness remains real-world external evidence |
+| 16 Referrals | Scoped setup/active site counts and staff/partner/referral tests deployed | Real financial/partner reconciliation is separate from counts |
+
+**Do not close** the 16-task initiative until all required external
+acceptance boundaries, particularly monetization readiness, are substantiated.
+Historical checkpoints follow for traceability.
+
+---
+
 # Current delivery checkpoint — 2026-11-16 20:56 UTC
 
 This table supersedes the historical checkpoints below. “Implemented” and
