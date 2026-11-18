@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import {createHash} from 'node:crypto';
 
 const loaderSource = await readFile(new URL('../../public/assets/hm-loader.js', import.meta.url), 'utf8');
 const builtLoaderSource = await readFile(new URL('../../public/assets/hm-loader.min.js', import.meta.url), 'utf8');
@@ -68,6 +69,7 @@ function createHarness(config, {
     diagnosticToken = null,
     deferredGpt = false,
     delegatedLoader = false,
+    delegatedSource = null,
     deferredDelegatedLoader = false,
     manualDelegatedTimeout = false,
     runtimeSource = loaderSource,
@@ -139,12 +141,13 @@ function createHarness(config, {
                     else queueMicrotask(() => node.onload?.());
                     return;
                 }
-                if (delegatedLoader && /\/assets\/hm-loader\.min\.js(?:\?|$)/.test(String(node.src || ''))) {
+                if (delegatedLoader && /(?:\/assets\/(?:loader\/)?|\/runtime\/loader\/)hm-loader(?:\.[a-f0-9]{16})?\.min\.js(?:\?|$)/.test(String(node.src || ''))) {
                     metrics.delegatedLoads += 1;
+                    metrics.delegatedScript = node;
                     const installDelegatedLoader = () => {
                         const previousScript = document.currentScript;
                         document.currentScript = node;
-                        vm.runInNewContext(runtimeSource, sandbox, { filename: 'hm-loader.delegated.js' });
+                        vm.runInNewContext(delegatedSource || runtimeSource, sandbox, { filename: 'hm-loader.delegated.js' });
                         document.currentScript = previousScript;
                         node.onload?.();
                     };
@@ -611,4 +614,46 @@ test('slow delegated handoff revalidates configuration instead of adopting an ol
     metrics.releaseDelegatedLoader();await boot;
     assert.equal(metrics.fetches.length,6);
     assert.equal(metrics.gptLoads,1);
+});
+
+test('build pin delegates across equal semantic versions to an immutable SRI protected archive',async()=>{
+    const digest='1bdbd462baebd358afce12cc4278a34fd90054b3ec8076d9f344a4e90a444751';
+    const registry=JSON.parse(await readFile(new URL('../../public/assets/loader/releases.json',import.meta.url),'utf8'));
+    const record=registry[digest];
+    const archived=await readFile(new URL('../../public/assets/loader/'+record.file,import.meta.url),'utf8');
+    assert.equal(createHash('sha256').update(archived).digest('hex'),digest);
+    const selected=activeConfig({loader:{version:record.version,assetUrl:'https://cdn.horusmedia.net/runtime/loader/'+record.file,
+        runtimeBuild:record.runtimeBuild,integrity:'sha256-'+Buffer.from(digest,'hex').toString('base64'),cacheBust:7}});
+    const {sandbox,metrics}=createHarness(selected,{delegatedLoader:true,delegatedSource:archived,runtimeSource:builtLoaderSource});
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.delegatedLoads,1);
+    assert.equal(metrics.gptLoads,1);
+    assert.equal(metrics.defined.length,1);
+    assert.equal(metrics.delegatedScript.integrity,selected.loader.integrity);
+    assert.equal(metrics.delegatedScript.crossOrigin,'anonymous');
+    assert.equal(sandbox.HorusMediaLoader.getStartupTrace().runtimeBuild,record.runtimeBuild);
+});
+
+test('build pin rejects a wrong archive runtime before monetization',async()=>{
+    const selected=activeConfig({loader:{version:'2.0.0',assetUrl:'https://cdn.horusmedia.net/runtime/loader/hm-loader.1234567890abcdef.min.js',
+        runtimeBuild:'sha256:'+'a'.repeat(64),integrity:'sha256-'+Buffer.alloc(32).toString('base64'),cacheBust:7}});
+    const {sandbox,metrics}=createHarness(selected,{delegatedLoader:true,runtimeSource:builtLoaderSource});
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.delegatedLoads,1);
+    assert.equal(metrics.gptLoads,0);
+    assert.equal(metrics.defined.length,0);
+    assert.equal(sandbox.__HM_RELEASE_HANDOFF_FAILED__,true);
+});
+
+test('matching current build pin avoids handoff and default boot retains the same request order',async()=>{
+    const h=createHarness(activeConfig(),{runtimeSource:builtLoaderSource});
+    const build=h.sandbox.HorusMediaLoader.getRuntimeBuild();
+    const digest=createHash('sha256').update(builtLoaderSource).digest('hex');
+    const selected=activeConfig({loader:{version:'2.0.0',assetUrl:'https://cdn.horusmedia.net/runtime/loader/hm-loader.'+digest.slice(0,16)+'.min.js',
+        runtimeBuild:build,integrity:'sha256-'+Buffer.from(digest,'hex').toString('base64'),cacheBust:7}});
+    const {sandbox,metrics}=createHarness(selected,{delegatedLoader:true,runtimeSource:builtLoaderSource});
+    await sandbox.HorusMediaLoader.boot();
+    assert.equal(metrics.delegatedLoads,0);
+    assert.equal(metrics.gptLoads,1);
+    assert.equal(metrics.fetches.length,3);
 });

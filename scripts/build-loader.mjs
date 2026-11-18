@@ -6,6 +6,7 @@ import { applyShadowClickGuardTransform } from './transform-loader-shadow-click-
 import { applyPlacementPresetTransform } from './transform-loader-placement-presets.mjs';
 import { applyDirectPreparationTransform } from './transform-loader-direct-preparation.mjs';
 import { applyVideoPreparationTransform } from './transform-loader-video-preparation.mjs';
+import {archiveLoaderRelease} from './archive-loader-release.mjs';
 import './build-rewarded-prompt.mjs';
 import './build-performance-observer.mjs';
 
@@ -27,4 +28,5 @@ const result = await transformWithEsbuild(identifiedSource, 'hm-loader.js', {
     legalComments: 'none',
 });
 await writeFile(outputPath, `${result.code.trim()}\n`, 'utf8');
+await archiveLoaderRelease(new URL('../public/assets/loader/',import.meta.url), `${result.code.trim()}\n`, {runtimeBuild,version:baseSource.match(/var VERSION = ['"]([0-9.]+)['"]/)?.[1]});
 console.log(`Built ${outputPath.pathname} with Client Traffic Gate, shadow-aware Click Guard, and smart placement runtime`);
