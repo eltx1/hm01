@@ -3535,3 +3535,46 @@ test('policy revocation retires IMA without triggering postroll and preserves ow
     video.emit('timeupdate');
     assert.equal(runtime.requested.length, 1, 'no further ads after policy denial');
 });
+
+
+test('managed rewarded prompts close immediately after policy revocation without requesting VAST', async () => {
+    let allowed = true;
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading', 'data-hm-serving-context': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=managed-reward').toString('base64'),
+    };
+    const target = container(attributes, 'managed-reward');
+    target.__hmCanRequestAds = () => allowed;
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(attributes['data-hm-video-status'], 'reward-ready');
+    const button = runtime.created.find(node => node.tagName === 'BUTTON' && node.textContent === 'Watch ad');
+    assert.ok(button);
+    allowed = false;
+    runtime.sandbox.dispatchEvent(new runtime.sandbox.CustomEvent('horus:serving-policy-change'));
+    assert.equal(target.style.display, 'none');
+    assert.equal(attributes['data-hm-video-status'], 'ineligible');
+    assert.equal(runtime.requested.length, 0);
+    button.click();
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(runtime.dispatched.filter(event => event.type === 'horus:rewarded-closed').length, 1);
+});
+
+test('late IMA SDK success cannot mount a managed rewarded prompt after revocation', async () => {
+    let allowed = true;
+    const attributes = {
+        'data-hm-video-direct': '1', 'data-hm-video-rewarded': '1',
+        'data-hm-reward-experience': 'continue-reading', 'data-hm-serving-context': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=late-reward').toString('base64'),
+    };
+    const target = container(attributes, 'managed-late-reward');
+    target.__hmCanRequestAds = () => allowed;
+    const runtime = runVideo(target);
+    allowed = false; // Before loadSdk().then() runs
+    await tick();
+    assert.equal(attributes['data-hm-video-status'], 'ineligible');
+    assert.equal(target.style.display, 'none');
+    assert.equal(runtime.requested.length, 0);
+    assert.equal(runtime.created.filter(node => node.getAttribute('data-hm-reward-prompt') === '1').length, 0);
+});
