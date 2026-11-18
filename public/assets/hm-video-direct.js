@@ -2397,6 +2397,22 @@
     }
 
     function prepareRewarded(container, ima, vastUrl) {
+        // The SDK may resolve after Click Guard, config, or Traffic Gate revokes
+        // the managed placement. Never mount a reading-blocking prompt then.
+        if (!servingContextAllowed(container)) {
+            setStatus(container, 'ineligible');
+            if (container.style) container.style.display = 'none';
+            return;
+        }
+        var managedPrompt = container.getAttribute('data-hm-serving-context') === '1'
+            || typeof container.__hmCanRequestAds === 'function';
+        var policyListener = null;
+        function detachPromptPolicyListener() {
+            if (policyListener && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('horus:serving-policy-change', policyListener);
+                policyListener = null;
+            }
+        }
         var remaining = rewardCooldownRemaining(container);
         var activated = false;
         var reading = container.getAttribute('data-hm-reward-experience') === 'continue-reading';
@@ -2421,6 +2437,10 @@
         container.appendChild(prompt);
 
         function activate(event) {
+            if (!servingContextAllowed(container)) {
+                if (container.__hmDestroy) container.__hmDestroy('ineligible');
+                return false;
+            }
             if (remaining || activated || container.getAttribute('data-hm-video-runtime-state') === 'dismissed') return false;
             var userActivation = window.navigator && window.navigator.userActivation;
             var trustedEvent = event && event.isTrusted === true;
@@ -2435,6 +2455,7 @@
             }
             if (event && event.stopPropagation) event.stopPropagation();
             activated = true;
+            detachPromptPolicyListener();
             try {
                 var player = createPlayer(container);
                 startAds(player, ima, vastUrl);
@@ -2449,6 +2470,7 @@
         container.__hmDestroy = function (reason) {
             if (dismissed) return;
             dismissed = true;
+            detachPromptPolicyListener();
             if (container.__hmVideoPlayer) {
                 destroyPlayer(container.__hmVideoPlayer, reason || 'dismissed');
                 return;
@@ -2459,6 +2481,13 @@
             finishReading(container);
             rewardEvent(container, 'horus:rewarded-closed', { granted: false, reason: reason || 'dismissed' });
         };
+
+        if (managedPrompt && typeof window.addEventListener === 'function') {
+            policyListener = function () {
+                if (!servingContextAllowed(container)) container.__hmDestroy('ineligible');
+            };
+            window.addEventListener('horus:serving-policy-change', policyListener);
+        }
 
         if (reading && !remaining) {
             state.readingPrompt = container;
