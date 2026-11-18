@@ -399,9 +399,12 @@
     // Live policy changes revoke running managed video, never grant advertising.
     function notifyServingPolicyChange() {
         if (state.notifyingServingPolicy || typeof window.dispatchEvent !== 'function'
-            || typeof window.CustomEvent !== 'function') return;
+            || (typeof window.Event !== 'function' && typeof window.CustomEvent !== 'function')) return;
         state.notifyingServingPolicy = true;
-        try { window.dispatchEvent(new window.CustomEvent('horus:serving-policy-change')); }
+        try {
+            var EventCtor = typeof window.Event === 'function' ? window.Event : window.CustomEvent;
+            window.dispatchEvent(new EventCtor('horus:serving-policy-change'));
+        }
         catch (error) { /* Notification is best effort; request-time checks remain authoritative. */ }
         finally { state.notifyingServingPolicy = false; }
     }
