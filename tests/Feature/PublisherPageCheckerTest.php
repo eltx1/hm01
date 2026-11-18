@@ -87,6 +87,29 @@ class PublisherPageCheckerTest extends TestCase
         }
     }
 
+    public function test_blocked_site_check_explains_unknown_evidence_without_revealing_page_url(): void
+    {
+        [$user, $site] = $this->site();
+        $this->actingAs($user)->withSession(['installation_check' => [
+            'site_id' => $site->id,
+            'code' => 'HTTP_NOT_SUCCESSFUL',
+            'http_status' => 403,
+            'checked_at_utc' => '2026-11-18T19:00:00Z',
+        ]])->get(route('publisher.sites.show', $site))
+            ->assertOk()
+            ->assertSee('The website refused or rate-limited this server-side check.')
+            ->assertSee('This is not proof the Loader is missing.');
+
+        $this->actingAs($user)->withSession(['installation_check' => [
+            'site_id' => $site->id,
+            'code' => 'CORRECT_TAG_FOUND',
+            'http_status' => 200,
+            'checked_at_utc' => '2026-11-18T19:00:00Z',
+        ]])->get(route('publisher.sites.show', $site))
+            ->assertOk()
+            ->assertSee('Actual script execution and ad delivery still need browser evidence.');
+    }
+
     public function test_other_organizations_cannot_request_a_check_for_this_site(): void
     {
         [, $site] = $this->site();
