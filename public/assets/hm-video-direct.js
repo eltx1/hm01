@@ -424,6 +424,10 @@
             started: false,
             destroyed: false,
             rewarded: rewarded,
+            // Never let stripped DOM attributes turn a previously managed ad into standalone inventory.
+            managedPolicyRequired: container.getAttribute('data-hm-serving-context') === '1'
+                || typeof container.__hmCanRequestAds === 'function',
+            adsSuppressed: false,
             completedAds: 0,
             disqualified: false,
             granted: false,
@@ -489,6 +493,10 @@
             destroyPlayer(player, 'dismissed');
         });
         container.__hmDestroy = function (reason) { destroyPlayer(player, reason || 'dismissed'); };
+        if (player.managedPolicyRequired && typeof window.addEventListener === 'function') {
+            player.policyListener = function () { revokeManagedVideoAds(player); };
+            window.addEventListener('horus:serving-policy-change', player.policyListener);
+        }
         installPlayerPresentation(player);
         installVideoViewport(player);
         if (player.floating && typeof window.CustomEvent === 'function' && window.dispatchEvent) {
@@ -500,6 +508,10 @@
     function destroyPlayer(player, reason) {
         if (!player || player.destroyed) return;
         player.destroyed = true;
+        if (player.policyListener && typeof window.removeEventListener === 'function') {
+            window.removeEventListener('horus:serving-policy-change', player.policyListener);
+            player.policyListener = null;
+        }
         player.audioSync = null;
         player.startupPlaybackGeneration += 1;
         window.clearTimeout(player.startupPlaybackTimer);
@@ -1373,7 +1385,7 @@
         }
     }
 
-    function cleanupContentAdRuntime(player) {
+    function cleanupContentAdRuntime(player, skipContentComplete) {
         var audio = viewerAudioState(player);
         // Retire callbacks BEFORE SDK teardown, which can itself dispatch events
         // and reject an older content play() promise on a shared video element.
@@ -1394,7 +1406,9 @@
         // IMA requires contentComplete() before reusing the same ad tag for a
         // later legitimate manual break. Ad-rules/VMAP keep their AdsLoader
         // alive and therefore never enter this cleanup path between breaks.
-        try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
+        if (!skipContentComplete) {
+            try { if (player.adsLoader && player.adsLoader.contentComplete) player.adsLoader.contentComplete(); } catch (error) {}
+        }
         try { if (player.adsLoader && player.adsLoader.destroy) player.adsLoader.destroy(); } catch (error) {}
         // Keep the gesture-unlocked IMA media element through legitimate content
         // breaks and confirmed no-fill retry. Final player teardown owns it.
@@ -1613,6 +1627,7 @@
     }
 
     function requestRepeatedContentBreak(player, ima, vastUrl) {
+        if (player.adsSuppressed || !servingContextAllowed(player.container)) return;
         if (intervalContentSchedule(player) && player.viewport && player.viewport.update) player.viewport.update();
         var interval = repeatedMidrollInterval(player), video = player.video;
         var duration = Number(video.duration), current = Number(video.currentTime);
@@ -1650,7 +1665,8 @@
     }
 
     function requestContentAdBreak(player, ima, vastUrl, position) {
-        if (!player || player.destroyed || player.closing || player.adBreakPending) return;
+        if (!player || player.destroyed || player.closing || player.adBreakPending
+            || player.adsSuppressed || !servingContextAllowed(player.container)) return;
         if (player.adRules && position !== 'preroll') return;
         // Fixed sound-on declarations require sound-on playback. Respect viewer
         // mute without rewriting the tag or forcing audio back on.
@@ -1682,7 +1698,10 @@
         setStatus(player.container, 'requesting-' + position);
         if (player.adLayer && player.adLayer.style) player.adLayer.style.pointerEvents = 'auto';
         var generation = player.adRuntimeGeneration;
-        function currentRequest() { return !player.destroyed && generation === player.adRuntimeGeneration; }
+        function currentRequest() {
+            return !player.destroyed && !player.adsSuppressed && generation === player.adRuntimeGeneration
+                && servingContextAllowed(player.container);
+        }
 
         function armStartupPhase(phase) {
             window.clearTimeout(player.startupTimer);
@@ -2081,6 +2100,10 @@
         });
         player.contentEndedHandler = function () {
             if (player.destroyed || player.contentEnded || player.adBreakPending && !player.nonLinearAdActive) return;
+            if (player.adsSuppressed || !servingContextAllowed(player.container)) {
+                finishContentPlayer(player, 'completed');
+                return;
+            }
             // Content can end beneath a genuine overlay. Do not lose EOS, queue
             // a missed midroll, or leave a five-second clip pinned indefinitely.
             if (player.nonLinearAdActive && !player.adRules) {
@@ -2164,6 +2187,10 @@
 
     function startAds(player, ima, vastUrl) {
         if (player.destroyed || player.started) return;
+        if (player.adsSuppressed || !servingContextAllowed(player.container)) {
+            destroyPlayer(player, 'ineligible');
+            return;
+        }
         if (state.active && state.active !== player && !state.active.destroyed) {
             setStatus(player.container, 'duplicate');
             hideFloatingSurface(player);
@@ -2370,6 +2397,22 @@
     }
 
     function prepareRewarded(container, ima, vastUrl) {
+        // The SDK may resolve after Click Guard, config, or Traffic Gate revokes
+        // the managed placement. Never mount a reading-blocking prompt then.
+        if (!servingContextAllowed(container)) {
+            setStatus(container, 'ineligible');
+            if (container.style) container.style.display = 'none';
+            return;
+        }
+        var managedPrompt = container.getAttribute('data-hm-serving-context') === '1'
+            || typeof container.__hmCanRequestAds === 'function';
+        var policyListener = null;
+        function detachPromptPolicyListener() {
+            if (policyListener && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('horus:serving-policy-change', policyListener);
+                policyListener = null;
+            }
+        }
         var remaining = rewardCooldownRemaining(container);
         var activated = false;
         var reading = container.getAttribute('data-hm-reward-experience') === 'continue-reading';
@@ -2394,6 +2437,10 @@
         container.appendChild(prompt);
 
         function activate(event) {
+            if (!servingContextAllowed(container)) {
+                if (container.__hmDestroy) container.__hmDestroy('ineligible');
+                return false;
+            }
             if (remaining || activated || container.getAttribute('data-hm-video-runtime-state') === 'dismissed') return false;
             var userActivation = window.navigator && window.navigator.userActivation;
             var trustedEvent = event && event.isTrusted === true;
@@ -2408,6 +2455,7 @@
             }
             if (event && event.stopPropagation) event.stopPropagation();
             activated = true;
+            detachPromptPolicyListener();
             try {
                 var player = createPlayer(container);
                 startAds(player, ima, vastUrl);
@@ -2422,6 +2470,7 @@
         container.__hmDestroy = function (reason) {
             if (dismissed) return;
             dismissed = true;
+            detachPromptPolicyListener();
             if (container.__hmVideoPlayer) {
                 destroyPlayer(container.__hmVideoPlayer, reason || 'dismissed');
                 return;
@@ -2432,6 +2481,13 @@
             finishReading(container);
             rewardEvent(container, 'horus:rewarded-closed', { granted: false, reason: reason || 'dismissed' });
         };
+
+        if (managedPrompt && typeof window.addEventListener === 'function') {
+            policyListener = function () {
+                if (!servingContextAllowed(container)) container.__hmDestroy('ineligible');
+            };
+            window.addEventListener('horus:serving-policy-change', policyListener);
+        }
 
         if (reading && !remaining) {
             state.readingPrompt = container;
@@ -2462,11 +2518,36 @@
     }
 
     function servingContextAllowed(container) {
-        if (!container || container.getAttribute('data-hm-serving-context') !== '1'
+        if (!container) return false;
+        var player = container.__hmVideoPlayer;
+        if (player && player.adsSuppressed) return false;
+        if (!(player && player.managedPolicyRequired)
+            && container.getAttribute('data-hm-serving-context') !== '1'
             && typeof container.__hmCanRequestAds !== 'function') return true;
         try {
             return typeof container.__hmCanRequestAds === 'function' && container.__hmCanRequestAds() === true;
         } catch (error) { return false; }
+    }
+
+    function revokeManagedVideoAds(player) {
+        if (!player || player.destroyed || player.adsSuppressed || !player.managedPolicyRequired
+            || servingContextAllowed(player.container)) return;
+        player.adsSuppressed = true;
+        if (!player.contentMode) {
+            destroyPlayer(player, 'ineligible');
+            return;
+        }
+        // Do not call contentComplete() after revocation: an IMA ad-rule loader can
+        // interpret it as permission to start an automatic postroll.
+        window.clearTimeout(player.nextContentAdTimer);
+        player.nextContentAdTimer = null;
+        cleanupContentAdRuntime(player, true);
+        player.adRules = false;
+        player.adRulesHasPostroll = false;
+        player.adBreakPending = false;
+        setStatus(player.container, 'content-only');
+        if (player.contentEnded) finishContentPlayer(player, 'completed');
+        else resumeContent(player);
     }
 
     function render(container) {
