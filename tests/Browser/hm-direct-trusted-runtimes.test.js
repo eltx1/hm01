@@ -3482,3 +3482,56 @@ for (const revoke of [false, true]) {
         assert.equal(runtime.requested.length, revoke ? 0 : 1);
     });
 }
+
+
+test('a managed video is torn down immediately on live policy revocation, including stripped binding', async () => {
+    for (const strip of [false, true]) {
+        let allowed = true;
+        const target = container({
+            'data-hm-video-direct': '1', 'data-hm-serving-context': '1',
+            'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=revoke').toString('base64'),
+            'data-hm-video-width': '400', 'data-hm-video-height': '225',
+            'data-hm-video-muted': '1', 'data-hm-video-autoplay': '1',
+        }, 'policy-ad-' + strip);
+        target.clientWidth = 400;
+        target.__hmCanRequestAds = () => allowed;
+        const runtime = runVideo(target);
+        await tick();
+        assert.equal(runtime.requested.length, 1);
+        const manager = runtime.managers[0];
+        if (strip) {
+            delete target.__hmCanRequestAds;
+            target.setAttribute('data-hm-serving-context', '0');
+        } else allowed = false;
+        runtime.sandbox.dispatchEvent(new runtime.sandbox.CustomEvent('horus:serving-policy-change'));
+        assert.equal(manager.destroyed, true);
+        assert.equal(target.__hmVideoPlayer.destroyed, true);
+        manager.emit('started');
+        assert.equal(runtime.requested.length, 1);
+    }
+});
+
+test('policy revocation retires IMA without triggering postroll and preserves owned content', async () => {
+    let allowed = true;
+    const target = container({
+        'data-hm-video-direct': '1', 'data-hm-serving-context': '1',
+        'data-hm-vast-url': Buffer.from('https://video.example.com/vast?slot=content-revoke').toString('base64'),
+        'data-hm-video-content-url': 'https://media.example/content.mp4',
+        'data-hm-video-width': '400', 'data-hm-video-height': '225',
+    }, 'policy-content');
+    target.clientWidth = 400;
+    target.__hmCanRequestAds = () => allowed;
+    const runtime = runVideo(target);
+    await tick();
+    assert.equal(runtime.requested.length, 1);
+    allowed = false;
+    runtime.sandbox.dispatchEvent(new runtime.sandbox.CustomEvent('horus:serving-policy-change'));
+    assert.equal(runtime.managers[0].destroyed, true);
+    assert.equal(runtime.loaders[0].contentCompleteCalls, 0, 'revocation cannot auto-trigger a postroll');
+    assert.equal(target.__hmVideoPlayer.destroyed, false, 'Horus-owned content survives revocation');
+    assert.equal(target.__hmVideoPlayer.adsSuppressed, true);
+    assert.equal(target.__hmVideoPlayer.adBreakPending, false);
+    const video = runtime.created.find(node => node.tagName === 'VIDEO');
+    video.emit('timeupdate');
+    assert.equal(runtime.requested.length, 1, 'no further ads after policy denial');
+});
