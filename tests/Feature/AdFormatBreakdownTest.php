@@ -403,4 +403,35 @@ class AdFormatBreakdownTest extends TestCase
         $this->assertSame('CURRENT', $this->syncFormats($binding)['status']);
         $this->assertSame(3, SiteGamAdFormatReport::withoutGlobalScopes()->count());
     }
+
+    public function test_recent_days_are_synchronized_first_then_history_backwards(): void
+    {
+        [, , , $site, $binding] = $this->context();
+        $binding->update(['starts_on' => '2026-07-01']);
+        $this->importLedger($binding);
+        $this->threeFormats();
+        $sync = app(SiteGamAdFormatSynchronizer::class);
+        $date = fn (array $day) => sprintf('%04d-%02d-%02d', $day['year'], $day['month'], $day['day']);
+
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $first = $this->google->lastQuery();
+        // Publishers open Today/Yesterday first: they are ready after one pass.
+        $this->assertSame(['2026-09-15', '2026-09-21'], [$date($first['startDate']), $date($first['endDate'])]);
+        $this->assertSame(3, SiteGamAdFormatReport::withoutGlobalScopes()->whereDate('report_date', self::DAY)->count());
+        $this->assertSame('BACKFILLING', $sync->status($site->fresh())['state']);
+        $this->assertSame('2026-09-21', $sync->status($site->fresh())['synced_through']);
+
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $second = $this->google->lastQuery();
+        $this->assertSame(['2026-08-15', '2026-09-14'], [$date($second['startDate']), $date($second['endDate'])]);
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $third = $this->google->lastQuery();
+        $this->assertSame(['2026-07-15', '2026-08-14'], [$date($third['startDate']), $date($third['endDate'])]);
+        $this->assertSame('COMPLETED', $sync->sync($binding)['status']);
+        $this->assertSame('2026-07-01', $date($this->google->lastQuery()['startDate']));
+        $this->assertSame('CURRENT', $sync->sync($binding)['status']);
+        $this->assertSame('CURRENT', $sync->status($site->fresh())['state']);
+        // History passes never removed the recent rows.
+        $this->assertSame(3, SiteGamAdFormatReport::withoutGlobalScopes()->whereDate('report_date', self::DAY)->count());
+    }
 }

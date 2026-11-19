@@ -20,8 +20,10 @@ publisher time zone, Ad Exchange metric basis and exact registered hostname),
 with two extra dimensions: `INVENTORY_FORMAT` and `INVENTORY_FORMAT_NAME`. These
 are available in every SOAP version the installed `googleads-php-lib` ships.
 
-- At most one bounded report of up to 31 days per pass. History goes back up to
-  400 days from the binding start, then the last 7 days are refreshed hourly.
+- Newest first. The first pass fetches the last 7 days, including today, so
+  Today and Yesterday are ready within minutes. These days then refresh hourly.
+  Older history is collected backwards in reports of up to 31 days per pass,
+  back to the binding start or 400 days, whichever is more recent.
 - Each completed Google report replaces the stored rows for its dates in
   `site_gam_ad_format_reports`, so corrections never add up twice.
 - Checkpoints live under `configuration.ad_format_breakdown` on the reporting
@@ -56,3 +58,16 @@ Up to date, Collecting history, Preparing, Retrying, Unsupported, or No GAM
 reporting ad unit connected, plus the last day with format data and the last
 synchronization time. It reads only stored checkpoints and never calls Google.
 The panel opens automatically when a website needs attention.
+
+## Post-deployment check
+
+The manual **Diagnose ad format breakdown** workflow (main only, read-only, run
+over SSH on the deployed release) reports closed codes and counts:
+
+- the sync state of each binding
+- whether Google accepted the format dimension
+- which format keys are present
+- for completed days, how many match the ledger's exact-site Ad Exchange gross
+  revenue exactly, how many are within one cent, and how many differ
+
+It never prints money, hostnames or IDs.

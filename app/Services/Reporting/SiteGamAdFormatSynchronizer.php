@@ -80,15 +80,18 @@ final class SiteGamAdFormatSynchronizer
                 $this->checkpoint($binding, $identity, $state);
             }
             if (isset($state['pending'])) {
-                [$from, $to] = [$state['pending']['from'], $state['pending']['to']];
+                [$from, $to, $kind] = [$state['pending']['from'], $state['pending']['to'], $state['pending']['kind'] ?? 'history'];
             } else {
-                $cursor = max((string) ($state['history_next'] ?? $first), $first);
-                $end = $last->subDay()->toDateString();
-                if ($cursor <= $end) {
-                    [$from, $to] = [$cursor, min(CarbonImmutable::parse($cursor)->addDays(30)->toDateString(), $end)];
-                } elseif (empty($state['next_refresh_at']) || CarbonImmutable::parse($state['next_refresh_at'])->lte(now())) {
-                    // Recheck recent Google revisions and today's running totals.
-                    [$from, $to] = [max($first, $last->subDays(self::REFRESH_DAYS - 1)->toDateString()), $last->toDateString()];
+                $recentFrom = max($first, $last->subDays(self::REFRESH_DAYS - 1)->toDateString());
+                // Earliest day already covered; history is collected backwards from it.
+                $historyBefore = min((string) ($state['history_before'] ?? $recentFrom), $recentFrom);
+                if (empty($state['next_refresh_at']) || CarbonImmutable::parse($state['next_refresh_at'])->lte(now())) {
+                    // Newest first: today's running totals and recent Google revisions
+                    // are what publishers open first, so they never wait for history.
+                    [$from, $to, $kind] = [$recentFrom, $last->toDateString(), 'recent'];
+                } elseif ($historyBefore > $first) {
+                    $to = CarbonImmutable::parse($historyBefore)->subDay()->toDateString();
+                    [$from, $kind] = [max($first, CarbonImmutable::parse($to)->subDays(30)->toDateString()), 'history'];
                 } else {
                     return ['status' => 'CURRENT', 'stored_days' => 0];
                 }
@@ -112,7 +115,7 @@ final class SiteGamAdFormatSynchronizer
                     $id = (string) ($response['id'] ?? '');
                     if (! ctype_digit($id) || strlen($id) > 32) throw new RuntimeException('Invalid ad format Google job.');
                     $state['pending'] = [
-                        'id' => $id, 'from' => $from, 'to' => $to, 'requested_at' => now()->toIso8601String(),
+                        'id' => $id, 'from' => $from, 'to' => $to, 'kind' => $kind, 'requested_at' => now()->toIso8601String(),
                         'network_currency' => (string) $network['currencyCode'],
                         'confirmed_report_currency' => $this->money->confirmedCurrency($response, $currency),
                     ];
@@ -157,8 +160,11 @@ final class SiteGamAdFormatSynchronizer
                             'google_report_job_id' => $job['id'], 'reported_at' => now(),
                         ]);
                     }
-                    $state['history_next'] = max((string) ($state['history_next'] ?? $job['from']), CarbonImmutable::parse($job['to'])->addDay()->toDateString());
-                    $state['next_refresh_at'] = ($job['to'] === $last->toDateString() ? now()->addHour() : now())->toIso8601String();
+                    $state['history_before'] = min((string) ($state['history_before'] ?? $job['from']), $job['from']);
+                    if (($job['kind'] ?? 'history') === 'recent') {
+                        $state['recent_through'] = $job['to'];
+                        $state['next_refresh_at'] = now()->addHour()->toIso8601String();
+                    }
                     $state['synced_at'] = now()->toIso8601String();
                     unset($state['pending'], $state['error'], $state['retry_at']);
                     $this->checkpoint($locked, $identity, $state);
@@ -198,7 +204,8 @@ final class SiteGamAdFormatSynchronizer
             return ['state' => 'NOT_CONNECTED', 'label' => 'No GAM reporting ad unit connected', 'synced_through' => null, 'synced_at' => null, 'retry_at' => null];
         }
         $state = ($connection->configuration ?? [])[self::STATE_KEY] ?? [];
-        $through = isset($state['history_next']) ? CarbonImmutable::parse($state['history_next'])->subDay()->toDateString() : null;
+        $through = $state['recent_through'] ?? null;
+        $first = max($binding->starts_on->toDateString(), CarbonImmutable::now($connection->timezone)->subDays(self::HISTORY_DAYS)->toDateString());
         $retry = isset($state['retry_at']) && CarbonImmutable::parse($state['retry_at'])->isFuture() ? $state['retry_at'] : null;
         [$code, $label] = match (true) {
             ! $connection->is_enabled || $connection->status->value === 'DISABLED' => ['DISABLED', 'Reporting source disabled'],
@@ -206,7 +213,7 @@ final class SiteGamAdFormatSynchronizer
             ($state['error'] ?? null) !== null => ['RETRYING', 'Google was temporarily unavailable; retrying automatically'],
             isset($state['pending']) => ['PREPARING', 'Google is preparing '.$state['pending']['from'].' – '.$state['pending']['to']],
             $through === null => ['WAITING', 'Waiting for the first synchronization (within five minutes)'],
-            $through < CarbonImmutable::now($connection->timezone)->subDay()->toDateString() => ['BACKFILLING', 'Collecting history'],
+            ($state['history_before'] ?? $first) > $first => ['BACKFILLING', 'Recent days ready; collecting older history from '.$state['history_before'].' backwards'],
             default => ['CURRENT', 'Up to date'],
         };
 
