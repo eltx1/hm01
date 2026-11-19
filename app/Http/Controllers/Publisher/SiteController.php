@@ -3,12 +3,14 @@
 namespace App\Http\Controllers\Publisher;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ReportPeriodRequest;
 use App\Http\Requests\Sites\StorePublisherSiteRequest;
 use App\Models\Publisher;
 use App\Models\Site;
 use App\Models\SiteDomain;
 use App\Services\Audit\AuditRecorder;
 use App\Services\Inventory\SiteConfigPublisher;
+use App\Services\Reporting\AdFormatBreakdownService;
 use App\Services\Sites\SiteAdsTxtInstallationService;
 use App\Services\Sites\SiteLifecycleService;
 use App\Services\Sites\SiteReviewSubmissionService;
@@ -40,13 +42,19 @@ class SiteController extends Controller
         return redirect()->route('publisher.sites.show', $site)->with('status', 'Website created. Publish the complete ads.txt block, then verify it. Successful verification submits the website for review automatically.');
     }
 
-    public function show(Site $site, SiteAdsTxtInstallationService $adsTxt): View
+    public function show(ReportPeriodRequest $request, Site $site, SiteAdsTxtInstallationService $adsTxt): View
     {
+        $reports = $request->user()->hasPermission('reporting.publisher.view');
+
         return view('publisher.sites.show', [
             'site' => $site->load(['domains.verifications', 'reviews', 'servingSettings', 'publisher', 'placements']),
             'internal' => false,
             'setupGuidance' => app(\App\Services\Sites\PublisherSetupGuidance::class)->describe($site->status->value),
             'adsTxtInstallation' => $adsTxt->bundle($site),
+            // This website's own earnings for the selected period, split by ad format (publisher-safe).
+            'adFormats' => $reports ? app(AdFormatBreakdownService::class)->summary(collect([$site]),
+                $request->validated('from'), $request->validated('to'), publisherView: true) : null,
+            'adFormatMetrics' => $reports ? array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions'])) : [],
         ]);
     }
 

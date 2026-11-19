@@ -1,4 +1,4 @@
-@props(['from', 'to', 'metrics', 'context' => []])
+@props(['from', 'to', 'metrics', 'context' => [], 'anchor' => null, 'formId' => 'publisher-report-filter'])
 <div class="publisher-report-period">
     <nav class="report-shortcuts" aria-label="Quick reporting periods">
         @foreach([
@@ -8,10 +8,10 @@
             ['This month', now()->startOfMonth()->toDateString(), now()->toDateString()],
             ['Last month', now()->subMonthNoOverflow()->startOfMonth()->toDateString(), now()->subMonthNoOverflow()->endOfMonth()->toDateString()],
         ] as [$label, $start, $end])
-            <a class="pill" href="{{ request()->url() }}?{{ http_build_query(['from' => $start, 'to' => $end] + $context + ['metrics' => $metrics]) }}" @if($from === $start && $to === $end)aria-current="true"@endif>{{ $label }}</a>
+            <a class="pill" href="{{ request()->url() }}?{{ http_build_query(['from' => $start, 'to' => $end] + $context + ['metrics' => $metrics]) }}{{ $anchor ? '#'.$anchor : '' }}" @if($from === $start && $to === $end)aria-current="true"@endif>{{ $label }}</a>
         @endforeach
     </nav>
-    <form method="get" id="publisher-report-filter" aria-label="Reporting period">
+    <form method="get" id="{{ $formId }}" @if($anchor) action="{{ request()->url() }}#{{ $anchor }}" @endif aria-label="Reporting period">
         <input type="hidden" name="customize" value="1">
         @foreach($context as $key => $value)<input type="hidden" name="{{ $key }}" value="{{ $value }}">@endforeach
         <details class="publisher-date-picker">

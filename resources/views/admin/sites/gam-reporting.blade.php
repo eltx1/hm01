@@ -1,7 +1,8 @@
 @php($reportBinding = $site->currentGamReportBinding)
 <article id="reporting" class="workspace-section">
     @if(auth()->user()->isHorusAdministrator() && auth()->user()->hasPermission('reporting.admin.view'))
-        <p><a class="hm-button-primary" href="{{ route('admin.reporting.websites.show', $site) }}">View full website report →</a></p>
+        <p><a class="hm-button-primary" href="{{ route('admin.reporting.websites.show', $site) }}">View full website report →</a>
+            @if($site->publisher)<a class="hm-button-secondary" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id]) }}">Breakdown by Ad Format</a>@endif</p>
     @endif
     @if($todayReport ?? null)
         <section id="today-report" aria-labelledby="today-report-heading">
