@@ -1,3 +1,23 @@
+# Verified production follow-up — 2026-11-19 01:39 UTC
+
+**Latest verified production release:** `842cb707e4bc205db04f3504ca57a70785787c93` (merged PR #335, documentation-only change). This entry supersedes the prior release SHA below; the 16-task acceptance ledger and its external evidence boundaries remain open.
+
+| Gate | Exact run | Result |
+|---|---|---|
+| Tests: PHP 8.2/8.3/8.4, MySQL, frontend, Chromium/WebKit, atomic deployment | [44418009107](https://github.com/eltx1/hm01/actions/runs/44418009107) | success |
+| Production release validation | [44418009054](https://github.com/eltx1/hm01/actions/runs/44418009054) | success |
+| Production deploy | [44423883147](https://github.com/eltx1/hm01/actions/runs/44423883147) | success |
+| Production static edge sync | [44424144705](https://github.com/eltx1/hm01/actions/runs/44424144705) | success |
+| Production live verification | [44424144608](https://github.com/eltx1/hm01/actions/runs/44424144608) | success |
+| Post-live video regression | [44424270031](https://github.com/eltx1/hm01/actions/runs/44424270031) | success |
+| Production readiness audit | [44424269894](https://github.com/eltx1/hm01/actions/runs/44424269894) | workflow success; **NOT_READY** business verdict |
+
+The latest audit, posted in [issue #111](https://github.com/eltx1/hm01/issues/111), confirms **one blocking P1**: `real_revenue_path`. Two GAM connections are enabled/healthy but none are non-dry-run; five approved Demand accounts have no recorded successful test; Prebid remains disabled. Successful CI and deployment do **not** prove paid impressions or a real monetization path. The Analytics Engine Worker entitlement blocker (Cloudflare 403 / code 10089) remains tracked in [issue #334](https://github.com/eltx1/hm01/issues/334). Task 11 cannot be accepted as live without external entitlement and an authorized, consent-compatible pilot.
+
+**Acceptance boundary:** Keep all 16 tasks open to their documented outstanding real-world checks. No production publisher opt-in, GAM/Demand mode changes, WAF/Click Guard changes, live revenue assertions, or physical Android assertions were performed for this documentation checkpoint. This follow-up is documentation only; do not trigger a forced redeploy of an already verified application release.
+
+---
+
 # Verified delivery checkpoint — 2026-11-18 21:26 UTC
 
 This checkpoint supersedes earlier deployment-status statements below.
