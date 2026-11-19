@@ -51,8 +51,9 @@ class ReportingController extends Controller
         $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
         $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
         abort_if($siteId && $selected->isEmpty(), 404);
+        $dimension = $this->dimension($request);
         $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: true,
-            publisher: $siteId ? null : $publisher);
+            publisher: $siteId ? null : $publisher, dimension: $dimension);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, true);
@@ -62,7 +63,7 @@ class ReportingController extends Controller
 
         return view('publisher.reporting.ad-formats', [
             'previousPeriod' => $period,
-            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: true, publisher: $siteId ? null : $publisher),
+            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: true, publisher: $siteId ? null : $publisher, dimension: $dimension),
             'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
         ]);
@@ -204,5 +205,11 @@ class ReportingController extends Controller
         return Publisher::withoutGlobalScopes()
             ->where('organization_id', $request->user()->organization_id)
             ->firstOrFail();
+    }
+
+    /** Breakdown dimension selected on the page: ad format (default), country or device. */
+    private function dimension(\Illuminate\Http\Request $request): string
+    {
+        return ['country' => 'COUNTRY', 'device' => 'DEVICE'][$request->query('by')] ?? 'FORMAT';
     }
 }

@@ -30,6 +30,10 @@ class SiteGamAdFormatReport extends Model
         ];
     }
 
+    /** Uniform breakdown accessors shared with SiteGamDimensionReport. */
+    public function getBreakdownKeyAttribute(): string { return $this->ad_format; }
+    public function getBreakdownNameAttribute(): ?string { return $this->google_format_name; }
+
     public function site(): BelongsTo { return $this->belongsTo(Site::class); }
     public function connection(): BelongsTo { return $this->belongsTo(ReportSourceConnection::class, 'report_source_connection_id'); }
 }

@@ -42,6 +42,9 @@ class AdFormatBreakdownTest extends TestCase
     /** Rows Google returns for the ad format report: [date, site, format name, requests, matched, impressions, clicks, revenue micros]. */
     private array $formatRows = [];
 
+    /** Country / device rows Google returns: kind => [[date, site, key, name, impressions, revenue micros]]. */
+    private array $dimensionRows = ['COUNTRY' => [], 'DEVICE' => []];
+
     private function context(): array
     {
         $this->travelTo(CarbonImmutable::parse('2026-09-21 10:00:00', 'UTC'));
@@ -105,7 +108,22 @@ class AdFormatBreakdownTest extends TestCase
         $date = fn (array $day) => sprintf('%04d-%02d-%02d', $day['year'], $day['month'], $day['day']);
         [$from, $to] = [$date($query['startDate']), $date($query['endDate'])];
         $stream = fopen('php://temp', 'w+');
-        if (in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true)) {
+        $dimensionKind = in_array('COUNTRY_CODE', $query['dimensions'], true) ? 'COUNTRY' : (in_array('DEVICE_CATEGORY_NAME', $query['dimensions'], true) ? 'DEVICE' : null);
+        if ($dimensionKind) {
+            fputcsv($stream, [...array_map(fn ($dimension) => 'Dimension.'.$dimension, $query['dimensions']),
+                ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
+            foreach ($this->dimensionRows[$dimensionKind] as [$day, $site, $key, $name, $impressions, $micros]) {
+                if ($day < $from || $day > $to) continue;
+                $dimensions = ['DATE' => $day, 'AD_UNIT_ID' => '12345', 'SITE_NAME' => $site, 'COUNTRY_CODE' => $key, 'COUNTRY_NAME' => $name,
+                    'DEVICE_CATEGORY_ID' => (string) (crc32($name) % 1000), 'DEVICE_CATEGORY_NAME' => $name];
+                $columns = ['AD_EXCHANGE_TOTAL_REQUESTS' => $impressions + 10, 'AD_EXCHANGE_RESPONSES_SERVED' => $impressions,
+                    'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => $impressions, 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => 1,
+                    'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'US$ '.$micros,
+                    'AD_EXCHANGE_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS' => intdiv($impressions, 2), 'AD_EXCHANGE_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS' => $impressions];
+                fputcsv($stream, [...array_map(fn ($dimension) => $dimensions[$dimension], $query['dimensions']),
+                    ...array_map(fn ($column) => $columns[$column], $query['columns'])], escape: '');
+            }
+        } elseif (in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true)) {
             fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Dimension.INVENTORY_FORMAT', 'Dimension.INVENTORY_FORMAT_NAME',
                 ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
             foreach ($this->formatRows as $index => [$day, $site, $name, $requests, $matched, $impressions, $clicks, $micros]) {
@@ -673,5 +691,67 @@ class AdFormatBreakdownTest extends TestCase
             ->assertSee('network median eCPM 2.50 USD');
         $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => '2026-09-14', 'to' => self::DAY]))->assertOk()
             ->assertDontSee('Website ranking by eCPM');
+    }
+
+    private function syncDimensions(SiteGamReportBinding $binding): void
+    {
+        $sync = app(\App\Services\Reporting\SiteGamDimensionSynchronizer::class);
+        foreach (['COUNTRY', 'DEVICE'] as $kind) {
+            for ($pass = 0; $pass < 10; $pass++) {
+                if (! in_array($sync->sync($binding, $kind)['status'], ['COMPLETED', 'PENDING'], true)) break;
+            }
+        }
+    }
+
+    public function test_country_and_device_breakdowns_split_the_same_ledger_without_touching_it(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
+        $host = $this->hostname();
+        $this->dimensionRows = [
+            'COUNTRY' => [[self::DAY, $host, 'US', 'United States', 70, 70_000_000], [self::DAY, $host, 'EG', 'Egypt', 30, 30_000_000],
+                [self::DAY, 'other.example', 'FR', 'France', 99, 99_000_000]],
+            'DEVICE' => [[self::DAY, $host, 'Desktop', 'Desktop', 40, 25_000_000], [self::DAY, $host, 'Smartphone', 'Smartphone', 60, 75_000_000]],
+        ];
+        $this->syncDimensions($binding);
+
+        $this->assertSame(['EG', 'US'], \App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', 'COUNTRY')->orderBy('dimension_key')->pluck('dimension_key')->all());
+        $this->assertSame(['DESKTOP', 'SMARTPHONE'], \App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', 'DEVICE')->orderBy('dimension_key')->pluck('dimension_key')->all());
+        $queries = collect($this->google->calls)->where('method', 'runReportJob')->map(fn ($call) => $call['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->assertTrue($queries->contains(['DATE', 'AD_UNIT_ID', 'SITE_NAME', 'COUNTRY_CODE', 'COUNTRY_NAME']));
+        $this->assertTrue($queries->contains(['DATE', 'AD_UNIT_ID', 'SITE_NAME', 'DEVICE_CATEGORY_ID', 'DEVICE_CATEGORY_NAME']));
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
+
+        $country = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: true, dimension: 'COUNTRY');
+        $this->assertSame(['United States' => 5600, 'Egypt' => 2400], $country['formats']->pluck('earnings_minor', 'label')->all());
+        $this->assertSame(8000, $country['totals']['earnings_minor']);
+
+        $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'country']))->assertOk()
+            ->assertSee('Your earnings by country')->assertSeeInOrder(['United States', 'Egypt'])->assertSee('56.00')
+            ->assertDontSee('over time')->assertSee('aria-current="true">Country', false);
+        $this->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'device']))->assertOk()
+            ->assertSee('Your earnings by device')->assertSeeInOrder(['Smartphone', 'Desktop'])->assertSee('60.00')
+            ->assertSee('by device over time');
+        $csv = $this->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'country', 'export' => 'csv']))->assertOk()->streamedContent();
+        $this->assertStringStartsWith('Country,', $csv);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'device']))->assertOk()
+            ->assertSee('Gross revenue by device')->assertSee('75.00');
+    }
+
+    public function test_long_country_tail_is_folded_into_other_countries(): void
+    {
+        [, , , $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $host = $this->hostname();
+        foreach (range(1, 18) as $i) {
+            $this->dimensionRows['COUNTRY'][] = [self::DAY, $host, 'C'.chr(64 + $i), 'Country '.chr(64 + $i), 10, (19 - $i) * 1_000_000];
+        }
+        $this->syncDimensions($binding);
+        $summary = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: false, dimension: 'COUNTRY');
+        $this->assertCount(16, $summary['formats']);
+        $this->assertSame('Other countries', $summary['formats']->last()['label']);
+        $this->assertSame(10000, $summary['formats']->sum('gross_revenue_minor'));
     }
 }

@@ -71,6 +71,18 @@ class SyncSiteGamReports extends Command
                     } catch (\Throwable) {
                         $this->line('Ad formats: SOURCE_UNAVAILABLE');
                     }
+                    // Country and device breakdowns: equally independent and nonfinancial.
+                    foreach (array_keys(\App\Services\Reporting\SiteGamDimensionSynchronizer::KINDS) as $kind) {
+                        $lock->assertOwned();
+                        try {
+                            $result = app(\App\Services\Reporting\SiteGamDimensionSynchronizer::class)->sync($binding, $kind);
+                            $this->line(ucfirst(strtolower($kind)).' breakdown: '.$result['status']);
+                        } catch (MainReportSyncLockException $exception) {
+                            throw $exception;
+                        } catch (\Throwable) {
+                            $this->line(ucfirst(strtolower($kind)).' breakdown: SOURCE_UNAVAILABLE');
+                        }
+                    }
                 }
             });
 

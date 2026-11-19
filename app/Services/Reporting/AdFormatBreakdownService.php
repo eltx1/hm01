@@ -29,7 +29,7 @@ final class AdFormatBreakdownService
     /**
      * @param  Collection<int, \App\Models\Site>  $sites  already authorized and organization-scoped
      */
-    public function summary(Collection $sites, string $from, string $to, bool $publisherView, ?Publisher $publisher = null): array
+    public function summary(Collection $sites, string $from, string $to, bool $publisherView, ?Publisher $publisher = null, string $dimension = 'FORMAT'): array
     {
         $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
         // Site id => organization id: every row must belong to an authorized site of the same tenant.
@@ -53,7 +53,9 @@ final class AdFormatBreakdownService
                 : ($owners[$row->dimension->site_id] ?? null) === $row->organization_id || ($publisher && ! isset($owners[$row->dimension->site_id])));
 
         $connections = $ledger->pluck('report_source_connection_id')->unique()->values()->all();
-        $formats = $connections === [] ? collect() : SiteGamAdFormatReport::withoutGlobalScopes()
+        $evidence = $dimension === 'FORMAT' ? SiteGamAdFormatReport::withoutGlobalScopes()
+            : \App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', $dimension);
+        $formats = $connections === [] ? collect() : $evidence
             ->whereIn('report_source_connection_id', $connections)
             ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
             ->get()
@@ -81,17 +83,22 @@ final class AdFormatBreakdownService
             $allocated = array_combine(self::MONEY, array_map(fn ($field) => $this->allocate($money[$field], $weights), self::MONEY));
             foreach ($evidence as $index => $row) {
                 $lastSynced = max($lastSynced, $row->reported_at?->toIso8601String());
-                $this->add($buckets, $days, $row->ad_format, $row->google_format_name, $date,
+                $this->add($buckets, $days, $row->breakdown_key, $row->breakdown_name, $date,
                     array_combine(self::MONEY, array_map(fn ($field) => $allocated[$field][$index], self::MONEY)),
                     array_combine(self::COUNTERS, array_map(fn ($field) => $row->{$field}, self::COUNTERS)), $estimated, false);
             }
         }
 
+        $this->dimension = $dimension;
+        if ($dimension === 'COUNTRY') {
+            [$buckets, $days] = $this->foldTail($buckets, $days, $publisherView ? 'publisher_earnings_minor' : 'gross_revenue_minor', 15);
+        }
         $revenueKey = $publisherView ? 'earnings_minor' : 'gross_revenue_minor';
         $rows = collect($buckets)->map(fn ($bucket) => $this->present($bucket, $publisherView));
         $total = (int) $rows->sum($revenueKey);
         $rows = $rows->map(fn ($row) => $row + ['share_bp' => $total > 0 ? (int) round(max(0, $row[$revenueKey]) * 10000 / $total) : null])
-            ->sortBy(fn ($row) => [$row['key'] === AdFormatCatalog::NOT_BROKEN_DOWN ? 1 : 0, -$row[$revenueKey], $row['label']])
+            // Real values by revenue; the folded tail, then amounts without evidence, last.
+            ->sortBy(fn ($row) => [match ($row['key']) { AdFormatCatalog::NOT_BROKEN_DOWN => 2, self::OTHER_COUNTRIES => 1, default => 0 }, -$row[$revenueKey], $row['label']])
             ->values();
         $formatKeys = $rows->pluck('key')->all();
         $daily = collect($days)->sortKeysDesc()->map(fn ($cells, $date) => [
@@ -103,6 +110,8 @@ final class AdFormatBreakdownService
         $totals = $this->present(['key' => 'TOTAL', 'name' => null] + $this->merge(array_values($buckets)), $publisherView);
 
         return [
+            'dimension' => $dimension,
+            'dimension_label' => ['FORMAT' => 'ad format', 'COUNTRY' => 'country', 'DEVICE' => 'device'][$dimension] ?? 'ad format',
             'from' => $from, 'to' => $to, 'currency' => $currency,
             'available' => $ledger->isNotEmpty(),
             'has_breakdown' => $rows->contains(fn ($row) => $row['key'] !== AdFormatCatalog::NOT_BROKEN_DOWN),
@@ -117,6 +126,42 @@ final class AdFormatBreakdownService
             'synced_at' => $lastSynced,
             'updated_at' => $ledger->max('updated_at'),
         ];
+    }
+
+    private string $dimension = 'FORMAT';
+
+    public const OTHER_COUNTRIES = 'OTHER_COUNTRIES';
+
+    private function label(string $key, ?string $name): string
+    {
+        if ($this->dimension === 'FORMAT' || $key === AdFormatCatalog::NOT_BROKEN_DOWN) return AdFormatCatalog::label($key, $name);
+        if ($key === self::OTHER_COUNTRIES) return 'Other countries';
+        if ($key === 'UNKNOWN') return 'Unknown';
+
+        return $name !== null && trim($name) !== '' ? trim($name) : ucfirst(strtolower(str_replace('_', ' ', $key)));
+    }
+
+    /** Keep the largest values; merge the long tail (e.g. countries) into one row. */
+    private function foldTail(array $buckets, array $days, string $field, int $keep): array
+    {
+        $ranked = collect($buckets)->reject(fn ($bucket) => $bucket['key'] === AdFormatCatalog::NOT_BROKEN_DOWN)->sortByDesc($field)->keys();
+        if ($ranked->count() <= $keep + 1) return [$buckets, $days];
+        $tail = $ranked->slice($keep)->all();
+        $other = ['key' => self::OTHER_COUNTRIES, 'name' => null] + $this->merge(array_values(array_intersect_key($buckets, array_flip($tail))));
+        $other['facts'] = 0;
+        foreach ($tail as $key) unset($buckets[$key]);
+        $buckets[self::OTHER_COUNTRIES] = $other;
+        foreach ($days as $date => $cells) {
+            foreach ($tail as $key) {
+                if (! isset($cells[$key])) continue;
+                foreach ($cells[$key] as $moneyField => $value) {
+                    $days[$date][self::OTHER_COUNTRIES][$moneyField] = ($days[$date][self::OTHER_COUNTRIES][$moneyField] ?? 0) + $value;
+                }
+                unset($days[$date][$key]);
+            }
+        }
+
+        return [$buckets, $days];
     }
 
     /** Largest-remainder allocation: integer parts that always sum to the ledger amount. */
@@ -208,7 +253,7 @@ final class AdFormatBreakdownService
         $matched = $bucket['matched_requests'];
         $row = [
             'key' => $bucket['key'],
-            'label' => $bucket['key'] === 'TOTAL' ? 'Total' : AdFormatCatalog::label($bucket['key'], $bucket['name'] ?? null),
+            'label' => $bucket['key'] === 'TOTAL' ? 'Total' : $this->label($bucket['key'], $bucket['name'] ?? null),
             'has_estimates' => $bucket['has_estimates'],
             'impressions' => $impressions,
             'clicks' => $clicks,

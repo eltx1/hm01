@@ -25,6 +25,9 @@ test('validator only passes closed codes and counts', () => {
     errors: {}, google_accepted_format_dimension: true, rows_last_14_days: 42, formats_by_website_count: {BANNER: 3, INTERSTITIAL: 2},
     completed_days_compared_with_ledger: 20, days_exact_match: 19, days_within_one_cent: 1, days_different: 0};
   assert.deepEqual(validate(JSON.stringify(ok)), ok);
+  const withDims = {...ok, dimensions: {COUNTRY: {rows: 120, errors: [], google_accepted: true}, DEVICE: {rows: 0, errors: {DIMENSION_UNSUPPORTED: 1}, google_accepted: false}}};
+  assert.deepEqual(validate(JSON.stringify(withDims)), withDims);
+  assert.equal(validate(JSON.stringify({...ok, dimensions: {COUNTRY: {rows: 1, errors: [], google_accepted: true, hostname: 'x'}}})), null);
   assert.equal(validate(JSON.stringify({...ok, hostname: 'example.com'})), null);
   assert.equal(validate(JSON.stringify({...ok, formats_by_website_count: {'example.com': 1}})), null);
   assert.equal(validate(JSON.stringify({...ok, days_exact_match: 1.5})), null);

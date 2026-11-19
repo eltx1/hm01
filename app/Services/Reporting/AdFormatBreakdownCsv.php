@@ -11,7 +11,7 @@ final class AdFormatBreakdownCsv
         return response()->streamDownload(function () use ($breakdown, $metrics, $publisher): void {
             $currency = $breakdown['currency'];
             $stream = fopen('php://output', 'w');
-            fputcsv($stream, ['Ad format', ...array_map(fn ($key) => PerformanceMetrics::label($key).($key === 'ecpm_minor' ? " ({$currency})" : ''), $metrics),
+            fputcsv($stream, [ucfirst($breakdown['dimension_label'] ?? 'ad format'), ...array_map(fn ($key) => PerformanceMetrics::label($key).($key === 'ecpm_minor' ? " ({$currency})" : ''), $metrics),
                 ($publisher ? 'Publisher earnings' : 'Gross revenue')." ({$currency})",
                 ...($publisher ? [] : ["Publisher earnings ({$currency})", "Horus margin ({$currency})"]),
                 'Share of revenue', 'Includes estimates', 'From', 'To'], escape: '');
@@ -29,6 +29,6 @@ final class AdFormatBreakdownCsv
                 ], escape: '');
             }
             fclose($stream);
-        }, 'horus-ad-format-breakdown.csv', ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'private, no-store']);
+        }, 'horus-'.str_replace(' ', '-', $breakdown['dimension_label'] ?? 'ad format').'-breakdown.csv', ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'private, no-store']);
     }
 }

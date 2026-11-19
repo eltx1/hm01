@@ -1,7 +1,7 @@
 @props(['breakdown'])
 @php
     // Colour follows the format, never its rank: a fixed slot per known format.
-    $slots = ['BANNER' => 1, 'INTERSTITIAL' => 2, 'ANCHOR' => 3, 'REWARDED' => 4, 'SIDE_RAIL' => 5, 'NATIVE' => 6, 'VIDEO' => 7, 'REWARDED_INTERSTITIAL' => 8];
+    $slots = ['DESKTOP' => 1, 'SMARTPHONE' => 2, 'TABLET' => 3, 'CONNECTED_TV' => 4, 'BANNER' => 1, 'INTERSTITIAL' => 2, 'ANCHOR' => 3, 'REWARDED' => 4, 'SIDE_RAIL' => 5, 'NATIVE' => 6, 'VIDEO' => 7, 'REWARDED_INTERSTITIAL' => 8];
     $columns = collect($breakdown['format_columns']);
     $days = collect($breakdown['days'])->sortBy('date')->values();
     $currency = $breakdown['currency'];
@@ -13,14 +13,14 @@
 @endphp
 @if($days->isNotEmpty() && $columns->isNotEmpty())
 <figure class="report-format-trend" aria-labelledby="format-trend-title">
-    <figcaption class="report-card-heading"><h3 id="format-trend-title">{{ $breakdown['revenue_label'] }} by ad format over time</h3><span class="report-state">{{ $currency }} · daily</span></figcaption>
-    <ul class="report-format-legend" aria-label="Ad formats">
+    <figcaption class="report-card-heading"><h3 id="format-trend-title">{{ $breakdown['revenue_label'] }} by {{ $breakdown['dimension_label'] ?? 'ad format' }} over time</h3><span class="report-state">{{ $currency }} · daily</span></figcaption>
+    <ul class="report-format-legend" aria-label="{{ ucfirst($breakdown['dimension_label'] ?? 'ad format') }} values">
         @foreach($columns as $column)
             <li><i class="format-swatch format-slot-{{ $slots[$column['key']] ?? ($column['key'] === \App\Services\Reporting\AdFormatCatalog::NOT_BROKEN_DOWN ? 'none' : 8) }}" aria-hidden="true"></i>{{ $column['label'] }}</li>
         @endforeach
     </ul>
-    <div class="report-format-trend-plot" tabindex="0" role="region" aria-label="Daily {{ strtolower($breakdown['revenue_label']) }} by ad format chart">
-        <svg viewBox="0 0 {{ $width }} {{ $height }}" role="img" aria-label="Stacked daily {{ strtolower($breakdown['revenue_label']) }} by ad format in {{ $currency }}. The daily table below lists every value.">
+    <div class="report-format-trend-plot" tabindex="0" role="region" aria-label="Daily {{ strtolower($breakdown['revenue_label']) }} by {{ $breakdown['dimension_label'] ?? 'ad format' }} chart">
+        <svg viewBox="0 0 {{ $width }} {{ $height }}" role="img" aria-label="Stacked daily {{ strtolower($breakdown['revenue_label']) }} by {{ $breakdown['dimension_label'] ?? 'ad format' }} in {{ $currency }}. The daily table below lists every value.">
             @foreach([0, 1, 2, 3] as $tick)
                 @php($y = $top + $tick / 3 * $plot)
                 <line class="report-chart-grid" x1="{{ $left }}" x2="{{ $right }}" y1="{{ $y }}" y2="{{ $y }}" />

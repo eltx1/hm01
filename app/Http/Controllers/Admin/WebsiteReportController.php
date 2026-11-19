@@ -74,8 +74,9 @@ class WebsiteReportController extends Controller
         $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
         $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
         abort_if($siteId && $selected->isEmpty(), 404);
+        $dimension = $this->dimension($request);
         $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: false,
-            publisher: $siteId ? null : $publisher);
+            publisher: $siteId ? null : $publisher, dimension: $dimension);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
@@ -85,7 +86,7 @@ class WebsiteReportController extends Controller
 
         return view('admin.reporting.ad-formats', [
             'previousPeriod' => $period,
-            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: false, publisher: $siteId ? null : $publisher),
+            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: false, publisher: $siteId ? null : $publisher, dimension: $dimension),
             'drops' => app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(\Carbon\CarbonImmutable::now('UTC')->subDay()->toDateString(), $selected->pluck('id')->all()),
             'ranking' => app(\App\Services\Reporting\AdFormatRankingService::class)->rank($selected->loadMissing('publisher'), $breakdown['from'], $breakdown['to']),
             'publisher' => $publisher, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
@@ -101,11 +102,12 @@ class WebsiteReportController extends Controller
         if ($publisherId) {
             $publisher = Publisher::query()->findOrFail($publisherId);
 
-            return redirect()->route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher,
-                'from' => $request->validated('from'), 'to' => $request->validated('to')]);
+            return redirect()->route('admin.reporting.publishers.ad-formats', array_filter(['publisher' => $publisher,
+                'from' => $request->validated('from'), 'to' => $request->validated('to'), 'by' => $request->query('by')]));
         }
         $sites = Site::query()->with('publisher')->orderBy('display_name')->orderBy('id')->get();
-        $breakdown = $breakdowns->summary($sites, $request->validated('from'), $request->validated('to'), publisherView: false);
+        $dimension = $this->dimension($request);
+        $breakdown = $breakdowns->summary($sites, $request->validated('from'), $request->validated('to'), publisherView: false, dimension: $dimension);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
@@ -116,7 +118,7 @@ class WebsiteReportController extends Controller
 
         return view('admin.reporting.ad-formats', [
             'previousPeriod' => $period,
-            'previousBreakdown' => $breakdowns->summary($sites, $period['from'], $period['to'], publisherView: false),
+            'previousBreakdown' => $breakdowns->summary($sites, $period['from'], $period['to'], publisherView: false, dimension: $dimension),
             'drops' => app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(\Carbon\CarbonImmutable::now('UTC')->subDay()->toDateString(), $sites->pluck('id')->all()),
             'ranking' => app(\App\Services\Reporting\AdFormatRankingService::class)->rank($sites->loadMissing('publisher'), $breakdown['from'], $breakdown['to']),
             'publisher' => null, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
@@ -124,5 +126,11 @@ class WebsiteReportController extends Controller
             'publishers' => Publisher::query()->whereHas('sites')->orderBy('display_name')->get(['id', 'display_name']),
             'syncStatuses' => $bound->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
         ]);
+    }
+
+    /** Breakdown dimension selected on the page: ad format (default), country or device. */
+    private function dimension(\Illuminate\Http\Request $request): string
+    {
+        return ['country' => 'COUNTRY', 'device' => 'DEVICE'][$request->query('by')] ?? 'FORMAT';
     }
 }
