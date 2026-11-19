@@ -1,6 +1,9 @@
 <section class="reports-page publisher-reports" aria-labelledby="performance-heading">
-    <header class="publisher-report-heading">
+    <header class="publisher-report-heading report-page-heading">
         <h2 id="performance-heading">Your earnings at a glance</h2>
+        @if(auth()->user()->hasPermission('reporting.publisher.view'))
+            <a class="hm-button-secondary ad-format-breakdown-button" href="{{ route('publisher.reporting.ad-formats', ['from' => $performance['from'], 'to' => $performance['to']]) }}">Breakdown by Ad Format</a>
+        @endif
     </header>
     <x-publisher-report-period :from="$performance['from']" :to="$performance['to']" :metrics="$reportMetrics" />
     @php($hasVideo = $performance['video']['available'] || ($performance['video']['has_configuration'] ?? $performance['video']['configured'] ?? false))

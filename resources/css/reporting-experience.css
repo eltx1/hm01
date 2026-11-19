@@ -273,3 +273,19 @@
 .video-report .report-chart-line { stroke: var(--hm-gold-highlight); }
 .video-report .report-chart-point { fill: var(--hm-gold-highlight); }
 .video-report .report-chart-foot i { background: var(--hm-gold-highlight); }
+
+/* Breakdown by ad format: share of revenue per Google inventory format. */
+.ad-format-breakdown { display: grid; gap: 1.1rem; }
+.ad-format-breakdown-button { white-space: nowrap; }
+.ad-format-notice { margin: 0; padding: .8rem 1rem; border: 1px solid var(--hm-line-gold); border-radius: .7rem; background: rgba(241,183,51,.07); font-size: .78rem; }
+.ad-format-share { display: grid; gap: .85rem; padding: 1.2rem; border: 1px solid var(--hm-line); border-radius: .9rem; background: var(--hm-glass); }
+.ad-format-share h3 { margin: 0; font-size: .95rem; }
+.ad-format-share-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+.ad-format-share-label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem .75rem; font-size: .8rem; }
+.ad-format-share-label span { color: var(--hm-muted); font-variant-numeric: tabular-nums; }
+.ad-format-share-bar { height: .45rem; margin-top: .35rem; border-radius: 999px; background: var(--hm-line); overflow: hidden; }
+.ad-format-share-bar i { display: block; height: 100%; border-radius: inherit; background: var(--hm-gold-highlight); }
+.ad-format-share-item--muted .ad-format-share-bar i { background: var(--hm-muted); opacity: .55; }
+.ad-format-site-filter select { min-width: min(100%, 18rem); }
+.ad-format-daily td, .ad-format-daily th { white-space: nowrap; }
+@media (max-width: 760px) { .publisher-report-heading.report-page-heading { align-items: flex-start; } .ad-format-breakdown-button { width: 100%; text-align: center; } }

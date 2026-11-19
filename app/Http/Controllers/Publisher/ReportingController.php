@@ -8,6 +8,9 @@ use App\Services\Reporting\PublisherPerformanceService;
 use App\Http\Requests\SavePublisherPaymentProfileRequest;
 use App\Models\Publisher;
 use App\Models\PublisherStatement;
+use App\Models\Site;
+use App\Services\Reporting\AdFormatBreakdownCsv;
+use App\Services\Reporting\AdFormatBreakdownService;
 use App\Services\Reporting\PublisherFinanceService;
 use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\PublisherStatementService;
@@ -35,6 +38,28 @@ class ReportingController extends Controller
         return view('publisher.reporting.index', [
             'performance' => $performance,
             'reportMetrics' => $request->selectedMetrics($performance),
+        ]);
+    }
+
+    /** Same publisher-safe earnings, broken down by Google inventory format. */
+    public function adFormats(ReportPeriodRequest $request, AdFormatBreakdownService $breakdowns): View|StreamedResponse
+    {
+        $publisher = $this->publisher($request);
+        $sites = Site::withoutGlobalScopes()->where('organization_id', $publisher->organization_id)
+            ->where('publisher_id', $publisher->id)->orderBy('display_name')->orderBy('id')->get();
+        $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
+        $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
+        abort_if($siteId && $selected->isEmpty(), 404);
+        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: true,
+            publisher: $siteId ? null : $publisher);
+        $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
+        if ($request->validated('export') === 'csv') {
+            return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, true);
+        }
+
+        return view('publisher.reporting.ad-formats', [
+            'breakdown' => $breakdown, 'reportMetrics' => $metrics,
+            'sites' => $sites, 'selectedSite' => $siteId,
         ]);
     }
 
