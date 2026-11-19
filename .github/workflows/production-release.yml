@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  # Read-only: find a successful PR validation of the identical code tree.
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -30,6 +32,36 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Reuse validation of the identical pull request tree
+        id: reuse
+        # Only for main pushes. The deploy gate still requires this run to succeed
+        # and still builds, validates and checksums the release artifact below.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.HORUS_FULL_MAIN_VALIDATION != 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const full = `${owner}/${repo}`;
+            const { data: current } = await github.rest.repos.getCommit({ owner, repo, ref: context.sha });
+            const tree = current.commit.tree.sha;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'production-release.yml', event: 'pull_request', status: 'success', per_page: 50,
+            });
+            for (const run of data.workflow_runs) {
+              // Same repository only (never a fork), latest successful attempt of this workflow.
+              if (run.conclusion !== 'success' || run.head_repository?.full_name !== full || run.path !== '.github/workflows/production-release.yml') continue;
+              const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: run.head_sha });
+              // An identical tree means identical code and identical workflow definition.
+              if (commit.commit.tree.sha === tree) {
+                core.notice(`Identical tree ${tree} already passed full validation in run ${run.id}; skipping duplicate test steps.`);
+                core.setOutput('validated', 'true');
+                core.setOutput('run_id', String(run.id));
+                return;
+              }
+            }
+            core.notice('No successful pull request validation of this exact tree; running full validation.');
+            core.setOutput('validated', 'false');
       - name: Verify deployment release checks
         run: bash tests/Deployment/verify-active-release-test.sh
       - uses: shivammathur/setup-php@v2
@@ -50,11 +82,13 @@ jobs:
           npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.62.1
           bash scripts/install-playwright-ci.sh
       - name: Render changed forms through real application routes
+        if: steps.reuse.outputs.validated != 'true'
         run: |
           cp .env.example .env
           php artisan key:generate
           HORUS_UI_FIXTURES=1 php artisan test --filter='FormExperienceTest|ReportPerformanceMetricsTest|AdExchangeUnmatchedRequestsTest|NullableReportingMetricsViewTest|VideoReportExperienceTest|GamRevenueComparisonTest|GamRevenueCorrectionTest|ImpersonationAuditTest|SiteVideoInventoryTest|DashboardLayoutTest'
       - name: Build and inspect report and publisher-login previews
+        if: steps.reuse.outputs.validated != 'true'
         run: |
           npm run build
           npx playwright test --config=playwright.form-experience.config.js video-reporting-experience.playwright.spec.js publisher-impersonation.playwright.spec.js site-video-inventory.playwright.spec.js dashboard-layout.playwright.spec.js
@@ -82,7 +116,17 @@ jobs:
           bash tests/Deployment/mysql-client-config-test.sh
           bash tests/Deployment/bootstrap-layout-test.sh
           bash tests/Deployment/atomic-deploy-test.sh
+      - name: Build production assets (identical tree already validated)
+        if: steps.reuse.outputs.validated == 'true'
+        run: |
+          npm run build
+          test -s public/assets/hm-loader.js
+          test -s public/assets/hm-loader.min.js
+          test -s public/assets/prebid/horus-prebid.js
+          test -s public/assets/prebid/horus-prebid.min.js
+          test -s public/assets/prebid/horus-prebid.sha256
       - name: Static, browser, and PHP validation
+        if: steps.reuse.outputs.validated != 'true'
         run: |
           find app bootstrap config database routes tests scripts ops -name '*.php' -print0 | xargs -0 -n1 php -l
           php scripts/static-analysis.php
@@ -104,6 +148,7 @@ jobs:
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan schedule:list
           DB_CONNECTION=sqlite DB_DATABASE="$GITHUB_WORKSPACE/database/database.sqlite" php artisan test
       - name: Review real Blade forms in desktop and mobile browsers
+        if: steps.reuse.outputs.validated != 'true'
         run: |
           npx playwright test --config=playwright.form-experience.config.js
       - uses: actions/upload-artifact@v7
