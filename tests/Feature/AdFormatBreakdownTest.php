@@ -754,4 +754,43 @@ class AdFormatBreakdownTest extends TestCase
         $this->assertSame('Other countries', $summary['formats']->last()['label']);
         $this->assertSame(10000, $summary['formats']->sum('gross_revenue_minor'));
     }
+
+    public function test_publishers_receive_daily_and_weekly_earnings_reports_by_notification_and_email(): void
+    {
+        [$admin, $publisher, $user, , $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-19', 0.5);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+        \Illuminate\Support\Facades\Mail::fake();
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => self::DAY]));
+        $item = \App\Models\HorusNotification::query()->where('recipient_id', $user->id)->where('type', 'EARNINGS_REPORT_DAILY')->sole();
+        $this->assertSame('Yesterday: 80.00 USD earned', $item->title);
+        $this->assertStringContainsString('(+100.0% vs the previous day)', $item->message);
+        $this->assertStringContainsString('Top ad formats: Banner 60%, Interstitial 30%, Rewarded 10%.', $item->message);
+        $this->assertStringNotContainsString('100.00', $item->message); // never gross revenue
+        $this->assertSame(\App\Enums\NotificationCategory::Reports, $item->category);
+        $this->assertTrue((bool) $item->email_requested);
+        $this->assertSame(0, \App\Models\HorusNotification::query()->where('recipient_id', $admin->id)->where('type', 'EARNINGS_REPORT_DAILY')->count());
+
+        // Idempotent for the same day.
+        \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => self::DAY]);
+        $this->assertSame(1, \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_DAILY')->count());
+
+        // Delivered by the existing email pipeline.
+        \Illuminate\Support\Facades\Artisan::call('notifications:deliver-email');
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\HorusNotificationMail::class, fn ($mail) => $mail->hasTo($user->email) && $mail->item->is($item));
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'weekly', '--date' => self::DAY]));
+        $weekly = \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_WEEKLY')->sole();
+        $this->assertSame('Last 7 days: 120.00 USD earned', $weekly->title);
+        $this->assertStringContainsString('14 Sep – 20 Sep 2026', $weekly->message);
+
+        // A user who turns the Reports email off still gets the in-app report only.
+        app(\App\Services\Notifications\HorusNotificationService::class)->savePreference($user, \App\Enums\NotificationCategory::Reports, true, false);
+        \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => '2026-09-19']);
+        $this->assertFalse((bool) \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_DAILY')->whereNot('id', $item->id)->sole()->email_requested);
+        $this->actingAs($user)->get(route('notifications.preferences'))->assertOk()->assertSee('Reports');
+    }
 }

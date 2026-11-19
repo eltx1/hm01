@@ -107,7 +107,7 @@ final class HorusNotificationService
 
         return [
             'in_app_enabled' => $category->mandatory() || ($preference?->in_app_enabled ?? true),
-            'email_enabled' => $category->mandatory() || ($preference?->email_enabled ?? false),
+            'email_enabled' => $category->mandatory() || ($preference?->email_enabled ?? $category->emailByDefault()),
         ];
     }
 
