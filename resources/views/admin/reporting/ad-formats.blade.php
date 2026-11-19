@@ -49,6 +49,7 @@
     </section>
     @endif
     <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" :previous="$previousBreakdown ?? null" :period="$previousPeriod ?? null" />
+    <x-report-ad-format-ranking :ranking="$ranking ?? collect()" :currency="$breakdown['currency']" />
     @if($syncStatuses->isNotEmpty())
     <details class="report-disclosure ad-format-sync-status" @if($syncStatuses->contains(fn ($status) => !in_array($status['state'], ['CURRENT', 'NOT_CONNECTED'], true))) open @endif>
         <summary>Ad format data status</summary>

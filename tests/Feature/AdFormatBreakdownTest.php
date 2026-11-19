@@ -645,4 +645,33 @@ class AdFormatBreakdownTest extends TestCase
             ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
             ->assertSee('Enable Rewarded')->assertSee('+200.00 USD');
     }
+
+    public function test_admin_ranks_websites_by_ecpm_within_each_format(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->formatRow($binding, self::DAY, 'BANNER', 10000, 20_000_000); // $2.00 eCPM
+        $peer = $this->makeSiteFor($publisher, $user, ['primary_domain' => 'peer.example', 'display_name' => 'Peer site']);
+        $tiny = $this->makeSiteFor($publisher, $user, ['primary_domain' => 'tiny.example', 'display_name' => 'Tiny site']);
+        foreach ([[$peer, '2026-09-19', 5000, 15_000_000], [$tiny, '2026-09-18', 100, 9_000_000]] as [$other, $day, $impressions, $micros]) {
+            SiteGamAdFormatReport::withoutGlobalScopes()->create([
+                'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+                'site_gam_report_binding_id' => $binding->id, 'site_id' => $other->id, 'gam_connection_id' => $binding->gam_connection_id,
+                'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => $other->primary_domain,
+                'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => 'BANNER', 'impressions' => $impressions, 'clicks' => 0,
+                'revenue_micros' => $micros, 'google_report_job_id' => '1', 'reported_at' => now()]);
+        }
+        $ranking = app(\App\Services\Reporting\AdFormatRankingService::class)
+            ->rank(\App\Models\Site::withoutGlobalScopes()->with('publisher')->get(), '2026-09-14', self::DAY);
+        $banner = $ranking->get('BANNER');
+        $this->assertSame(['Peer site', 'Example Site'], $banner['sites']->pluck('site')->all()); // tiny site below the impression floor
+        $this->assertSame([300, 200], $banner['sites']->pluck('ecpm_minor')->all());
+        $this->assertSame(250, $banner['median_ecpm_minor']);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats', ['from' => '2026-09-14', 'to' => self::DAY]))->assertOk()
+            ->assertSee('Website ranking by eCPM per format')->assertSeeInOrder(['Peer site', 'Example Site'])
+            ->assertSee('network median eCPM 2.50 USD');
+        $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => '2026-09-14', 'to' => self::DAY]))->assertOk()
+            ->assertDontSee('Website ranking by eCPM');
+    }
 }

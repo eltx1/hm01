@@ -27,6 +27,8 @@ return [
     ],
     // Revenue opportunity suggestions need at least this many peer websites per format.
     'ad_format_opportunities' => ['min_peer_sites' => (int) env('REPORTING_AD_FORMAT_OPPORTUNITY_MIN_PEERS', 3)],
+    // Website ranking by eCPM per format: minimum impressions in the period to be ranked.
+    'ad_format_ranking' => ['min_impressions' => (int) env('REPORTING_AD_FORMAT_RANKING_MIN_IMPRESSIONS', 1000)],
     'statement_invoice_max_bytes' => (int) env('REPORTING_STATEMENT_INVOICE_MAX_BYTES', 10 * 1024 * 1024),
     'sources' => [
         'HORUS_GAM' => ['name' => 'Horus GAM', 'primary' => true, 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],
