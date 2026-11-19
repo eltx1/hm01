@@ -52,7 +52,7 @@ final class SiteGamAdFormatSynchronizer
         }
 
         return Cache::lock('site-gam-report:'.$binding->report_source_connection_id, 300)->block(3, function () use ($binding): array {
-            $binding->refresh()->load('connection.source', 'gamConnection', 'site');
+            $binding->refresh()->load(self::relations());
             $this->assertBinding($binding);
             $connection = $binding->connection;
             if (! $connection->is_enabled || ! $connection->source?->is_enabled || $connection->status->value === 'DISABLED'
@@ -139,7 +139,7 @@ final class SiteGamAdFormatSynchronizer
                 }
                 $state = DB::transaction(function () use ($binding, $identity, $state, $rows, $job, $last, $hostname): array {
                     $locked = SiteGamReportBinding::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->id);
-                    $locked->load('connection', 'site', 'gamConnection');
+                    $locked->load(self::relations());
                     $this->assertBinding($locked);
                     if ($this->identity($locked, $hostname) !== $identity) throw new RuntimeException('Ad format binding changed during collection.');
                     // Each completed report is a full snapshot for its dates:
@@ -310,6 +310,17 @@ final class SiteGamAdFormatSynchronizer
         }
     }
 
+    /**
+     * Identity is verified explicitly by assertBinding(); never let the
+     * signed-in user's organization scope hide the Horus GAM connection.
+     */
+    private static function relations(): array
+    {
+        $unscoped = fn ($query) => $query->withoutGlobalScopes();
+
+        return ['connection' => $unscoped, 'connection.source' => $unscoped, 'site' => $unscoped, 'gamConnection' => $unscoped];
+    }
+
     public static function unsupported(\Throwable $error): bool
     {
         return preg_match('/COLUMNS_NOT_SUPPORTED|NOT_SUPPORTED_FOR_REQUESTED|INVALID_DIMENSION|INVENTORY_FORMAT|Unmarshalling|not a valid enum|is not a valid value/i', $error->getMessage()) === 1;
@@ -345,7 +356,7 @@ final class SiteGamAdFormatSynchronizer
     {
         DB::transaction(function () use ($binding, $identity, $state): void {
             $connection = ReportSourceConnection::withoutGlobalScopes()->lockForUpdate()->findOrFail($binding->report_source_connection_id);
-            $binding->load('connection', 'site', 'gamConnection');
+            $binding->load(self::relations());
             $this->assertBinding($binding);
             if ($this->identity($binding, $this->scopes->hostname((string) $binding->site->primary_domain)) !== $identity) {
                 throw new RuntimeException('Ad format binding changed.');

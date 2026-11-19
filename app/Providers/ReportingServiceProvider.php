@@ -42,6 +42,8 @@ class ReportingServiceProvider extends ServiceProvider
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.show');
                 Route::get('/admin/reporting/publishers/{publisher}/ad-formats', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'adFormats'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.publishers.ad-formats');
+                Route::post('/admin/reporting/publishers/{publisher}/ad-formats/verify', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'verifyAdFormats'])
+                    ->middleware(['permission:reporting.admin.view', 'permission:reporting.sources.manage', 'throttle:6,1'])->name('admin.reporting.publishers.ad-formats.verify');
                 Route::post('/admin/reporting/connections', [AdminReportingController::class, 'storeConnection'])
                     ->middleware('permission:reporting.sources.manage')->name('admin.reporting.connections.store');
                 Route::patch('/admin/reporting/connections/{reportSourceConnection}/status', [AdminReportingController::class, 'connectionStatus'])
