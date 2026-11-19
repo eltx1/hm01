@@ -51,8 +51,13 @@ class WebsiteReportController extends Controller
             return app(PerformanceReportCsv::class)->download($summary['days'], $request->selectedMetrics($summary), $summary['currency'], false, includeFinality: true);
         }
 
+        $metrics = $request->selectedMetrics($summary);
+
         return view('admin.reporting.website', [
-            'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $request->selectedMetrics($summary),
+            'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $metrics,
+            // Same period and website, split by Google inventory format (read-only projection of the same ledger).
+            'adFormats' => app(AdFormatBreakdownService::class)->summary(collect([$site]), $summary['from'], $summary['to'], publisherView: false),
+            'adFormatMetrics' => array_values(array_diff($metrics, ['unfilled_impressions'])),
         ]);
     }
 

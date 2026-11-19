@@ -7,8 +7,12 @@
     @if($site->publisher)<a class="hm-button-secondary ad-format-breakdown-button" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $summary['from'], 'to' => $summary['to']]) }}">Breakdown by Ad Format</a>@endif</nav>
     <header class="report-page-heading"><div><p class="eyebrow">WEBSITE PERFORMANCE</p><h2>{{ $site->display_name }}</h2><p class="muted">{{ $site->primary_domain }} · {{ $site->publisher?->display_name }}</p></div><span class="report-state report-finality-state"><x-report-data-state :available="$summary['available']" :has-estimates="$summary['has_estimates']" :coverage="$summary['coverage']['main'] ?? []" /> · {{ $summary['currency'] }}</span></header>
     <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
-    @if($summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))
-    <nav class="report-channel-nav" aria-label="Report sections"><a href="#main-performance">Main performance</a><a href="#video-performance">Video performance</a></nav>
+    @php($hasVideoSection = $summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))
+    @php($hasAdFormats = isset($adFormats) && $adFormats['available'])
+    @if($hasVideoSection || $hasAdFormats)
+    <nav class="report-channel-nav" aria-label="Report sections">@if($hasVideoSection)<a href="#main-performance">Main performance</a>@endif @if($hasAdFormats)<a href="#ad-formats">Ad formats</a>@endif @if($hasVideoSection)<a href="#video-performance">Video performance</a>@endif</nav>
+    @endif
+    @if($hasVideoSection)
     <header id="main-performance" class="report-main-heading"><h2>Main performance</h2><p>Primary website reports, excluding independent Video results below.</p></header>
     @endif
     <x-report-coverage :coverage="$summary['coverage']['main'] ?? []" />
@@ -31,6 +35,13 @@
     </section>
     @if($summary['updated_at'])<p class="publisher-report-updated">Last updated: {{ $summary['updated_at']->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>@endif
     @else<x-empty-state :title="($summary['video']['available'] || ($summary['video']['configured'] ?? false)) ? 'No main reports for these dates' : 'No reports for these dates'" description="Try another reporting period. Missing data does not mean zero earnings." />@endif
+    @if($hasAdFormats)
+    <section id="ad-formats" class="report-ad-formats-section" aria-labelledby="website-ad-formats-heading">
+        <header class="report-main-heading"><h2 id="website-ad-formats-heading">Ad formats</h2><p>The same period for this website, split by Banner, Interstitial, Anchor, Rewarded and other formats.</p></header>
+        <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :compact="true"
+            :full-url="$site->publisher ? route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $summary['from'], 'to' => $summary['to']]) : null" />
+    </section>
+    @endif
     <x-video-performance :coverage="$summary['coverage']['video'] ?? []" :video="$summary['video']" :from="$summary['from']" :to="$summary['to']" />
 </div>
 @endsection

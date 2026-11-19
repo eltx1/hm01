@@ -156,6 +156,7 @@
 @else
 <x-control-plane.workspace-tabs :items="[
     ['label' => 'Overview', 'href' => '#website-overview'],
+    ['label' => 'Reports', 'href' => '#website-reports', 'visible' => $adFormats !== null],
     ['label' => 'Monetization', 'href' => '#monetization-health'],
     ['label' => 'Ads.txt', 'href' => '#ads-txt-setup', 'visible' => auth()->user()->hasPermission('publisher.ads_txt.view')],
     ['label' => 'Installation', 'href' => '#site-installation'],
@@ -174,6 +175,18 @@
         <a class="section-anchor" href="{{ $setupGuidance['target'] }}">Open the relevant website section</a>
     @endif
 </article>
+@if($adFormats !== null)
+<section id="website-reports" class="workspace-section reports-page publisher-reports" aria-labelledby="website-reports-heading">
+    <div class="workspace-heading"><div><p class="eyebrow">{{ $site->primary_domain }} · Reports</p><h2 id="website-reports-heading">Earnings by ad format</h2></div>
+        <a class="hm-button-secondary" href="{{ route('publisher.reporting.index', ['from' => $adFormats['from'], 'to' => $adFormats['to']]) }}">All reports</a></div>
+    <x-publisher-report-period :from="$adFormats['from']" :to="$adFormats['to']" :metrics="$adFormatMetrics" anchor="website-reports" form-id="website-report-filter" />
+    @if($adFormats['available'])
+        <p class="publisher-earnings-value ad-format-site-total"><span>{{ $adFormats['currency'] }}</span> {{ \App\Support\Money::formatMinor((int) $adFormats['totals']['earnings_minor']) }} <small class="muted">this website, selected period</small></p>
+    @endif
+    <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :publisher="true" :compact="true"
+        :full-url="route('publisher.reporting.ad-formats', ['site' => $site->id, 'from' => $adFormats['from'], 'to' => $adFormats['to']])" />
+</section>
+@endif
 @include('publisher.monetization.site-health')
 @include('publisher.privacy-readiness')
 @include('publisher.sites.installation-check')

@@ -289,3 +289,9 @@
 .ad-format-site-filter select { min-width: min(100%, 18rem); }
 .ad-format-daily td, .ad-format-daily th { white-space: nowrap; }
 @media (max-width: 760px) { .publisher-report-heading.report-page-heading { align-items: flex-start; } .ad-format-breakdown-button { width: 100%; text-align: center; } }
+/* Ad formats inside each website report. */
+.report-ad-formats-section { display: grid; gap: 1rem; }
+.ad-format-site-total { margin: .2rem 0 0; font-size: clamp(1.6rem, 3vw, 2.2rem); color: var(--hm-gold-highlight); font-weight: 750; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ad-format-site-total > span { font-size: .8rem; color: var(--hm-muted); font-weight: 550; letter-spacing: .03em; }
+.ad-format-site-total > small { display: block; font-size: .72rem; font-weight: 500; letter-spacing: 0; margin-top: .2rem; }
+#website-reports .ad-format-breakdown { margin-top: .4rem; }

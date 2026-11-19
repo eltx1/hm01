@@ -1,4 +1,4 @@
-@props(['breakdown', 'metrics', 'publisher' => false])
+@props(['breakdown', 'metrics', 'publisher' => false, 'compact' => false, 'fullUrl' => null])
 @php
     $currency = $breakdown['currency'];
     $revenueKey = $breakdown['revenue_key'];
@@ -50,7 +50,7 @@
             @endunless
         </section>
 
-        @if($breakdown['days']->isNotEmpty())
+        @if(!$compact && $breakdown['days']->isNotEmpty())
         <section class="publisher-report-details" aria-labelledby="ad-format-daily-heading">
             <div class="report-card-heading"><h3 id="ad-format-daily-heading">Daily breakdown by ad format</h3><span class="report-state">{{ $breakdown['revenue_label'] }} · {{ $currency }}</span></div>
             <div class="table-wrap ad-format-daily" tabindex="0" role="region" aria-label="Daily {{ strtolower($breakdown['revenue_label']) }} by ad format">
@@ -69,6 +69,10 @@
         </section>
         @endif
 
+        @if($compact)
+        <p class="report-footnote muted">Same reported amounts as this report, split by Google Ad Manager inventory format.@if($notBrokenDown) “Not broken down” covers amounts without format data from Google.@endif
+            @if($fullUrl)<a class="text-link" href="{{ $fullUrl }}">Open full ad format breakdown →</a>@endif</p>
+        @else
         <p class="report-footnote muted">
             Ad formats come from Google Ad Manager's inventory format for this website's reporting ad unit (exact website only).
             {{ $publisher ? 'Your earnings' : 'Gross revenue, publisher earnings and margin' }} are the same reported amounts as the main report, split across formats in proportion to the revenue Google reported for each format, so the formats always add up to the main total.
@@ -78,6 +82,7 @@
             @endif
             Video and mobile apps are reported separately.
         </p>
+        @endif
         @if($breakdown['synced_at'])<p class="publisher-report-updated">Ad formats last synchronized: {{ \Carbon\CarbonImmutable::parse($breakdown['synced_at'])->setTimezone(config('app.timezone'))->format('j M Y, H:i') }} ({{ config('app.timezone') }}).</p>@endif
     @endif
 </div>

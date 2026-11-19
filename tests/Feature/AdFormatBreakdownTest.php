@@ -458,4 +458,50 @@ class AdFormatBreakdownTest extends TestCase
         $this->get(route('publisher.reporting.ad-formats'))->assertOk()->assertSee('Ad formats');
         $this->get(route('admin.reporting.ad-formats'))->assertForbidden();
     }
+
+    public function test_admin_website_report_includes_this_websites_ad_formats_for_the_same_period(): void
+    {
+        [$admin, $publisher, , $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+
+        $response = $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('href="#ad-formats"', false)->assertSee('id="ad-formats"', false)
+            ->assertSeeInOrder(['Daily breakdown', 'Ad formats', 'Banner', 'Interstitial', 'Rewarded'])
+            ->assertSee('60.00')->assertSee('Open full ad format breakdown')
+            ->assertSee(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'site' => $site->id, 'from' => self::DAY, 'to' => self::DAY]));
+        // Compact inside the website report: no second daily table.
+        $response->assertDontSee('Daily breakdown by ad format');
+
+        // A period without reports shows no empty ad format section.
+        $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-01', 'to' => '2026-09-02']))->assertOk()
+            ->assertDontSee('id="ad-formats"', false);
+        $this->get(route('admin.sites.show', $site))->assertOk()
+            ->assertSee(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'site' => $site->id]), false);
+    }
+
+    public function test_publisher_website_page_shows_its_own_earnings_by_ad_format(): void
+    {
+        [, , $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+
+        $this->actingAs($user)->get(route('publisher.sites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('href="#website-reports"', false)->assertSee('Earnings by ad format')
+            ->assertSeeInOrder(['Banner', 'Interstitial', 'Rewarded'])
+            ->assertSee('80.00')->assertSee('48.00')->assertSee('24.00')
+            ->assertDontSee('Horus margin')->assertDontSee('Gross revenue')
+            ->assertSee(route('publisher.reporting.ad-formats', ['site' => $site->id, 'from' => self::DAY, 'to' => self::DAY]))
+            // Period shortcuts return to the website reports section.
+            ->assertSee('#website-reports"', false);
+        // Default period still renders without query parameters.
+        $this->get(route('publisher.sites.show', $site))->assertOk()->assertSee('Earnings by ad format');
+
+        $other = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Other'), RoleName::PublisherAdmin);
+        $this->makePublisherFor($other);
+        $this->assertContains($this->actingAs($other)->get(route('publisher.sites.show', $site))->status(), [403, 404]);
+    }
 }
