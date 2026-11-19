@@ -1,3 +1,24 @@
+# Verified production follow-up — 2026-11-19 06:09 UTC
+
+**Latest verified production release:** `9d6515446eede170ff9583726a77d18875b36f44` (merged PR #336, documentation-only). All checks below ran against this exact SHA; prior release evidence is retained below for history.
+
+| Gate | Exact run | Result |
+|---|---|---|
+| Tests: PHP 8.2/8.3/8.4, MySQL, frontend, Chromium/WebKit, atomic deployment | [44449223957](https://github.com/eltx1/hm01/actions/runs/44449223957) | success |
+| Production release validation | [44449223911](https://github.com/eltx1/hm01/actions/runs/44449223911) | success |
+| Static edge validation | [44449223880](https://github.com/eltx1/hm01/actions/runs/44449223880) | success |
+| Production deploy | [44454346546](https://github.com/eltx1/hm01/actions/runs/44454346546) | success |
+| Production static edge sync | [44454526400](https://github.com/eltx1/hm01/actions/runs/44454526400) | success |
+| Production live verification | [44454526306](https://github.com/eltx1/hm01/actions/runs/44454526306) | success |
+| Post-live video regression | [44454630078](https://github.com/eltx1/hm01/actions/runs/44454630078) | success |
+| Production readiness audit | [44454630026](https://github.com/eltx1/hm01/actions/runs/44454630026) | workflow success; **NOT_READY** remains the last recorded business verdict |
+
+The [production readiness issue #111](https://github.com/eltx1/hm01/issues/111) retains the blocking P1 `real_revenue_path`: enabled GAM connections have no verified non-dry-run path, approved Demand accounts have no recorded successful tests, and Prebid remains disabled. A green audit workflow is not evidence of live paid impressions or commercial readiness. The independent [Cloudflare Analytics Engine entitlement issue #334](https://github.com/eltx1/hm01/issues/334) remains open with API 403/code 10089; do not claim the Worker or real visitor-speed pilot is live.
+
+**Acceptance boundary:** The 16-task ledger below remains open to its external acceptance evidence. No WAF/Click Guard change, GAM/Demand mode or publisher mutation, opt-in/canary enrollment, Android physical-device claim, or synthetic revenue evidence is authorized by this checkpoint. This documentation-only follow-up must pass the repository's required checks before merging; do not force a redeploy of an already verified release.
+
+---
+
 # Verified production follow-up — 2026-11-19 01:39 UTC
 
 **Latest verified production release:** `842cb707e4bc205db04f3504ca57a70785787c93` (merged PR #335, documentation-only change). This entry supersedes the prior release SHA below; the 16-task acceptance ledger and its external evidence boundaries remain open.
