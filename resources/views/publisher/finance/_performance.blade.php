@@ -1,8 +1,7 @@
 <section class="reports-page publisher-reports" aria-labelledby="performance-heading">
     <header class="publisher-report-heading report-page-heading">
         <h2 id="performance-heading">Your earnings at a glance</h2>
-        {{-- Shown only once Google has actually returned ad format data for this publisher's websites. --}}
-        @if(auth()->user()->hasPermission('reporting.publisher.view') && \App\Models\SiteGamAdFormatReport::withoutGlobalScopes()->where('organization_id', auth()->user()->organization_id)->exists())
+        @if(auth()->user()->hasPermission('reporting.publisher.view'))
             <a class="hm-button-secondary ad-format-breakdown-button" href="{{ route('publisher.reporting.ad-formats', ['from' => $performance['from'], 'to' => $performance['to']]) }}">Breakdown by Ad Format</a>
         @endif
     </header>

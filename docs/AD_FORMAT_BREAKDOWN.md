@@ -56,35 +56,3 @@ Up to date, Collecting history, Preparing, Retrying, Unsupported, or No GAM
 reporting ad unit connected, plus the last day with format data and the last
 synchronization time. It reads only stored checkpoints and never calls Google.
 The panel opens automatically when a website needs attention.
-
-## Compatibility evidence and live verification
-
-Google's generated SOAP documentation (googleads-java-lib, v202608) marks both
-format dimensions and every Ad Exchange column we use as compatible with the
-same "Historical" report type:
-
-- `INVENTORY_FORMAT`: "Breaks down impressions by inventory format id. Compatible
-  with the Historical report type."
-- `INVENTORY_FORMAT_NAME`: "Corresponds to 'Inventory format' in the Ad Manager UI.
-  Compatible with the Historical report type."
-- `AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS`, `_CLICKS`, `_REVENUE`,
-  `AD_EXCHANGE_TOTAL_REQUESTS`, `AD_EXCHANGE_RESPONSES_SERVED` and `SITE_NAME`
-  are also Historical.
-
-Sharing a report type is not proof that Google accepts every combination for a
-given network. Verify it live with one of these read-only checks, which store
-nothing:
-
-- **Dashboard:** open a publisher's *Breakdown by ad format*, choose one website
-  and press **Verify with Google now**. This requires `reporting.sources.manage`.
-- **Server:** `php artisan reporting:probe-ad-formats --site=<site id> --date=<Y-m-d>`
-
-Both run the exact production query for one completed day and compare Google's
-per-format Ad Exchange revenue with the stored report for that day. If Google
-rejects the production query, narrower variants show which part it refuses
-(Active View, the site dimension, or inventory format itself). The result is
-one of SUPPORTED, PARTIALLY_SUPPORTED, UNSUPPORTED or INCONCLUSIVE, and it is
-audited.
-
-Publishers see the **Breakdown by Ad Format** button only after Google has
-returned format data for their websites.

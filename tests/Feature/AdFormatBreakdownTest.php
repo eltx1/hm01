@@ -58,7 +58,6 @@ class AdFormatBreakdownTest extends TestCase
         {
             public array $calls = [];
             public bool $rejectFormat = false;
-            public ?\Closure $rejectQuery = null;
             public int $jobs = 0;
 
             public function call(GamConnection $connection, string $service, string $method, array $payload = []): array
@@ -72,9 +71,6 @@ class AdFormatBreakdownTest extends TestCase
                 if ($method === 'runReportJob' && $this->rejectFormat
                     && in_array('INVENTORY_FORMAT_NAME', $payload['reportJob']['reportQuery']['dimensions'], true)) {
                     throw new \RuntimeException('ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS');
-                }
-                if ($method === 'runReportJob' && $this->rejectQuery && ($this->rejectQuery)($payload['reportJob']['reportQuery'])) {
-                    throw new \RuntimeException('[ReportError.COLUMNS_NOT_SUPPORTED_FOR_REQUESTED_DIMENSIONS @ columns]');
                 }
 
                 return match ($method) {
@@ -110,17 +106,13 @@ class AdFormatBreakdownTest extends TestCase
         [$from, $to] = [$date($query['startDate']), $date($query['endDate'])];
         $stream = fopen('php://temp', 'w+');
         if (in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true)) {
-            fputcsv($stream, [...array_map(fn ($dimension) => 'Dimension.'.$dimension, $query['dimensions']),
+            fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Dimension.INVENTORY_FORMAT', 'Dimension.INVENTORY_FORMAT_NAME',
                 ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
             foreach ($this->formatRows as $index => [$day, $site, $name, $requests, $matched, $impressions, $clicks, $micros]) {
                 if ($day < $from || $day > $to) continue;
-                $dimensions = ['DATE' => $day, 'AD_UNIT_ID' => '12345', 'SITE_NAME' => $site, 'INVENTORY_FORMAT' => (string) ($index + 1), 'INVENTORY_FORMAT_NAME' => $name];
-                $columns = ['AD_EXCHANGE_TOTAL_REQUESTS' => $requests, 'AD_EXCHANGE_RESPONSES_SERVED' => $matched,
-                    'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => $impressions, 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => $clicks,
-                    'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'US$ '.$micros,
-                    'AD_EXCHANGE_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS' => intdiv($impressions, 2), 'AD_EXCHANGE_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS' => $impressions];
-                fputcsv($stream, [...array_map(fn ($dimension) => $dimensions[$dimension], $query['dimensions']),
-                    ...array_map(fn ($column) => $columns[$column], $query['columns'])], escape: '');
+                $values = [$requests, $matched, $impressions, $clicks, 'US$ '.$micros];
+                if (count($query['columns']) > count(SiteGamReportMetrics::CORE_COLUMNS)) array_push($values, intdiv($impressions, 2), $impressions);
+                fputcsv($stream, [$day, '12345', $site, (string) ($index + 1), $name, ...$values], escape: '');
             }
         } else {
             // The unchanged ledger import: one exact-site total for the day.
@@ -401,99 +393,14 @@ class AdFormatBreakdownTest extends TestCase
         $this->get(route('admin.reporting.websites.index', ['from' => self::DAY, 'to' => self::DAY]))->assertOk()->assertSee('Breakdown by Ad Format');
     }
 
-    public function test_live_probe_confirms_adx_by_format_against_the_ledger_and_stores_nothing(): void
-    {
-        [$admin, $publisher, , $site, $binding] = $this->context();
-        $this->importLedger($binding);
-        $this->threeFormats();
-        $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
-        $configuration = $binding->connection->fresh()->configuration;
-
-        $probe = app(\App\Services\Reporting\SiteGamAdFormatProbe::class)->withSleeper(fn () => null);
-        $result = $probe->run($site->fresh(), self::DAY);
-        $this->assertSame('SUPPORTED', $result['verdict']);
-        $this->assertSame(['production'], array_keys($result['attempts']));
-        $this->assertSame(['Banner', 'Interstitial', 'Rewarded'], array_column($result['formats'], 'format'));
-        $this->assertSame(10000, $result['google_format_revenue_minor']);
-        $this->assertSame(10000, $result['ledger_gross_revenue_minor']);
-        $this->assertSame(0, $result['difference_minor']);
-        $this->assertFalse($result['stored']);
-        $query = $this->google->lastQuery();
-        $this->assertSame(['DATE', 'AD_UNIT_ID', 'SITE_NAME', 'INVENTORY_FORMAT', 'INVENTORY_FORMAT_NAME'], $query['dimensions']);
-        $this->assertContains('AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE', $query['columns']);
-        // Read-only: no format rows, no ledger change, no sync checkpoint.
-        $this->assertSame(0, SiteGamAdFormatReport::withoutGlobalScopes()->count());
-        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
-        $this->assertSame($configuration, $binding->connection->fresh()->configuration);
-        $this->assertDatabaseHas('audit_logs', ['event' => 'reporting.site_gam.ad_format_probe']);
-
-        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:probe-ad-formats', ['--site' => $site->id, '--date' => self::DAY, '--wait' => 5]));
-        $output = json_decode(\Illuminate\Support\Facades\Artisan::output(), true, flags: JSON_THROW_ON_ERROR);
-        $this->assertSame('SUPPORTED', $output['verdict']);
-        $this->assertSame(0, SiteGamAdFormatReport::withoutGlobalScopes()->count());
-    }
-
-    public function test_live_probe_pinpoints_what_google_rejects(): void
-    {
-        [, , , $site, $binding] = $this->context();
-        $this->importLedger($binding);
-        $this->threeFormats();
-        $probe = app(\App\Services\Reporting\SiteGamAdFormatProbe::class)->withSleeper(fn () => null);
-
-        // Google refuses the site dimension together with inventory format, but not the format itself.
-        $this->google->rejectQuery = fn (array $query) => in_array('SITE_NAME', $query['dimensions'], true)
-            && in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true);
-        $result = $probe->run($site->fresh(), self::DAY);
-        $this->assertSame('PARTIALLY_SUPPORTED', $result['verdict']);
-        $this->assertSame('without_site_dimension', $result['accepted_variant']);
-        $this->assertSame(['REJECTED', 'REJECTED', 'COMPLETED'], array_column($result['attempts'], 'status'));
-        $this->assertStringContainsString('COLUMNS_NOT_SUPPORTED', $result['attempts']['production']['error']);
-
-        // Google refuses inventory format with any Ad Exchange metric.
-        $this->google->rejectQuery = fn (array $query) => in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true);
-        $result = $probe->run($site->fresh(), self::DAY);
-        $this->assertSame('UNSUPPORTED', $result['verdict']);
-        $this->assertCount(4, $result['attempts']);
-        $this->assertSame(0, SiteGamAdFormatReport::withoutGlobalScopes()->count());
-
-        $this->assertSame('INVALID_DATE', $probe->run($site->fresh(), now()->toDateString())['verdict']);
-        $other = $this->makeSiteFor(\App\Models\Publisher::withoutGlobalScopes()->firstOrFail(), \App\Models\User::query()->firstOrFail(),
-            ['primary_domain' => 'unbound.example', 'display_name' => 'Unbound']);
-        $this->assertSame('NOT_CONNECTED', $probe->run($other)['verdict']);
-    }
-
-    public function test_admin_verify_button_shows_the_live_result_and_is_staff_only(): void
-    {
-        [$admin, $publisher, $user, $site, $binding] = $this->context();
-        $this->importLedger($binding);
-        $this->threeFormats();
-        $this->app->instance(\App\Services\Reporting\SiteGamAdFormatProbe::class,
-            app(\App\Services\Reporting\SiteGamAdFormatProbe::class)->withSleeper(fn () => null));
-
-        $this->actingAs($user)->post(route('admin.reporting.publishers.ad-formats.verify', $publisher), ['site' => $site->id])->assertForbidden();
-
-        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
-        $this->get(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'site' => $site->id]))
-            ->assertOk()->assertSee('Verify with Google now');
-        $this->get(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher]))
-            ->assertOk()->assertDontSee('Verify with Google now');
-        $this->followingRedirects()->post(route('admin.reporting.publishers.ad-formats.verify', $publisher), ['site' => $site->id, 'date' => self::DAY])
-            ->assertOk()->assertSee('data-ad-format-probe="SUPPORTED"', false)
-            ->assertSee('Supported — Ad Exchange by ad format works')->assertSee('Nothing was stored.')
-            ->assertSee('Banner')->assertSee('60.00');
-        $this->post(route('admin.reporting.publishers.ad-formats.verify', $publisher), ['site' => '01JFOREIGNSITE0000000000000'])->assertNotFound();
-        $this->assertSame(0, SiteGamAdFormatReport::withoutGlobalScopes()->count());
-    }
-
-    public function test_publisher_button_appears_only_after_google_returned_format_data(): void
+    public function test_sync_works_while_a_publisher_is_signed_in(): void
     {
         [, , $user, , $binding] = $this->context();
         $this->importLedger($binding);
-        $this->actingAs($user)->get(route('publisher.reporting.index', ['from' => self::DAY, 'to' => self::DAY]))
-            ->assertOk()->assertDontSee('Breakdown by Ad Format');
         $this->threeFormats();
-        $this->syncFormats($binding);
-        $this->get(route('publisher.reporting.index', ['from' => self::DAY, 'to' => self::DAY]))
-            ->assertOk()->assertSee('Breakdown by Ad Format');
+        // The signed-in publisher's organization scope must not hide the Horus GAM connection.
+        $this->actingAs($user);
+        $this->assertSame('CURRENT', $this->syncFormats($binding)['status']);
+        $this->assertSame(3, SiteGamAdFormatReport::withoutGlobalScopes()->count());
     }
 }

@@ -27,41 +27,7 @@
         <article class="report-kpi"><h3 class="eyebrow">Impressions</h3><div class="report-kpi-value">{{ \App\Services\Reporting\PerformanceMetrics::display('impressions', $breakdown['totals']['impressions']) }}</div></article>
     </section>
     @endif
-    @if($probe = session('adFormatProbe'))
-    @php($good = $probe['verdict'] === 'SUPPORTED')
-    <section class="ad-format-probe {{ $good ? 'ad-format-probe--ok' : 'ad-format-probe--warn' }}" aria-labelledby="ad-format-probe-heading" data-ad-format-probe="{{ $probe['verdict'] }}">
-        <h3 id="ad-format-probe-heading">Live Google check: {{ match($probe['verdict']) { 'SUPPORTED' => 'Supported — Ad Exchange by ad format works', 'PARTIALLY_SUPPORTED' => 'Partially supported', 'UNSUPPORTED' => 'Not supported by this network', 'INCONCLUSIVE' => 'Inconclusive — try again', default => str_replace('_', ' ', $probe['verdict']) } }}</h3>
-        <p class="muted">{{ $probe['message'] ?? '' }} @isset($probe['date'])Day tested: {{ $probe['date'] }}.@endisset Nothing was stored.</p>
-        @if($good)
-            <dl class="ad-format-probe-totals">
-                <div><dt>Google AdX revenue (sum of formats)</dt><dd>{{ \App\Support\Money::formatMinor($probe['google_format_revenue_minor']) }} {{ $breakdown['currency'] }}</dd></div>
-                <div><dt>Stored report gross revenue</dt><dd>{{ $probe['ledger_gross_revenue_minor'] === null ? 'No stored report for this day' : \App\Support\Money::formatMinor($probe['ledger_gross_revenue_minor']).' '.$breakdown['currency'] }}</dd></div>
-                <div><dt>Difference</dt><dd>{{ $probe['difference_minor'] === null ? '—' : \App\Support\Money::formatMinor($probe['difference_minor']).' '.$breakdown['currency'] }}</dd></div>
-            </dl>
-            <div class="table-wrap" tabindex="0" role="region" aria-label="Formats returned by Google">
-                <table><caption class="sr-only">Formats returned by Google</caption>
-                    <thead><tr><th scope="col">Google inventory format</th><th scope="col">AdX requests</th><th scope="col">AdX impressions</th><th scope="col">AdX clicks</th><th scope="col">AdX revenue ({{ $breakdown['currency'] }})</th></tr></thead>
-                    <tbody>@forelse($probe['formats'] as $format)<tr><th scope="row">{{ $format['format'] }}@if($format['google_name'] && $format['google_name'] !== $format['format'])<span class="muted"> · {{ $format['google_name'] }}</span>@endif</th><td>{{ $format['ad_requests'] === null ? '—' : number_format($format['ad_requests']) }}</td><td>{{ number_format($format['impressions']) }}</td><td>{{ number_format($format['clicks']) }}</td><td class="money">{{ \App\Support\Money::formatMinor($format['revenue_minor']) }}</td></tr>@empty<tr><td colspan="5">Google accepted the query; this website had no Ad Exchange delivery on that day.</td></tr>@endforelse</tbody>
-                </table>
-            </div>
-        @endif
-        @if(!empty($probe['attempts']))
-            <details class="report-disclosure"><summary>Technical details</summary><ul>
-                @foreach($probe['attempts'] as $name => $attempt)<li><strong>{{ str_replace('_', ' ', $name) }}</strong>: {{ $attempt['status'] }}@if(!empty($attempt['error'])) — {{ $attempt['error'] }}@endif <span class="muted">({{ implode(', ', $attempt['dimensions'] ?? []) }} · {{ implode(', ', $attempt['columns'] ?? []) }})</span></li>@endforeach
-            </ul></details>
-        @endif
-    </section>
-    @endif
     <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" />
-    @if($selectedSite && auth()->user()->hasPermission('reporting.sources.manage'))
-    <form method="post" action="{{ route('admin.reporting.publishers.ad-formats.verify', $publisher) }}" class="ad-format-probe-form">
-        @csrf
-        <input type="hidden" name="site" value="{{ $selectedSite }}">
-        <label>Day to test<input class="hm-input" type="date" name="date" value="{{ $breakdown['to'] < now()->toDateString() ? $breakdown['to'] : now()->subDay()->toDateString() }}" max="{{ now()->subDay()->toDateString() }}"></label>
-        <button class="hm-button-secondary" type="submit">Verify with Google now</button>
-        <p class="report-footnote muted">Runs the exact Ad Exchange by ad format query for this website and day, read-only. Nothing is stored and financial reports are unchanged.</p>
-    </form>
-    @endif
     @if($syncStatuses->isNotEmpty())
     <details class="report-disclosure ad-format-sync-status" @if($syncStatuses->contains(fn ($status) => !in_array($status['state'], ['CURRENT', 'NOT_CONNECTED'], true))) open @endif>
         <summary>Ad format data status</summary>

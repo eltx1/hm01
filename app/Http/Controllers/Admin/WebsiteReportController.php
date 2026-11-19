@@ -10,7 +10,6 @@ use App\Services\Reporting\AdFormatBreakdownCsv;
 use App\Services\Reporting\AdFormatBreakdownService;
 use App\Services\Reporting\AdminWebsitePerformanceService;
 use App\Services\Reporting\PerformanceReportCsv;
-use App\Services\Reporting\SiteGamAdFormatProbe;
 use App\Services\Reporting\SiteGamAdFormatSynchronizer;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -77,17 +76,5 @@ class WebsiteReportController extends Controller
             'sites' => $sites, 'selectedSite' => $siteId,
             'syncStatuses' => $selected->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
         ]);
-    }
-
-    /** Read-only live check with Google for one website; stores no report data. */
-    public function verifyAdFormats(\Illuminate\Http\Request $request, Publisher $publisher, SiteGamAdFormatProbe $probe): \Illuminate\Http\RedirectResponse
-    {
-        $data = $request->validate(['site' => ['required', 'string', 'max:64'], 'date' => ['nullable', 'date_format:Y-m-d']]);
-        $site = Site::withoutGlobalScopes()->where('organization_id', $publisher->organization_id)
-            ->where('publisher_id', $publisher->id)->findOrFail($data['site']);
-        $result = $probe->run($site, $data['date'] ?? null, waitSeconds: 25, actor: $request->user());
-
-        return redirect()->route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'site' => $site->id,
-            'from' => $result['date'] ?? null, 'to' => $result['date'] ?? null])->with('adFormatProbe', $result);
     }
 }
