@@ -434,4 +434,28 @@ class AdFormatBreakdownTest extends TestCase
         // History passes never removed the recent rows.
         $this->assertSame(3, SiteGamAdFormatReport::withoutGlobalScopes()->whereDate('report_date', self::DAY)->count());
     }
+
+    public function test_ad_formats_are_reachable_from_the_sidebar_and_main_reports_pages(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $this->get(route('admin.reporting.index'))->assertOk()
+            ->assertSee(route('admin.reporting.ad-formats'), false)->assertSee('Ad formats');
+        $this->get(route('admin.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('All publishers')->assertSeeInOrder(['Banner', 'Interstitial', 'Rewarded'])
+            ->assertSee('Horus margin')->assertSee('data-ad-format-sync="CURRENT"', false);
+        $this->get(route('admin.reporting.ad-formats', ['publisher' => $publisher->id, 'from' => self::DAY, 'to' => self::DAY]))
+            ->assertRedirect(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'from' => self::DAY, 'to' => self::DAY]));
+        $csv = $this->get(route('admin.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'export' => 'csv']))->assertOk()->streamedContent();
+        $this->assertStringContainsString('Banner', $csv);
+
+        $this->actingAs($user)->get(route('publisher.reporting.index'))->assertOk()
+            ->assertSee(route('publisher.reporting.ad-formats'), false);
+        $this->get(route('publisher.reporting.ad-formats'))->assertOk()->assertSee('Ad formats');
+        $this->get(route('admin.reporting.ad-formats'))->assertForbidden();
+    }
 }

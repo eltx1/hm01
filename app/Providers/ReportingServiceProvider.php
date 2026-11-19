@@ -40,6 +40,8 @@ class ReportingServiceProvider extends ServiceProvider
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.index');
                 Route::get('/admin/reporting/websites/{site}', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'show'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.show');
+                Route::get('/admin/reporting/ad-formats', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'adFormatsOverview'])
+                    ->middleware('permission:reporting.admin.view')->name('admin.reporting.ad-formats');
                 Route::get('/admin/reporting/publishers/{publisher}/ad-formats', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'adFormats'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.publishers.ad-formats');
                 Route::post('/admin/reporting/connections', [AdminReportingController::class, 'storeConnection'])

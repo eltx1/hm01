@@ -1,5 +1,5 @@
 @extends('layouts.admin')
-@section('title', $publisher->display_name.' · Ad formats')
+@section('title', ($publisher?->display_name ?? 'All publishers').' · Ad formats')
 @section('heading', 'Breakdown by ad format')
 @section('content')
 @php($context = $selectedSite ? ['site' => $selectedSite] : [])
@@ -7,11 +7,19 @@
 <div class="reports-page admin-website-reports">
     <nav class="report-finance-links" aria-label="Report navigation">
         @if($site)<a class="text-link" href="{{ route('admin.reporting.websites.show', ['site' => $site, 'from' => $breakdown['from'], 'to' => $breakdown['to']]) }}">← Website report</a>@endif
-        <a class="text-link" href="{{ route('admin.reporting.websites.index', ['from' => $breakdown['from'], 'to' => $breakdown['to'], 'q' => $publisher->display_name]) }}">Publisher websites</a>
+        @if($publisher)<a class="text-link" href="{{ route('admin.reporting.ad-formats', ['from' => $breakdown['from'], 'to' => $breakdown['to']]) }}">← All publishers</a>
+        <a class="text-link" href="{{ route('admin.reporting.websites.index', ['from' => $breakdown['from'], 'to' => $breakdown['to'], 'q' => $publisher->display_name]) }}">Publisher websites</a>@else<a class="text-link" href="{{ route('admin.reporting.index', ['from' => $breakdown['from'], 'to' => $breakdown['to']]) }}">← Reports</a>@endif
     </nav>
-    <header class="report-page-heading"><div><p class="eyebrow">BREAKDOWN BY AD FORMAT</p><h2>{{ $publisher->display_name }}</h2><p class="muted">{{ $site ? $site->display_name.' · '.$site->primary_domain : 'All websites ('.$sites->count().')' }}</p></div><span class="report-state report-finality-state"><x-report-data-state :available="$breakdown['available']" :has-estimates="$breakdown['has_estimates']" /> · {{ $breakdown['currency'] }}</span></header>
+    <header class="report-page-heading"><div><p class="eyebrow">BREAKDOWN BY AD FORMAT</p><h2>{{ $publisher?->display_name ?? 'All publishers' }}</h2><p class="muted">{{ $site ? $site->display_name.' · '.$site->primary_domain : 'All websites ('.$sites->count().')' }}</p></div><span class="report-state report-finality-state"><x-report-data-state :available="$breakdown['available']" :has-estimates="$breakdown['has_estimates']" /> · {{ $breakdown['currency'] }}</span></header>
     <x-report-period :from="$breakdown['from']" :to="$breakdown['to']" :metrics="$reportMetrics" :context="$context" />
-    @if($sites->count() > 1)
+    @if(!$publisher && ($publishers ?? collect())->isNotEmpty())
+    <form method="get" class="admin-website-search ad-format-site-filter" aria-label="Choose a publisher">
+        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">
+        <label>Publisher<select class="hm-input" name="publisher" onchange="this.form.submit()"><option value="">All publishers</option>@foreach($publishers as $option)<option value="{{ $option->id }}">{{ $option->display_name }}</option>@endforeach</select></label>
+        <noscript><button class="hm-button-secondary" type="submit">Show</button></noscript>
+    </form>
+    @endif
+    @if($publisher && $sites->count() > 1)
     <form method="get" class="admin-website-search ad-format-site-filter" aria-label="Choose a website">
         <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">
         @foreach($reportMetrics as $metric)<input type="hidden" name="metrics[]" value="{{ $metric }}">@endforeach

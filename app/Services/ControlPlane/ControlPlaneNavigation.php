@@ -46,6 +46,7 @@ final class ControlPlaneNavigation
             ]),
             $this->group('Revenue & Reporting', [
                 $this->item('Reports', 'admin.reporting.index', 'reporting.admin.view', ['admin.reporting.*']),
+                $this->item('Ad formats', 'admin.reporting.ad-formats', 'reporting.admin.view', ['admin.reporting.ad-formats', 'admin.reporting.publishers.ad-formats']),
                 $this->item('Finance', 'admin.finance.overview', 'finance.operations.view', ['admin.finance.*']),
                 $this->item('Direct Demand', 'admin.demand.index', 'demand.view', ['admin.demand.*']),
                 $this->item('Direct campaigns', 'admin.campaigns.index', 'campaigns.review', ['admin.campaigns.*']),

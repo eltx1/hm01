@@ -77,4 +77,30 @@ class WebsiteReportController extends Controller
             'syncStatuses' => $selected->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
         ]);
     }
+
+    /** Network-wide breakdown by ad format, with a publisher selector. */
+    public function adFormatsOverview(ReportPeriodRequest $request, AdFormatBreakdownService $breakdowns): View|StreamedResponse|\Illuminate\Http\RedirectResponse
+    {
+        $publisherId = $request->validate(['publisher' => ['nullable', 'string', 'max:64']])['publisher'] ?? null;
+        if ($publisherId) {
+            $publisher = Publisher::query()->findOrFail($publisherId);
+
+            return redirect()->route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher,
+                'from' => $request->validated('from'), 'to' => $request->validated('to')]);
+        }
+        $sites = Site::query()->with('publisher')->orderBy('display_name')->orderBy('id')->get();
+        $breakdown = $breakdowns->summary($sites, $request->validated('from'), $request->validated('to'), publisherView: false);
+        $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
+        if ($request->validated('export') === 'csv') {
+            return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
+        }
+        $bound = $sites->filter(fn (Site $site) => $site->currentGamReportBinding()->exists());
+
+        return view('admin.reporting.ad-formats', [
+            'publisher' => null, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
+            'sites' => $sites, 'selectedSite' => null,
+            'publishers' => Publisher::query()->whereHas('sites')->orderBy('display_name')->get(['id', 'display_name']),
+            'syncStatuses' => $bound->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
+        ]);
+    }
 }

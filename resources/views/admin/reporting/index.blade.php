@@ -4,7 +4,7 @@
 @section('content')
 <div class="reports-page">
 <header class="report-page-heading"><div><p class="eyebrow">REVENUE INTELLIGENCE</p><h2>Performance overview</h2><p class="muted">A clear view of your revenue and the publishers behind it.</p></div><span class="report-state report-finality-state"><span aria-hidden="true">●</span> <x-report-data-state :available="$summary['available']" :has-estimates="$summary['has_estimates']" :coverage="$summary['coverage']['main'] ?? []" /> · {{ $summary['currency'] }}</span></header>
-<nav class="report-finance-links" aria-label="Report views"><a class="hm-button-primary" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from']->toDateString(), 'to' => $summary['to']->toDateString(), 'metrics' => $reportMetrics]) }}">Website reports →</a></nav>
+<nav class="report-finance-links" aria-label="Report views"><a class="hm-button-primary" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from']->toDateString(), 'to' => $summary['to']->toDateString(), 'metrics' => $reportMetrics]) }}">Website reports →</a><a class="hm-button-secondary" href="{{ route('admin.reporting.ad-formats', ['from' => $summary['from']->toDateString(), 'to' => $summary['to']->toDateString()]) }}">Breakdown by Ad Format</a></nav>
 <p><a class="text-link" href="{{ route('admin.reporting.gam-comparison') }}">Private historical GAM preview</a></p>
 <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
 @if($summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))
