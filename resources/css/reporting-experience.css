@@ -301,3 +301,24 @@
 .report-delta--down { color: #ff6b6b; }
 .report-delta--flat { color: var(--hm-muted); }
 .report-delta-caption { font-size: .68rem; color: var(--hm-muted); }
+/* Daily trend by ad format: fixed colour per format (validated palette, dark + light). */
+.report-format-trend { margin: 0; display: grid; gap: .75rem; padding: 1.2rem; border: 1px solid var(--hm-line); border-radius: .9rem; background: var(--hm-glass); }
+.report-format-trend h3 { margin: 0; font-size: .95rem; }
+.report-format-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .75rem; color: var(--hm-muted); }
+.report-format-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.format-swatch { width: .7rem; height: .7rem; border-radius: .2rem; display: inline-block; background: currentColor; }
+.report-format-trend-plot { overflow-x: auto; }
+.report-format-trend-plot svg { width: 100%; min-width: 320px; height: auto; display: block; }
+.format-segment { stroke: var(--hm-bg-page, #0b1020); stroke-width: 2px; paint-order: stroke; }
+.format-trend-hit { fill: transparent; }
+.format-trend-day:hover .format-segment { opacity: .85; }
+.format-slot-1 { color: #3987e5; fill: #3987e5; } .format-slot-2 { color: #d95926; fill: #d95926; }
+.format-slot-3 { color: #199e70; fill: #199e70; } .format-slot-4 { color: #c98500; fill: #c98500; }
+.format-slot-5 { color: #d55181; fill: #d55181; } .format-slot-6 { color: #0ca30c; fill: #0ca30c; }
+.format-slot-7 { color: #9085e9; fill: #9085e9; } .format-slot-8 { color: #e66767; fill: #e66767; }
+.format-slot-none { color: #6b7280; fill: #6b7280; }
+[data-hm-theme="light"] .format-slot-1 { color: #2a78d6; fill: #2a78d6; } [data-hm-theme="light"] .format-slot-2 { color: #eb6834; fill: #eb6834; }
+[data-hm-theme="light"] .format-slot-3 { color: #1baf7a; fill: #1baf7a; } [data-hm-theme="light"] .format-slot-4 { color: #eda100; fill: #eda100; }
+[data-hm-theme="light"] .format-slot-5 { color: #e87ba4; fill: #e87ba4; } [data-hm-theme="light"] .format-slot-6 { color: #008300; fill: #008300; }
+[data-hm-theme="light"] .format-slot-7 { color: #6250d6; fill: #6250d6; } [data-hm-theme="light"] .format-slot-8 { color: #e34948; fill: #e34948; }
+[data-hm-theme="light"] .format-segment { stroke: #fff; }

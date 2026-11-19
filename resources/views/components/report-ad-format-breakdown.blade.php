@@ -52,6 +52,7 @@
             @endunless
         </section>
 
+        @if(!$compact && $breakdown['has_breakdown'])<x-report-format-trend :breakdown="$breakdown" />@endif
         @if(!$compact && $breakdown['days']->isNotEmpty())
         <section class="publisher-report-details" aria-labelledby="ad-format-daily-heading">
             <div class="report-card-heading"><h3 id="ad-format-daily-heading">Daily breakdown by ad format</h3><span class="report-state">{{ $breakdown['revenue_label'] }} · {{ $currency }}</span></div>

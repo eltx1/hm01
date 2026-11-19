@@ -532,4 +532,28 @@ class AdFormatBreakdownTest extends TestCase
         $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-19', 'to' => '2026-09-19']))->assertOk()
             ->assertDontSee('report-delta--', false);
     }
+
+    public function test_full_ad_format_page_shows_a_daily_stacked_trend_with_fixed_format_colours(): void
+    {
+        [, , $user, , $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-18', 0.6);
+        $this->ledgerDay('2026-09-19', 0.8);
+        $host = $this->hostname();
+        foreach (['2026-09-18' => 0.6, '2026-09-19' => 0.8, self::DAY => 1.0] as $day => $scale) {
+            $this->formatRows[] = [$day, $host, 'Banner', 70, 60, (int) (60 * $scale), 2, (int) (60000000 * $scale)];
+            $this->formatRows[] = [$day, $host, 'Interstitial', 30, 25, (int) (25 * $scale), 1, (int) (40000000 * $scale)];
+        }
+        $this->syncFormats($binding);
+
+        $response = $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => '2026-09-18', 'to' => self::DAY]))->assertOk()
+            ->assertSee('Your earnings by ad format over time')
+            ->assertSee('format-segment format-slot-1', false)->assertSee('format-segment format-slot-2', false);
+        // Three days, two formats each: six segments, each with its own tooltip value.
+        $this->assertSame(6, substr_count($response->getContent(), 'class="format-segment'));
+        $response->assertSee('20 Sep 2026 · Banner: 48.00 USD');
+        // The compact website report has no trend chart.
+        $this->get(route('publisher.sites.show', ['site' => $binding->site_id, 'from' => '2026-09-18', 'to' => self::DAY]))->assertOk()
+            ->assertDontSee('over time');
+    }
 }
