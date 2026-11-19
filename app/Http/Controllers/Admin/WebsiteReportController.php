@@ -85,6 +85,7 @@ class WebsiteReportController extends Controller
         return view('admin.reporting.ad-formats', [
             'previousPeriod' => $period,
             'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: false, publisher: $siteId ? null : $publisher),
+            'drops' => app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(\Carbon\CarbonImmutable::now('UTC')->subDay()->toDateString(), $selected->pluck('id')->all()),
             'publisher' => $publisher, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
             'syncStatuses' => $selected->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
@@ -114,6 +115,7 @@ class WebsiteReportController extends Controller
         return view('admin.reporting.ad-formats', [
             'previousPeriod' => $period,
             'previousBreakdown' => $breakdowns->summary($sites, $period['from'], $period['to'], publisherView: false),
+            'drops' => app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(\Carbon\CarbonImmutable::now('UTC')->subDay()->toDateString(), $sites->pluck('id')->all()),
             'publisher' => null, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => null,
             'publishers' => Publisher::query()->whereHas('sites')->orderBy('display_name')->get(['id', 'display_name']),

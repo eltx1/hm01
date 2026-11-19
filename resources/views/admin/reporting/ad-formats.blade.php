@@ -27,6 +27,19 @@
         <noscript><button class="hm-button-secondary" type="submit">Show</button></noscript>
     </form>
     @endif
+    @if(($drops ?? collect())->isNotEmpty())
+    <section class="ad-format-drops" aria-labelledby="ad-format-drops-heading" role="status">
+        <h3 id="ad-format-drops-heading"><span aria-hidden="true">⚠</span> Drops detected yesterday ({{ $drops->count() }})</h3>
+        <ul>
+            @foreach($drops->take(20) as $drop)
+                <li data-ad-format-drop="{{ $drop['format'] }}"><strong>{{ $drop['format_label'] }} {{ $drop['metric'] === 'ecpm' ? 'eCPM' : 'revenue' }} {{ number_format($drop['change_bp'] / 100, 0) }}%</strong>
+                    · {{ $drop['site'] }} <span class="muted">({{ $drop['domain'] }})</span> · {{ \App\Support\Money::formatMinor($drop['current']) }} vs {{ \App\Support\Money::formatMinor($drop['baseline']) }} USD average
+                    @if($drop['publisher_id'])<a class="text-link" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $drop['publisher_id'], 'site' => $drop['site_id'], 'from' => \Carbon\CarbonImmutable::parse($drop['day'])->subDays(13)->toDateString(), 'to' => $drop['day']]) }}">Open</a>@endif</li>
+            @endforeach
+        </ul>
+        <p class="report-footnote muted">Compared with each website-format's own average over the previous {{ \App\Services\Reporting\AdFormatDropDetector::BASELINE_DAYS }} days (Google Ad Exchange revenue). Reporting staff are also notified once per drop.</p>
+    </section>
+    @endif
     @if($breakdown['available'])
     <section class="report-metrics" aria-label="Ad format revenue totals">
         @foreach([['Gross revenue', $breakdown['totals']['gross_revenue_minor']], ['Publisher earnings', $breakdown['totals']['publisher_earnings_minor']], ['Horus margin', $breakdown['totals']['horus_earnings_minor']]] as [$label, $value])

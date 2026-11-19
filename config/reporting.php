@@ -17,6 +17,14 @@ return [
     'hourly_lookback_hours' => (int) env('REPORTING_HOURLY_LOOKBACK_HOURS', 3),
     'daily_lookback_days' => (int) env('REPORTING_DAILY_LOOKBACK_DAYS', 2),
     'financial_source_stale_days' => (int) env('REPORTING_FINANCIAL_SOURCE_STALE_DAYS', 3),
+    // Daily drop alerts per website and ad format (Google Ad Exchange evidence, USD).
+    'ad_format_alerts' => [
+        'min_baseline_days' => (int) env('REPORTING_AD_FORMAT_ALERT_MIN_DAYS', 7),
+        'min_baseline_revenue_micros' => (int) env('REPORTING_AD_FORMAT_ALERT_MIN_REVENUE_MICROS', 5_000_000),
+        'revenue_drop_ratio' => (float) env('REPORTING_AD_FORMAT_ALERT_REVENUE_RATIO', 0.5),
+        'min_baseline_impressions' => (int) env('REPORTING_AD_FORMAT_ALERT_MIN_IMPRESSIONS', 1000),
+        'ecpm_drop_ratio' => (float) env('REPORTING_AD_FORMAT_ALERT_ECPM_RATIO', 0.6),
+    ],
     'statement_invoice_max_bytes' => (int) env('REPORTING_STATEMENT_INVOICE_MAX_BYTES', 10 * 1024 * 1024),
     'sources' => [
         'HORUS_GAM' => ['name' => 'Horus GAM', 'primary' => true, 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],

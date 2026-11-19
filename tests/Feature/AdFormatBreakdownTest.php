@@ -556,4 +556,54 @@ class AdFormatBreakdownTest extends TestCase
         $this->get(route('publisher.sites.show', ['site' => $binding->site_id, 'from' => '2026-09-18', 'to' => self::DAY]))->assertOk()
             ->assertDontSee('over time');
     }
+
+    /** Stored Google format evidence for one day, written directly for detector tests. */
+    private function formatRow(SiteGamReportBinding $binding, string $day, string $format, int $impressions, int $revenueMicros): void
+    {
+        $binding->loadMissing('connection');
+        SiteGamAdFormatReport::withoutGlobalScopes()->create([
+            'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+            'site_gam_report_binding_id' => $binding->id, 'site_id' => $binding->site_id, 'gam_connection_id' => $binding->gam_connection_id,
+            'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => $this->hostname(),
+            'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => $format, 'impressions' => $impressions, 'clicks' => 0,
+            'revenue_micros' => $revenueMicros, 'google_report_job_id' => '1', 'reported_at' => now(),
+        ]);
+    }
+
+    public function test_drop_alerts_compare_each_website_format_with_its_own_recent_baseline(): void
+    {
+        [$admin, $publisher, , $site, $binding] = $this->context();
+        for ($i = 14; $i >= 1; $i--) {
+            $day = CarbonImmutable::parse(self::DAY)->subDays($i)->toDateString();
+            $this->formatRow($binding, $day, 'BANNER', 10000, 20_000_000);       // $20/day, $2 eCPM
+            $this->formatRow($binding, $day, 'INTERSTITIAL', 4000, 16_000_000);  // $16/day, $4 eCPM
+            $this->formatRow($binding, $day, 'ANCHOR', 300, 600_000);            // tiny: never alerts
+        }
+        $this->formatRow($binding, self::DAY, 'BANNER', 10000, 6_000_000);         // revenue -70%
+        $this->formatRow($binding, self::DAY, 'INTERSTITIAL', 4000, 8_000_000);    // revenue -50% boundary: eCPM -50%
+        $this->formatRow($binding, self::DAY, 'ANCHOR', 10, 1_000);
+
+        $drops = app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(self::DAY);
+        $this->assertSame([['BANNER', 'revenue', -7000], ['INTERSTITIAL', 'ecpm', -5000]],
+            $drops->map(fn ($d) => [$d['format'], $d['metric'], $d['change_bp']])->all());
+        $this->assertSame(600, $drops->first()['current']);
+        $this->assertSame(2000, $drops->first()['baseline']);
+        // An unsynchronized day is unknown, never a drop.
+        $this->assertCount(0, app(\App\Services\Reporting\AdFormatDropDetector::class)->detect('2026-09-21'));
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:ad-format-alerts', ['--date' => self::DAY]));
+        $this->assertStringContainsString('"drops":2', \Illuminate\Support\Facades\Artisan::output());
+        $notification = \App\Models\HorusNotification::query()->where('recipient_id', $admin->id)->where('type', 'AD_FORMAT_DROP')->orderBy('title')->first();
+        $this->assertNotNull($notification);
+        $this->assertStringContainsString('Banner revenue down 70%', $notification->title);
+        $count = \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->count();
+        // Re-running the same day never duplicates notifications.
+        \Illuminate\Support\Facades\Artisan::call('reporting:ad-format-alerts', ['--date' => self::DAY]);
+        $this->assertSame($count, \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->count());
+        $this->assertSame(0, \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->where('organization_id', $publisher->organization_id)->count());
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats'))->assertOk()
+            ->assertSee('Drops detected yesterday (2)')->assertSee('data-ad-format-drop="BANNER"', false);
+    }
 }
