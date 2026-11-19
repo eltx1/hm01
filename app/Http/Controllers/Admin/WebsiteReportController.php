@@ -57,6 +57,7 @@ class WebsiteReportController extends Controller
 
         return view('admin.reporting.website', [
             'previousPeriod' => $period, 'previous' => $previous['available'] ? $previous : null,
+            'opportunities' => app(\App\Services\Reporting\AdFormatOpportunityService::class)->forSite($site, publisherView: false),
             'previousAdFormats' => app(AdFormatBreakdownService::class)->summary(collect([$site]), $period['from'], $period['to'], publisherView: false),
             'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $metrics,
             // Same period and website, split by Google inventory format (read-only projection of the same ledger).

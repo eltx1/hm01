@@ -25,6 +25,8 @@ return [
         'min_baseline_impressions' => (int) env('REPORTING_AD_FORMAT_ALERT_MIN_IMPRESSIONS', 1000),
         'ecpm_drop_ratio' => (float) env('REPORTING_AD_FORMAT_ALERT_ECPM_RATIO', 0.6),
     ],
+    // Revenue opportunity suggestions need at least this many peer websites per format.
+    'ad_format_opportunities' => ['min_peer_sites' => (int) env('REPORTING_AD_FORMAT_OPPORTUNITY_MIN_PEERS', 3)],
     'statement_invoice_max_bytes' => (int) env('REPORTING_STATEMENT_INVOICE_MAX_BYTES', 10 * 1024 * 1024),
     'sources' => [
         'HORUS_GAM' => ['name' => 'Horus GAM', 'primary' => true, 'capabilities' => ['API', 'HOURLY', 'DAILY', 'MONTHLY'], 'finalized_methods' => ['API']],

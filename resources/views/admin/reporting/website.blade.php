@@ -41,6 +41,7 @@
         <header class="report-main-heading"><h2 id="website-ad-formats-heading">Ad formats</h2><p>The same period for this website, split by Banner, Interstitial, Anchor, Rewarded and other formats.</p></header>
         <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :compact="true" :previous="$previousAdFormats ?? null" :period="$previousPeriod ?? null"
             :full-url="$site->publisher ? route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $summary['from'], 'to' => $summary['to']]) : null" />
+        <x-report-ad-format-opportunities :opportunities="$opportunities ?? collect()" :currency="$summary['currency']" />
     </section>
     @endif
     <x-video-performance :coverage="$summary['coverage']['video'] ?? []" :video="$summary['video']" :from="$summary['from']" :to="$summary['to']" />

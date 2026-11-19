@@ -606,4 +606,43 @@ class AdFormatBreakdownTest extends TestCase
             ->get(route('admin.reporting.ad-formats'))->assertOk()
             ->assertSee('Drops detected yesterday (2)')->assertSee('data-ad-format-drop="BANNER"', false);
     }
+
+    public function test_revenue_opportunities_use_the_median_of_at_least_three_peer_websites(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding); // 100.00 gross / 80.00 publisher: the website's own 80% ratio
+        $peerRow = function (string $siteId, string $day, string $format, int $micros) use ($binding): void {
+            SiteGamAdFormatReport::withoutGlobalScopes()->create([
+                'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+                'site_gam_report_binding_id' => $binding->id, 'site_id' => $siteId, 'gam_connection_id' => $binding->gam_connection_id,
+                'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => 'peer.example',
+                'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => $format, 'impressions' => 1000, 'clicks' => 0,
+                'revenue_micros' => $micros, 'google_report_job_id' => '1', 'reported_at' => now()]);
+        };
+        $this->formatRow($binding, self::DAY, 'BANNER', 1000, 600_000_000);
+        $peers = collect(range(1, 3))->map(fn ($i) => $this->makeSiteFor($publisher, $user, ['primary_domain' => "peer{$i}.example", 'display_name' => "Peer {$i}"]));
+        // The sidecar is unique per source connection and day: give each test peer its own day.
+        foreach ($peers->take(2) as $i => $peer) {
+            $peerRow($peer->id, '2026-09-1'.($i + 1), 'BANNER', 75_000_000);
+            $peerRow($peer->id, '2026-09-1'.($i + 1), 'REWARDED', 25_000_000);
+        }
+        $service = app(\App\Services\Reporting\AdFormatOpportunityService::class);
+        // Two peers are not enough to publish an aggregate.
+        $this->assertCount(0, $service->forSite($site->fresh(), false));
+
+        $peerRow($peers[2]->id, '2026-09-13', 'BANNER', 50_000_000);
+        $peerRow($peers[2]->id, '2026-09-13', 'REWARDED', 50_000_000);
+        $admin_ = $service->forSite($site->fresh(), false);
+        $this->assertSame(['REWARDED'], $admin_->pluck('format')->all());
+        // Median share 25%: 600 * 0.25 / 0.75 = 200.00 gross; publisher sees 80% of it.
+        $this->assertSame(20000, $admin_->first()['estimated_minor']);
+        $this->assertSame(2500, $admin_->first()['median_share_bp']);
+        $this->assertSame(16000, $service->forSite($site->fresh(), true)->first()['estimated_minor']);
+
+        $this->actingAs($user)->get(route('publisher.sites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('Revenue opportunities')->assertSee('Enable Rewarded')->assertSee('+160.00 USD');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('Enable Rewarded')->assertSee('+200.00 USD');
+    }
 }

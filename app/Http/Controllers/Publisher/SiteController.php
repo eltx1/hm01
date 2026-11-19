@@ -54,6 +54,7 @@ class SiteController extends Controller
             // This website's own earnings for the selected period, split by ad format (publisher-safe).
             'adFormats' => $reports ? app(AdFormatBreakdownService::class)->summary(collect([$site]),
                 $request->validated('from'), $request->validated('to'), publisherView: true) : null,
+            'opportunities' => $reports ? app(\App\Services\Reporting\AdFormatOpportunityService::class)->forSite($site, publisherView: true) : collect(),
             'previousPeriod' => $period = \App\Support\PeriodComparison::previous($request->validated('from'), $request->validated('to')),
             'previousAdFormats' => $reports ? app(AdFormatBreakdownService::class)->summary(collect([$site]),
                 $period['from'], $period['to'], publisherView: true) : null,

@@ -325,3 +325,6 @@
 .ad-format-drops { padding: 1rem 1.2rem; border: 1px solid rgba(255, 107, 107, .45); border-radius: .9rem; background: rgba(255, 107, 107, .06); display: grid; gap: .5rem; }
 .ad-format-drops h3 { margin: 0; font-size: .9rem; }
 .ad-format-drops ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .78rem; }
+.ad-format-opportunities { padding: 1rem 1.2rem; border: 1px solid rgba(52, 199, 123, .45); border-radius: .9rem; background: rgba(52, 199, 123, .06); display: grid; gap: .5rem; }
+.ad-format-opportunities h3 { margin: 0; font-size: .9rem; }
+.ad-format-opportunities ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .78rem; }

@@ -185,6 +185,7 @@
     @endif
     <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :publisher="true" :compact="true" :previous="$previousAdFormats" :period="$previousPeriod"
         :full-url="route('publisher.reporting.ad-formats', ['site' => $site->id, 'from' => $adFormats['from'], 'to' => $adFormats['to']])" />
+    <x-report-ad-format-opportunities :opportunities="$opportunities" :currency="$adFormats['currency']" :publisher="true" />
 </section>
 @endif
 @include('publisher.monetization.site-health')
