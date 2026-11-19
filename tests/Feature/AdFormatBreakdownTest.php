@@ -328,4 +328,68 @@ class AdFormatBreakdownTest extends TestCase
         $this->assertStringContainsString('Horus margin', $csv);
         $this->assertStringContainsString('60.00', $csv);
     }
+
+    public function test_all_websites_view_matches_the_publisher_main_report_including_amounts_without_a_website(): void
+    {
+        [, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+        // A publisher-level fact that is not tied to one website (e.g. an unmapped demand row).
+        $original = DailyReport::withoutGlobalScopes()->sole();
+        $dimension = ReportDimension::withoutGlobalScopes()->create(['organization_id' => $publisher->organization_id,
+            'publisher_id' => $publisher->id, 'dimension_hash' => hash('sha256', 'publisher-level-test')]);
+        $extra = $original->replicate();
+        $extra->forceFill(['report_dimension_id' => $dimension->id, 'publisher_earnings_minor' => 500,
+            'gross_revenue_minor' => 625, 'horus_earnings_minor' => 125, 'impressions' => 7])->save();
+
+        $main = app(\App\Services\Reporting\PublisherPerformanceService::class)->summary($publisher, self::DAY, self::DAY);
+        $this->assertSame(8500, $main['earnings_minor']);
+        $all = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: true, publisher: $publisher);
+        $this->assertSame($main['earnings_minor'], $all['totals']['earnings_minor']);
+        $this->assertSame(500, $all['not_broken_down']['earnings_minor']);
+        $this->assertSame(4800, $all['formats']->firstWhere('key', 'BANNER')['earnings_minor']);
+        // A single website never includes publisher-level amounts.
+        $one = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: true);
+        $this->assertSame(8000, $one['totals']['earnings_minor']);
+        $this->assertNull($one['not_broken_down']);
+
+        $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY]))
+            ->assertOk()->assertSee('Not broken down')->assertSee('85.00');
+        $this->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'site' => $site->id]))
+            ->assertOk()->assertDontSee('data-ad-format="NOT_BROKEN_DOWN"', false);
+    }
+
+    public function test_admin_sees_format_sync_status_and_entry_points_without_calling_google(): void
+    {
+        [$admin, $publisher, , $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp]);
+        $sync = app(SiteGamAdFormatSynchronizer::class);
+        $this->assertSame('WAITING', $sync->status($site->fresh())['state']);
+
+        $this->threeFormats();
+        $this->syncFormats($binding);
+        $status = $sync->status($site->fresh());
+        $this->assertSame('CURRENT', $status['state']);
+        $this->assertSame('2026-09-21', $status['synced_through'], 'The hourly refresh includes today’s running totals.');
+        $calls = count($this->google->calls);
+        $this->get(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'from' => self::DAY, 'to' => self::DAY]))
+            ->assertOk()->assertSee('Ad format data status')->assertSee('data-ad-format-sync="CURRENT"', false)->assertSee('21 Sep 2026');
+        $this->assertCount($calls, $this->google->calls, 'Viewing reports must never call Google.');
+
+        $binding->connection->update(['configuration' => array_replace_recursive($binding->connection->fresh()->configuration, [
+            SiteGamAdFormatSynchronizer::STATE_KEY => ['error' => 'FORMAT_DIMENSION_UNSUPPORTED', 'retry_at' => now()->addDay()->toIso8601String()],
+        ])]);
+        $this->assertSame('UNSUPPORTED', $sync->status($site->fresh())['state']);
+        $this->get(route('admin.reporting.publishers.ad-formats', ['publisher' => $publisher, 'site' => $site->id]))
+            ->assertOk()->assertSee('data-ad-format-sync="UNSUPPORTED"', false);
+
+        $other = $this->makeSiteFor($publisher, $admin, ['primary_domain' => 'second-site.example', 'display_name' => 'Second site']);
+        $this->assertSame('NOT_CONNECTED', $sync->status($other)['state']);
+
+        $this->get(route('admin.publishers.show', $publisher))->assertOk()
+            ->assertSee(route('admin.reporting.publishers.ad-formats', $publisher));
+        $this->get(route('admin.reporting.websites.index', ['from' => self::DAY, 'to' => self::DAY]))->assertOk()->assertSee('Breakdown by Ad Format');
+    }
 }

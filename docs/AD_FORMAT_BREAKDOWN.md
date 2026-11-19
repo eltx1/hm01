@@ -5,7 +5,8 @@ Publishers (`/publisher/reporting/ad-formats`) and Horus staff
 broken down by Google Ad Manager inventory format: Banner, Interstitial, Anchor,
 Rewarded, Side rail, Native and any other format Google reports. The
 **Breakdown by Ad Format** button sits on the publisher's Reports page, on each
-admin website report and on the website-report cards. Both pages support
+admin website report, on the website-report cards and on the admin publisher
+page. Both pages support
 Today / Yesterday / Last 7 days / This month / Last month, custom dates, an
 optional single-website filter, column selection and CSV export.
 
@@ -41,6 +42,17 @@ publisher earnings, never gross revenue or margin.
 Impressions, clicks, requests and Active View per format are Google's own
 counters. Unfilled impressions are not available per format.
 
-Ledger amounts without format evidence, such as other demand sources or days
-not synchronized yet, appear as **Not broken down**. They are never guessed.
-Video and mobile apps keep their own separate reports.
+Ledger amounts without format evidence, such as other demand sources,
+publisher-level amounts not tied to one website, or days not synchronized yet,
+appear as **Not broken down**. They are never guessed. The "All websites" view
+uses the same scope as the publisher's main report, so its total equals the main
+report's main earnings. A single-website view covers that website only. Video
+and mobile apps keep their own separate reports.
+
+## Operator status
+
+The admin page has an **Ad format data status** panel for each website. It shows
+Up to date, Collecting history, Preparing, Retrying, Unsupported, or No GAM
+reporting ad unit connected, plus the last day with format data and the last
+synchronization time. It reads only stored checkpoints and never calls Google.
+The panel opens automatically when a website needs attention.

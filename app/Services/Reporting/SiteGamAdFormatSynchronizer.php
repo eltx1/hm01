@@ -184,6 +184,35 @@ final class SiteGamAdFormatSynchronizer
         });
     }
 
+    /**
+     * Read-only operator view of a website's format synchronization. Never calls Google.
+     *
+     * @return array{state: string, label: string, synced_through: ?string, synced_at: ?string, retry_at: ?string}
+     */
+    public function status(\App\Models\Site $site): array
+    {
+        $site->loadMissing('currentGamReportBinding.connection');
+        $binding = $site->currentGamReportBinding;
+        $connection = $binding?->connection;
+        if (! $binding || ! $connection || $connection->organization_id !== $site->organization_id) {
+            return ['state' => 'NOT_CONNECTED', 'label' => 'No GAM reporting ad unit connected', 'synced_through' => null, 'synced_at' => null, 'retry_at' => null];
+        }
+        $state = ($connection->configuration ?? [])[self::STATE_KEY] ?? [];
+        $through = isset($state['history_next']) ? CarbonImmutable::parse($state['history_next'])->subDay()->toDateString() : null;
+        $retry = isset($state['retry_at']) && CarbonImmutable::parse($state['retry_at'])->isFuture() ? $state['retry_at'] : null;
+        [$code, $label] = match (true) {
+            ! $connection->is_enabled || $connection->status->value === 'DISABLED' => ['DISABLED', 'Reporting source disabled'],
+            ($state['error'] ?? null) === 'FORMAT_DIMENSION_UNSUPPORTED' => ['UNSUPPORTED', 'Google did not accept the ad format dimension for this network; retrying automatically'],
+            ($state['error'] ?? null) !== null => ['RETRYING', 'Google was temporarily unavailable; retrying automatically'],
+            isset($state['pending']) => ['PREPARING', 'Google is preparing '.$state['pending']['from'].' – '.$state['pending']['to']],
+            $through === null => ['WAITING', 'Waiting for the first synchronization (within five minutes)'],
+            $through < CarbonImmutable::now($connection->timezone)->subDay()->toDateString() => ['BACKFILLING', 'Collecting history'],
+            default => ['CURRENT', 'Up to date'],
+        };
+
+        return ['state' => $code, 'label' => $label, 'synced_through' => $through, 'synced_at' => $state['synced_at'] ?? null, 'retry_at' => $retry];
+    }
+
     public function query(SiteGamReportBinding $binding, string $from, string $to, string $currency = 'USD'): array
     {
         $date = static fn (string $day): array => ['year' => (int) substr($day, 0, 4), 'month' => (int) substr($day, 5, 2), 'day' => (int) substr($day, 8, 2)];

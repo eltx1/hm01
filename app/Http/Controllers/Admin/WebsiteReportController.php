@@ -10,6 +10,7 @@ use App\Services\Reporting\AdFormatBreakdownCsv;
 use App\Services\Reporting\AdFormatBreakdownService;
 use App\Services\Reporting\AdminWebsitePerformanceService;
 use App\Services\Reporting\PerformanceReportCsv;
+use App\Services\Reporting\SiteGamAdFormatSynchronizer;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -63,7 +64,8 @@ class WebsiteReportController extends Controller
         $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
         $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
         abort_if($siteId && $selected->isEmpty(), 404);
-        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: false);
+        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: false,
+            publisher: $siteId ? null : $publisher);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
@@ -72,6 +74,7 @@ class WebsiteReportController extends Controller
         return view('admin.reporting.ad-formats', [
             'publisher' => $publisher, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
+            'syncStatuses' => $selected->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
         ]);
     }
 }

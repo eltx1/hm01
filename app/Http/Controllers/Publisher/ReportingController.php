@@ -50,7 +50,8 @@ class ReportingController extends Controller
         $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
         $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
         abort_if($siteId && $selected->isEmpty(), 404);
-        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: true);
+        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: true,
+            publisher: $siteId ? null : $publisher);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, true);

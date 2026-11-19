@@ -74,7 +74,7 @@
             {{ $publisher ? 'Your earnings' : 'Gross revenue, publisher earnings and margin' }} are the same reported amounts as the main report, split across formats in proportion to the revenue Google reported for each format, so the formats always add up to the main total.
             Impressions, clicks and requests per format are Google's own counters.
             @if($notBrokenDown)
-                “Not broken down” covers amounts without format data from Google, such as other demand sources or days still being synchronized.
+                “Not broken down” covers amounts without format data from Google, such as other demand sources, amounts not tied to one website, or days still being synchronized.
             @endif
             Video and mobile apps are reported separately.
         </p>

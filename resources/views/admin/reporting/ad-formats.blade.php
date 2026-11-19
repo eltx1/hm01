@@ -28,5 +28,26 @@
     </section>
     @endif
     <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" />
+    @if($syncStatuses->isNotEmpty())
+    <details class="report-disclosure ad-format-sync-status" @if($syncStatuses->contains(fn ($status) => !in_array($status['state'], ['CURRENT', 'NOT_CONNECTED'], true))) open @endif>
+        <summary>Ad format data status</summary>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Ad format data status">
+            <table>
+                <caption class="sr-only">Ad format synchronization by website</caption>
+                <thead><tr><th scope="col">Website</th><th scope="col">Status</th><th scope="col">Formats available through</th><th scope="col">Last synchronized</th></tr></thead>
+                <tbody>
+                @foreach($syncStatuses as $siteId => $status)
+                    @php($statusSite = $sites->firstWhere('id', $siteId))
+                    <tr data-ad-format-sync="{{ $status['state'] }}"><th scope="row">{{ $statusSite?->display_name }}<span class="muted"> · {{ $statusSite?->primary_domain }}</span></th>
+                        <td>{{ $status['label'] }}@if($status['retry_at']) <span class="muted">· next attempt {{ \Carbon\CarbonImmutable::parse($status['retry_at'])->setTimezone(config('app.timezone'))->format('j M, H:i') }}</span>@endif</td>
+                        <td>{{ $status['synced_through'] ? \Carbon\CarbonImmutable::parse($status['synced_through'])->format('j M Y') : '—' }}</td>
+                        <td>{{ $status['synced_at'] ? \Carbon\CarbonImmutable::parse($status['synced_at'])->setTimezone(config('app.timezone'))->format('j M Y, H:i') : '—' }}</td></tr>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+        <p class="report-footnote muted">Synchronized automatically with website reports. Financial reports are never affected by this status.</p>
+    </details>
+    @endif
 </div>
 @endsection

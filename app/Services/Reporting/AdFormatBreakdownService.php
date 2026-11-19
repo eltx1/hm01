@@ -4,6 +4,7 @@ namespace App\Services\Reporting;
 
 use App\Enums\ReportFinality;
 use App\Models\DailyReport;
+use App\Models\Publisher;
 use App\Models\SiteGamAdFormatReport;
 use Illuminate\Support\Collection;
 
@@ -28,27 +29,36 @@ final class AdFormatBreakdownService
     /**
      * @param  Collection<int, \App\Models\Site>  $sites  already authorized and organization-scoped
      */
-    public function summary(Collection $sites, string $from, string $to, bool $publisherView): array
+    public function summary(Collection $sites, string $from, string $to, bool $publisherView, ?Publisher $publisher = null): array
     {
         $currency = strtoupper((string) config('reporting.canonical_currency', 'USD'));
-        $siteIds = $sites->pluck('id')->all();
-        $ledger = $siteIds === [] ? collect() : ReportDisplayQuery::constrain(DailyReport::withoutGlobalScopes(), true)
-            ->whereIn('organization_id', $sites->pluck('organization_id')->unique()->all())
-            ->whereHas('dimension', fn ($query) => $query->whereIn('site_id', $siteIds)->whereNull('mobile_app_id'))
+        // Site id => organization id: every row must belong to an authorized site of the same tenant.
+        $owners = $sites->mapWithKeys(fn ($site) => [$site->id => $site->organization_id])->all();
+        $siteIds = array_keys($owners);
+        // "All websites" of a publisher uses the main report's own scope (publisher
+        // dimension), so publisher-level rows without a website are not lost.
+        $ledger = $siteIds === [] && ! $publisher ? collect() : ReportDisplayQuery::constrain(DailyReport::withoutGlobalScopes(), true)
             ->where('currency', $currency)
             ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
+            ->when($publisher, fn ($query) => $query->where('organization_id', $publisher->organization_id)
+                ->whereHas('dimension', fn ($dimension) => $dimension->where('publisher_id', $publisher->id)
+                    ->where('organization_id', $publisher->organization_id)->whereNull('mobile_app_id')))
+            ->when(! $publisher, fn ($query) => $query->whereIn('organization_id', array_values(array_unique($owners)))
+                ->whereHas('dimension', fn ($dimension) => $dimension->whereIn('site_id', $siteIds)->whereNull('mobile_app_id')))
             ->with(['dimension', 'connection.source'])
             ->get()
             ->reject(fn ($row) => VideoPerformanceService::isVideo($row))
-            ->filter(fn ($row) => $sites->firstWhere('id', $row->dimension?->site_id)?->organization_id === $row->organization_id);
+            ->filter(fn ($row) => $row->dimension?->site_id === null
+                ? $publisher !== null
+                : ($owners[$row->dimension->site_id] ?? null) === $row->organization_id || ($publisher && ! isset($owners[$row->dimension->site_id])));
 
-        $formats = $siteIds === [] ? collect() : SiteGamAdFormatReport::withoutGlobalScopes()
-            ->whereIn('site_id', $siteIds)
-            ->whereIn('report_source_connection_id', $ledger->pluck('report_source_connection_id')->unique()->all() ?: [''])
+        $connections = $ledger->pluck('report_source_connection_id')->unique()->values()->all();
+        $formats = $connections === [] ? collect() : SiteGamAdFormatReport::withoutGlobalScopes()
+            ->whereIn('report_source_connection_id', $connections)
             ->whereDate('report_date', '>=', $from)->whereDate('report_date', '<=', $to)
             ->get()
-            ->filter(fn ($row) => $sites->firstWhere('id', $row->site_id)?->organization_id === $row->organization_id)
-            ->groupBy(fn ($row) => $row->report_source_connection_id.'|'.$row->report_date->toDateString());
+            ->filter(fn ($row) => isset($owners[$row->site_id]) ? $owners[$row->site_id] === $row->organization_id : $publisher?->organization_id === $row->organization_id)
+            ->groupBy(fn ($row) => $row->report_source_connection_id.'|'.$row->report_date->toDateString().'|'.$row->site_id);
 
         $buckets = [];
         $days = [];
@@ -59,7 +69,7 @@ final class AdFormatBreakdownService
             $estimated = $group->contains('finality', ReportFinality::Estimated);
             $money = array_combine(self::MONEY, array_map(fn ($field) => (int) $group->sum($field), self::MONEY));
             $evidence = $first->connection?->connection_type === 'SITE_GAM_AD_UNIT'
-                ? ($formats->get($first->report_source_connection_id.'|'.$date) ?? collect())->where('site_id', $first->dimension?->site_id)->values()
+                ? ($formats->get($first->report_source_connection_id.'|'.$date.'|'.$first->dimension?->site_id) ?? collect())->values()
                 : collect();
             $weights = $evidence->map(fn ($row) => (int) $row->revenue_micros)->all();
             $usable = $evidence->isNotEmpty() && min($weights) >= 0 && (array_sum($weights) > 0 || array_sum($money) === 0);
