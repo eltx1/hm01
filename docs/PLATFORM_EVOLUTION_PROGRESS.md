@@ -1,3 +1,22 @@
+# Verified production checkpoint — 2026-11-19 08:45 UTC
+
+**Current main and verified production SHA:** `23161dd0cec55039f05bb7f1e2bab61e6bbb1249` (merged PR #337; documentation-only). This supersedes the earlier `9d651544...` production checkpoint below, without changing the 16-task external acceptance boundaries.
+
+| Gate | Run | Result |
+|---|---|---|
+| Tests (PHP 8.2/8.3/8.4, MySQL, frontend, Chromium/WebKit, atomic deployment, release artifact) | [44483062178](https://github.com/eltx1/hm01/actions/runs/44483062178) | success |
+| Production release validation | [44483062121](https://github.com/eltx1/hm01/actions/runs/44483062121) | success |
+| Static edge validation | [44483062093](https://github.com/eltx1/hm01/actions/runs/44483062093) | success |
+| Production deploy | [44488680782](https://github.com/eltx1/hm01/actions/runs/44488680782) | success |
+| Production static edge sync | [44489032946](https://github.com/eltx1/hm01/actions/runs/44489032946) | success |
+| Production live verification | [44489032822](https://github.com/eltx1/hm01/actions/runs/44489032822) | success |
+| Post-live video regression | [44489142959](https://github.com/eltx1/hm01/actions/runs/44489142959) | in progress at checkpoint; **not** asserted successful |
+| Production readiness audit | [44489143033](https://github.com/eltx1/hm01/actions/runs/44489143033) | workflow success; **not** proof of business readiness |
+
+**Outstanding acceptance:** [issue #111](https://github.com/eltx1/hm01/issues/111) tracks P1 `real_revenue_path` (no independently verified paid traffic/revenue); [issue #334](https://github.com/eltx1/hm01/issues/334) tracks Cloudflare Analytics Engine entitlement 403/code10089. Keep the 16 tasks open pending external acceptance evidence. No WAF/Click Guard, GAM/Demand, publisher, opt-in/canary, or live revenue changes/claims were made. This checkpoint changes documentation only and must pass required CI before merge.
+
+---
+
 # Verified production follow-up — 2026-11-19 06:09 UTC
 
 **Latest verified production release:** `9d6515446eede170ff9583726a77d18875b36f44` (merged PR #336, documentation-only). All checks below ran against this exact SHA; prior release evidence is retained below for history.
