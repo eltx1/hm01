@@ -181,9 +181,9 @@
         <a class="hm-button-secondary" href="{{ route('publisher.reporting.index', ['from' => $adFormats['from'], 'to' => $adFormats['to']]) }}">All reports</a></div>
     <x-publisher-report-period :from="$adFormats['from']" :to="$adFormats['to']" :metrics="$adFormatMetrics" anchor="website-reports" form-id="website-report-filter" />
     @if($adFormats['available'])
-        <p class="publisher-earnings-value ad-format-site-total"><span>{{ $adFormats['currency'] }}</span> {{ \App\Support\Money::formatMinor((int) $adFormats['totals']['earnings_minor']) }} <small class="muted">this website, selected period</small></p>
+        <p class="publisher-earnings-value ad-format-site-total"><span>{{ $adFormats['currency'] }}</span> {{ \App\Support\Money::formatMinor((int) $adFormats['totals']['earnings_minor']) }} <small class="muted">this website, selected period @if($previousAdFormats && $previousAdFormats['available'])· <x-report-delta metric="earnings_minor" :current="$adFormats['totals']['earnings_minor']" :previous="$previousAdFormats['totals']['earnings_minor']" :period="$previousPeriod" /> vs previous period @endif</small></p>
     @endif
-    <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :publisher="true" :compact="true"
+    <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :publisher="true" :compact="true" :previous="$previousAdFormats" :period="$previousPeriod"
         :full-url="route('publisher.reporting.ad-formats', ['site' => $site->id, 'from' => $adFormats['from'], 'to' => $adFormats['to']])" />
 </section>
 @endif

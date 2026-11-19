@@ -38,6 +38,7 @@ class ReportingController extends Controller
         return view('publisher.reporting.index', [
             'performance' => $performance,
             'reportMetrics' => $request->selectedMetrics($performance),
+            ...$this->comparison($publisher, $performance),
         ]);
     }
 
@@ -57,7 +58,11 @@ class ReportingController extends Controller
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, true);
         }
 
+        $period = \App\Support\PeriodComparison::previous($breakdown['from'], $breakdown['to']);
+
         return view('publisher.reporting.ad-formats', [
+            'previousPeriod' => $period,
+            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: true, publisher: $siteId ? null : $publisher),
             'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
         ]);
@@ -80,7 +85,17 @@ class ReportingController extends Controller
             ...$finance->overview($publisher),
             'performance' => $performance,
             'reportMetrics' => $request->selectedMetrics($performance),
+            ...$this->comparison($publisher, $performance),
         ]);
+    }
+
+    /** Same metrics for the equal-length period immediately before the selection. */
+    private function comparison(Publisher $publisher, array $performance): array
+    {
+        $period = \App\Support\PeriodComparison::previous($performance['from'], $performance['to']);
+        $previous = app(PublisherPerformanceService::class)->summary($publisher, $period['from'], $period['to']);
+
+        return ['previousPeriod' => $period, 'previous' => $previous['available'] ? $previous : null];
     }
 
     public function statements(Request $request, PublisherFinanceService $finance): View

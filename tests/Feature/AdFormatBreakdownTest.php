@@ -504,4 +504,32 @@ class AdFormatBreakdownTest extends TestCase
         $this->makePublisherFor($other);
         $this->assertContains($this->actingAs($other)->get(route('publisher.sites.show', $site))->status(), [403, 404]);
     }
+
+    /** Copy the imported day's ledger fact to another day with scaled amounts. */
+    private function ledgerDay(string $day, float $scale): void
+    {
+        $original = DailyReport::withoutGlobalScopes()->whereDate('report_date', self::DAY)->firstOrFail();
+        $copy = $original->replicate();
+        $copy->forceFill(['report_date' => $day,
+            'gross_revenue_minor' => (int) round($original->gross_revenue_minor * $scale),
+            'publisher_earnings_minor' => (int) round($original->publisher_earnings_minor * $scale),
+            'horus_earnings_minor' => (int) round($original->horus_earnings_minor * $scale),
+            'impressions' => (int) round($original->impressions * $scale)])->save();
+    }
+
+    public function test_reports_compare_with_the_previous_equal_length_period(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-19', 0.5);
+
+        $this->actingAs($user)->get(route('publisher.reporting.index', ['from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('report-delta--up', false)->assertSee('+100.0%')->assertSee('vs previous day');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('report-delta--up', false)->assertSee('+100.0%');
+        // Nothing to compare with: no badge, never a fake percentage.
+        $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-19', 'to' => '2026-09-19']))->assertOk()
+            ->assertDontSee('report-delta--', false);
+    }
 }

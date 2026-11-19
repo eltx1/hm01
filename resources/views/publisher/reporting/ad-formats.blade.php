@@ -20,6 +20,6 @@
     </form>
     @endif
     <x-publisher-report-columns :metrics="$reportMetrics" />
-    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="true" />
+    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="true" :previous="$previousBreakdown ?? null" :period="$previousPeriod ?? null" />
 </section>
 @endsection

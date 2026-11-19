@@ -1,9 +1,10 @@
-@props(['breakdown', 'metrics', 'publisher' => false, 'compact' => false, 'fullUrl' => null])
+@props(['breakdown', 'metrics', 'publisher' => false, 'compact' => false, 'fullUrl' => null, 'previous' => null, 'period' => null])
 @php
     $currency = $breakdown['currency'];
     $revenueKey = $breakdown['revenue_key'];
     $formats = $breakdown['formats'];
     $notBrokenDown = $breakdown['not_broken_down'];
+    $previousByFormat = $previous && $previous['available'] ? collect($previous['formats'])->keyBy('key') : null;
 @endphp
 <div class="ad-format-breakdown">
     @if(!$breakdown['available'])
@@ -17,14 +18,15 @@
         <section class="ad-format-share" aria-labelledby="ad-format-share-heading">
             <div class="report-card-heading">
                 <h3 id="ad-format-share-heading">{{ $breakdown['revenue_label'] }} by ad format</h3>
-                <span class="report-state">{{ \App\Support\Money::formatMinor((int) $breakdown['totals'][$revenueKey]) }} {{ $currency }} total</span>
+                <span class="report-state">{{ \App\Support\Money::formatMinor((int) $breakdown['totals'][$revenueKey]) }} {{ $currency }} total @if($previousByFormat)<x-report-delta :metric="$revenueKey" :current="$breakdown['totals'][$revenueKey]" :previous="$previous['totals'][$revenueKey]" :period="$period" />@endif</span>
             </div>
             <ul class="ad-format-share-list">
                 @foreach($formats as $row)
                     <li class="ad-format-share-item {{ $row['key'] === \App\Services\Reporting\AdFormatCatalog::NOT_BROKEN_DOWN ? 'ad-format-share-item--muted' : '' }}" data-ad-format="{{ $row['key'] }}">
                         <div class="ad-format-share-label">
                             <strong>{{ $row['label'] }}</strong>
-                            <span>{{ \App\Support\Money::formatMinor((int) $row[$revenueKey]) }} <small>{{ $currency }}</small>@if($row['share_bp'] !== null) · {{ number_format($row['share_bp'] / 100, 1) }}%@endif</span>
+                            <span>{{ \App\Support\Money::formatMinor((int) $row[$revenueKey]) }} <small>{{ $currency }}</small>@if($row['share_bp'] !== null) · {{ number_format($row['share_bp'] / 100, 1) }}%@endif
+                                @if($previousByFormat && $row['key'] !== \App\Services\Reporting\AdFormatCatalog::NOT_BROKEN_DOWN)<x-report-delta :metric="$revenueKey" :current="$row[$revenueKey]" :previous="$previousByFormat->get($row['key'])[$revenueKey] ?? null" :period="$period" />@endif</span>
                         </div>
                         <div class="ad-format-share-bar" aria-hidden="true"><i style="width: {{ $row['share_bp'] === null ? 0 : max(0, min(100, $row['share_bp'] / 100)) }}%"></i></div>
                     </li>

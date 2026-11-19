@@ -54,6 +54,9 @@ class SiteController extends Controller
             // This website's own earnings for the selected period, split by ad format (publisher-safe).
             'adFormats' => $reports ? app(AdFormatBreakdownService::class)->summary(collect([$site]),
                 $request->validated('from'), $request->validated('to'), publisherView: true) : null,
+            'previousPeriod' => $period = \App\Support\PeriodComparison::previous($request->validated('from'), $request->validated('to')),
+            'previousAdFormats' => $reports ? app(AdFormatBreakdownService::class)->summary(collect([$site]),
+                $period['from'], $period['to'], publisherView: true) : null,
             'adFormatMetrics' => $reports ? array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions'])) : [],
         ]);
     }

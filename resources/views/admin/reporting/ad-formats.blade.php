@@ -35,7 +35,7 @@
         <article class="report-kpi"><h3 class="eyebrow">Impressions</h3><div class="report-kpi-value">{{ \App\Services\Reporting\PerformanceMetrics::display('impressions', $breakdown['totals']['impressions']) }}</div></article>
     </section>
     @endif
-    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" />
+    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" :previous="$previousBreakdown ?? null" :period="$previousPeriod ?? null" />
     @if($syncStatuses->isNotEmpty())
     <details class="report-disclosure ad-format-sync-status" @if($syncStatuses->contains(fn ($status) => !in_array($status['state'], ['CURRENT', 'NOT_CONNECTED'], true))) open @endif>
         <summary>Ad format data status</summary>

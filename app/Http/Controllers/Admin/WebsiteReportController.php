@@ -52,8 +52,12 @@ class WebsiteReportController extends Controller
         }
 
         $metrics = $request->selectedMetrics($summary);
+        $period = \App\Support\PeriodComparison::previous($summary['from'], $summary['to']);
+        $previous = $reports->summary($site, $period['from'], $period['to'], includeEstimates: true);
 
         return view('admin.reporting.website', [
+            'previousPeriod' => $period, 'previous' => $previous['available'] ? $previous : null,
+            'previousAdFormats' => app(AdFormatBreakdownService::class)->summary(collect([$site]), $period['from'], $period['to'], publisherView: false),
             'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $metrics,
             // Same period and website, split by Google inventory format (read-only projection of the same ledger).
             'adFormats' => app(AdFormatBreakdownService::class)->summary(collect([$site]), $summary['from'], $summary['to'], publisherView: false),
@@ -76,7 +80,11 @@ class WebsiteReportController extends Controller
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
         }
 
+        $period = \App\Support\PeriodComparison::previous($breakdown['from'], $breakdown['to']);
+
         return view('admin.reporting.ad-formats', [
+            'previousPeriod' => $period,
+            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: false, publisher: $siteId ? null : $publisher),
             'publisher' => $publisher, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
             'syncStatuses' => $selected->mapWithKeys(fn (Site $site) => [$site->id => app(SiteGamAdFormatSynchronizer::class)->status($site)]),
@@ -101,7 +109,11 @@ class WebsiteReportController extends Controller
         }
         $bound = $sites->filter(fn (Site $site) => $site->currentGamReportBinding()->exists());
 
+        $period = \App\Support\PeriodComparison::previous($breakdown['from'], $breakdown['to']);
+
         return view('admin.reporting.ad-formats', [
+            'previousPeriod' => $period,
+            'previousBreakdown' => $breakdowns->summary($sites, $period['from'], $period['to'], publisherView: false),
             'publisher' => null, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => null,
             'publishers' => Publisher::query()->whereHas('sites')->orderBy('display_name')->get(['id', 'display_name']),
