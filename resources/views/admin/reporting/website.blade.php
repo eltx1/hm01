@@ -3,7 +3,8 @@
 @section('heading', 'Website report')
 @section('content')
 <div class="reports-page admin-website-reports">
-    <nav class="report-finance-links" aria-label="Website report navigation"><a class="text-link" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from'], 'to' => $summary['to'], 'metrics' => $reportMetrics]) }}">← Website reports</a>@if(auth()->user()->hasPermission('sites.view'))<a class="text-link" href="{{ route('admin.sites.show', $site) }}">Website settings</a>@endif</nav>
+    <nav class="report-finance-links" aria-label="Website report navigation"><a class="text-link" href="{{ route('admin.reporting.websites.index', ['from' => $summary['from'], 'to' => $summary['to'], 'metrics' => $reportMetrics]) }}">← Website reports</a>@if(auth()->user()->hasPermission('sites.view'))<a class="text-link" href="{{ route('admin.sites.show', $site) }}">Website settings</a>@endif
+    @if($site->publisher)<a class="hm-button-secondary ad-format-breakdown-button" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $summary['from'], 'to' => $summary['to']]) }}">Breakdown by Ad Format</a>@endif</nav>
     <header class="report-page-heading"><div><p class="eyebrow">WEBSITE PERFORMANCE</p><h2>{{ $site->display_name }}</h2><p class="muted">{{ $site->primary_domain }} · {{ $site->publisher?->display_name }}</p></div><span class="report-state report-finality-state"><x-report-data-state :available="$summary['available']" :has-estimates="$summary['has_estimates']" :coverage="$summary['coverage']['main'] ?? []" /> · {{ $summary['currency'] }}</span></header>
     <x-report-period :from="$summary['from']" :to="$summary['to']" :metrics="$reportMetrics" />
     @if($summary['video']['available'] || ($summary['video']['has_configuration'] ?? $summary['video']['configured'] ?? false))

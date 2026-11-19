@@ -25,6 +25,7 @@
                 <dl>@foreach($metrics as $metric)<div><dt>{{ \App\Services\Reporting\PerformanceMetrics::label($metric, $row) }}</dt><dd>{{ $row[$metric] === null ? 'Unavailable' : \App\Services\Reporting\PerformanceMetrics::display($metric, $row[$metric]) }}@if($metric === 'ecpm_minor' && $row[$metric] !== null) <small>{{ $currency }}</small>@endif</dd></div>@endforeach</dl>
             @else<p class="muted">No main reports for these dates. Missing data does not mean zero earnings.</p>@endif
             <a class="hm-button-secondary" href="{{ route('admin.reporting.websites.show', ['site' => $site, 'from' => $from, 'to' => $to, 'metrics' => $metrics]) }}" aria-label="View report for {{ $site->display_name }}">View report →</a>
+            @if($site->publisher)<a class="text-link" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $from, 'to' => $to]) }}" aria-label="Breakdown by ad format for {{ $site->display_name }}">Breakdown by Ad Format</a>@endif
         </article>
     @empty<x-empty-state title="No websites found" description="Try another website, domain or publisher name." />@endforelse
     </section>

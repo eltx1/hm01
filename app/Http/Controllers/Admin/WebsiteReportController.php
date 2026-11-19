@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ReportPeriodRequest;
+use App\Models\Publisher;
 use App\Models\Site;
+use App\Services\Reporting\AdFormatBreakdownCsv;
+use App\Services\Reporting\AdFormatBreakdownService;
 use App\Services\Reporting\AdminWebsitePerformanceService;
 use App\Services\Reporting\PerformanceReportCsv;
 use Illuminate\View\View;
@@ -49,6 +52,26 @@ class WebsiteReportController extends Controller
 
         return view('admin.reporting.website', [
             'site' => $site->load('publisher'), 'summary' => $summary, 'reportMetrics' => $request->selectedMetrics($summary),
+        ]);
+    }
+
+    /** The publisher's report, broken down by Google inventory format (all websites or one). */
+    public function adFormats(ReportPeriodRequest $request, Publisher $publisher, AdFormatBreakdownService $breakdowns): View|StreamedResponse
+    {
+        $sites = Site::withoutGlobalScopes()->where('organization_id', $publisher->organization_id)
+            ->where('publisher_id', $publisher->id)->orderBy('display_name')->orderBy('id')->get();
+        $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
+        $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
+        abort_if($siteId && $selected->isEmpty(), 404);
+        $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: false);
+        $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
+        if ($request->validated('export') === 'csv') {
+            return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, false);
+        }
+
+        return view('admin.reporting.ad-formats', [
+            'publisher' => $publisher, 'breakdown' => $breakdown, 'reportMetrics' => $metrics,
+            'sites' => $sites, 'selectedSite' => $siteId,
         ]);
     }
 }

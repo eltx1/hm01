@@ -40,6 +40,8 @@ class ReportingServiceProvider extends ServiceProvider
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.index');
                 Route::get('/admin/reporting/websites/{site}', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'show'])
                     ->middleware('permission:reporting.admin.view')->name('admin.reporting.websites.show');
+                Route::get('/admin/reporting/publishers/{publisher}/ad-formats', [\App\Http\Controllers\Admin\WebsiteReportController::class, 'adFormats'])
+                    ->middleware('permission:reporting.admin.view')->name('admin.reporting.publishers.ad-formats');
                 Route::post('/admin/reporting/connections', [AdminReportingController::class, 'storeConnection'])
                     ->middleware('permission:reporting.sources.manage')->name('admin.reporting.connections.store');
                 Route::patch('/admin/reporting/connections/{reportSourceConnection}/status', [AdminReportingController::class, 'connectionStatus'])
@@ -128,6 +130,8 @@ class ReportingServiceProvider extends ServiceProvider
 
             Route::get('/publisher/reporting', [PublisherReportingController::class, 'index'])
                 ->middleware('permission:reporting.publisher.view')->name('publisher.reporting.index');
+            Route::get('/publisher/reporting/ad-formats', [PublisherReportingController::class, 'adFormats'])
+                ->middleware('permission:reporting.publisher.view')->name('publisher.reporting.ad-formats');
             Route::get('/publisher/reporting/statements/{publisherStatement}', [PublisherReportingController::class, 'statement'])
                 ->middleware('permission:reporting.publisher.view')->name('publisher.reporting.statements.show');
             Route::get('/publisher/reporting/statements/{publisherStatement}/csv', [PublisherReportingController::class, 'csv'])

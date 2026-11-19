@@ -61,6 +61,16 @@ class SyncSiteGamReports extends Command
                     } catch (\Throwable) {
                         $this->line('Unit Unfilled: SOURCE_UNAVAILABLE');
                     }
+                    // Nonfinancial "Breakdown by ad format" evidence, equally independent.
+                    $lock->assertOwned();
+                    try {
+                        $result = app(\App\Services\Reporting\SiteGamAdFormatSynchronizer::class)->sync($binding);
+                        $this->line('Ad formats: '.$result['status']);
+                    } catch (MainReportSyncLockException $exception) {
+                        throw $exception;
+                    } catch (\Throwable) {
+                        $this->line('Ad formats: SOURCE_UNAVAILABLE');
+                    }
                 }
             });
 
