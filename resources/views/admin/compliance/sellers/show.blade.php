@@ -53,5 +53,5 @@
 </section>
 @endif
 
-<article class="workspace-section"><p class="eyebrow">Immutable evidence</p><h2>Seller history</h2>@forelse($auditEvents as $event)<details class="event"><summary><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong> · {{ $event->created_at }}</summary><div class="detail-grid"><pre class="compliance-code">{{ json_encode($event->old_values ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre><pre class="compliance-code">{{ json_encode($event->new_values ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre></div></details>@empty<p class="muted">No seller audit history.</p>@endforelse</article>
+<article class="workspace-section"><p class="eyebrow">Immutable evidence</p><h2>Seller history</h2>@forelse($auditEvents as $event)<details class="event"><summary><strong>{{ str($event->event)->replace('.', ' ')->label() }}</strong> · {{ $event->created_at }}</summary><div class="detail-grid"><pre class="compliance-code">{{ json_encode($event->old_values ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre><pre class="compliance-code">{{ json_encode($event->new_values ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre></div></details>@empty<p class="muted">No seller audit history.</p>@endforelse</article>
 @endsection

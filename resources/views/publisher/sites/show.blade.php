@@ -150,7 +150,7 @@
 @endif
 
 @if(auth()->user()->hasPermission('audit.view'))
-<article class="workspace-section"><p class="eyebrow">Immutable evidence</p><h2>Site audit events</h2>@forelse($auditEvents as $event)<div class="event"><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong><span>{{ $event->created_at }}</span></div>@empty<p class="muted">No site-specific audit events.</p>@endforelse</article>
+<article class="workspace-section"><p class="eyebrow">Immutable evidence</p><h2>Site audit events</h2>@forelse($auditEvents as $event)<div class="event"><strong>{{ str($event->event)->replace('.', ' ')->label() }}</strong><span>{{ $event->created_at }}</span></div>@empty<p class="muted">No site-specific audit events.</p>@endforelse</article>
 @endif
 
 @else

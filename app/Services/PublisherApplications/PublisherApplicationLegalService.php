@@ -35,7 +35,7 @@ final class PublisherApplicationLegalService
 
                 return [$type => [
                     'type' => $type,
-                    'label' => (string) ($document['label'] ?? str($type)->replace('_', ' ')->headline()),
+                    'label' => (string) ($document['label'] ?? \App\Support\DisplayLabel::from($type)),
                     'version' => $version,
                     'url' => $url,
                     'required' => (bool) ($document['required'] ?? true),

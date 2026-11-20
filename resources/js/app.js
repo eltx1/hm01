@@ -10,6 +10,7 @@ import '../css/dashboard-theme.css';
 import '../css/reporting-experience.css';
 import '../css/form-experience.css';
 import '../css/workspace-navigation.css';
+import '../css/design-system.css';
 
 const navigation = document.querySelector('#control-navigation');
 const navigationToggle = document.querySelector('[data-nav-toggle]');
@@ -280,3 +281,16 @@ if (trafficGateTestButton) {
         watchdog = window.setTimeout(() => finish('GATE UNREACHABLE'), 16000);
     });
 }
+
+// Header notifications: close the preview on an outside click or Escape.
+const notificationMenus = [...document.querySelectorAll('.notification-bell')];
+document.addEventListener('click', (event) => {
+    notificationMenus.forEach((menu) => { if (menu.open && !menu.contains(event.target)) menu.open = false; });
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    notificationMenus.filter(menu => menu.open).forEach((menu) => {
+        menu.open = false;
+        menu.querySelector('summary')?.focus();
+    });
+});

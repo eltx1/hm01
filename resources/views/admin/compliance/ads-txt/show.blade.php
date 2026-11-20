@@ -84,6 +84,6 @@
 
 <section class="detail-grid">
     <article><p class="eyebrow">Verification snapshots</p><h2>History</h2>@forelse($history as $check)<div class="event"><div><x-status-badge :status="$check->status" /> <strong>{{ $check->trigger }}</strong><p>{{ $check->http_status ? 'HTTP '.$check->http_status : data_get($check->findings, 'fetch.error_code') }} · {{ $check->occurrence_count }} occurrence(s)</p></div><span>{{ $check->first_checked_at }} → {{ $check->checked_at }}</span></div>@empty<p class="muted">No verification history.</p>@endforelse</article>
-    <article><p class="eyebrow">Immutable evidence</p><h2>Ads.txt audit history</h2>@forelse($auditEvents as $event)<div class="event"><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong><span>{{ $event->created_at }}</span></div>@empty<p class="muted">No manual ads.txt audit events.</p>@endforelse</article>
+    <article><p class="eyebrow">Immutable evidence</p><h2>Ads.txt audit history</h2>@forelse($auditEvents as $event)<div class="event"><strong>{{ str($event->event)->replace('.', ' ')->label() }}</strong><span>{{ $event->created_at }}</span></div>@empty<p class="muted">No manual ads.txt audit events.</p>@endforelse</article>
 </section>
 @endsection

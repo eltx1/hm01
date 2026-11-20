@@ -177,7 +177,7 @@
     <div class="workspace-heading"><div><p class="eyebrow">Application acceptance evidence</p><h2>Legal documents &amp; consent</h2></div><span class="status">{{ $application->legalAcceptances->count() }} acceptance record(s)</span></div>
 
     @forelse ($application->legalAcceptances as $acceptance)
-        <div class="compact-row"><div><strong>{{ str($acceptance->document_type)->replace('_', ' ')->headline() }} · {{ $acceptance->document_version }}</strong><p><a class="text-link" href="{{ $acceptance->canonical_url }}" target="_blank" rel="noopener noreferrer">Canonical document</a> · Evidence {{ $acceptance->evidence_hash }}</p></div><span class="muted">Accepted {{ $acceptance->accepted_at }}</span></div>
+        <div class="compact-row"><div><strong>{{ str($acceptance->document_type)->replace('_', ' ')->label() }} · {{ $acceptance->document_version }}</strong><p><a class="text-link" href="{{ $acceptance->canonical_url }}" target="_blank" rel="noopener noreferrer">Canonical document</a> · Evidence {{ $acceptance->evidence_hash }}</p></div><span class="muted">Accepted {{ $acceptance->accepted_at }}</span></div>
     @empty
         <p class="muted">No legal acceptance evidence has been recorded.</p>
     @endforelse
@@ -197,7 +197,7 @@
 <article class="workspace-section">
     <h2>Lifecycle history</h2>
     @foreach ($application->events as $event)
-        <div class="compact-row"><div><strong>{{ str($event->action)->replace('_', ' ')->headline() }}</strong><p>{{ $event->previous_status ?: 'Created' }} → {{ $event->new_status }} @if ($event->reason)· {{ $event->reason }}@endif</p></div><span class="muted">{{ $event->actor?->name ?: 'System' }} · {{ $event->created_at }}</span></div>
+        <div class="compact-row"><div><strong>{{ str($event->action)->replace('_', ' ')->label() }}</strong><p>{{ $event->previous_status ?: 'Created' }} → {{ $event->new_status }} @if ($event->reason)· {{ $event->reason }}@endif</p></div><span class="muted">{{ $event->actor?->name ?: 'System' }} · {{ $event->created_at }}</span></div>
     @endforeach
 </article>
 @endsection

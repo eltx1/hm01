@@ -30,7 +30,7 @@
             <select class="hm-input" name="content_categories[]" required>
                 <option value="">Choose one</option>
                 @foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)
-                    <option value="{{ $category }}" @selected(in_array($category, old('content_categories', $profile?->content_categories ?? [])))>{{ str($category)->headline() }}</option>
+                    <option value="{{ $category }}" @selected(in_array($category, old('content_categories', $profile?->content_categories ?? [])))>{{ str($category)->label() }}</option>
                 @endforeach
             </select>
         </label>

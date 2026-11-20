@@ -8,7 +8,7 @@
         @if($organization)
             <div class="compact-row">
                 <div><strong>{{ $organization->name }}</strong><p>Your team workspace</p></div>
-                <span class="pill">{{ str($organization->type->value)->headline() }}</span>
+                <span class="pill">{{ str($organization->type->value)->label() }}</span>
             </div>
             <input type="hidden" name="organization_id" value="{{ $organization->id }}">
         @else

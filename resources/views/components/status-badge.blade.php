@@ -16,7 +16,7 @@
         'NOT_APPLICABLE', 'N/A', 'NA' => 'Not applicable',
         'PARTIALLY_PAID' => 'Partially paid',
         'RETRY_SCHEDULED' => 'Retry scheduled',
-        default => str($value)->replace('_', ' ')->headline()->toString(),
+        default => \App\Support\DisplayLabel::from($value),
     };
 @endphp
 

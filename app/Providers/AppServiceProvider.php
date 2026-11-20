@@ -40,6 +40,7 @@ use Illuminate\Pagination\Paginator;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Stringable;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -73,6 +74,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Readable labels for stored codes: str('ACTIVE')->label() is "Active", not "A C T I V E".
+        Stringable::macro('label', fn (): Stringable => new Stringable(\App\Support\DisplayLabel::from((string) $this)));
         Paginator::defaultView('pagination.horus');
         Paginator::defaultSimpleView('pagination.horus-simple');
         $this->configureAuthenticationMail();

@@ -52,7 +52,7 @@
     <div class="workspace-heading"><div><p class="eyebrow">Inventory ownership</p><h2>Websites</h2></div><div>@if(auth()->user()->hasPermission('sites.manage'))<a class="hm-button-primary button-link" href="{{ route('admin.publishers.sites.create', $publisher) }}">Add website</a>@endif <a class="section-anchor" href="{{ route('admin.sites.index') }}">All websites</a></div></div>
     <div class="compact-list">
         @forelse($publisher->sites as $site)
-            <a class="compact-row" href="{{ route('admin.sites.show', $site) }}"><div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }} · {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</p></div><x-status-badge :status="$site->status" /></a>
+            <a class="compact-row" href="{{ route('admin.sites.show', $site) }}"><div><strong>{{ $site->display_name }}</strong><p>{{ $site->primary_domain }} · {{ str($site->serving_mode->value)->replace('_', ' ')->label() }}</p></div><x-status-badge :status="$site->status" /></a>
         @empty<p class="muted">No websites are attached to this publisher.</p>@endforelse
     </div>
 </article>
@@ -67,10 +67,10 @@
         <label>Content categories (one or more)<select name="content_categories[]" multiple required>@foreach(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'] as $category)<option @selected(in_array($category, old('content_categories', $qualityProfile?->content_categories ?? [])))>{{ $category }}</option>@endforeach</select></label>
         <label>Content description<textarea name="content_description" required>{{ old('content_description', $qualityProfile?->content_description) }}</textarea></label>
         <label>Monthly pageviews<input type="number" name="monthly_pageviews" min="0" value="{{ old('monthly_pageviews', data_get($qualityProfile?->traffic_profile, 'monthly_pageviews')) }}"></label>
-        @foreach(['organic','social','direct','paid','other'] as $source)<label>{{ str($source)->headline() }} traffic %<input type="number" name="{{ $source }}_percent" min="0" max="100" value="{{ old($source.'_percent', data_get($qualityProfile?->traffic_profile, $source, $source === 'direct' ? 100 : 0)) }}" required></label>@endforeach
+        @foreach(['organic','social','direct','paid','other'] as $source)<label>{{ str($source)->label() }} traffic %<input type="number" name="{{ $source }}_percent" min="0" max="100" value="{{ old($source.'_percent', data_get($qualityProfile?->traffic_profile, $source, $source === 'direct' ? 100 : 0)) }}" required></label>@endforeach
         <label>Audience countries (ISO-2)<select name="audience_countries[]" multiple required>@foreach(['US','GB','CA','AU','AE','SA','EG','FR','DE','IN','OTHER'] as $country)<option @selected(in_array($country, old('audience_countries', $qualityProfile?->audience_countries ?? [])))>{{ $country }}</option>@endforeach</select></label>
-        @foreach(['desktop','mobile','tablet'] as $device)<label>{{ str($device)->headline() }} %<input type="number" name="{{ $device }}_percent" min="0" max="100" value="{{ old($device.'_percent', data_get($qualityProfile?->device_mix, $device, $device === 'desktop' ? 100 : 0)) }}" required></label>@endforeach
-        @foreach(['original_content','user_generated_content','ai_assisted_content','sensitive_content','has_privacy_policy','has_contact_details','has_cmp','prior_policy_incidents'] as $flag)<label><input type="checkbox" name="{{ $flag }}" value="1" @checked(old($flag, data_get($qualityProfile?->declarations, $flag, false)))> {{ str($flag)->replace('_', ' ')->headline() }}</label>@endforeach
+        @foreach(['desktop','mobile','tablet'] as $device)<label>{{ str($device)->label() }} %<input type="number" name="{{ $device }}_percent" min="0" max="100" value="{{ old($device.'_percent', data_get($qualityProfile?->device_mix, $device, $device === 'desktop' ? 100 : 0)) }}" required></label>@endforeach
+        @foreach(['original_content','user_generated_content','ai_assisted_content','sensitive_content','has_privacy_policy','has_contact_details','has_cmp','prior_policy_incidents'] as $flag)<label><input type="checkbox" name="{{ $flag }}" value="1" @checked(old($flag, data_get($qualityProfile?->declarations, $flag, false)))> {{ str($flag)->replace('_', ' ')->label() }}</label>@endforeach
         <label>Monetization history<textarea name="monetization_history">{{ old('monetization_history', data_get($qualityProfile?->traffic_profile, 'monetization_history')) }}</textarea></label>
         <label>Reviewer comments<textarea name="review_comments">{{ old('review_comments', $qualityProfile?->review_comments) }}</textarea></label><button>Save immutable profile version</button>
     </form></details>
@@ -141,7 +141,7 @@
 @if(auth()->user()->hasPermission('audit.view'))
 <article id="audit" class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Immutable evidence</p><h2>Recent audit activity</h2></div></div>
-    @forelse($auditEvents as $event)<div class="compact-row"><div><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong><p>{{ $event->auditable_type ? class_basename($event->auditable_type) : 'Organization' }}</p></div><span class="muted">{{ $event->created_at }}</span></div>@empty<p class="muted">No audit activity for this organization.</p>@endforelse
+    @forelse($auditEvents as $event)<div class="compact-row"><div><strong>{{ str($event->event)->replace('.', ' ')->label() }}</strong><p>{{ $event->auditable_type ? class_basename($event->auditable_type) : 'Organization' }}</p></div><span class="muted">{{ $event->created_at }}</span></div>@empty<p class="muted">No audit activity for this organization.</p>@endforelse
 </article>
 @endif
 @endsection

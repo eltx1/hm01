@@ -254,10 +254,34 @@ app/Support/Branding/BrandIdentityResolver.php
 resources/css/brand-tokens.css
 resources/css/components.css
 resources/css/app.css
+resources/css/design-system.css
 resources/views/components/brand/
+resources/views/components/ui-icon.blade.php
 resources/views/emails/layouts/horus.blade.php
 public/assets/brand/
 ```
+
+### Console design layer
+
+`resources/css/design-system.css` is imported last by `resources/js/app.js` and is
+the single place that turns these brand tokens into dashboard components. It
+defines semantic `--ds-*` tokens (surfaces, borders, field, focus ring, status
+colors) for the dark default and re-declares them for White Mode, so screens
+never carry their own colors.
+
+- Shell: sticky glass top bar with breadcrumb and icon actions (White Mode,
+  notifications); page title below it; sidebar items with one icon each, active
+  item in royal blue with a gold indicator; account footer with initials avatar.
+- Icons: one stroke family in `<x-ui-icon>` (24px grid, 1.7 stroke). No emoji
+  icons. Every navigation destination maps to an icon in
+  `ControlPlaneNavigation::ICONS`.
+- Figures: KPI values are white; gold is reserved for primary money totals,
+  primary actions, and active states.
+- Labels: stored codes are shown with `str($code)->label()` /
+  `App\Support\DisplayLabel`, never `headline()`, which renders `ACTIVE` as
+  `A C T I V E`.
+- Mobile: no page-level horizontal overflow at 320–390px; tables scroll inside
+  their card; tabs scroll edge to edge; KPI tiles use two columns.
 
 Every future UI task must read this file and the supplied website CSS before implementation.
 

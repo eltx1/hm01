@@ -1,6 +1,6 @@
 @php
     $preset = (string) data_get($placement->metadata, 'placement_preset', '');
-    $label = $presets[$preset]['label'] ?? str($placement->type->value)->headline();
+    $label = $presets[$preset]['label'] ?? str($placement->type->value)->label();
     $position = match ($preset) {
         'sticky_top' => 'Top of page', 'sticky_bottom' => 'Bottom of page',
         'side_rail_left' => 'Left side · desktop', 'side_rail_right' => 'Right side · desktop',

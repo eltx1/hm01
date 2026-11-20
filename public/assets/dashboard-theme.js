@@ -9,8 +9,17 @@
         root.dataset.hmTheme = theme;
         document.querySelectorAll('[data-theme-toggle]').forEach(button => {
             button.setAttribute('aria-pressed', String(theme === 'light'));
-            button.setAttribute('aria-label', theme === 'light' ? 'Switch to Dark Mode' : 'Switch to White Mode');
-            button.textContent = theme === 'light' ? 'Dark Mode' : 'White Mode';
+            const action = theme === 'light' ? 'Switch to Dark Mode' : 'Switch to White Mode';
+            const label = theme === 'light' ? 'Dark Mode' : 'White Mode';
+            button.setAttribute('aria-label', action);
+            // Icon buttons keep their SVGs and update only their text label.
+            const text = typeof button.querySelector === 'function' ? button.querySelector('[data-theme-label]') : null;
+            if (text) {
+                text.textContent = label;
+                button.setAttribute('title', action);
+            } else {
+                button.textContent = label;
+            }
         });
     };
     let saved;

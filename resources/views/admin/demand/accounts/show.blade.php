@@ -43,7 +43,7 @@
     <div class="detail-grid">
         <div class="domain-card">
             <p class="eyebrow">Horus scope</p>
-            <h3>{{ str($account->scope->value)->replace('_', ' ')->headline() }}</h3>
+            <h3>{{ str($account->scope->value)->replace('_', ' ')->label() }}</h3>
             @if($account->scope->value === 'PUBLISHER')
                 @if($publisher)
                     <p><strong>{{ $publisher->display_name }}</strong></p>

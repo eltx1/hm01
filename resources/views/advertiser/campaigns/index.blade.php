@@ -18,7 +18,7 @@
     @else
         @foreach($campaigns as $campaign)
             <div class="domain-card">
-                <div><strong><a class="section-anchor" href="{{ route('advertiser.campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><div class="status-row"><x-status-badge :status="$campaign->status" /><span class="pill">{{ str($campaign->pricing_model->value)->replace('_', ' ')->headline() }}</span><span class="pill">{{ $campaign->sites_count }} sites</span><span class="pill">{{ $campaign->network_instances_count }} delivery route(s)</span></div></div>
+                <div><strong><a class="section-anchor" href="{{ route('advertiser.campaigns.show',$campaign) }}">{{ $campaign->name }}</a></strong><div class="status-row"><x-status-badge :status="$campaign->status" /><span class="pill">{{ str($campaign->pricing_model->value)->replace('_', ' ')->label() }}</span><span class="pill">{{ $campaign->sites_count }} sites</span><span class="pill">{{ $campaign->network_instances_count }} delivery route(s)</span></div></div>
                 <div class="money" aria-label="Campaign budget">{{ $campaign->currency }} {{ number_format($campaign->total_budget_minor/100,2) }}</div>
             </div>
         @endforeach

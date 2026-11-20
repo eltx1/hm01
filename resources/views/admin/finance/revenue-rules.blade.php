@@ -95,7 +95,7 @@
                 <div><strong>Effective</strong><span>{{ $previewVersion->effective_from->toDateString() }} — {{ $previewVersion->effective_to?->toDateString() ?: 'Open' }}</span></div>
                 <div><strong>Currency</strong><span>{{ $previewVersion->currency ?: ($previewCurrency ?: 'Any') }}</span></div>
             </div>
-            @if($previewRule)<p class="muted">Resolved by {{ str($previewRule->scope_type->value)->replace('_', ' ')->headline() }} specificity, then explicit priority. {{ $previewVersion->reason ? 'Reason: '.$previewVersion->reason : '' }}</p>@else<p class="muted">No stored rule matched this context, so the configured system fallback is shown.</p>@endif
+            @if($previewRule)<p class="muted">Resolved by {{ str($previewRule->scope_type->value)->replace('_', ' ')->label() }} specificity, then explicit priority. {{ $previewVersion->reason ? 'Reason: '.$previewVersion->reason : '' }}</p>@else<p class="muted">No stored rule matched this context, so the configured system fallback is shown.</p>@endif
         @endif
     @endif
 </article>
@@ -151,7 +151,7 @@
 @forelse($rules as $rule)
 <article>
     <div class="workspace-heading">
-        <div><p class="eyebrow">{{ str($rule->scope_type->value)->replace('_', ' ')->headline() }}</p><h2>{{ $rule->name }}</h2><p>{{ $scopeLabels[$rule->id] }} · {{ $rule->is_active ? 'Active' : 'Inactive' }} · Created by {{ $rule->creator?->name ?: 'System' }}</p></div>
+        <div><p class="eyebrow">{{ str($rule->scope_type->value)->replace('_', ' ')->label() }}</p><h2>{{ $rule->name }}</h2><p>{{ $scopeLabels[$rule->id] }} · {{ $rule->is_active ? 'Active' : 'Inactive' }} · Created by {{ $rule->creator?->name ?: 'System' }}</p></div>
         <x-status-badge :status="$rule->is_active ? 'ACTIVE' : 'INACTIVE'" />
     </div>
     <div class="table-wrap"><table><thead><tr><th>Version</th><th>Effective</th><th>Currency</th><th>Publisher</th><th>Horus</th><th>MCM</th><th>Creator</th><th>Reason</th></tr></thead><tbody>

@@ -3,7 +3,7 @@
 @section('heading', 'Website operations')
 @section('content')
 <form method="GET" action="{{ route('admin.sites.index') }}" class="inline-form" aria-label="Filter website health evidence">
-    <label>Website state<select class="hm-input" name="status"><option value="">All states</option>@foreach(\App\Enums\SiteStatus::cases() as $state)<option value="{{ $state->value }}" @selected($activeStatus === $state->value)>{{ str($state->value)->replace('_', ' ')->headline() }}</option>@endforeach</select></label>
+    <label>Website state<select class="hm-input" name="status"><option value="">All states</option>@foreach(\App\Enums\SiteStatus::cases() as $state)<option value="{{ $state->value }}" @selected($activeStatus === $state->value)>{{ str($state->value)->replace('_', ' ')->label() }}</option>@endforeach</select></label>
     <label>Stored evidence<select class="hm-input" name="health"><option value="">All evidence</option><option value="findings" @selected($healthFilter === 'findings')>Has stored findings (including old records)</option><option value="stale" @selected($healthFilter === 'stale')>Has stale or invalid observation times</option><option value="missing" @selected($healthFilter === 'missing')>No stored checks</option></select></label>
     <button class="hm-button-secondary" type="submit">Filter sites</button>
     @if($healthFilter || $activeStatus)<a href="{{ route('admin.sites.index') }}">Clear all filters</a>@endif
@@ -28,7 +28,7 @@
     </td>
     <td>{{ $site->primary_domain }}</td>
     <td><x-status-badge :status="$site->status" /></td>
-    <td>{{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</td>
+    <td>{{ str($site->serving_mode->value)->replace('_', ' ')->label() }}</td>
     <td data-health-evidence="{{ $healthEvidence[$site->id]['state'] }}">
         <strong>{{ $healthEvidence[$site->id]['label'] }}</strong>
         <small>{{ $healthEvidence[$site->id]['findings'] }} finding(s) in {{ $healthEvidence[$site->id]['checks'] }} stored checks</small>

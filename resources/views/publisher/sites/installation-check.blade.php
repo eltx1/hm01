@@ -3,7 +3,7 @@
     <p>This checks the HTML of a public page on this website for its assigned Horus Loader tag. It does not execute ads or verify a browser impression. Pages that require sign-in, block the checker or insert the tag only through JavaScript need separate browser evidence.</p>
     @if(($result = session('installation_check')) && ($result['site_id'] ?? null) === $site->id)
         <div class="notice" role="status">
-            Result: {{ str($result['code'])->replace('_', ' ')->headline() }}.
+            Result: {{ str($result['code'])->replace('_', ' ')->label() }}.
             HTTP: {{ $result['http_status'] ?? 'Unavailable' }}. Checked (UTC): {{ $result['checked_at_utc'] }}.
         </div>
         @php

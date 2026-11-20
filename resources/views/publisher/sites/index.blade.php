@@ -36,7 +36,7 @@
                 </div>
                 <p>{{ $nextStep }}</p>
                 <div class="site-card-meta">
-                    <span>Serving: {{ str($site->serving_mode->value)->replace('_', ' ')->headline() }}</span>
+                    <span>Serving: {{ str($site->serving_mode->value)->replace('_', ' ')->label() }}</span>
                 </div>
                 <a class="hm-button-secondary button-link" href="{{ route('publisher.sites.show', $site) }}">Open website →</a>
             </article>

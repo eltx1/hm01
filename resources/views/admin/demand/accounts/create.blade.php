@@ -35,7 +35,7 @@
         <label>Scope
             <select class="hm-input" name="scope" id="demand-scope" required>
                 @foreach($scopes as $scope)
-                    <option value="{{ $scope->value }}" @selected(old('scope', 'HORUS_MEDIA') === $scope->value)>{{ str($scope->value)->replace('_', ' ')->headline() }}</option>
+                    <option value="{{ $scope->value }}" @selected(old('scope', 'HORUS_MEDIA') === $scope->value)>{{ str($scope->value)->replace('_', ' ')->label() }}</option>
                 @endforeach
             </select>
             <span class="muted">Choose who owns this demand relationship inside Horus.</span>
