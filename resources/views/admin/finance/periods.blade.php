@@ -22,7 +22,7 @@
                 @endforeach
             </td>
             <td>
-                @foreach(($readiness['counts'] ?? []) as $label => $count)<span class="table-note">{{ str($label)->headline() }}: {{ number_format($count) }}</span>@endforeach
+                @foreach(($readiness['counts'] ?? []) as $label => $count)<span class="table-note">{{ str($label)->label() }}: {{ number_format($count) }}</span>@endforeach
                 @if($period->close_override_reason)<span class="table-note error">Override: {{ $period->close_override_reason }}</span>@endif
             </td>
             <td>

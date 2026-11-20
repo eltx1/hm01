@@ -82,7 +82,7 @@
     <article>
         <p class="eyebrow">Governance</p><h2>Recent audit events</h2>
         @forelse($auditEvents as $event)
-            <div class="event"><strong>{{ str($event->event)->replace('.', ' ')->headline() }}</strong><span>{{ $event->created_at }}</span></div>
+            <div class="event"><strong>{{ str($event->event)->replace('.', ' ')->label() }}</strong><span>{{ $event->created_at }}</span></div>
         @empty
             <p class="muted">No audit events yet.</p>
         @endforelse

@@ -8,6 +8,45 @@ use Illuminate\Support\Collection;
 
 final class ControlPlaneNavigation
 {
+    /** Sidebar icon per destination route (see x-ui-icon). */
+    private const ICONS = [
+        'dashboard' => 'dashboard',
+        'admin.publishers.index' => 'users',
+        'admin.sites.index' => 'globe',
+        'admin.mobile-apps.index' => 'phone',
+        'admin.organizations.index' => 'building',
+        'admin.publisher-affiliates.index' => 'link',
+        'admin.reporting.index' => 'chart',
+        'admin.reporting.ad-formats' => 'pie',
+        'admin.finance.overview' => 'wallet',
+        'admin.demand.index' => 'target',
+        'admin.campaigns.index' => 'megaphone',
+        'admin.gam.connections.index' => 'plug',
+        'admin.compliance.supply-chain.overview' => 'file-check',
+        'admin.click-protection.index' => 'shield',
+        'admin.operations.traffic-quality' => 'activity',
+        'admin.operations.index' => 'server',
+        'admin.thoth.settings' => 'sparkles',
+        'admin.settings.index' => 'sliders',
+        'admin.support.tickets.index' => 'help',
+        'admin.advertisers.index' => 'briefcase',
+        'admin.audit.index' => 'history',
+        'admin.roles.index' => 'lock',
+        'publisher.reporting.index' => 'chart',
+        'publisher.finance.overview' => 'wallet',
+        'publisher.sites.index' => 'globe',
+        'publisher.mobile-apps.index' => 'phone',
+        'publisher.monetization.index' => 'activity',
+        'publisher.ads-txt.index' => 'file-check',
+        'publisher.contracts.index' => 'file-text',
+        'publisher.affiliate.index' => 'link',
+        'admin.invitations.create' => 'user-plus',
+        'support.tickets.index' => 'help',
+        'notifications.index' => 'bell',
+        'advertiser.campaigns.index' => 'megaphone',
+        'advertiser.reporting.index' => 'chart',
+    ];
+
     public function for(User $user): array
     {
         $user->loadMissing('roles.permissions');
@@ -145,6 +184,8 @@ final class ControlPlaneNavigation
 
     private function item(string $label, string $route, string $permission, array $active, array $parameters = []): array
     {
-        return compact('label', 'route', 'permission', 'active', 'parameters');
+        $icon = self::ICONS[$route] ?? 'dot';
+
+        return compact('label', 'route', 'permission', 'active', 'parameters', 'icon');
     }
 }

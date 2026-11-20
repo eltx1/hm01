@@ -161,7 +161,7 @@ class Task43PublicApplicationFailClosedTest extends TestCase
     {
         Config::set('publisher-applications.legal_documents.PRIVACY_POLICY.url', '');
 
-        $this->assertPublicRegistrationBlocked('Legal Privacy Url Missing');
+        $this->assertPublicRegistrationBlocked('Legal Privacy URL Missing');
     }
 
     public function test_current_legal_contract_requires_explicit_exact_acceptance_and_ready_config_allows_it(): void

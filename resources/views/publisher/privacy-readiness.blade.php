@@ -24,7 +24,7 @@
             @if($internal)
             <details><summary>Evidence details</summary><dl>
                 @foreach(data_get($privacyReadiness, 'sections.'.$key.'.details', []) as $detailKey => $detailValue)
-                    <dt>{{ str($detailKey)->replace('_', ' ')->headline() }}</dt>
+                    <dt>{{ str($detailKey)->replace('_', ' ')->label() }}</dt>
                     <dd>{{ is_array($detailValue) ? json_encode($detailValue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : ($detailValue === null ? '—' : (is_bool($detailValue) ? ($detailValue ? 'Yes' : 'No') : $detailValue)) }}</dd>
                 @endforeach
             </dl></details>

@@ -4,7 +4,7 @@
 @section('content')
 @include('admin.finance._tabs')
 <section class="hero"><div><p class="eyebrow">Masked verification queue</p><h2>Review payout destinations safely</h2><p>Only operationally necessary masked values appear here. Raw account, routing, and tax values are not rendered or placed in audit metadata.</p></div></section>
-<form method="get" class="form-grid workspace-section"><label>Status<select name="status"><option value="">All</option>@foreach($profileStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->headline() }}</option>@endforeach</select></label><button class="hm-button-secondary">Filter queue</button></form>
+<form method="get" class="form-grid workspace-section"><label>Status<select name="status"><option value="">All</option>@foreach($profileStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->label() }}</option>@endforeach</select></label><button class="hm-button-secondary">Filter queue</button></form>
 <article class="workspace-section"><div class="table-wrap"><table><thead><tr><th>Publisher</th><th>Status</th><th>Beneficiary</th><th>Destination</th><th>Currency / Country</th><th>Review</th></tr></thead><tbody>
 @forelse($publishers as $publisher)
 @php($profile = $publisher->paymentProfile)

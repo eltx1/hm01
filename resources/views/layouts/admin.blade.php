@@ -30,45 +30,57 @@
         <aside class="sidebar" id="control-navigation" aria-label="Primary navigation">
             <div class="sidebar-header">
                 <x-brand.product-lockup context="workspace" variant="emblem" :href="url('/')" class="sidebar-brand" />
-                <button class="sidebar-close" type="button" data-nav-close aria-label="Close navigation"><span aria-hidden="true">×</span></button>
+                <button class="sidebar-close" type="button" data-nav-close aria-label="Close navigation"><x-ui-icon name="close" /></button>
             </div>
             <div class="sidebar-scroll">
-                <p class="eyebrow">{{ $workspaceLabel }}</p>
+                <p class="eyebrow sidebar-workspace">{{ $workspaceLabel }}</p>
                 <label class="navigation-finder">
                     <span class="sr-only">Find a page</span>
+                    <x-ui-icon name="search" class="navigation-finder-icon" />
                     <input type="search" placeholder="Find a page…" autocomplete="off" data-nav-filter aria-label="Find a page in navigation">
                 </label>
                 <p class="navigation-empty muted" data-nav-empty hidden>No matching page.</p>
                 <x-control-plane.navigation :groups="$navigationGroups" />
             </div>
+            @php($accountInitials = collect(preg_split('/\s+/u', trim((string) auth()->user()->name)) ?: [])->filter()->reject(fn ($word) => str_ends_with($word, '.'))->take(2)->map(fn ($word) => mb_strtoupper(mb_substr($word, 0, 1)))->implode('') ?: 'H')
             <div class="sidebar-account">
-                <span>{{ auth()->user()->name }}</span>
-                <small>{{ auth()->user()->email }}</small>
+                <div class="sidebar-account-identity">
+                    <span class="account-avatar" aria-hidden="true">{{ $accountInitials }}</span>
+                    <span class="sidebar-account-copy"><span>{{ auth()->user()->name }}</span><small>{{ auth()->user()->email }}</small></span>
+                </div>
                 <div class="sidebar-account-actions">
-                    <a class="text-link" href="{{ route('account.index') }}">My account</a>
-                    <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button" type="submit">Sign out</button></form>
+                    <a class="text-link" href="{{ route('account.index') }}"><x-ui-icon name="user" /><span>My account</span></a>
+                    <form method="POST" action="{{ route('logout') }}">@csrf<button class="text-button" type="submit"><x-ui-icon name="logout" /><span>Sign out</span></button></form>
                 </div>
             </div>
         </aside>
         <button class="sidebar-scrim" tabindex="-1" type="button" data-nav-close aria-label="Close navigation"></button>
         <main id="main-content" tabindex="-1">
             <header class="topbar">
-                <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span></button>
+                <button class="mobile-nav-toggle" type="button" data-nav-toggle aria-controls="control-navigation" aria-expanded="false"><x-ui-icon name="menu" /><span class="sr-only">Open navigation</span></button>
                 <x-brand.product-lockup context="workspace" variant="header" :href="url('/')" :compact="true" class="mobile-product-lockup" />
-                <div class="topbar-title">
-                    <p class="eyebrow workspace-context">
-                        <span>{{ $workspaceLabel }}</span>
-                        @if($activeNavigationGroup)<span aria-hidden="true">/</span><span>{{ $activeNavigationGroup['label'] }}</span>@endif
-                        @if($activeNavigationItem)<span aria-hidden="true">/</span><span>{{ $activeNavigationItem['label'] }}</span>@endif
-                    </p>
-                    <h1>@yield('heading', 'Dashboard')</h1>
+                <nav class="workspace-context" aria-label="Breadcrumb">
+                    <span>{{ $workspaceLabel }}</span>
+                    @if($activeNavigationGroup)<x-ui-icon name="chevron-right" class="workspace-context-separator" /><span>{{ $activeNavigationGroup['label'] }}</span>@endif
+                    @if($activeNavigationItem)<x-ui-icon name="chevron-right" class="workspace-context-separator" /><span aria-current="page">{{ $activeNavigationItem['label'] }}</span>@endif
+                </nav>
+                <div class="topbar-actions">
+                    <button type="button" class="topbar-icon-button theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to White Mode" title="Switch to White Mode" hidden><x-ui-icon name="sun" class="theme-icon-to-light" /><x-ui-icon name="moon" class="theme-icon-to-dark" /><span class="sr-only" data-theme-label>White Mode</span></button>
+                    @if(auth()->user()->hasPermission('notifications.view_own'))
+                    <details class="notification-bell">
+                        <summary class="topbar-icon-button" aria-label="Notifications" title="Notifications"><x-ui-icon name="bell" />@if($unreadNotifications)<span class="notification-count" aria-label="{{ $unreadNotifications }} unread notifications">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary>
+                        <div class="notification-popover">
+                            <div class="notification-popover-header"><strong>Latest notifications</strong>@if($unreadNotifications)<span class="status-badge status-badge-warning">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }} unread</span>@endif</div>
+                            @forelse($notificationPreview as $item)<a class="notification-preview-item" href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted notification-preview-empty"><x-ui-icon name="bell" />No notifications yet.</p>@endforelse
+                            <a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center <x-ui-icon name="arrow-right" /></a>
+                        </div>
+                    </details>
+                    @endif
                 </div>
-                <button type="button" class="hm-button-secondary theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to White Mode" hidden>White Mode</button>
-                @if(auth()->user()->hasPermission('notifications.view_own'))
-                <details class="notification-bell"><summary aria-label="Notifications">🔔 @if($unreadNotifications)<span aria-label="{{ $unreadNotifications }} unread notifications">{{ $unreadNotifications > 99 ? '99+' : $unreadNotifications }}</span>@endif</summary><div class="notification-popover"><strong>Latest notifications</strong>@forelse($notificationPreview as $item)<a href="{{ route('notifications.index') }}"><span>{{ $item->title }}</span><small>{{ $item->created_at->diffForHumans() }}</small></a>@empty<p class="muted">No notifications yet.</p>@endforelse<a class="section-anchor" href="{{ route('notifications.index') }}">Open Notification Center</a></div></details>
-                @endif
-                <span class="status">{{ $workspaceLabel }}</span>
             </header>
+            <div class="page-heading">
+                <h1>@yield('heading', 'Dashboard')</h1>
+            </div>
             <x-impersonation-banner />
             @if(session('status'))<div class="notice" role="status">{{ session('status') }}@if(session('operation_reference'))<small>Operation reference: {{ str(session('operation_reference'))->limit(80) }}</small>@endif</div>@endif
             @if(session('error'))<div class="notice error" role="alert">{{ session('error') }}</div>@endif

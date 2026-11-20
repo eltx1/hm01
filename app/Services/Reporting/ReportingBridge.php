@@ -282,7 +282,7 @@ final class ReportingBridge
         string $currency,
         ?User $actor,
     ): ReportSourceConnection {
-        $definition = config('reporting.sources.'.$sourceCode->value, ['name' => str($sourceCode->value)->headline()]);
+        $definition = config('reporting.sources.'.$sourceCode->value, ['name' => \App\Support\DisplayLabel::from($sourceCode->value)]);
         $source = ReportSource::query()->firstOrCreate(
             ['code' => $sourceCode],
             [

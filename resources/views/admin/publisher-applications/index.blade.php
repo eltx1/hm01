@@ -8,7 +8,7 @@
         <div class="notice error"><strong>Public application readiness is blocked.</strong> Resolve the safe configuration reasons below before enabling or accepting new applications.</div>
         <ul>
             @foreach($publisherApplicationReadiness['reasons'] as $reason)
-                <li>{{ str($reason)->replace('_', ' ')->headline() }}</li>
+                <li>{{ str($reason)->replace('_', ' ')->label() }}</li>
             @endforeach
         </ul>
     @else
@@ -17,13 +17,13 @@
 </article>
 <section class="metric-grid" aria-label="Application counts">
     @foreach([\App\Enums\PublisherApplicationStatus::Submitted, \App\Enums\PublisherApplicationStatus::UnderReview, \App\Enums\PublisherApplicationStatus::MoreInfoRequired, \App\Enums\PublisherApplicationStatus::Approved, \App\Enums\PublisherApplicationStatus::Rejected] as $state)
-    <article><p class="eyebrow">{{ str($state->value)->replace('_', ' ')->headline() }}</p><strong class="metric">{{ $counts[$state->value] ?? 0 }}</strong></article>
+    <article><p class="eyebrow">{{ str($state->value)->replace('_', ' ')->label() }}</p><strong class="metric">{{ $counts[$state->value] ?? 0 }}</strong></article>
     @endforeach
 </section>
 <article class="workspace-section">
     <div class="workspace-heading"><div><p class="eyebrow">Review queue</p><h2>Find applications</h2><p class="muted">Filter the queue without changing application state.</p></div></div>
     <form method="GET" class="form-grid">
-        <label for="application-status">Status<select id="application-status" class="hm-input" name="status"><option value="">All</option><option value="NEW" @selected($status === 'NEW')>New</option>@foreach(\App\Enums\PublisherApplicationStatus::cases() as $state)<option value="{{ $state->value }}" @selected($status === $state->value)>{{ str($state->value)->replace('_', ' ')->headline() }}</option>@endforeach</select></label>
+        <label for="application-status">Status<select id="application-status" class="hm-input" name="status"><option value="">All</option><option value="NEW" @selected($status === 'NEW')>New</option>@foreach(\App\Enums\PublisherApplicationStatus::cases() as $state)<option value="{{ $state->value }}" @selected($status === $state->value)>{{ str($state->value)->replace('_', ' ')->label() }}</option>@endforeach</select></label>
         <label for="application-age">At least this many days old<input id="application-age" class="hm-input" type="number" name="age" min="0" max="3650" value="{{ $age ?: '' }}"></label>
         <label for="application-domain">Domain<input id="application-domain" class="hm-input" name="domain" value="{{ $domain }}" autocomplete="off"></label>
         <label for="application-applicant">Applicant name or email<input id="application-applicant" class="hm-input" name="applicant" value="{{ $applicant }}" autocomplete="off"></label>

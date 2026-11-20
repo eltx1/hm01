@@ -19,7 +19,7 @@
             <x-form-section number="02" title="Content and audience" description="Help us understand your website’s primary audience.">
                 <div class="ui-fields">
                     @if(! $site->exists)
-                        <x-form-field name="content_category" label="Content category" as="select" :value="old('content_category')" :options="collect(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'])->mapWithKeys(fn ($category) => [$category => str($category)->headline()->toString()])->all()" required placeholder="Choose a category" />
+                        <x-form-field name="content_category" label="Content category" as="select" :value="old('content_category')" :options="collect(['NEWS','ENTERTAINMENT','SPORTS','TECHNOLOGY','LIFESTYLE','BUSINESS','OTHER'])->mapWithKeys(fn ($category) => [$category => str($category)->label()->toString()])->all()" required placeholder="Choose a category" />
                     @else
                         <x-form-field name="content_category" label="Content category" :value="old('content_category', $site->content_category)" required />
                         <x-form-field name="language" label="Primary language" :value="old('language', $site->language ?: 'en')" required placeholder="en" help="Language code, for example en or ar." />

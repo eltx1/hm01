@@ -52,7 +52,7 @@
                         <summary>Admin diagnostics</summary>
                         <dl>
                             @foreach($module['diagnostics'] as $key => $value)
-                                <dt>{{ str($key)->replace('_', ' ')->headline() }}</dt>
+                                <dt>{{ str($key)->replace('_', ' ')->label() }}</dt>
                                 <dd>{{ $diagnosticValue($value) }}</dd>
                             @endforeach
                         </dl>
@@ -67,7 +67,7 @@
             <summary>Site 360 technical readiness</summary>
             <dl>
                 @foreach($monetization['diagnostics'] as $key => $value)
-                    <dt>{{ str($key)->replace('_', ' ')->headline() }}</dt>
+                    <dt>{{ str($key)->replace('_', ' ')->label() }}</dt>
                     <dd>{{ $diagnosticValue($value) }}</dd>
                 @endforeach
             </dl>

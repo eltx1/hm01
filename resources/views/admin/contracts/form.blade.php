@@ -19,7 +19,7 @@
 
 @if($contract->exists)
 <article class="workspace-section">
-    <div class="workspace-heading"><div><p class="eyebrow">Status</p><h2>{{ str($contract->status->value)->headline() }}</h2><p>@if($contract->status === \App\Enums\ContractStatus::Active)The default Publisher revenue rule is synchronized automatically.@elseif($allowedStatuses === [])No further action is available for this record.@elseChoose the required action. No upload or signature step is required.@endif</p></div><x-status-badge :status="$contract->status" /></div>
+    <div class="workspace-heading"><div><p class="eyebrow">Status</p><h2>{{ str($contract->status->value)->label() }}</h2><p>@if($contract->status === \App\Enums\ContractStatus::Active)The default Publisher revenue rule is synchronized automatically.@elseif($allowedStatuses === [])No further action is available for this record.@elseChoose the required action. No upload or signature step is required.@endif</p></div><x-status-badge :status="$contract->status" /></div>
     @if($allowedStatuses !== [])
     <form method="POST" action="{{ route('admin.publishers.contracts.status', [$publisher, $contract]) }}" class="form-grid">@csrf
         <label class="full">Reason (optional)<input class="hm-input" name="reason" maxlength="2000" placeholder="Commercial decision note"></label>
@@ -30,7 +30,7 @@
                     \App\Enums\ContractStatus::Draft => 'Return to draft',
                     \App\Enums\ContractStatus::Expired => 'Mark expired',
                     \App\Enums\ContractStatus::Terminated => 'Terminate terms',
-                    default => str($status->value)->headline(),
+                    default => str($status->value)->label(),
                 } }}</button>
             @endforeach
         </div>

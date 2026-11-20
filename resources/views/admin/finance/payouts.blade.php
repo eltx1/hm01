@@ -4,7 +4,7 @@
 @section('content')
 @include('admin.finance._tabs')
 <section class="hero"><div><p class="eyebrow">Maker-checker settlement</p><h2>Approve, process externally, then settle</h2><p>Approval never claims funds moved. Only an authorized settlement with a real immutable reference reduces Publisher liability.</p></div><a class="hm-button-secondary button-link" href="{{ route('admin.finance.payouts.csv', request()->query()) }}">Export safe CSV</a></section>
-<form method="get" class="form-grid workspace-section"><label>Status<select name="status"><option value="">All</option>@foreach($paymentStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->headline() }}</option>@endforeach</select></label><label>Currency<input name="currency" maxlength="3" value="{{ request('currency') }}"></label><button class="hm-button-secondary">Filter</button></form>
+<form method="get" class="form-grid workspace-section"><label>Status<select name="status"><option value="">All</option>@foreach($paymentStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->label() }}</option>@endforeach</select></label><label>Currency<input name="currency" maxlength="3" value="{{ request('currency') }}"></label><button class="hm-button-secondary">Filter</button></form>
 <article class="workspace-section"><div class="table-wrap"><table><thead><tr><th>Payout</th><th>Publisher / Statement</th><th>Amounts</th><th>Method / Dates</th><th>Settlement references</th><th>Operations</th></tr></thead><tbody>
 @forelse($payments as $payment)
 <tr>

@@ -5,8 +5,8 @@
 @include('admin.finance._tabs')
 <section class="hero"><div><p class="eyebrow">Eligible statements</p><h2>Validate, select, and create payouts</h2><p>Eligibility requires a payable statement, accepted invoice when required, verified currency-matched payment destination, and unreserved balance.</p></div></section>
 <form method="get" class="form-grid workspace-section">
-    <label>Status<select name="status"><option value="">All</option>@foreach($statementStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->headline() }}</option>@endforeach</select></label>
-    <label>Invoice<select name="invoice_status"><option value="">All</option>@foreach($invoiceStatuses as $status)<option value="{{ $status->value }}" @selected(request('invoice_status') === $status->value)>{{ str($status->value)->headline() }}</option>@endforeach</select></label>
+    <label>Status<select name="status"><option value="">All</option>@foreach($statementStatuses as $status)<option value="{{ $status->value }}" @selected(request('status') === $status->value)>{{ str($status->value)->label() }}</option>@endforeach</select></label>
+    <label>Invoice<select name="invoice_status"><option value="">All</option>@foreach($invoiceStatuses as $status)<option value="{{ $status->value }}" @selected(request('invoice_status') === $status->value)>{{ str($status->value)->label() }}</option>@endforeach</select></label>
     <label>Currency<input name="currency" maxlength="3" value="{{ request('currency') }}"></label><button class="hm-button-secondary">Filter</button>
 </form>
 <form method="post" action="{{ route('admin.finance.payouts.create-selected') }}" class="workspace-section">@csrf

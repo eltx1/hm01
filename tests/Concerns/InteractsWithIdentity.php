@@ -21,7 +21,7 @@ trait InteractsWithIdentity
     protected function makeOrganization(OrganizationType $type, ?string $name = null): Organization
     {
         return Organization::create([
-            'name' => $name ?? str($type->value)->headline(),
+            'name' => $name ?? \App\Support\DisplayLabel::from($type->value),
             'slug' => fake()->unique()->slug(),
             'type' => $type,
             'status' => AccountStatus::Active,
