@@ -22,8 +22,9 @@ final class SiteGamDimensionSynchronizer
     public const SCOPE = 'AD_UNIT_EXACT_SITE_BY_DIMENSION_V1';
 
     public const KINDS = [
-        SiteGamDimensionReport::COUNTRY => ['dimensions' => ['COUNTRY_CODE', 'COUNTRY_NAME'], 'key' => 'COUNTRY_CODE', 'name' => 'COUNTRY_NAME'],
-        SiteGamDimensionReport::DEVICE => ['dimensions' => ['DEVICE_CATEGORY_ID', 'DEVICE_CATEGORY_NAME'], 'key' => 'DEVICE_CATEGORY_NAME', 'name' => 'DEVICE_CATEGORY_NAME'],
+        // Google adds COUNTRY_CRITERIA_ID automatically whenever COUNTRY_NAME is requested.
+        SiteGamDimensionReport::COUNTRY => ['dimensions' => ['COUNTRY_CODE', 'COUNTRY_NAME'], 'automatic' => ['COUNTRY_CRITERIA_ID'], 'key' => 'COUNTRY_CODE', 'name' => 'COUNTRY_NAME'],
+        SiteGamDimensionReport::DEVICE => ['dimensions' => ['DEVICE_CATEGORY_ID', 'DEVICE_CATEGORY_NAME'], 'automatic' => [], 'key' => 'DEVICE_CATEGORY_NAME', 'name' => 'DEVICE_CATEGORY_NAME'],
     ];
 
     public const HISTORY_DAYS = 90;
@@ -203,7 +204,7 @@ final class SiteGamDimensionSynchronizer
             $headers[0] = ltrim((string) $headers[0], "\xEF\xBB\xBF");
             $required = ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Dimension.'.$spec['key'],
                 ...array_map(fn ($column) => 'Column.'.$column, array_keys(SiteGamReportMetrics::CORE_COLUMNS))];
-            $allowed = [...$required, ...array_map(fn ($d) => 'Dimension.'.$d, $spec['dimensions']), 'Dimension.AD_UNIT_NAME',
+            $allowed = [...$required, ...array_map(fn ($d) => 'Dimension.'.$d, [...$spec['dimensions'], ...$spec['automatic']]), 'Dimension.AD_UNIT_NAME',
                 ...array_map(fn ($column) => 'Column.'.$column, array_keys(SiteGamReportMetrics::OPTIONAL_COLUMNS))];
             if (array_diff($required, $headers) || array_diff($headers, $allowed) || count(array_unique($headers)) !== count($headers)) {
                 throw new RuntimeException('Unexpected breakdown CSV definition.');
