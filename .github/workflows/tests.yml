@@ -88,7 +88,7 @@ jobs:
           node --test tests/Deployment/npm-audit-ci.test.mjs
           node scripts/audit-npm-ci.mjs
       - name: Validate ad format breakdown diagnostic
-        run: node --test tests/Deployment/ad-format-breakdown-diagnostic.test.mjs
+        run: node --test tests/Deployment/ad-format-breakdown-diagnostic.test.mjs tests/Deployment/fast-main-validation.test.mjs
       - name: Execute Horus Loader browser tests
         run: npm run test:browser
       - name: Build production assets, custom Prebid, and minified loader

@@ -24,6 +24,7 @@
     <article class="publisher-earnings" aria-labelledby="publisher-earnings-heading">
         <div class="publisher-earnings-topline"><h3 id="publisher-earnings-heading">{{ $hasVideo ? 'Main earnings' : 'Your earnings' }}</h3><span class="report-state report-finality-state"><x-report-data-state :available="$performance['available']" :has-estimates="$performance['has_estimates']" :coverage="$performance['coverage']['main'] ?? []" /></span></div>
         <p class="publisher-earnings-value"><span>{{ $performance['currency'] }}</span> {{ \App\Support\Money::formatMinor($performance['earnings_minor']) }}</p>
+        @if($previous ?? null)<p class="report-delta-caption"><x-report-delta metric="earnings_minor" :current="$performance['earnings_minor']" :previous="$previous['earnings_minor']" :period="$previousPeriod" /> vs previous {{ $previousPeriod['from'] === $previousPeriod['to'] ? 'day' : 'period' }}</p>@endif
         <details class="publisher-earnings-breakdown">
             <summary>Earnings breakdown</summary>
             <dl>
@@ -32,7 +33,7 @@
             </dl>
         </details>
     </article>
-    <x-publisher-report-metrics :totals="$performance" :currency="$performance['currency']" />
+    <x-publisher-report-metrics :totals="$performance" :currency="$performance['currency']" :previous="$previous ?? null" :period="$previousPeriod ?? null" />
     </div>
     <x-report-unmatched-help :totals="$performance" />
     <article class="report-chart-card">

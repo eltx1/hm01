@@ -38,6 +38,7 @@ class ReportingController extends Controller
         return view('publisher.reporting.index', [
             'performance' => $performance,
             'reportMetrics' => $request->selectedMetrics($performance),
+            ...$this->comparison($publisher, $performance),
         ]);
     }
 
@@ -50,14 +51,19 @@ class ReportingController extends Controller
         $siteId = $request->validate(['site' => ['nullable', 'string', 'max:64']])['site'] ?? null;
         $selected = $siteId ? $sites->where('id', $siteId)->values() : $sites;
         abort_if($siteId && $selected->isEmpty(), 404);
+        $dimension = $this->dimension($request);
         $breakdown = $breakdowns->summary($selected, $request->validated('from'), $request->validated('to'), publisherView: true,
-            publisher: $siteId ? null : $publisher);
+            publisher: $siteId ? null : $publisher, dimension: $dimension);
         $metrics = array_values(array_diff($request->selectedMetrics(['has_site_ad_exchange' => true]), ['unfilled_impressions']));
         if ($request->validated('export') === 'csv') {
             return app(AdFormatBreakdownCsv::class)->download($breakdown, $metrics, true);
         }
 
+        $period = \App\Support\PeriodComparison::previous($breakdown['from'], $breakdown['to']);
+
         return view('publisher.reporting.ad-formats', [
+            'previousPeriod' => $period,
+            'previousBreakdown' => $breakdowns->summary($selected, $period['from'], $period['to'], publisherView: true, publisher: $siteId ? null : $publisher, dimension: $dimension),
             'breakdown' => $breakdown, 'reportMetrics' => $metrics,
             'sites' => $sites, 'selectedSite' => $siteId,
         ]);
@@ -80,7 +86,17 @@ class ReportingController extends Controller
             ...$finance->overview($publisher),
             'performance' => $performance,
             'reportMetrics' => $request->selectedMetrics($performance),
+            ...$this->comparison($publisher, $performance),
         ]);
+    }
+
+    /** Same metrics for the equal-length period immediately before the selection. */
+    private function comparison(Publisher $publisher, array $performance): array
+    {
+        $period = \App\Support\PeriodComparison::previous($performance['from'], $performance['to']);
+        $previous = app(PublisherPerformanceService::class)->summary($publisher, $period['from'], $period['to']);
+
+        return ['previousPeriod' => $period, 'previous' => $previous['available'] ? $previous : null];
     }
 
     public function statements(Request $request, PublisherFinanceService $finance): View
@@ -189,5 +205,11 @@ class ReportingController extends Controller
         return Publisher::withoutGlobalScopes()
             ->where('organization_id', $request->user()->organization_id)
             ->firstOrFail();
+    }
+
+    /** Breakdown dimension selected on the page: ad format (default), country or device. */
+    private function dimension(\Illuminate\Http\Request $request): string
+    {
+        return ['country' => 'COUNTRY', 'device' => 'DEVICE'][$request->query('by')] ?? 'FORMAT';
     }
 }

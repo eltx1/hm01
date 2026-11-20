@@ -5,7 +5,7 @@ const CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const COUNT = (value) => Number.isInteger(value) && value >= 0 && value < 1e9;
 const KEYS = ['schema_version', 'diagnostic', 'reason', 'active_bindings', 'states', 'errors', 'google_accepted_format_dimension',
   'rows_last_14_days', 'formats_by_website_count', 'completed_days_compared_with_ledger', 'days_exact_match',
-  'days_within_one_cent', 'days_different', 'class'];
+  'days_within_one_cent', 'days_different', 'dimensions', 'class'];
 
 export function validate(text) {
   const lines = text.trim().split('\n');
@@ -22,6 +22,16 @@ export function validate(text) {
   }
   for (const key of ['active_bindings', 'rows_last_14_days', 'completed_days_compared_with_ledger', 'days_exact_match', 'days_within_one_cent', 'days_different']) {
     if (key in result && !COUNT(result[key])) return null;
+  }
+  if ('dimensions' in result) {
+    const dims = result.dimensions;
+    if (!dims || typeof dims !== 'object' || Array.isArray(dims)) return null;
+    for (const [kind, value] of Object.entries(dims)) {
+      if (!['COUNTRY', 'DEVICE'].includes(kind) || !value || typeof value !== 'object') return null;
+      if (Object.keys(value).some((key) => !['rows', 'errors', 'google_accepted'].includes(key))) return null;
+      if (!COUNT(value.rows) || ![true, false, null].includes(value.google_accepted)) return null;
+      if (typeof value.errors !== 'object' || (!Array.isArray(value.errors) && Object.entries(value.errors).some(([name, count]) => !CODE.test(name) || !COUNT(count)))) return null;
+    }
   }
   if ('google_accepted_format_dimension' in result && ![true, false, null].includes(result.google_accepted_format_dimension)) return null;
   return result;

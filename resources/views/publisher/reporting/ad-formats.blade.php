@@ -3,7 +3,7 @@
 @section('heading', 'Reports & earnings')
 @section('content')
 @include('publisher.finance._tabs')
-@php($context = $selectedSite ? ['site' => $selectedSite] : [])
+@php($context = array_filter(['site' => $selectedSite, 'by' => request()->query('by')]))
 <section class="reports-page publisher-reports" aria-labelledby="ad-format-heading">
     <nav class="report-finance-links" aria-label="Report navigation"><a class="text-link" href="{{ route('publisher.reporting.index', ['from' => $breakdown['from'], 'to' => $breakdown['to']]) }}">← Back to reports</a></nav>
     <header class="publisher-report-heading">
@@ -13,13 +13,14 @@
     <x-publisher-report-period :from="$breakdown['from']" :to="$breakdown['to']" :metrics="$reportMetrics" :context="$context" />
     @if($sites->count() > 1)
     <form method="get" class="admin-website-search ad-format-site-filter" aria-label="Choose a website">
-        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">
+        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">@if(request()->query('by'))<input type="hidden" name="by" value="{{ request()->query('by') }}">@endif
         @foreach($reportMetrics as $metric)<input type="hidden" name="metrics[]" value="{{ $metric }}">@endforeach
         <label>Website<select class="hm-input" name="site" onchange="this.form.submit()"><option value="">All websites</option>@foreach($sites as $site)<option value="{{ $site->id }}" @selected($selectedSite === $site->id)>{{ $site->display_name }}</option>@endforeach</select></label>
         <noscript><button class="hm-button-secondary" type="submit">Show</button></noscript>
     </form>
     @endif
     <x-publisher-report-columns :metrics="$reportMetrics" />
-    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="true" />
+    <x-report-breakdown-selector :current="$breakdown['dimension']" :context="['from' => $breakdown['from'], 'to' => $breakdown['to']] + $context" />
+    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="true" :previous="$previousBreakdown ?? null" :period="$previousPeriod ?? null" />
 </section>
 @endsection

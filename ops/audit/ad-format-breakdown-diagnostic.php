@@ -73,6 +73,21 @@ try {
             else $daysDifferent++;
         }
     }
+    // Country / device breakdowns: closed state codes and row counts only.
+    $dimensions = [];
+    foreach (['COUNTRY', 'DEVICE'] as $kind) {
+        $kindErrors = [];
+        foreach ($bindings as $binding) {
+            $kindError = data_get($binding->connection->configuration, 'dimension_breakdown_'.strtolower($kind).'.error');
+            if (is_string($kindError)) $kindErrors[$kindError] = ($kindErrors[$kindError] ?? 0) + 1;
+        }
+        $kindRows = Illuminate\Support\Facades\Schema::hasTable('site_gam_dimension_reports')
+            ? App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', $kind)
+                ->whereIn('report_source_connection_id', $bindings->pluck('report_source_connection_id')->all() ?: [''])->count() : 0;
+        ksort($kindErrors);
+        $dimensions[$kind] = ['rows' => $kindRows, 'errors' => $kindErrors,
+            'google_accepted' => $kindRows > 0 ? true : (($kindErrors['DIMENSION_UNSUPPORTED'] ?? 0) > 0 ? false : null)];
+    }
     ksort($states);
     ksort($errors);
     ksort($formats);
@@ -89,6 +104,7 @@ try {
         'days_exact_match' => $daysExact,
         'days_within_one_cent' => $daysOffByRounding,
         'days_different' => $daysDifferent,
+        'dimensions' => $dimensions,
     ]);
 } catch (Throwable $error) {
     $print(['reason' => 'EXECUTION_FAILED', 'class' => (new ReflectionClass($error))->getShortName()]);

@@ -89,6 +89,9 @@ Schedule::command('reporting:import hourly --retry-failed')->hourlyAt(12)->witho
 // Session-owned writer lock in the command provides exclusion beyond this launch throttle.
 // Keep the same mutex name: pre-deploy locks expire naturally, never force-clear them.
 Schedule::command('reporting:sync-site-gam')->everyFiveMinutes()->withoutOverlapping(10);
+Schedule::command('reporting:ad-format-alerts')->dailyAt('07:35')->withoutOverlapping();
+Schedule::command('reporting:send-earnings-digests --period=daily')->dailyAt('08:15')->withoutOverlapping();
+Schedule::command('reporting:send-earnings-digests --period=weekly')->weeklyOn(1, '08:25')->withoutOverlapping();
 Schedule::command('reporting:sync-site-gam-video')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('reporting:import daily --retry-failed')->dailyAt('04:10')->withoutOverlapping();
 Schedule::command('reporting:close-ready-periods --force')->hourlyAt(40)->withoutOverlapping();

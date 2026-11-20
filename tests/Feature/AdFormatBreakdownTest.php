@@ -42,6 +42,9 @@ class AdFormatBreakdownTest extends TestCase
     /** Rows Google returns for the ad format report: [date, site, format name, requests, matched, impressions, clicks, revenue micros]. */
     private array $formatRows = [];
 
+    /** Country / device rows Google returns: kind => [[date, site, key, name, impressions, revenue micros]]. */
+    private array $dimensionRows = ['COUNTRY' => [], 'DEVICE' => []];
+
     private function context(): array
     {
         $this->travelTo(CarbonImmutable::parse('2026-09-21 10:00:00', 'UTC'));
@@ -105,7 +108,22 @@ class AdFormatBreakdownTest extends TestCase
         $date = fn (array $day) => sprintf('%04d-%02d-%02d', $day['year'], $day['month'], $day['day']);
         [$from, $to] = [$date($query['startDate']), $date($query['endDate'])];
         $stream = fopen('php://temp', 'w+');
-        if (in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true)) {
+        $dimensionKind = in_array('COUNTRY_CODE', $query['dimensions'], true) ? 'COUNTRY' : (in_array('DEVICE_CATEGORY_NAME', $query['dimensions'], true) ? 'DEVICE' : null);
+        if ($dimensionKind) {
+            fputcsv($stream, [...array_map(fn ($dimension) => 'Dimension.'.$dimension, $query['dimensions']),
+                ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
+            foreach ($this->dimensionRows[$dimensionKind] as [$day, $site, $key, $name, $impressions, $micros]) {
+                if ($day < $from || $day > $to) continue;
+                $dimensions = ['DATE' => $day, 'AD_UNIT_ID' => '12345', 'SITE_NAME' => $site, 'COUNTRY_CODE' => $key, 'COUNTRY_NAME' => $name,
+                    'DEVICE_CATEGORY_ID' => (string) (crc32($name) % 1000), 'DEVICE_CATEGORY_NAME' => $name];
+                $columns = ['AD_EXCHANGE_TOTAL_REQUESTS' => $impressions + 10, 'AD_EXCHANGE_RESPONSES_SERVED' => $impressions,
+                    'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => $impressions, 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => 1,
+                    'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'US$ '.$micros,
+                    'AD_EXCHANGE_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS' => intdiv($impressions, 2), 'AD_EXCHANGE_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS' => $impressions];
+                fputcsv($stream, [...array_map(fn ($dimension) => $dimensions[$dimension], $query['dimensions']),
+                    ...array_map(fn ($column) => $columns[$column], $query['columns'])], escape: '');
+            }
+        } elseif (in_array('INVENTORY_FORMAT_NAME', $query['dimensions'], true)) {
             fputcsv($stream, ['Dimension.DATE', 'Dimension.AD_UNIT_ID', 'Dimension.SITE_NAME', 'Dimension.INVENTORY_FORMAT', 'Dimension.INVENTORY_FORMAT_NAME',
                 ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
             foreach ($this->formatRows as $index => [$day, $site, $name, $requests, $matched, $impressions, $clicks, $micros]) {
@@ -503,5 +521,276 @@ class AdFormatBreakdownTest extends TestCase
         $other = $this->makeUser($this->makeOrganization(OrganizationType::Publisher, 'Other'), RoleName::PublisherAdmin);
         $this->makePublisherFor($other);
         $this->assertContains($this->actingAs($other)->get(route('publisher.sites.show', $site))->status(), [403, 404]);
+    }
+
+    /** Copy the imported day's ledger fact to another day with scaled amounts. */
+    private function ledgerDay(string $day, float $scale): void
+    {
+        $original = DailyReport::withoutGlobalScopes()->whereDate('report_date', self::DAY)->firstOrFail();
+        $copy = $original->replicate();
+        $copy->forceFill(['report_date' => $day,
+            'gross_revenue_minor' => (int) round($original->gross_revenue_minor * $scale),
+            'publisher_earnings_minor' => (int) round($original->publisher_earnings_minor * $scale),
+            'horus_earnings_minor' => (int) round($original->horus_earnings_minor * $scale),
+            'impressions' => (int) round($original->impressions * $scale)])->save();
+    }
+
+    public function test_reports_compare_with_the_previous_equal_length_period(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-19', 0.5);
+
+        $this->actingAs($user)->get(route('publisher.reporting.index', ['from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('report-delta--up', false)->assertSee('+100.0%')->assertSee('vs previous day');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('report-delta--up', false)->assertSee('+100.0%');
+        // Nothing to compare with: no badge, never a fake percentage.
+        $this->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => '2026-09-19', 'to' => '2026-09-19']))->assertOk()
+            ->assertDontSee('report-delta--', false);
+    }
+
+    public function test_full_ad_format_page_shows_a_daily_stacked_trend_with_fixed_format_colours(): void
+    {
+        [, , $user, , $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-18', 0.6);
+        $this->ledgerDay('2026-09-19', 0.8);
+        $host = $this->hostname();
+        foreach (['2026-09-18' => 0.6, '2026-09-19' => 0.8, self::DAY => 1.0] as $day => $scale) {
+            $this->formatRows[] = [$day, $host, 'Banner', 70, 60, (int) (60 * $scale), 2, (int) (60000000 * $scale)];
+            $this->formatRows[] = [$day, $host, 'Interstitial', 30, 25, (int) (25 * $scale), 1, (int) (40000000 * $scale)];
+        }
+        $this->syncFormats($binding);
+
+        $response = $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => '2026-09-18', 'to' => self::DAY]))->assertOk()
+            ->assertSee('Your earnings by ad format over time')
+            ->assertSee('format-segment format-slot-1', false)->assertSee('format-segment format-slot-2', false);
+        // Three days, two formats each: six segments, each with its own tooltip value.
+        $this->assertSame(6, substr_count($response->getContent(), 'class="format-segment'));
+        $response->assertSee('20 Sep 2026 · Banner: 48.00 USD');
+        // The compact website report has no trend chart.
+        $this->get(route('publisher.sites.show', ['site' => $binding->site_id, 'from' => '2026-09-18', 'to' => self::DAY]))->assertOk()
+            ->assertDontSee('over time');
+    }
+
+    /** Stored Google format evidence for one day, written directly for detector tests. */
+    private function formatRow(SiteGamReportBinding $binding, string $day, string $format, int $impressions, int $revenueMicros): void
+    {
+        $binding->loadMissing('connection');
+        SiteGamAdFormatReport::withoutGlobalScopes()->create([
+            'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+            'site_gam_report_binding_id' => $binding->id, 'site_id' => $binding->site_id, 'gam_connection_id' => $binding->gam_connection_id,
+            'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => $this->hostname(),
+            'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => $format, 'impressions' => $impressions, 'clicks' => 0,
+            'revenue_micros' => $revenueMicros, 'google_report_job_id' => '1', 'reported_at' => now(),
+        ]);
+    }
+
+    public function test_drop_alerts_compare_each_website_format_with_its_own_recent_baseline(): void
+    {
+        [$admin, $publisher, , $site, $binding] = $this->context();
+        for ($i = 14; $i >= 1; $i--) {
+            $day = CarbonImmutable::parse(self::DAY)->subDays($i)->toDateString();
+            $this->formatRow($binding, $day, 'BANNER', 10000, 20_000_000);       // $20/day, $2 eCPM
+            $this->formatRow($binding, $day, 'INTERSTITIAL', 4000, 16_000_000);  // $16/day, $4 eCPM
+            $this->formatRow($binding, $day, 'ANCHOR', 300, 600_000);            // tiny: never alerts
+        }
+        $this->formatRow($binding, self::DAY, 'BANNER', 10000, 6_000_000);         // revenue -70%
+        $this->formatRow($binding, self::DAY, 'INTERSTITIAL', 4000, 8_000_000);    // revenue -50% boundary: eCPM -50%
+        $this->formatRow($binding, self::DAY, 'ANCHOR', 10, 1_000);
+
+        $drops = app(\App\Services\Reporting\AdFormatDropDetector::class)->detect(self::DAY);
+        $this->assertSame([['BANNER', 'revenue', -7000], ['INTERSTITIAL', 'ecpm', -5000]],
+            $drops->map(fn ($d) => [$d['format'], $d['metric'], $d['change_bp']])->all());
+        $this->assertSame(600, $drops->first()['current']);
+        $this->assertSame(2000, $drops->first()['baseline']);
+        // An unsynchronized day is unknown, never a drop.
+        $this->assertCount(0, app(\App\Services\Reporting\AdFormatDropDetector::class)->detect('2026-09-21'));
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:ad-format-alerts', ['--date' => self::DAY]));
+        $this->assertStringContainsString('"drops":2', \Illuminate\Support\Facades\Artisan::output());
+        $notification = \App\Models\HorusNotification::query()->where('recipient_id', $admin->id)->where('type', 'AD_FORMAT_DROP')->orderBy('title')->first();
+        $this->assertNotNull($notification);
+        $this->assertStringContainsString('Banner revenue down 70%', $notification->title);
+        $count = \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->count();
+        // Re-running the same day never duplicates notifications.
+        \Illuminate\Support\Facades\Artisan::call('reporting:ad-format-alerts', ['--date' => self::DAY]);
+        $this->assertSame($count, \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->count());
+        $this->assertSame(0, \App\Models\HorusNotification::query()->where('type', 'AD_FORMAT_DROP')->where('organization_id', $publisher->organization_id)->count());
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats'))->assertOk()
+            ->assertSee('Drops detected yesterday (2)')->assertSee('data-ad-format-drop="BANNER"', false);
+    }
+
+    public function test_revenue_opportunities_use_the_median_of_at_least_three_peer_websites(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding); // 100.00 gross / 80.00 publisher: the website's own 80% ratio
+        $peerRow = function (string $siteId, string $day, string $format, int $micros) use ($binding): void {
+            SiteGamAdFormatReport::withoutGlobalScopes()->create([
+                'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+                'site_gam_report_binding_id' => $binding->id, 'site_id' => $siteId, 'gam_connection_id' => $binding->gam_connection_id,
+                'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => 'peer.example',
+                'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => $format, 'impressions' => 1000, 'clicks' => 0,
+                'revenue_micros' => $micros, 'google_report_job_id' => '1', 'reported_at' => now()]);
+        };
+        $this->formatRow($binding, self::DAY, 'BANNER', 1000, 600_000_000);
+        $peers = collect(range(1, 3))->map(fn ($i) => $this->makeSiteFor($publisher, $user, ['primary_domain' => "peer{$i}.example", 'display_name' => "Peer {$i}"]));
+        // The sidecar is unique per source connection and day: give each test peer its own day.
+        foreach ($peers->take(2) as $i => $peer) {
+            $peerRow($peer->id, '2026-09-1'.($i + 1), 'BANNER', 75_000_000);
+            $peerRow($peer->id, '2026-09-1'.($i + 1), 'REWARDED', 25_000_000);
+        }
+        $service = app(\App\Services\Reporting\AdFormatOpportunityService::class);
+        // Two peers are not enough to publish an aggregate.
+        $this->assertCount(0, $service->forSite($site->fresh(), false));
+
+        $peerRow($peers[2]->id, '2026-09-13', 'BANNER', 50_000_000);
+        $peerRow($peers[2]->id, '2026-09-13', 'REWARDED', 50_000_000);
+        $admin_ = $service->forSite($site->fresh(), false);
+        $this->assertSame(['REWARDED'], $admin_->pluck('format')->all());
+        // Median share 25%: 600 * 0.25 / 0.75 = 200.00 gross; publisher sees 80% of it.
+        $this->assertSame(20000, $admin_->first()['estimated_minor']);
+        $this->assertSame(2500, $admin_->first()['median_share_bp']);
+        $this->assertSame(16000, $service->forSite($site->fresh(), true)->first()['estimated_minor']);
+
+        $this->actingAs($user)->get(route('publisher.sites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('Revenue opportunities')->assertSee('Enable Rewarded')->assertSee('+160.00 USD');
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.websites.show', ['site' => $site, 'from' => self::DAY, 'to' => self::DAY]))->assertOk()
+            ->assertSee('Enable Rewarded')->assertSee('+200.00 USD');
+    }
+
+    public function test_admin_ranks_websites_by_ecpm_within_each_format(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->formatRow($binding, self::DAY, 'BANNER', 10000, 20_000_000); // $2.00 eCPM
+        $peer = $this->makeSiteFor($publisher, $user, ['primary_domain' => 'peer.example', 'display_name' => 'Peer site']);
+        $tiny = $this->makeSiteFor($publisher, $user, ['primary_domain' => 'tiny.example', 'display_name' => 'Tiny site']);
+        foreach ([[$peer, '2026-09-19', 5000, 15_000_000], [$tiny, '2026-09-18', 100, 9_000_000]] as [$other, $day, $impressions, $micros]) {
+            SiteGamAdFormatReport::withoutGlobalScopes()->create([
+                'organization_id' => $binding->organization_id, 'report_source_connection_id' => $binding->report_source_connection_id,
+                'site_gam_report_binding_id' => $binding->id, 'site_id' => $other->id, 'gam_connection_id' => $binding->gam_connection_id,
+                'network_code' => $binding->network_code, 'ad_unit_id' => $binding->ad_unit_id, 'hostname' => $other->primary_domain,
+                'report_date' => $day, 'timezone' => 'Africa/Cairo', 'ad_format' => 'BANNER', 'impressions' => $impressions, 'clicks' => 0,
+                'revenue_micros' => $micros, 'google_report_job_id' => '1', 'reported_at' => now()]);
+        }
+        $ranking = app(\App\Services\Reporting\AdFormatRankingService::class)
+            ->rank(\App\Models\Site::withoutGlobalScopes()->with('publisher')->get(), '2026-09-14', self::DAY);
+        $banner = $ranking->get('BANNER');
+        $this->assertSame(['Peer site', 'Example Site'], $banner['sites']->pluck('site')->all()); // tiny site below the impression floor
+        $this->assertSame([300, 200], $banner['sites']->pluck('ecpm_minor')->all());
+        $this->assertSame(250, $banner['median_ecpm_minor']);
+
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats', ['from' => '2026-09-14', 'to' => self::DAY]))->assertOk()
+            ->assertSee('Website ranking by eCPM per format')->assertSeeInOrder(['Peer site', 'Example Site'])
+            ->assertSee('network median eCPM 2.50 USD');
+        $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => '2026-09-14', 'to' => self::DAY]))->assertOk()
+            ->assertDontSee('Website ranking by eCPM');
+    }
+
+    private function syncDimensions(SiteGamReportBinding $binding): void
+    {
+        $sync = app(\App\Services\Reporting\SiteGamDimensionSynchronizer::class);
+        foreach (['COUNTRY', 'DEVICE'] as $kind) {
+            for ($pass = 0; $pass < 10; $pass++) {
+                if (! in_array($sync->sync($binding, $kind)['status'], ['COMPLETED', 'PENDING'], true)) break;
+            }
+        }
+    }
+
+    public function test_country_and_device_breakdowns_split_the_same_ledger_without_touching_it(): void
+    {
+        [$admin, $publisher, $user, $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $before = DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all();
+        $host = $this->hostname();
+        $this->dimensionRows = [
+            'COUNTRY' => [[self::DAY, $host, 'US', 'United States', 70, 70_000_000], [self::DAY, $host, 'EG', 'Egypt', 30, 30_000_000],
+                [self::DAY, 'other.example', 'FR', 'France', 99, 99_000_000]],
+            'DEVICE' => [[self::DAY, $host, 'Desktop', 'Desktop', 40, 25_000_000], [self::DAY, $host, 'Smartphone', 'Smartphone', 60, 75_000_000]],
+        ];
+        $this->syncDimensions($binding);
+
+        $this->assertSame(['EG', 'US'], \App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', 'COUNTRY')->orderBy('dimension_key')->pluck('dimension_key')->all());
+        $this->assertSame(['DESKTOP', 'SMARTPHONE'], \App\Models\SiteGamDimensionReport::withoutGlobalScopes()->where('kind', 'DEVICE')->orderBy('dimension_key')->pluck('dimension_key')->all());
+        $queries = collect($this->google->calls)->where('method', 'runReportJob')->map(fn ($call) => $call['payload']['reportJob']['reportQuery']['dimensions']);
+        $this->assertTrue($queries->contains(['DATE', 'AD_UNIT_ID', 'SITE_NAME', 'COUNTRY_CODE', 'COUNTRY_NAME']));
+        $this->assertTrue($queries->contains(['DATE', 'AD_UNIT_ID', 'SITE_NAME', 'DEVICE_CATEGORY_ID', 'DEVICE_CATEGORY_NAME']));
+        $this->assertSame($before, DailyReport::withoutGlobalScopes()->orderBy('id')->get()->map->getAttributes()->all());
+
+        $country = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: true, dimension: 'COUNTRY');
+        $this->assertSame(['United States' => 5600, 'Egypt' => 2400], $country['formats']->pluck('earnings_minor', 'label')->all());
+        $this->assertSame(8000, $country['totals']['earnings_minor']);
+
+        $this->actingAs($user)->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'country']))->assertOk()
+            ->assertSee('Your earnings by country')->assertSeeInOrder(['United States', 'Egypt'])->assertSee('56.00')
+            ->assertDontSee('over time')->assertSee('aria-current="true">Country', false);
+        $this->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'device']))->assertOk()
+            ->assertSee('Your earnings by device')->assertSeeInOrder(['Smartphone', 'Desktop'])->assertSee('60.00')
+            ->assertSee('by device over time');
+        $csv = $this->get(route('publisher.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'country', 'export' => 'csv']))->assertOk()->streamedContent();
+        $this->assertStringStartsWith('Country,', $csv);
+        $this->actingAs($admin)->withSession(['two_factor_passed_at' => now()->timestamp])
+            ->get(route('admin.reporting.ad-formats', ['from' => self::DAY, 'to' => self::DAY, 'by' => 'device']))->assertOk()
+            ->assertSee('Gross revenue by device')->assertSee('75.00');
+    }
+
+    public function test_long_country_tail_is_folded_into_other_countries(): void
+    {
+        [, , , $site, $binding] = $this->context();
+        $this->importLedger($binding);
+        $host = $this->hostname();
+        foreach (range(1, 18) as $i) {
+            $this->dimensionRows['COUNTRY'][] = [self::DAY, $host, 'C'.chr(64 + $i), 'Country '.chr(64 + $i), 10, (19 - $i) * 1_000_000];
+        }
+        $this->syncDimensions($binding);
+        $summary = app(AdFormatBreakdownService::class)->summary(collect([$site->fresh()]), self::DAY, self::DAY, publisherView: false, dimension: 'COUNTRY');
+        $this->assertCount(16, $summary['formats']);
+        $this->assertSame('Other countries', $summary['formats']->last()['label']);
+        $this->assertSame(10000, $summary['formats']->sum('gross_revenue_minor'));
+    }
+
+    public function test_publishers_receive_daily_and_weekly_earnings_reports_by_notification_and_email(): void
+    {
+        [$admin, $publisher, $user, , $binding] = $this->context();
+        $this->importLedger($binding);
+        $this->ledgerDay('2026-09-19', 0.5);
+        $this->threeFormats();
+        $this->syncFormats($binding);
+        \Illuminate\Support\Facades\Mail::fake();
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => self::DAY]));
+        $item = \App\Models\HorusNotification::query()->where('recipient_id', $user->id)->where('type', 'EARNINGS_REPORT_DAILY')->sole();
+        $this->assertSame('Yesterday: 80.00 USD earned', $item->title);
+        $this->assertStringContainsString('(+100.0% vs the previous day)', $item->message);
+        $this->assertStringContainsString('Top ad formats: Banner 60%, Interstitial 30%, Rewarded 10%.', $item->message);
+        $this->assertStringNotContainsString('100.00', $item->message); // never gross revenue
+        $this->assertSame(\App\Enums\NotificationCategory::Reports, $item->category);
+        $this->assertTrue((bool) $item->email_requested);
+        $this->assertSame(0, \App\Models\HorusNotification::query()->where('recipient_id', $admin->id)->where('type', 'EARNINGS_REPORT_DAILY')->count());
+
+        // Idempotent for the same day.
+        \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => self::DAY]);
+        $this->assertSame(1, \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_DAILY')->count());
+
+        // Delivered by the existing email pipeline.
+        \Illuminate\Support\Facades\Artisan::call('notifications:deliver-email');
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\HorusNotificationMail::class, fn ($mail) => $mail->hasTo($user->email) && $mail->item->is($item));
+
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'weekly', '--date' => self::DAY]));
+        $weekly = \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_WEEKLY')->sole();
+        $this->assertSame('Last 7 days: 120.00 USD earned', $weekly->title);
+        $this->assertStringContainsString('14 Sep – 20 Sep 2026', $weekly->message);
+
+        // A user who turns the Reports email off still gets the in-app report only.
+        app(\App\Services\Notifications\HorusNotificationService::class)->savePreference($user, \App\Enums\NotificationCategory::Reports, true, false);
+        \Illuminate\Support\Facades\Artisan::call('reporting:send-earnings-digests', ['--period' => 'daily', '--date' => '2026-09-19']);
+        $this->assertFalse((bool) \App\Models\HorusNotification::query()->where('type', 'EARNINGS_REPORT_DAILY')->whereNot('id', $item->id)->sole()->email_requested);
+        $this->actingAs($user)->get(route('notifications.preferences'))->assertOk()->assertSee('Reports');
     }
 }

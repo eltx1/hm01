@@ -122,3 +122,16 @@ The authoritative deployment package and operational runbooks are generated
 under `release/`. Build with `scripts/build-release.sh` only after production
 Composer dependencies and browser assets are compiled, then validate with
 `scripts/validate-release.sh`.
+
+## Faster main validation for identical pull request trees
+
+On a push to `main`, "Production release validation" first looks for a
+successful pull request run of the same workflow from this repository whose
+commit tree is identical to the pushed tree, i.e. the same code. When one
+exists, the duplicate test steps are skipped: forms, browser previews, the
+full PHP and browser suite, and the Blade form review. The release assets, the
+production smoke test, and the release ZIP build, validation and checksum
+artifact still run, and the deploy gate is unchanged. When the trees differ
+(for example, main moved after the PR ran), everything runs in full. Set the
+repository variable `HORUS_FULL_MAIN_VALIDATION=true` to always run the full
+validation.

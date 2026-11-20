@@ -2,7 +2,7 @@
 @section('title', ($publisher?->display_name ?? 'All publishers').' · Ad formats')
 @section('heading', 'Breakdown by ad format')
 @section('content')
-@php($context = $selectedSite ? ['site' => $selectedSite] : [])
+@php($context = array_filter(['site' => $selectedSite, 'by' => request()->query('by')]))
 @php($site = $selectedSite ? $sites->firstWhere('id', $selectedSite) : null)
 <div class="reports-page admin-website-reports">
     <nav class="report-finance-links" aria-label="Report navigation">
@@ -14,18 +14,31 @@
     <x-report-period :from="$breakdown['from']" :to="$breakdown['to']" :metrics="$reportMetrics" :context="$context" />
     @if(!$publisher && ($publishers ?? collect())->isNotEmpty())
     <form method="get" class="admin-website-search ad-format-site-filter" aria-label="Choose a publisher">
-        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">
+        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">@if(request()->query('by'))<input type="hidden" name="by" value="{{ request()->query('by') }}">@endif
         <label>Publisher<select class="hm-input" name="publisher" onchange="this.form.submit()"><option value="">All publishers</option>@foreach($publishers as $option)<option value="{{ $option->id }}">{{ $option->display_name }}</option>@endforeach</select></label>
         <noscript><button class="hm-button-secondary" type="submit">Show</button></noscript>
     </form>
     @endif
     @if($publisher && $sites->count() > 1)
     <form method="get" class="admin-website-search ad-format-site-filter" aria-label="Choose a website">
-        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">
+        <input type="hidden" name="from" value="{{ $breakdown['from'] }}"><input type="hidden" name="to" value="{{ $breakdown['to'] }}">@if(request()->query('by'))<input type="hidden" name="by" value="{{ request()->query('by') }}">@endif
         @foreach($reportMetrics as $metric)<input type="hidden" name="metrics[]" value="{{ $metric }}">@endforeach
         <label>Website<select class="hm-input" name="site" onchange="this.form.submit()"><option value="">All websites</option>@foreach($sites as $option)<option value="{{ $option->id }}" @selected($selectedSite === $option->id)>{{ $option->display_name }} · {{ $option->primary_domain }}</option>@endforeach</select></label>
         <noscript><button class="hm-button-secondary" type="submit">Show</button></noscript>
     </form>
+    @endif
+    @if(($drops ?? collect())->isNotEmpty() && ($breakdown['dimension'] ?? 'FORMAT') === 'FORMAT')
+    <section class="ad-format-drops" aria-labelledby="ad-format-drops-heading" role="status">
+        <h3 id="ad-format-drops-heading"><span aria-hidden="true">⚠</span> Drops detected yesterday ({{ $drops->count() }})</h3>
+        <ul>
+            @foreach($drops->take(20) as $drop)
+                <li data-ad-format-drop="{{ $drop['format'] }}"><strong>{{ $drop['format_label'] }} {{ $drop['metric'] === 'ecpm' ? 'eCPM' : 'revenue' }} {{ number_format($drop['change_bp'] / 100, 0) }}%</strong>
+                    · {{ $drop['site'] }} <span class="muted">({{ $drop['domain'] }})</span> · {{ \App\Support\Money::formatMinor($drop['current']) }} vs {{ \App\Support\Money::formatMinor($drop['baseline']) }} USD average
+                    @if($drop['publisher_id'])<a class="text-link" href="{{ route('admin.reporting.publishers.ad-formats', ['publisher' => $drop['publisher_id'], 'site' => $drop['site_id'], 'from' => \Carbon\CarbonImmutable::parse($drop['day'])->subDays(13)->toDateString(), 'to' => $drop['day']]) }}">Open</a>@endif</li>
+            @endforeach
+        </ul>
+        <p class="report-footnote muted">Compared with each website-format's own average over the previous {{ \App\Services\Reporting\AdFormatDropDetector::BASELINE_DAYS }} days (Google Ad Exchange revenue). Reporting staff are also notified once per drop.</p>
+    </section>
     @endif
     @if($breakdown['available'])
     <section class="report-metrics" aria-label="Ad format revenue totals">
@@ -35,7 +48,9 @@
         <article class="report-kpi"><h3 class="eyebrow">Impressions</h3><div class="report-kpi-value">{{ \App\Services\Reporting\PerformanceMetrics::display('impressions', $breakdown['totals']['impressions']) }}</div></article>
     </section>
     @endif
-    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" />
+    <x-report-breakdown-selector :current="$breakdown['dimension']" :context="['from' => $breakdown['from'], 'to' => $breakdown['to']] + $context" />
+    <x-report-ad-format-breakdown :breakdown="$breakdown" :metrics="$reportMetrics" :publisher="false" :previous="$previousBreakdown ?? null" :period="$previousPeriod ?? null" />
+    <x-report-ad-format-ranking :ranking="($breakdown['dimension'] ?? 'FORMAT') === 'FORMAT' ? ($ranking ?? collect()) : collect()" :currency="$breakdown['currency']" />
     @if($syncStatuses->isNotEmpty())
     <details class="report-disclosure ad-format-sync-status" @if($syncStatuses->contains(fn ($status) => !in_array($status['state'], ['CURRENT', 'NOT_CONNECTED'], true))) open @endif>
         <summary>Ad format data status</summary>

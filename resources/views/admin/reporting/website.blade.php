@@ -19,8 +19,9 @@
     @if($summary['has_estimates'])<p class="report-footnote muted">Estimated results are awaiting finalization and may change. These reporting totals are not payout balances.</p>@endif
     @if($summary['available'])
     <section class="report-metrics" aria-label="Website revenue totals">
-        @foreach([['Gross revenue', $summary['gross_revenue_minor'], $summary['currency']], ['Publisher earnings', $summary['publisher_earnings_minor'], $summary['currency']], ['Horus margin', $summary['horus_earnings_minor'], $summary['currency']], ['Impressions', $summary['impressions'], '']] as [$label, $value, $unit])
-            <article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><h3 class="eyebrow">{{ $label }}</h3><div class="report-kpi-value">{{ $unit ? \App\Support\Money::formatMinor($value) : \App\Services\Reporting\PerformanceMetrics::display('impressions', $value) }} @if($unit)<span>{{ $unit }}</span>@endif</div></article>
+        @foreach([['Gross revenue', 'gross_revenue_minor', $summary['currency']], ['Publisher earnings', 'publisher_earnings_minor', $summary['currency']], ['Horus margin', 'horus_earnings_minor', $summary['currency']], ['Impressions', 'impressions', '']] as [$label, $key, $unit])
+            @php($value = $summary[$key])
+            <article class="report-kpi {{ $loop->first ? 'report-kpi-primary' : '' }}"><h3 class="eyebrow">{{ $label }}</h3><div class="report-kpi-value">{{ $unit ? \App\Support\Money::formatMinor($value) : \App\Services\Reporting\PerformanceMetrics::display('impressions', $value) }} @if($unit)<span>{{ $unit }}</span>@endif</div>@if($previous ?? null)<x-report-delta :metric="$key" :current="$value" :previous="$previous[$key] ?? null" :period="$previousPeriod" />@endif</article>
         @endforeach
     </section>
     <p class="muted report-footnote">Reported amounts before statement adjustments.@if($summary['metric_basis_incomplete'] ?? false) Performance metrics are unavailable for periods containing legacy website GAM counters.@endif</p>
@@ -38,8 +39,9 @@
     @if($hasAdFormats)
     <section id="ad-formats" class="report-ad-formats-section" aria-labelledby="website-ad-formats-heading">
         <header class="report-main-heading"><h2 id="website-ad-formats-heading">Ad formats</h2><p>The same period for this website, split by Banner, Interstitial, Anchor, Rewarded and other formats.</p></header>
-        <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :compact="true"
+        <x-report-ad-format-breakdown :breakdown="$adFormats" :metrics="$adFormatMetrics" :compact="true" :previous="$previousAdFormats ?? null" :period="$previousPeriod ?? null"
             :full-url="$site->publisher ? route('admin.reporting.publishers.ad-formats', ['publisher' => $site->publisher, 'site' => $site->id, 'from' => $summary['from'], 'to' => $summary['to']]) : null" />
+        <x-report-ad-format-opportunities :opportunities="$opportunities ?? collect()" :currency="$summary['currency']" />
     </section>
     @endif
     <x-video-performance :coverage="$summary['coverage']['video'] ?? []" :video="$summary['video']" :from="$summary['from']" :to="$summary['to']" />
