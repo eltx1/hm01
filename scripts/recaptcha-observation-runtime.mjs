@@ -48,68 +48,164 @@ export const recaptchaObservationRuntime = String.raw`
         };
     }
 
+    var RECAPTCHA_OBSERVATION_ACTION = 'horus_cf_pass';
+
+    // Local, read-only explanation of the latest observation attempt for the
+    // browser console: HorusMediaLoader.getRecaptchaObservation(). Nothing is
+    // sent anywhere and neither the token nor the site key is ever recorded.
+    function recaptchaObservationClock() {
+        try {
+            return window.performance && typeof window.performance.now === 'function'
+                ? Math.round(window.performance.now()) : null;
+        } catch (error) { return null; }
+    }
+
+    function recaptchaObservationError(error, siteKey) {
+        var text = '';
+        try { text = String(error && error.message || error || ''); } catch (ignored) {}
+        if (siteKey) text = text.split(siteKey).join('<site-key>');
+        text = text.replace(/[A-Za-z0-9_-]{60,}/g, '<redacted>').slice(0, 200);
+        return text || null;
+    }
+
+    function recaptchaObservationNote(config, observation, phase, reason, error) {
+        observation.phase = phase;
+        observation.reason = reason || null;
+        if (error !== undefined) observation.error = error;
+        try {
+            if (typeof log === 'function') log(config, 'reCAPTCHA observation', phase, reason || '', observation.error || '');
+        } catch (ignored) {}
+    }
+
+    function recaptchaObservationDebugState() {
+        try {
+            var config = state.config;
+            var options = config && config.recaptchaObservation;
+            var enabled = Boolean(options && options.enabled === true);
+            var observation = state.recaptchaObservation || state.recaptchaObservationSkip || null;
+            var requests = { anchor: 0, reload: 0 };
+            try {
+                var entries = window.performance && typeof window.performance.getEntriesByType === 'function'
+                    ? window.performance.getEntriesByType('resource') : [];
+                Array.prototype.forEach.call(entries || [], function (entry) {
+                    var name = String(entry && entry.name || '');
+                    if (!/^https:\/\/www\.(google\.com|recaptcha\.net)\/recaptcha\//.test(name)) return;
+                    if (name.indexOf('/anchor') !== -1) requests.anchor += 1;
+                    if (name.indexOf('/reload') !== -1) requests.reload += 1;
+                });
+            } catch (ignored) {}
+            return {
+                enabled: enabled,
+                phase: observation ? observation.phase : 'not_scheduled',
+                reason: observation ? observation.reason || null : (enabled ? 'WAITING_FOR_CLOUDFLARE_PASS' : 'DISABLED_FOR_SITE'),
+                error: observation && observation.error || null,
+                tokenReceived: Boolean(observation && observation.tokenReceived === true),
+                cloudflare: trafficGateRuntimeState().status,
+                action: RECAPTCHA_OBSERVATION_ACTION,
+                googleRequests: requests,
+                timingsMs: observation && observation.timings ? {
+                    scheduled: observation.timings.scheduled, started: observation.timings.started,
+                    sdkLoaded: observation.timings.sdkLoaded, finished: observation.timings.finished
+                } : null
+            };
+        } catch (error) {
+            return { phase: 'unavailable', reason: 'DEBUG_STATE_FAILED' };
+        }
+    }
+
     function scheduleRecaptchaObservation(config) {
         try {
             var options = config && config.recaptchaObservation;
-            if (!options || options.enabled !== true || typeof options.siteKey !== 'string'
-                || !/^[A-Za-z0-9_-]{20,200}$/.test(options.siteKey)
-                || trafficGateRuntimeState().status !== TRAFFIC_GATE_STATES.passed
-                || state.recaptchaObservation) return;
-            var observation = { phase: 'scheduled' };
+            if (!options || options.enabled !== true || state.recaptchaObservation) return;
+            if (typeof options.siteKey !== 'string' || !/^[A-Za-z0-9_-]{20,200}$/.test(options.siteKey)) {
+                state.recaptchaObservationSkip = { phase: 'not_started', reason: 'INVALID_SITE_KEY' };
+                return;
+            }
+            var gateStatus = trafficGateRuntimeState().status;
+            if (gateStatus !== TRAFFIC_GATE_STATES.passed) {
+                // Intentional: observation runs only after Cloudflare PASS.
+                state.recaptchaObservationSkip = { phase: 'not_started', reason: 'CLOUDFLARE_' + gateStatus };
+                return;
+            }
+            var observation = { phase: 'scheduled', reason: null, error: null, tokenReceived: false,
+                step: 'scheduled', timings: { scheduled: recaptchaObservationClock() } };
             state.recaptchaObservation = observation;
-            function eligible() {
-                return state.config === config && config.recaptchaObservation.enabled === true
-                    && config.status === 'active' && !config.immediatePause
-                    && hostAllowed(currentHostname(), config.allowedHostnames)
-                    && trafficGateRuntimeState().status === TRAFFIC_GATE_STATES.passed
-                    && !window.__HM_RELEASE_HANDOFF_FAILED__;
+            state.recaptchaObservationSkip = null;
+            function ineligibleReason() {
+                if (state.config !== config) return 'CONFIG_REPLACED';
+                if (config.recaptchaObservation.enabled !== true) return 'DISABLED_FOR_SITE';
+                if (config.status !== 'active' || config.immediatePause) return 'SITE_PAUSED';
+                if (!hostAllowed(currentHostname(), config.allowedHostnames)) return 'HOST_NOT_ALLOWED';
+                var status = trafficGateRuntimeState().status;
+                if (status !== TRAFFIC_GATE_STATES.passed) return 'CLOUDFLARE_' + status;
+                if (window.__HM_RELEASE_HANDOFF_FAILED__) return 'LOADER_HANDOFF_FAILED';
+                return null;
             }
             function start() {
                 try {
-                    if (!eligible()) { observation.phase = 'cancelled'; return; }
+                    observation.timings.started = recaptchaObservationClock();
+                    var blocked = ineligibleReason();
+                    if (blocked) { recaptchaObservationNote(config, observation, 'cancelled', blocked); return; }
                     // Do not replace or reconfigure a publisher's existing CAPTCHA.
                     if (window.grecaptcha || document.querySelector('script[src*="/recaptcha/"], .grecaptcha-badge')) {
-                        observation.phase = 'publisher_recaptcha_present'; return;
+                        recaptchaObservationNote(config, observation, 'publisher_recaptcha_present', 'PUBLISHER_RECAPTCHA_PRESENT');
+                        return;
                     }
                     var sdk = document.createElement('script');
                     sdk.async = true;
                     sdk.fetchPriority = 'low';
                     sdk.src = 'https://www.google.com/recaptcha/api.js?render=' + encodeURIComponent(options.siteKey);
                     sdk.setAttribute('data-hm-recaptcha-observation', '1');
-                    observation.phase = 'loading';
+                    observation.step = 'sdk_loading';
+                    recaptchaObservationNote(config, observation, 'loading', null);
                     var stopBadgeObserver = hideObservationBadge(options.siteKey);
                     var expired = false;
-                    var timeout = window.setTimeout(function () { finish('timeout'); }, 10000);
-                    function finish(phase) {
+                    var timeout = window.setTimeout(function () {
+                        finish('timeout', { sdk_loading: 'SDK_LOAD_TIMEOUT', google_ready_wait: 'GOOGLE_READY_TIMEOUT',
+                            executing: 'EXECUTE_TIMEOUT' }[observation.step] || 'TIMEOUT');
+                    }, 10000);
+                    function finish(phase, reason, error) {
                         if (expired) return;
                         expired = true;
                         window.clearTimeout(timeout);
                         sdk.onload = sdk.onerror = null;
                         stopBadgeObserver();
-                        observation.phase = phase;
+                        observation.timings.finished = recaptchaObservationClock();
+                        recaptchaObservationNote(config, observation, phase, reason, error);
                     }
-                    sdk.onerror = function () { finish('unavailable'); };
+                    sdk.onerror = function () { finish('unavailable', 'SDK_NETWORK_ERROR'); };
                     sdk.onload = function () {
                         try {
-                            if (expired || !eligible()) { finish('cancelled'); return; }
+                            observation.timings.sdkLoaded = recaptchaObservationClock();
+                            var blockedOnLoad = expired ? 'EXPIRED' : ineligibleReason();
+                            if (blockedOnLoad) { finish('cancelled', blockedOnLoad); return; }
                             var api = window.grecaptcha;
                             if (!api || typeof api.ready !== 'function' || typeof api.execute !== 'function') {
-                                finish('unavailable'); return;
+                                finish('unavailable', 'SDK_API_MISSING'); return;
                             }
+                            observation.step = 'google_ready_wait';
                             api.ready(function () {
                                 try {
-                                    if (expired || !eligible()) { finish('cancelled'); return; }
-                                    observation.phase = 'executing';
-                                    Promise.resolve(api.execute(options.siteKey, { action: 'horus_cf_pass' })).then(
-                                        function () { finish('completed'); },
-                                        function () { finish('unavailable'); }
-                                    ); // Token deliberately discarded: no storage, POST or verification.
-                                } catch (error) { finish('unavailable'); }
+                                    var blockedOnReady = expired ? 'EXPIRED' : ineligibleReason();
+                                    if (blockedOnReady) { finish('cancelled', blockedOnReady); return; }
+                                    observation.step = 'executing';
+                                    recaptchaObservationNote(config, observation, 'executing', null);
+                                    Promise.resolve(api.execute(options.siteKey, { action: RECAPTCHA_OBSERVATION_ACTION })).then(
+                                        function (token) {
+                                            // Token deliberately discarded: only whether one arrived is kept.
+                                            observation.tokenReceived = typeof token === 'string' && token.length > 0;
+                                            finish('completed', observation.tokenReceived ? null : 'EMPTY_TOKEN');
+                                        },
+                                        function (error) { finish('unavailable', 'EXECUTE_REJECTED', recaptchaObservationError(error, options.siteKey)); }
+                                    );
+                                } catch (error) { finish('unavailable', 'EXECUTE_THREW', recaptchaObservationError(error, options.siteKey)); }
                             });
-                        } catch (error) { finish('unavailable'); }
+                        } catch (error) { finish('unavailable', 'SDK_START_FAILED', recaptchaObservationError(error, options.siteKey)); }
                     };
                     (document.head || document.documentElement).appendChild(sdk);
-                } catch (error) { observation.phase = 'unavailable'; }
+                } catch (error) {
+                    recaptchaObservationNote(config, observation, 'unavailable', 'START_FAILED', recaptchaObservationError(error, options.siteKey));
+                }
             }
             // Give advertising startup first use of the main thread and network.
             window.setTimeout(function () {
@@ -117,7 +213,7 @@ export const recaptchaObservationRuntime = String.raw`
                     if (typeof window.requestIdleCallback === 'function') {
                         window.requestIdleCallback(start, { timeout: 2000 });
                     } else start();
-                } catch (error) { observation.phase = 'unavailable'; }
+                } catch (error) { recaptchaObservationNote(config, observation, 'unavailable', 'SCHEDULE_FAILED'); }
             }, 1000);
         } catch (error) {} // Optional observation cannot reject a serving promise.
     }

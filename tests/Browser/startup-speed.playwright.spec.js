@@ -207,9 +207,17 @@ for (const mode of ['success','fail','hang']) {
         await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
         await expect.poll(()=>run.counts.recaptcha).toBe(1);
         expect(await page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
+        if (mode==='fail') {
+            await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getRecaptchaObservation().reason)).toBe('SDK_NETWORK_ERROR');
+        }
         if (mode==='success') {
             await expect.poll(()=>page.evaluate(()=>window.observationExecutions||0)).toBe(1);
             expect(await page.evaluate(()=>window.observedAction)).toBe('horus_cf_pass');
+            await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getRecaptchaObservation().phase)).toBe('completed');
+            const diagnostic = await page.evaluate(()=>window.HorusMediaLoader.getRecaptchaObservation());
+            expect(diagnostic).toMatchObject({enabled:true,reason:null,tokenReceived:true,cloudflare:'PASSED',action:'horus_cf_pass'});
+            expect(JSON.stringify(diagnostic)).not.toContain('unused-token');
+            expect(JSON.stringify(diagnostic)).not.toContain('6LcObservationBrowserTest_12345');
             await expect(page.locator('.grecaptcha-badge')).toHaveCSS('visibility','hidden');
             await expect(page.locator('.grecaptcha-badge')).toHaveAttribute('data-hm-recaptcha-badge','hidden');
             // The scoped rule remains effective after the startup observer stops.
@@ -235,5 +243,8 @@ for (const mode of ['denied','disabled','default']) {
         await page.waitForTimeout(1300);
         expect(run.counts.recaptcha).toBe(0);
         expect(await page.evaluate(()=>window.adCalls||0)).toBe(mode==='denied'?0:1);
+        // The console explains why nothing ran, without changing the PASS-only rule.
+        expect(await page.evaluate(()=>window.HorusMediaLoader.getRecaptchaObservation().reason))
+            .toBe(mode==='denied'?'CLOUDFLARE_ERROR':mode==='disabled'?'CLOUDFLARE_DISABLED':'DISABLED_FOR_SITE');
     });
 }

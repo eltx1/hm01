@@ -12,6 +12,24 @@ A third-party script consumes network/CPU even with the badge hidden. Absolute z
 
 Validation covers default-off, no PASS/no SDK, verified PASS, duplicate boots, failed/hung SDK, thrown/rejected execute, stale config/late callbacks, publisher CAPTCHA coexistence, secret confidentiality, authorization and static publication. Browser fixtures mock Google and never send real visitor tokens. Rollback: disable the per-site option and allow normal CDN publication, or revert the code release. Already loaded third-party JavaScript cannot be unloaded from an existing page; settings take effect on newly loaded config/pages.
 
+## Checking a live page
+
+Open a page of the site in a normal browser, wait for the ads, then run in the browser console:
+
+```js
+HorusMediaLoader.getRecaptchaObservation()
+```
+
+It returns local, read-only evidence; nothing is sent to Horus and neither the token nor the site key is included:
+
+- `cloudflare`: the current traffic-gate state (observation starts only at `PASSED`).
+- `phase` / `reason`: `not_started` + `CLOUDFLARE_*` (waiting for or not given a PASS), `publisher_recaptcha_present`, `cancelled` + why (`CONFIG_REPLACED`, `SITE_PAUSED`, `HOST_NOT_ALLOWED`, `CLOUDFLARE_*`), `unavailable` + `SDK_NETWORK_ERROR` / `SDK_API_MISSING` / `EXECUTE_REJECTED` (with Google's message, key redacted), `timeout` + `SDK_LOAD_TIMEOUT` / `GOOGLE_READY_TIMEOUT` / `EXECUTE_TIMEOUT`, or `completed`.
+- `tokenReceived`: Google returned a token for `horus_cf_pass` (the token itself is discarded). `completed` with `EMPTY_TOKEN` means Google answered without one.
+- `googleRequests`: how many reCAPTCHA anchor/reload requests this page made, from the browser's own resource timing.
+- `timingsMs`: when the attempt was scheduled, started, loaded the SDK and finished.
+
+Sites with Loader debug enabled also log each phase with `console.info`. When `phase` is `completed` with `tokenReceived: true` but the Google console stays empty, the key's type (must be Score based v3), its domain list, or Google's minimum-traffic threshold are the remaining causes; the badge that would show Google's site-owner error is intentionally hidden.
+
 References:
 - https://developers.google.com/recaptcha/docs/v3
 - https://developers.google.com/recaptcha/docs/analytics
