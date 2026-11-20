@@ -14,18 +14,23 @@ function harness({enabled=true,status='PASSED',existing=false,idle=true}={}) {
     return {w,state,config,gate,scripts,schedule:()=>w.scheduleRecaptchaObservation(config),
         tick(ms){now+=ms;for(const [id,t]of timers)if(t.at<=now){timers.delete(id);t.fn();}},idle(){idleTasks.splice(0).forEach(f=>f());}};
 }
-for(const status of ['DISABLED','PENDING','ERROR','DENIED','TIMEOUT']) test(`no SDK or work for gate ${status}`,()=>{
-    const h=harness({status});h.schedule();h.tick(20000);h.idle();assert.equal(h.state.recaptchaObservation,undefined);assert.equal(h.scripts.length,0);
+// Independent admin monitor: Cloudflare's decision neither enables nor blocks it.
+for(const status of ['DISABLED','BOOTING','PENDING','PASSED','ERROR','BLOCKED','TIMEOUT']) test(`observation runs in parallel for gate ${status} and never changes it`,()=>{
+    const h=harness({status});h.schedule();h.tick(1000);h.idle();assert.equal(h.scripts.length,1);assert.equal(h.state.recaptchaObservation.phase,'loading');
+    assert.match(h.scripts[0].src,/^https:\/\/www\.google\.com\/recaptcha\/api\.js\?render=6LcTestObservationKey_123456789$/);assert.equal(h.gate.status,status);
 });
 test('disabled default creates no background task',()=>{const h=harness({enabled:false});h.schedule();assert.equal(h.state.recaptchaObservation,undefined);});
-test('one deferred execution per document discards token and never changes PASS',async()=>{
+test('one deferred execution per document discards token and never changes the gate',async()=>{
     const h=harness();h.schedule();h.schedule();assert.equal(h.scripts.length,0);h.tick(1000);assert.equal(h.scripts.length,0);h.idle();assert.equal(h.scripts.length,1);
-    let calls=0;h.w.grecaptcha={ready:f=>f(),execute:(key,o)=>{calls++;assert.equal(key,h.config.recaptchaObservation.siteKey);assert.equal(o.action,'horus_cf_pass');return Promise.resolve('DO_NOT_STORE_TOKEN');}};
-    h.scripts[0].onload();await new Promise(resolve=>setImmediate(resolve));h.schedule();assert.equal(calls,1);assert.equal(h.state.recaptchaObservation.phase,'completed');assert.equal(h.gate.status,'PASSED');assert.equal(JSON.stringify(h.state).includes('DO_NOT_STORE_TOKEN'),false);
+    let calls=0;h.w.grecaptcha={ready:f=>f(),execute:(key,o)=>{calls++;assert.equal(key,h.config.recaptchaObservation.siteKey);assert.equal(o.action,'horus_pageview');return Promise.resolve('DO_NOT_STORE_TOKEN');}};
+    h.scripts[0].onload();await new Promise(resolve=>setImmediate(resolve));h.schedule();assert.equal(calls,1);assert.equal(h.state.recaptchaObservation.phase,'completed');assert.deepEqual({...h.w.recaptchaObservationDebugState()},{phase:'completed',action:'horus_pageview'});assert.equal(h.gate.status,'PASSED');assert.equal(JSON.stringify(h.state).includes('DO_NOT_STORE_TOKEN'),false);
 });
 test('existing publisher CAPTCHA is never touched',()=>{const h=harness({existing:true});h.schedule();h.tick(1000);h.idle();assert.equal(h.scripts.length,0);assert.equal(h.state.recaptchaObservation.phase,'publisher_recaptcha_present');});
 test('configuration replacement before idle cancels old work',()=>{const h=harness();h.schedule();h.state.config={...h.config};h.tick(1000);h.idle();assert.equal(h.scripts.length,0);});
-test('PASS retirement during SDK download prevents execution',()=>{const h=harness();h.schedule();h.tick(1000);h.idle();h.gate.status='ERROR';h.scripts[0].onload();assert.equal(h.state.recaptchaObservation.phase,'cancelled');});
+test('configuration replacement during SDK download prevents execution',()=>{const h=harness();h.schedule();h.tick(1000);h.idle();h.state.config={...h.config};h.scripts[0].onload();assert.equal(h.state.recaptchaObservation.phase,'cancelled');});
+test('a later Cloudflare decision during SDK download does not cancel observation',async()=>{const h=harness({status:'PENDING'});let calls=0;h.schedule();h.tick(1000);h.idle();h.gate.status='BLOCKED';h.w.grecaptcha={ready:f=>f(),execute:()=>{calls++;return Promise.resolve('x');}};h.scripts[0].onload();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);assert.equal(h.state.recaptchaObservation.phase,'completed');assert.equal(h.gate.status,'BLOCKED');});
+test('paused or inactive sites and foreign hostnames never load the SDK',()=>{for(const change of [c=>{c.status='paused';},c=>{c.immediatePause=true;}]){const h=harness();change(h.config);h.schedule();h.tick(1000);h.idle();assert.equal(h.scripts.length,0);assert.equal(h.state.recaptchaObservation.phase,'cancelled');}
+    const h=harness();h.w.hostAllowed=()=>false;h.schedule();h.tick(1000);h.idle();assert.equal(h.scripts.length,0);});
 for(const failure of ['throw','reject','network','timeout'])test(`optional failure ${failure} leaves PASS untouched`,async()=>{
     const h=harness({idle:false});h.schedule();h.tick(1000);const s=h.scripts[0];
     if(failure==='network')s.onerror();
