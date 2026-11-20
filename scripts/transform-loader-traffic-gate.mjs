@@ -884,17 +884,16 @@ const bootReplacement = String.raw`    function startMonetization(config, script
             // Configuration is known. The verified gate is the only asynchronous
             // admission step; provider consent handling is not reimplemented here.
             prepareStaticConnections(config, false);
-            // Independent admin monitor: runs in parallel with (never after or
-            // instead of) Cloudflare verification and advertising startup.
-            scheduleRecaptchaObservation(config);
             setTrafficGateResume(function () {
                 if (state.config !== config) return [];
+                scheduleRecaptchaObservation(config);
                 var monetization = startMonetization(config, script);
                 schedulePerformanceObservation(config);
                 return monetization;
             });
             var gatePromise = beginDomTrafficGate(config, earlyAttempt, generation, Boolean(options.force));
             return gatePromise.then(function () {
+                scheduleRecaptchaObservation(config);
                 if (!trafficGateAllowsMonetization()) return [];
                 var monetization = startMonetization(config, script);
                 schedulePerformanceObservation(config);
@@ -986,7 +985,7 @@ export function applyTrafficGateTransform(input) {
     source = replaceOnce(
         source,
         "        getConfig: function () { return state.config; },\n        _resetForTests: function () {\n",
-        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        getRecaptchaObservation: function () { return recaptchaObservationDebugState(); },\n        getStartupTrace: startupSnapshot,\n        getRuntimeBuild: startupRuntimeBuild,\n        trace: startupTrace,\n        traceGpt: traceGptService,\n        traceSlot: startupSlotNumber,\n        _resetForTests: function () {\n",
+        "        getConfig: function () { return state.config; },\n        getTrafficGateState: function () { return trafficGateDebugState(); },\n        getStartupTrace: startupSnapshot,\n        getRuntimeBuild: startupRuntimeBuild,\n        trace: startupTrace,\n        traceGpt: traceGptService,\n        traceSlot: startupSlotNumber,\n        _resetForTests: function () {\n",
         'public local state accessor',
     );
 

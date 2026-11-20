@@ -198,22 +198,18 @@ test('controlled gate document comparison removes one delayed script fetch, not 
 });
 
 for (const mode of ['success','fail','hang']) {
-    test(`optional reCAPTCHA ${mode} runs in parallel and never delays or admits ads`, async ({page}) => {
+    test(`optional reCAPTCHA ${mode} never delays ads after verified PASS`, async ({page}) => {
         const run = await open(page, {recaptcha:mode,holdVerification:true,inline:true});
         await expect.poll(()=>run.counts.verifies).toBe(1);
-        // Independent monitor: it starts while Cloudflare verification is still pending...
-        await expect.poll(()=>run.counts.recaptcha).toBe(1);
-        // ...and grants nothing: advertising still waits for the verified gate.
+        expect(run.counts.recaptcha).toBe(0);
         expect(await page.evaluate(()=>window.adCalls||0)).toBe(0);
-        expect(await page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).not.toBe('PASSED');
         run.releaseVerification();
         await expect.poll(()=>page.evaluate(()=>window.adCalls||0)).toBe(1);
-        expect(run.counts.recaptcha).toBe(1);
+        await expect.poll(()=>run.counts.recaptcha).toBe(1);
         expect(await page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe('PASSED');
         if (mode==='success') {
             await expect.poll(()=>page.evaluate(()=>window.observationExecutions||0)).toBe(1);
-            expect(await page.evaluate(()=>window.observedAction)).toBe('horus_pageview');
-            expect(await page.evaluate(()=>window.HorusMediaLoader.getRecaptchaObservation())).toEqual({phase:'completed',action:'horus_pageview'});
+            expect(await page.evaluate(()=>window.observedAction)).toBe('horus_cf_pass');
             await expect(page.locator('.grecaptcha-badge')).toHaveCSS('visibility','hidden');
             await expect(page.locator('.grecaptcha-badge')).toHaveAttribute('data-hm-recaptcha-badge','hidden');
             // The scoped rule remains effective after the startup observer stops.
@@ -233,17 +229,11 @@ for (const mode of ['success','fail','hang']) {
     });
 }
 for (const mode of ['denied','disabled','default']) {
-    test(`reCAPTCHA observation is independent of Cloudflare when ${mode}`, async ({page}) => {
+    test(`reCAPTCHA has zero requests when ${mode}`, async ({page}) => {
         const run = await open(page, {recaptcha:mode!=='default',serverReject:mode==='denied',gateDisabled:mode==='disabled',inline:true});
         await expect.poll(()=>page.evaluate(()=>window.HorusMediaLoader.getTrafficGateState().state)).toBe(mode==='denied'?'ERROR':mode==='disabled'?'DISABLED':'PASSED');
-        // Enabled sites observe every eligible page view, including the Cloudflare
-        // gate turned off (DISABLED) and rejected verification; disabled sites never load it.
-        if (mode === 'default') { await page.waitForTimeout(1300); expect(run.counts.recaptcha).toBe(0); }
-        else {
-            await expect.poll(()=>run.counts.recaptcha).toBe(1);
-            await expect.poll(()=>page.evaluate(()=>window.observationExecutions||0)).toBe(1);
-        }
+        await page.waitForTimeout(1300);
+        expect(run.counts.recaptcha).toBe(0);
         expect(await page.evaluate(()=>window.adCalls||0)).toBe(mode==='denied'?0:1);
-        expect(run.counts.recaptcha).toBeLessThanOrEqual(1);
     });
 }

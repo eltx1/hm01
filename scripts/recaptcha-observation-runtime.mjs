@@ -1,7 +1,4 @@
 // Included in the compiled loader, but never part of the advertising promise chain.
-// reCAPTCHA v3 observation is an independent admin monitor: it runs in parallel
-// on every eligible page view, whatever the Cloudflare traffic gate decides, and
-// its result is never read by advertising or protection code.
 export const recaptchaObservationRuntime = String.raw`
     function hideObservationBadge(siteKey) {
         var observer = null;
@@ -51,18 +48,12 @@ export const recaptchaObservationRuntime = String.raw`
         };
     }
 
-    var RECAPTCHA_OBSERVATION_ACTION = 'horus_pageview';
-
-    function recaptchaObservationDebugState() {
-        var observation = state.recaptchaObservation;
-        return observation ? { phase: observation.phase, action: RECAPTCHA_OBSERVATION_ACTION } : null;
-    }
-
     function scheduleRecaptchaObservation(config) {
         try {
             var options = config && config.recaptchaObservation;
             if (!options || options.enabled !== true || typeof options.siteKey !== 'string'
                 || !/^[A-Za-z0-9_-]{20,200}$/.test(options.siteKey)
+                || trafficGateRuntimeState().status !== TRAFFIC_GATE_STATES.passed
                 || state.recaptchaObservation) return;
             var observation = { phase: 'scheduled' };
             state.recaptchaObservation = observation;
@@ -70,6 +61,7 @@ export const recaptchaObservationRuntime = String.raw`
                 return state.config === config && config.recaptchaObservation.enabled === true
                     && config.status === 'active' && !config.immediatePause
                     && hostAllowed(currentHostname(), config.allowedHostnames)
+                    && trafficGateRuntimeState().status === TRAFFIC_GATE_STATES.passed
                     && !window.__HM_RELEASE_HANDOFF_FAILED__;
             }
             function start() {
@@ -108,7 +100,7 @@ export const recaptchaObservationRuntime = String.raw`
                                 try {
                                     if (expired || !eligible()) { finish('cancelled'); return; }
                                     observation.phase = 'executing';
-                                    Promise.resolve(api.execute(options.siteKey, { action: RECAPTCHA_OBSERVATION_ACTION })).then(
+                                    Promise.resolve(api.execute(options.siteKey, { action: 'horus_cf_pass' })).then(
                                         function () { finish('completed'); },
                                         function () { finish('unavailable'); }
                                     ); // Token deliberately discarded: no storage, POST or verification.
