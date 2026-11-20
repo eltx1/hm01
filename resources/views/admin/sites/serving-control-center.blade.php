@@ -118,6 +118,7 @@
             </label>
             <label><input type="checkbox" name="clear_secret" value="1"> Remove stored secret</label>
             <p class="muted">No token verification or score storage in Horus. View the action “horus_cf_pass” in Google reCAPTCHA Admin. Register the publisher's domain with this key. The Horus reCAPTCHA badge is hidden. Google requires a visible disclosure in the publisher's user flow: “This site is protected by reCAPTCHA.” The publisher can place it in the footer; Horus does not inject a popup or notice. Existing publisher reCAPTCHA is left alone; observation is skipped on those pages to avoid conflicts.</p>
+            <p class="muted">To check a page: open it, wait for the ads, then run <code>HorusMediaLoader.getRecaptchaObservation()</code> in the browser console. It shows whether Cloudflare passed, whether Google returned a token, and the reason if it did not. Nothing is sent to Horus.</p>
             <button class="hm-button-secondary">Save reCAPTCHA observation</button>
         </form>
     @endif
