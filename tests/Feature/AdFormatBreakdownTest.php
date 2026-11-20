@@ -110,12 +110,14 @@ class AdFormatBreakdownTest extends TestCase
         $stream = fopen('php://temp', 'w+');
         $dimensionKind = in_array('COUNTRY_CODE', $query['dimensions'], true) ? 'COUNTRY' : (in_array('DEVICE_CATEGORY_NAME', $query['dimensions'], true) ? 'DEVICE' : null);
         if ($dimensionKind) {
+            // Like Google: COUNTRY_NAME automatically adds the COUNTRY_CRITERIA_ID column.
+            if (in_array('COUNTRY_NAME', $query['dimensions'], true)) $query['dimensions'][] = 'COUNTRY_CRITERIA_ID';
             fputcsv($stream, [...array_map(fn ($dimension) => 'Dimension.'.$dimension, $query['dimensions']),
                 ...array_map(fn ($column) => 'Column.'.$column, $query['columns'])], escape: '');
             foreach ($this->dimensionRows[$dimensionKind] as [$day, $site, $key, $name, $impressions, $micros]) {
                 if ($day < $from || $day > $to) continue;
                 $dimensions = ['DATE' => $day, 'AD_UNIT_ID' => '12345', 'SITE_NAME' => $site, 'COUNTRY_CODE' => $key, 'COUNTRY_NAME' => $name,
-                    'DEVICE_CATEGORY_ID' => (string) (crc32($name) % 1000), 'DEVICE_CATEGORY_NAME' => $name];
+                    'DEVICE_CATEGORY_ID' => (string) (crc32($name) % 1000), 'DEVICE_CATEGORY_NAME' => $name, 'COUNTRY_CRITERIA_ID' => (string) (2000 + crc32($key) % 1000)];
                 $columns = ['AD_EXCHANGE_TOTAL_REQUESTS' => $impressions + 10, 'AD_EXCHANGE_RESPONSES_SERVED' => $impressions,
                     'AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS' => $impressions, 'AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS' => 1,
                     'AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE' => 'US$ '.$micros,
