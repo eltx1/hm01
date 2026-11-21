@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Services\Gam\GamReportingGoogleApp;
+use App\Services\Reporting\MonetizationAuditEvidence;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -226,8 +227,10 @@ $prebidEnabled = $count('prebid_settings', fn ($query) => $query->where('enabled
 $metrics['prebid'] = ['enabled_settings' => $prebidEnabled, 'bidders' => $count('prebid_bidders'), 'adapters' => $count('prebid_adapters')];
 $add('Monetization', 'prebid', $prebidEnabled > 0 ? 'PASS' : 'NOT_CONFIGURED', 'P3', $prebidEnabled > 0 ? 'At least one Prebid runtime setting is enabled.' : 'Prebid is not enabled; another monetization path may be used.', ['enabled_settings' => $prebidEnabled]);
 
-$realMonetizationPath = $gamHealthyReal > 0 || $demandTested > 0;
-$add('Monetization', 'real_revenue_path', $realMonetizationPath ? 'PASS' : 'BLOCKED', 'P1', $realMonetizationPath ? 'At least one tested real monetization path is available for the Publisher pilot.' : 'No tested real monetization path is proven yet; the first revenue pilot cannot complete.', ['healthy_live_gam' => $gamHealthyReal, 'tested_approved_demand' => $demandTested]);
+// Integration health / test timestamps qualify a path for investigation, not proof of serving.
+foreach (MonetizationAuditEvidence::checks($gamHealthyReal, $demandTested) as $check) {
+    $add('Monetization', $check['key'], $check['status'], $check['priority'], $check['message'], $check['evidence']);
+}
 
 // Publisher / Site / supply-chain aggregate integrity.
 $metrics['publishers'] = ['total' => $count('publishers')];
