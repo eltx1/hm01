@@ -1,6 +1,7 @@
 @php
     $items = [
         ['label' => 'Overview', 'href' => route('admin.finance.overview'), 'visible' => auth()->user()->hasPermission('finance.operations.view')],
+        ['label' => 'Monthly payouts', 'href' => route('admin.finance.monthly-payouts'), 'visible' => auth()->user()->hasPermission('finance.operations.view')],
         ['label' => 'Financial Periods', 'href' => route('admin.finance.periods.index'), 'visible' => auth()->user()->hasPermission('finance.operations.view')],
         ['label' => 'Publisher Statements', 'href' => route('admin.finance.statements.index'), 'visible' => auth()->user()->hasPermission('finance.publisher.view')],
         ['label' => 'Payouts', 'href' => route('admin.finance.payouts.index'), 'visible' => auth()->user()->hasPermission('finance.payments.view')],

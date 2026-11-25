@@ -79,6 +79,8 @@ class ReportingServiceProvider extends ServiceProvider
 
                 Route::prefix('/admin/finance')->name('admin.finance.')->group(function (): void {
                     Route::get('/', [FinanceOperationsController::class, 'overview'])->middleware('permission:finance.operations.view')->name('overview');
+                    Route::get('/monthly-payouts', [FinanceOperationsController::class, 'monthlyPayouts'])->middleware('permission:finance.operations.view')->name('monthly-payouts');
+                    Route::get('/monthly-payouts/csv', [FinanceOperationsController::class, 'monthlyPayoutsCsv'])->middleware('permission:finance.operations.view')->name('monthly-payouts.csv');
                     Route::get('/periods', [FinanceOperationsController::class, 'periods'])->middleware('permission:finance.operations.view')->name('periods.index');
                     Route::post('/periods/{financialPeriod}/close', [FinanceOperationsController::class, 'closePeriod'])->middleware('permission:finance.periods.close')->name('periods.close');
                     Route::get('/statements', [FinanceOperationsController::class, 'statements'])->middleware('permission:finance.publisher.view')->name('statements.index');
