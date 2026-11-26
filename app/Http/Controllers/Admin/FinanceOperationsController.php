@@ -24,6 +24,7 @@ use App\Models\RevenueAdjustment;
 use App\Models\RevenueRule;
 use App\Models\Site;
 use App\Services\Reporting\AdminFinanceService;
+use App\Services\Reporting\MonthlyPayoutSummaryService;
 use App\Services\Reporting\FinancialPeriodService;
 use App\Services\Reporting\PublisherPaymentProfileService;
 use App\Services\Reporting\PublisherPaymentService;
@@ -47,6 +48,43 @@ final class FinanceOperationsController extends Controller
     public function overview(AdminFinanceService $finance): View
     {
         return view('admin.finance.overview', $finance->overview());
+    }
+
+    public function monthlyPayouts(Request $request, MonthlyPayoutSummaryService $payouts): View
+    {
+        $month = $payouts->resolveMonth($request->query('month'));
+
+        return view('admin.finance.monthly-payouts', ['summary' => $payouts->summary($month), 'months' => $payouts->months()]);
+    }
+
+    public function monthlyPayoutsCsv(Request $request, MonthlyPayoutSummaryService $payouts): StreamedResponse
+    {
+        $summary = $payouts->summary($payouts->resolveMonth($request->query('month')));
+        $decimal = static fn (int $minor): string => ($minor < 0 ? '-' : '').intdiv(abs($minor), 100).'.'.str_pad((string) (abs($minor) % 100), 2, '0', STR_PAD_LEFT);
+
+        return response()->streamDownload(function () use ($summary, $decimal): void {
+            $handle = fopen('php://output', 'wb');
+            fputcsv($handle, ['Month', 'Publisher', 'Currency', 'Gross revenue', 'Publisher net earnings', 'Horus commission', 'Other deductions and partner shares',
+                'Of which video (publisher)', 'Estimated part of net earnings', 'Days with data', 'Statement status', 'Carried in from earlier months',
+                'Statement balance due', 'Paid', 'Payment details', 'Payment method']);
+            foreach ($summary['rows'] as $row) {
+                fputcsv($handle, [
+                    $summary['month'], Csv::safeCell($row['publisher']), $row['currency'],
+                    $decimal($row['gross_minor']), $decimal($row['publisher_minor']), $decimal($row['horus_minor']), $decimal($row['other_minor']),
+                    $decimal($row['video_publisher_minor']), $decimal($row['estimated_publisher_minor']), $row['days'],
+                    $row['statement']['status'] ?? 'NO_STATEMENT',
+                    $row['statement'] ? $decimal($row['statement']['carried_in_minor']) : '',
+                    $row['statement'] ? $decimal($row['statement']['balance_due_minor']) : '',
+                    $row['statement'] ? $decimal($row['statement']['paid_minor']) : '',
+                    $row['payment_details'], Csv::safeCell($row['payment_method']),
+                ]);
+            }
+            foreach ($summary['totals'] as $total) {
+                fputcsv($handle, [$summary['month'], 'TOTAL', $total['currency'], $decimal($total['gross_minor']), $decimal($total['publisher_minor']),
+                    $decimal($total['horus_minor']), $decimal($total['other_minor']), '', $decimal($total['estimated_publisher_minor'])]);
+            }
+            fclose($handle);
+        }, 'publisher-payouts-'.$summary['month'].'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     public function periods(AdminFinanceService $finance): View

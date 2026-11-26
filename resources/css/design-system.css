@@ -745,6 +745,11 @@ article > :is(.table-wrap, .table-scroll):last-child { margin-bottom: 0; }
     .split-grid, .detail-grid { gap: .75rem; }
 }
 
+@media (max-width: 430px) {
+    /* Stacked inline forms: the 220px flex-basis must not become a field height. */
+    .inline-form > .hm-input { flex: 0 0 auto; }
+}
+
 @media (max-width: 360px) {
     .metric-grid { grid-template-columns: minmax(0, 1fr); }
     .mobile-product-lockup .brand-product-mark { width: 1.9rem; max-height: 1.9rem; }
